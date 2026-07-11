@@ -43,7 +43,7 @@ if(ENABLE_TESTING
 endif()
 
 find_package(gnuradio4 CONFIG REQUIRED)
-find_package(gnuradio4Algorithm CONFIG REQUIRED)
+find_package(gnuradio4Library CONFIG REQUIRED)
 find_package(GnuRadioBlockLib CONFIG REQUIRED)
 
 if(NOT TARGET gnuradio-core AND TARGET gnuradio4::gnuradio-core)

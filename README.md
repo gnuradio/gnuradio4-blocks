@@ -2,7 +2,7 @@
 
 This repository contains the standard MIT-licensed GNU Radio 4 block libraries.
 
-It builds against installed `gnuradio4-core` and `gnuradio4Algorithm` SDKs and installs the camelCase CMake package `gnuradio4Blocks`.
+It builds against installed `gnuradio4-core` and `gnuradio4Library` SDKs and installs the camelCase CMake package `gnuradio4Blocks`.
 
 ## Build model
 

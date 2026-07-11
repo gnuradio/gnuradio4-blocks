@@ -8,7 +8,7 @@ includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 Name: GNU Radio 4 Blocks
 Description: GNU Radio 4 standard block libraries
 Version: @GR4_PKG_VERSION@
-Requires: gnuradio4 gnuradio4Algorithm
+Requires: gnuradio4 gnuradio4Library
 
 Cflags: -I${includedir}
 Libs:
