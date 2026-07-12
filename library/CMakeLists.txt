@@ -131,9 +131,6 @@ if(ENABLE_TESTING)
   include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/GnuRadioTestHelpers.cmake)
 endif()
 
-add_subdirectory(bench)
-add_subdirectory(algorithm)
-
 if(ENABLE_TESTING
    AND (UNIX
         OR APPLE
@@ -144,6 +141,16 @@ if(ENABLE_TESTING
   append_coverage_compiler_flags()
   set(GCOVR_ADDITIONAL_ARGS "--merge-mode-functions=merge-use-line-min"
                             "--gcov-ignore-parse-errors=negative_hits.warn_once_per_file")
+endif()
+
+add_subdirectory(bench)
+add_subdirectory(algorithm)
+
+if(ENABLE_TESTING
+   AND (UNIX
+        OR APPLE
+        OR WIN32)
+   AND ENABLE_COVERAGE)
   set(GR4_LIBRARY_COVERAGE_DEPENDENCIES
       qa_Xoshiro256pp
       qa_GaussianNoise
@@ -164,17 +171,6 @@ if(ENABLE_TESTING
       qa_BurstTaper
       qa_FileIo
       qa_FileIoHelpers)
-  foreach(target_name IN LISTS GR4_LIBRARY_COVERAGE_DEPENDENCIES)
-    if(TARGET ${target_name})
-      target_compile_options(
-        ${target_name}
-        PRIVATE --coverage
-                -Og
-                -g1
-                -gz)
-      target_link_options(${target_name} PRIVATE --coverage)
-    endif()
-  endforeach()
   setup_target_for_coverage_gcovr_xml(
     NAME
     coverage
