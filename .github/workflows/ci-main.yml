@@ -1,73 +1,20 @@
-name: common/pull-request CI
+name: main branch CI
 
 on:
-  pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
   packages: read
 
 jobs:
-  dco:
-    name: "DCO"
-    runs-on: "ubuntu-latest"
-    steps:
-      - name: Check commit signoffs
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const commits = await github.paginate(github.rest.pulls.listCommits, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-              per_page: 100,
-            });
-
-            const missing = commits.filter(({ commit }) => !/^Signed-off-by:\s.+$/im.test(commit.message));
-
-            for (const { sha } of missing) {
-              core.error(`Commit ${sha} is missing a Signed-off-by line`);
-            }
-
-            if (missing.length > 0) {
-              core.setFailed(`${missing.length} commit(s) missing DCO signoff`);
-            }
-
-  restyled:
-    name: "Restyled"
-    runs-on: ubuntu-latest
-    concurrency:
-      group: Restyled-${{ github.ref }}
-      cancel-in-progress: true
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-    steps:
-      - name: Ensure fork is public
-        if: ${{ github.event.pull_request.head.repo.private }}
-        run: |
-          echo "Private forks are not supported for restyling" >&2
-          exit 1
-
-      - uses: actions/checkout@v6
-        with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: restyled-io/actions/setup@v4
-
-      - id: restyler
-        uses: restyled-io/actions/run@v4
-        with:
-          fail-on-differences: true
-
   build:
     name: "${{ matrix.name }}"
-    needs: [dco, restyled]
     runs-on: ubuntu-latest
     concurrency:
-      group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-${{ matrix.name }}
-      cancel-in-progress: true
+      group: ${{ github.workflow }}-${{ github.run_id }}-${{ matrix.name }}
+      cancel-in-progress: false
     container:
       image: ghcr.io/${{ github.repository_owner }}/gnuradio4-library-sdk:${{ matrix.library_sdk_tag }}
     strategy:
@@ -86,6 +33,24 @@ jobs:
             cxx: g++
             cmake-build-type: Release
             extra_cmake_flags: ""
+          - name: "Ubuntu 26.04 | gcc | Debug"
+            library_sdk_tag: main-ubuntu-26.04-gcc-debug
+            cc: gcc
+            cxx: g++
+            cmake-build-type: Debug
+            extra_cmake_flags: ""
+          - name: "Ubuntu 24.04 | clang-20 | Release"
+            library_sdk_tag: main-ubuntu-24.04-clang20-release
+            cc: clang-20
+            cxx: clang++-20
+            cmake-build-type: Release
+            extra_cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
+          - name: "Fedora 44 | clang | Release"
+            library_sdk_tag: main-fedora-44-clang-release
+            cc: clang
+            cxx: clang++
+            cmake-build-type: Release
+            extra_cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
           - name: "Fedora 44 | clang | Debug"
             library_sdk_tag: main-fedora-44-clang-debug
             cc: clang

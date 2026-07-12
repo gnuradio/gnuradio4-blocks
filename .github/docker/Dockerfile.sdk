@@ -1,0 +1,59 @@
+ARG LIBRARY_SDK_OWNER=gnuradio
+ARG LIBRARY_SDK_TAG=main-ubuntu-26.04-gcc-release
+
+FROM ghcr.io/${LIBRARY_SDK_OWNER}/gnuradio4-library-sdk:${LIBRARY_SDK_TAG} AS builder
+
+ARG GIT_SHA=unknown
+ARG REPOSITORY_URL=https://github.com/gnuradio/gnuradio4-blocks
+ARG LIBRARY_SDK_OWNER=gnuradio
+ARG LIBRARY_SDK_TAG=main-ubuntu-26.04-gcc-release
+ARG CMAKE_BUILD_TYPE=RelWithDebInfo
+ARG CMAKE_FLAGS=""
+ARG CC=gcc
+ARG CXX=g++
+
+WORKDIR /src/gnuradio4-blocks
+COPY . .
+
+ENV CC=${CC} \
+    CXX=${CXX} \
+    CMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+RUN cmake -S . -B /build/gnuradio4-blocks \
+      -DCMAKE_COLOR_DIAGNOSTICS=ON \
+      -DDISABLE_EXTERNAL_DEPS_WARNINGS=ON \
+      -DCMAKE_PREFIX_PATH=/opt/gnuradio4 \
+      -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+      -DCMAKE_INSTALL_PREFIX=/opt/gnuradio4 \
+      -DUSE_CCACHE=OFF \
+      -DENABLE_EXAMPLES=OFF \
+      -DENABLE_TESTING=OFF \
+      -DGR4_ENABLE_AUDIO=OFF \
+      -DGR4_ENABLE_SDR=OFF \
+      -DGR4_ENABLE_HTTP_TESTS=OFF \
+      ${CMAKE_FLAGS} \
+    && cmake --build /build/gnuradio4-blocks --parallel \
+    && cmake --install /build/gnuradio4-blocks \
+    && mkdir -p /opt/gnuradio4/share/gnuradio4-blocks-sdk \
+    && printf 'git_sha=%s\nprefix=/opt/gnuradio4\nlibrary_sdk_image=%s\ncmake_build_type=%s\ncmake_flags=%s\n' \
+      "${GIT_SHA}" "ghcr.io/${LIBRARY_SDK_OWNER}/gnuradio4-library-sdk:${LIBRARY_SDK_TAG}" "${CMAKE_BUILD_TYPE}" "${CMAKE_FLAGS}" \
+      > /opt/gnuradio4/share/gnuradio4-blocks-sdk/manifest
+
+FROM ghcr.io/${LIBRARY_SDK_OWNER}/gnuradio4-library-sdk:${LIBRARY_SDK_TAG} AS sdk
+
+ARG GIT_SHA=unknown
+ARG REPOSITORY_URL=https://github.com/gnuradio/gnuradio4-blocks
+
+LABEL org.opencontainers.image.source="${REPOSITORY_URL}" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.description="GNU Radio 4 blocks SDK image with core, library, and blocks installed" \
+      org.opencontainers.image.licenses="MIT"
+
+COPY --from=builder /opt/gnuradio4 /opt/gnuradio4
+
+ENV GNURADIO4_PREFIX=/opt/gnuradio4 \
+    CMAKE_PREFIX_PATH=/opt/gnuradio4 \
+    LD_LIBRARY_PATH=/opt/gnuradio4/lib:/opt/gnuradio4/lib64:${LD_LIBRARY_PATH} \
+    PATH=/opt/gnuradio4/bin:${PATH}
+
+WORKDIR /work
