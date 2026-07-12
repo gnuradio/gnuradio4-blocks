@@ -70,13 +70,14 @@ jobs:
       group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-${{ matrix.name }}
       cancel-in-progress: true
     container:
-      image: ghcr.io/${{ github.repository_owner }}/gnuradio4-core-sdk:${{ matrix.core_sdk_tag }}
+      image: ${{ matrix.image }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: "Ubuntu 24.04 | gcc-14 | Release"
             cache_key: ubuntu-2404-gcc14-release
+            image: ghcr.io/${{ github.repository_owner }}/gnuradio4-core-sdk:main-ubuntu-24.04-gcc14-release
             core_sdk_tag: main-ubuntu-24.04-gcc14-release
             cc: gcc-14
             cxx: g++-14
@@ -84,34 +85,15 @@ jobs:
             cmake_flags: "-DADDRESS_SANITIZER=OFF"
           - name: "Ubuntu 26.04 | gcc | Release"
             cache_key: ubuntu-2604-gcc-release
+            image: ghcr.io/${{ github.repository_owner }}/gnuradio4-core-sdk:main-ubuntu-26.04-gcc-release
             core_sdk_tag: main-ubuntu-26.04-gcc-release
             cc: gcc
             cxx: g++
             cmake-build-type: Release
             cmake_flags: "-DADDRESS_SANITIZER=OFF"
-          - name: "Ubuntu 26.04 | gcc | Debug"
-            cache_key: ubuntu-2604-gcc-debug
-            core_sdk_tag: main-ubuntu-26.04-gcc-debug
-            cc: gcc
-            cxx: g++
-            cmake-build-type: Debug
-            cmake_flags: "-DADDRESS_SANITIZER=OFF"
-          - name: "Ubuntu 24.04 | clang-20 | Release"
-            cache_key: ubuntu-2404-clang20-release
-            core_sdk_tag: main-ubuntu-24.04-clang20-release
-            cc: clang-20
-            cxx: clang++-20
-            cmake-build-type: Release
-            cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
-          - name: "Fedora 44 | clang | Release"
-            cache_key: fedora-44-clang-release
-            core_sdk_tag: main-fedora-44-clang-release
-            cc: clang
-            cxx: clang++
-            cmake-build-type: Release
-            cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
           - name: "Fedora 44 | clang | Debug"
             cache_key: fedora-44-clang-debug
+            image: ghcr.io/${{ github.repository_owner }}/gnuradio4-core-sdk:main-fedora-44-clang-debug
             core_sdk_tag: main-fedora-44-clang-debug
             cc: clang
             cxx: clang++
