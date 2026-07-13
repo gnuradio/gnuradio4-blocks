@@ -111,6 +111,7 @@ jobs:
             -DCMAKE_PREFIX_PATH=/opt/gnuradio4 \
             -DCMAKE_BUILD_TYPE=${{ matrix.cmake-build-type }} \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_C_COMPILER=${{ matrix.cc }} \
             -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
             -DENABLE_TESTING=ON \
             "${extra_cmake_flags[@]}"
