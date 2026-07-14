@@ -1,0 +1,17 @@
+name: pull request CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    name: Bootstrap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Register workflow
+        run: echo "GitHub Actions is enabled for this repository."
