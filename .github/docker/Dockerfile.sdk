@@ -32,7 +32,7 @@ RUN cmake -S . -B /build/gnuradio4-blocks \
       -DGR4_ENABLE_SDR=OFF \
       -DGR4_ENABLE_HTTP_TESTS=OFF \
       ${CMAKE_FLAGS} \
-    && cmake --build /build/gnuradio4-blocks --parallel \
+    && cmake --build /build/gnuradio4-blocks --parallel 2 \
     && cmake --install /build/gnuradio4-blocks \
     && mkdir -p /opt/gnuradio4/share/gnuradio4-blocks-sdk \
     && printf 'git_sha=%s\nprefix=/opt/gnuradio4\nlibrary_sdk_image=%s\ncmake_build_type=%s\ncmake_flags=%s\n' \
