@@ -99,7 +99,7 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::audio::AudioSink<float32>"sv));
 #endif
         expect(registry.contains("gr::filter::fir_filter<float32>"sv));
-        expect(registry.contains("gr::blocks::fft::FFT<float32>"sv));
+        expect(registry.contains("gr::fourier::FFT<float32>"sv));
     };
 
     "CheckBlockInstantiations"_test = [&] {

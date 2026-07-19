@@ -37,7 +37,7 @@ struct TestTypes {
 
 const boost::ut::suite<"Fourier Transforms"> fftTests = [] {
     using namespace boost::ut;
-    using namespace gr::blocks::fft;
+    using namespace gr::fourier;
     using namespace boost::ut::reflection;
 
     using AllTypesToTest = std::tuple<
