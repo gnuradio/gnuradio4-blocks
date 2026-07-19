@@ -79,7 +79,7 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::testing::NullSink<gr::Packet<float32>>"sv));
         expect(registry.contains("gr::testing::NullSink<gr::Tensor<float32>>"sv));
         expect(registry.contains("gr::testing::NullSink<gr::DataSet<float32>>"sv));
-        expect(registry.contains("gr::blocks::fileio::BasicFileSink<float32>"sv));
+        expect(registry.contains("gr::fileio::BasicFileSink<float32>"sv));
         expect(registry.contains("gr::basic::Convert<float32, float32>"sv));
         expect(registry.contains("gr::basic::Convert<float32, float64>"sv));
         expect(registry.contains("gr::basic::ScalingConvert<float32, float32>"sv));
@@ -93,8 +93,8 @@ const boost::ut::suite TagTests = [] {
 #endif
         expect(registry.contains("gr::http::HttpSource"sv));
         expect(registry.contains("gr::http::HttpSink"sv));
-        expect(registry.contains("gr::blocks::fileio::WavSource<float32>"sv));
-        expect(registry.contains("gr::blocks::fileio::WavSink<float32>"sv));
+        expect(registry.contains("gr::fileio::WavSource<float32>"sv));
+        expect(registry.contains("gr::fileio::WavSink<float32>"sv));
 #if GNURADIO4_HAVE_AUDIO_BLOCKS
         expect(registry.contains("gr::audio::AudioSink<float32>"sv));
 #endif
@@ -104,7 +104,7 @@ const boost::ut::suite TagTests = [] {
 
     "CheckBlockInstantiations"_test = [&] {
         expect(registry.create("gr::testing::Delay<float32>"sv, {}) != nullptr);
-        expect(registry.create("gr::blocks::fileio::WavSource<float32>"sv, {}) != nullptr);
+        expect(registry.create("gr::fileio::WavSource<float32>"sv, {}) != nullptr);
 #if GNURADIO4_HAVE_AUDIO_BLOCKS
         expect(registry.create("gr::audio::AudioSink<float32>"sv, {}) != nullptr);
 #endif

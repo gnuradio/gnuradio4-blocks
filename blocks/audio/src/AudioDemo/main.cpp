@@ -145,7 +145,7 @@ void runPlaybackGraph(std::shared_ptr<Scheduler> scheduler, std::string uri, std
         std::println("[AudioTest] main runtime thread: {}", fileio::isMainThread());
 
         gr::Graph graph;
-        auto&     source  = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", std::move(uri)}, {"repeat", repeat}});
+        auto&     source  = graph.emplaceBlock<gr::fileio::WavSource<float>>({{"uri", std::move(uri)}, {"repeat", repeat}});
         auto&     monitor = graph.emplaceBlock<audio_test_app_detail::LevelMonitor>();
         auto&     sink    = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"device", std::move(outputDevice)}, {"debug_console", true}});
 

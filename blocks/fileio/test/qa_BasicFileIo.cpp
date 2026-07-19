@@ -44,17 +44,17 @@ std::expected<void, gr::Error> runSchedulerAndWait(Scheduler& sched) {
 }
 
 template<typename DataType>
-void runTest(const gr::blocks::fileio::Mode mode) {
+void runTest(const gr::fileio::Mode mode) {
     using namespace boost::ut;
-    using namespace gr::blocks::fileio;
+    using namespace gr::fileio;
     using namespace gr::testing;
     using scheduler = gr::scheduler::Simple<>;
 
     constexpr gr::Size_t nSamples    = 1024U;
-    const gr::Size_t     maxFileSize = mode == gr::blocks::fileio::Mode::multi ? 256U : 0U;
+    const gr::Size_t     maxFileSize = mode == gr::fileio::Mode::multi ? 256U : 0U;
     std::string          modeName{magic_enum::enum_name(mode)};
     std::string          fileName = std::format("/tmp/gr4_file_sink_test/TestFileName_{}.bin", modeName);
-    gr::blocks::fileio::detail::deleteFilesContaining(fileName);
+    gr::fileio::detail::deleteFilesContaining(fileName);
 
     "BasicFileSink"_test = [&] { // NOSONAR capture all
         std::string testCaseName = std::format("BasicFileSink: failed for type '{}' and '{}", gr::meta::type_name<DataType>(), modeName);
@@ -78,16 +78,16 @@ void runTest(const gr::blocks::fileio::Mode mode) {
         expect(eq(source.count, nSamples)) << testCaseName;
         expect(eq(fileSink._totalBytesWritten / sizeof(DataType), nSamples)) << testCaseName;
 
-        std::vector<std::filesystem::path> files = gr::blocks::fileio::detail::getSortedFilesContaining(fileName);
-        if (mode == gr::blocks::fileio::Mode::multi) {
+        std::vector<std::filesystem::path> files = gr::fileio::detail::getSortedFilesContaining(fileName);
+        if (mode == gr::fileio::Mode::multi) {
             // greater-equal 'ge' because files can be legitimally zero-sized
             expect(ge(files.size(), (nSamples * sizeof(DataType)) / maxFileSize)) << testCaseName;
         } else {
             expect(eq(files.size(), 1U)) << testCaseName;
         }
         for (const auto& file : files) {
-            auto fileSize = gr::blocks::fileio::detail::getFileSize(file);
-            if (mode == gr::blocks::fileio::Mode::multi) {
+            auto fileSize = gr::fileio::detail::getFileSize(file);
+            if (mode == gr::fileio::Mode::multi) {
                 // less-equal 'le' because files can be legitimally zero-sized
                 expect(le(fileSize, maxFileSize)) << testCaseName;
             } else {
@@ -143,12 +143,12 @@ void runTest(const gr::blocks::fileio::Mode mode) {
         }
         expect(!externalInterventionNeededRead->load(std::memory_order_relaxed)) << testCaseName;
 
-        auto nonEmptyFileCount = static_cast<gr::Size_t>(std::ranges::count_if(gr::blocks::fileio::detail::getSortedFilesContaining(fileName), [](const auto& file) { return std::filesystem::file_size(file) > 0; }));
+        auto nonEmptyFileCount = static_cast<gr::Size_t>(std::ranges::count_if(gr::fileio::detail::getSortedFilesContaining(fileName), [](const auto& file) { return std::filesystem::file_size(file) > 0; }));
         expect(eq(sink.count, nonEmptyFileCount * lengthSamples)) << testCaseName;
         expect(eq(fileSource._totalBytesRead, nonEmptyFileCount * lengthSamples * sizeof(DataType))) << testCaseName;
     };
 
-    expect(!gr::blocks::fileio::detail::deleteFilesContaining(fileName).empty());
+    expect(!gr::fileio::detail::deleteFilesContaining(fileName).empty());
 }
 
 } // anonymous namespace
@@ -160,7 +160,7 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
 
     constexpr auto kArithmeticTypes = std::tuple<uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, gr::UncertainValue<float>, gr::UncertainValue<double>, std::complex<float>, std::complex<double>>();
 
-    using enum gr::blocks::fileio::Mode;
+    using enum gr::fileio::Mode;
     "overwrite mode"_test = []<typename T>(const T&) { runTest<T>(overwrite); } | kArithmeticTypes;
 
     "append mode"_test = []<typename T>(const T&) { runTest<T>(append); } | kArithmeticTypes;

@@ -30,7 +30,7 @@
 #include <utility>
 #include <vector>
 
-namespace gr::blocks::fileio {
+namespace gr::fileio {
 namespace detail {
 
 template<typename T>
@@ -158,7 +158,7 @@ template<WavSample T>
 
 } // namespace detail
 
-GR_REGISTER_BLOCK(gr::blocks::fileio::WavSource, [T], [ float, int16_t ])
+GR_REGISTER_BLOCK(gr::fileio::WavSource, [T], [ float, int16_t ])
 
 template<detail::WavSample T>
 struct WavSource : gr::Block<WavSource<T>> {
@@ -616,7 +616,7 @@ private:
 
 static_assert(gr::BlockLike<WavSource<float>>);
 
-GR_REGISTER_BLOCK(gr::blocks::fileio::WavSink, [T], [ float, int16_t ])
+GR_REGISTER_BLOCK(gr::fileio::WavSink, [T], [ float, int16_t ])
 
 template<detail::WavSample T>
 struct WavSink : gr::Block<WavSink<T>> {
@@ -777,6 +777,6 @@ private:
 
 static_assert(gr::BlockLike<WavSink<float>>);
 
-} // namespace gr::blocks::fileio
+} // namespace gr::fileio
 
 #endif

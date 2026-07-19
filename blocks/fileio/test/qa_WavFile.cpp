@@ -192,7 +192,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
     using namespace boost::ut;
 
     "Local WAV sources"_test = [] {
-        constexpr std::string_view caseName = "gr::blocks::fileio::WavSource<std::int16_t>";
+        constexpr std::string_view caseName = "gr::fileio::WavSource<std::int16_t>";
 
         const std::vector<std::int16_t> reference{0, 16384, -16384, 32767};
         const std::uint32_t             sampleRate = 8000U;
@@ -201,7 +201,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         TempFile   file{writeTempAudioFile(wavBytes)};
 
         gr::Graph graph;
-        auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", file.path.string()}});
+        auto&     source = graph.emplaceBlock<gr::fileio::WavSource<std::int16_t>>({{"uri", file.path.string()}});
         auto&     sink   = graph.emplaceBlock<gr::testing::TagSink<std::int16_t, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -220,7 +220,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
             {"junk chunk before data", makeWav(1U, 1U, 16U, 44100U, encodePcm16(std::vector<std::int16_t>{0, 2000, -2000, 4000}), true), {0, 2000, -2000, 4000}, 44100.f, 1U},
         };
 
-        runLocalSourceCases<gr::blocks::fileio::WavSource<std::int16_t>>(cases, [](const auto& actual, const auto& expected, std::string_view name) { expect(eq(actual, expected)) << name; });
+        runLocalSourceCases<gr::fileio::WavSource<std::int16_t>>(cases, [](const auto& actual, const auto& expected, std::string_view name) { expect(eq(actual, expected)) << name; });
     };
 
     "WavSource normalizes non-16-bit WAV variants to float"_test = [] {
@@ -231,7 +231,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
             {"float32 mono", makeWav(3U, 1U, 32U, 9600U, encodeFloat32(std::vector<float>{-1.0f, 0.0f, 0.5f, 1.0f})), {-1.0f, 0.0f, 0.5f, 1.0f}, 9600.f, 1U},
         };
 
-        runLocalSourceCases<gr::blocks::fileio::WavSource<float>>(cases, [](const auto& actual, const auto& expected, std::string_view name) {
+        runLocalSourceCases<gr::fileio::WavSource<float>>(cases, [](const auto& actual, const auto& expected, std::string_view name) {
             expect(eq(actual.size(), expected.size())) << name;
             for (std::size_t i = 0U; i < expected.size(); ++i) {
                 expect(approx(actual[i], expected[i], 1e-6f)) << name;
@@ -252,8 +252,8 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         // write: WavSource -> WavSink
         {
             gr::Graph graph;
-            auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", inputFile.path.string()}});
-            auto&     sink   = graph.emplaceBlock<gr::blocks::fileio::WavSink<std::int16_t>>({{"uri", outputPath.string()}, {"sample_rate", 22050.f}, {"num_channels", gr::Size_t(2)}});
+            auto&     source = graph.emplaceBlock<gr::fileio::WavSource<std::int16_t>>({{"uri", inputFile.path.string()}});
+            auto&     sink   = graph.emplaceBlock<gr::fileio::WavSink<std::int16_t>>({{"uri", outputPath.string()}, {"sample_rate", 22050.f}, {"num_channels", gr::Size_t(2)}});
             expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
             gr::scheduler::Simple<> sched;
@@ -265,7 +265,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         // read back and verify
         {
             gr::Graph graph;
-            auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", outputPath.string()}});
+            auto&     source = graph.emplaceBlock<gr::fileio::WavSource<std::int16_t>>({{"uri", outputPath.string()}});
             auto&     sink   = graph.emplaceBlock<gr::testing::TagSink<std::int16_t, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
             expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -290,8 +290,8 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
 
         {
             gr::Graph graph;
-            auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", inputFile.path.string()}});
-            auto&     sink   = graph.emplaceBlock<gr::blocks::fileio::WavSink<float>>({{"uri", outputPath.string()}, {"sample_rate", 9600.f}, {"num_channels", gr::Size_t(1)}});
+            auto&     source = graph.emplaceBlock<gr::fileio::WavSource<float>>({{"uri", inputFile.path.string()}});
+            auto&     sink   = graph.emplaceBlock<gr::fileio::WavSink<float>>({{"uri", outputPath.string()}, {"sample_rate", 9600.f}, {"num_channels", gr::Size_t(1)}});
             expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
             gr::scheduler::Simple<> sched;
@@ -302,7 +302,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         // read back
         {
             gr::Graph graph;
-            auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", outputPath.string()}});
+            auto&     source = graph.emplaceBlock<gr::fileio::WavSource<float>>({{"uri", outputPath.string()}});
             auto&     sink   = graph.emplaceBlock<gr::testing::TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
             expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -330,8 +330,8 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
 
         {
             gr::Graph graph;
-            auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", inputFile.path.string()}});
-            auto&     sink   = graph.emplaceBlock<gr::blocks::fileio::WavSink<std::int16_t>>({{"uri", outputPath.string()}, {"sample_rate", 44100.f}, {"num_channels", gr::Size_t(4)}});
+            auto&     source = graph.emplaceBlock<gr::fileio::WavSource<std::int16_t>>({{"uri", inputFile.path.string()}});
+            auto&     sink   = graph.emplaceBlock<gr::fileio::WavSink<std::int16_t>>({{"uri", outputPath.string()}, {"sample_rate", 44100.f}, {"num_channels", gr::Size_t(4)}});
             expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
             gr::scheduler::Simple<> sched;
@@ -341,7 +341,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
 
         {
             gr::Graph graph;
-            auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", outputPath.string()}});
+            auto&     source = graph.emplaceBlock<gr::fileio::WavSource<std::int16_t>>({{"uri", outputPath.string()}});
             auto&     sink   = graph.emplaceBlock<gr::testing::TagSink<std::int16_t, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
             expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -362,7 +362,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         TempFile                        file{writeTempAudioFile(wavBytes)};
 
         gr::Graph graph;
-        auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", file.path.string()}, {"repeat", true}});
+        auto&     source = graph.emplaceBlock<gr::fileio::WavSource<std::int16_t>>({{"uri", file.path.string()}, {"repeat", true}});
         auto&     sink   = graph.emplaceBlock<gr::testing::TagSink<std::int16_t, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -379,7 +379,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
 
 #if GR4_ENABLE_HTTP_TESTS && !defined(__EMSCRIPTEN__)
     "HTTP WAV sources"_test = [] {
-        constexpr std::string_view      caseName = "gr::blocks::fileio::WavSource<float>";
+        constexpr std::string_view      caseName = "gr::fileio::WavSource<float>";
         const std::vector<std::int16_t> reference{0, 8192, -8192, 16384};
         const auto                      wavBytes = makeWav(1U, 1U, 16U, 11025U, encodePcm16(reference));
         const std::string               body(reinterpret_cast<const char*>(wavBytes.data()), wavBytes.size());
@@ -393,7 +393,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         server.wait_until_ready();
 
         gr::Graph graph;
-        auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", std::format("http://127.0.0.1:{}/tone.wav", port)}});
+        auto&     source = graph.emplaceBlock<gr::fileio::WavSource<float>>({{"uri", std::format("http://127.0.0.1:{}/tone.wav", port)}});
         auto&     sink   = graph.emplaceBlock<gr::testing::TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
         gr::scheduler::Simple<> sched;

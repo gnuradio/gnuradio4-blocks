@@ -200,7 +200,7 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         TempFile                        file{writeTempAudioFile(wavBytes)};
 
         gr::Graph graph;
-        auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
+        auto&     source              = graph.emplaceBlock<gr::fileio::WavSource<float>>({{"uri", file.path.string()}});
         auto&     sink                = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
@@ -286,7 +286,7 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         TempFile                        file{writeTempAudioFile(wavBytes)};
 
         gr::Graph graph;
-        auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
+        auto&     source              = graph.emplaceBlock<gr::fileio::WavSource<float>>({{"uri", file.path.string()}});
         auto&     sink                = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
@@ -552,7 +552,7 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         TempFile                        file{writeTempAudioFile(wavBytes)};
 
         gr::Graph graph;
-        auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
+        auto&     source              = graph.emplaceBlock<gr::fileio::WavSource<float>>({{"uri", file.path.string()}});
         auto&     sink                = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}, {"ppm_estimator_cutoff", 0.5f}});
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
@@ -635,7 +635,7 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         TempFile                        file{writeTempAudioFile(wavBytes)};
 
         gr::Graph graph;
-        auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
+        auto&     source              = graph.emplaceBlock<gr::fileio::WavSource<float>>({{"uri", file.path.string()}});
         auto&     sink                = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
