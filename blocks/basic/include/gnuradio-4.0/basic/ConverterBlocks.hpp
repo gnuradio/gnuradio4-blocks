@@ -177,7 +177,7 @@ struct ToRealImag : Block<ToRealImag<T>> {
     }
 };
 
-GR_REGISTER_BLOCK(gr::blocks::type::converter::ToRealImag, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::type::converter::RealImagToComplex, [T], [ float, double ])
 
 template<std::floating_point T>
 struct RealImagToComplex : Block<RealImagToComplex<T>> {
@@ -194,7 +194,7 @@ struct RealImagToComplex : Block<RealImagToComplex<T>> {
     }
 };
 
-GR_REGISTER_BLOCK(gr::blocks::type::converter::ToRealImag, [T], [ std::complex<float>, std::complex<double> ])
+GR_REGISTER_BLOCK(gr::blocks::type::converter::ToMagPhase, [T], [ std::complex<float>, std::complex<double> ])
 
 template<typename T>
 requires std::is_arithmetic_v<T> || meta::complex_like<T>
@@ -212,7 +212,7 @@ struct ToMagPhase : Block<ToMagPhase<T>> {
     }
 };
 
-GR_REGISTER_BLOCK(gr::blocks::type::converter::ToRealImag, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::type::converter::MagPhaseToComplex, [T], [ float, double ])
 
 template<typename T>
 requires std::is_arithmetic_v<T>
