@@ -38,6 +38,7 @@
 #include <vector>
 
 #include <gnuradio-4.0/common/USBDevice.hpp>
+#include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
