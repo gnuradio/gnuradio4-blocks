@@ -1,6 +1,5 @@
 #include <boost/ut.hpp>
 
-#include <gnuradio-4.0/basic/CommonBlocks.hpp>
 #include <gnuradio-4.0/basic/DataSink.hpp>
 #include <gnuradio-4.0/basic/FunctionGenerator.hpp>
 #include <gnuradio-4.0/basic/Selector.hpp>
@@ -19,10 +18,6 @@ const boost::ut::suite AvailableBlockTests = [] {
         std::ranges::sort(known);
         std::vector<std::string> desired{
             //
-            "gr::basic::builtin_counter<float32>"s,              //
-            "gr::basic::builtin_counter<float64>"s,              //
-            "gr::basic::builtin_multiply<float32>"s,             //
-            "gr::basic::builtin_multiply<float64>"s,             //
             "gr::basic::DataSink<float32>"s,          //
             "gr::basic::DataSink<float64>"s,          //
             "gr::basic::DataSetSink<float32>"s,       //
