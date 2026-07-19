@@ -12,7 +12,7 @@ namespace {
 
 template<typename T>
 std::vector<std::complex<T>> execRotator(const std::vector<std::complex<T>>& input, const gr::property_map& initSettings) {
-    gr::blocks::math::Rotator<std::complex<T>> rot(initSettings);
+    gr::math::Rotator<std::complex<T>> rot(initSettings);
     rot.settings().init();
     std::ignore = rot.settings().applyStagedParameters(); // needed for unit-test only when executed outside a Scheduler/Graph
 
@@ -57,7 +57,7 @@ void plotTimeDomain(const std::vector<std::complex<T>>& dataIn, const std::vecto
 
 const boost::ut::suite<"basic math tests"> basicMath = [] {
     using namespace boost::ut;
-    using namespace gr::blocks::math;
+    using namespace gr::math;
 
     constexpr auto kArithmeticTypes = std::tuple<std::complex<float>, std::complex<double>>{};
 

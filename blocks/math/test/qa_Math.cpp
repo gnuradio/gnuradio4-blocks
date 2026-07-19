@@ -18,7 +18,7 @@ void test_block(const TestParameters<T> p) {
     using namespace boost::ut;
     using namespace gr;
     using namespace gr::testing;
-    using namespace gr::blocks::math;
+    using namespace gr::math;
     const Size_t n_inputs = static_cast<Size_t>(p.inputs.size());
 
     // build test graph
@@ -53,7 +53,7 @@ constexpr T val(double x) {
 const boost::ut::suite<"basic math tests"> basicMath = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::blocks::math;
+    using namespace gr::math;
     constexpr auto kArithmeticTypes = std::tuple<uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::complex<float>, std::complex<double> /*, gr::UncertainValue<float>, gr::UncertainValue<double>*/>();
 
     "Add"_test = []<typename T>(const T&) { //

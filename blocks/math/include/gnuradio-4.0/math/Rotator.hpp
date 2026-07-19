@@ -10,9 +10,9 @@
 #include <gnuradio-4.0/meta/utils.hpp>
 #include <numbers>
 
-namespace gr::blocks::math {
+namespace gr::math {
 
-GR_REGISTER_BLOCK(gr::blocks::math::Rotator, [T], [ std::complex<float>, std::complex<double> ])
+GR_REGISTER_BLOCK(gr::math::Rotator, [T], [ std::complex<float>, std::complex<double> ])
 
 template<gr::meta::complex_like T>
 struct Rotator : gr::Block<Rotator<T>> {
@@ -61,6 +61,6 @@ given 'sample_rate' in Hz (N.B sample_rate is normalised to '1' by default).
     }
 };
 
-} // namespace gr::blocks::math
+} // namespace gr::math
 
 #endif // GNURADIO_ROTATOR_HPP

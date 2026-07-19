@@ -10,16 +10,16 @@
 #include <gnuradio-4.0/Message.hpp>
 #include <gnuradio-4.0/meta/formatter.hpp>
 
-namespace gr::blocks::math {
+namespace gr::math {
 static_assert(std::is_constructible_v<ExpressionSISO<float>, property_map>, "Block type ExpressionSISO must be constructible from property_map");
 static_assert(std::is_constructible_v<ExpressionDISO<float>, property_map>, "Block type ExpressionDISO must be constructible from property_map");
 static_assert(std::is_constructible_v<ExpressionBulk<float>, property_map>, "Block type ExpressionBulk must be constructible from property_map");
-} // namespace gr::blocks::math
+} // namespace gr::math
 
 const boost::ut::suite<"basic expression block tests"> basicMath = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::blocks::math;
+    using namespace gr::math;
     using testing::ProcessFunction::USE_PROCESS_ONE;
 
     "ExpressionSISO"_test = []<typename T>(const T&) {
