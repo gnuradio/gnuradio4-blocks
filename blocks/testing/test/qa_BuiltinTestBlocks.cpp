@@ -11,7 +11,7 @@ const boost::ut::suite BuiltinTestBlockTests = [] {
     };
 
     "count processed samples"_test = [] {
-        using Counter = gr::testing::builtin_counter<double>;
+        using Counter          = gr::testing::builtin_counter<double>;
         Counter::s_event_count = 0;
 
         Counter counter;

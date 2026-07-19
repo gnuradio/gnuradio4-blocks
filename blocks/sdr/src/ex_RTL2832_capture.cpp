@@ -114,7 +114,7 @@ EMSCRIPTEN_KEEPALIVE void gr_requestAllPermissions() { gr::blocks::common::Devic
 EMSCRIPTEN_KEEPALIVE int rtl2832Connect() {
     // runs on main thread — Asyncify works here
     static gr::sdr::RTL2832Device mainDevice;
-    int                                   ret = gr::sdr::js_rtl_open_device(0);
+    int                           ret = gr::sdr::js_rtl_open_device(0);
     if (ret < 0) {
         std::println(stderr, "[RTL2832] WebUSB open failed");
         return -1;

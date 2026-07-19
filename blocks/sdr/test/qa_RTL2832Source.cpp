@@ -85,7 +85,7 @@ void printNoiseStats(std::span<const T> samples, double sampleRate) {
 
 bool hasRtlDevice() {
     gr::sdr::RTL2832Device probe;
-    bool                           found = probe.open(0).has_value();
+    bool                   found = probe.open(0).has_value();
     if (found) {
         probe.close();
     }
@@ -282,8 +282,8 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
 
     "real device complex<float> capture with noise stats"_test = [] {
         gr::sdr::RTL2832Device probe;
-        bool                           hasDevice = probe.open(0).has_value();
-        auto                           tunerType = probe._tunerType;
+        bool                   hasDevice = probe.open(0).has_value();
+        auto                   tunerType = probe._tunerType;
         if (hasDevice) {
             probe.close();
         }
@@ -337,7 +337,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
 
     "real device uint8_t raw capture with noise stats"_test = [] {
         gr::sdr::RTL2832Device probe;
-        bool                           hasDevice = probe.open(0).has_value();
+        bool                   hasDevice = probe.open(0).has_value();
         if (hasDevice) {
             probe.close();
         }
@@ -385,7 +385,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
 
     "real device timing tag format validation"_test = [] {
         gr::sdr::RTL2832Device probe;
-        bool                           hasDevice = probe.open(0).has_value();
+        bool                   hasDevice = probe.open(0).has_value();
         if (hasDevice) {
             probe.close();
         }
@@ -497,7 +497,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
 
     "real device emit_timing_tags=false suppresses tags"_test = [] {
         gr::sdr::RTL2832Device probe;
-        bool                           hasDevice = probe.open(0).has_value();
+        bool                   hasDevice = probe.open(0).has_value();
         if (hasDevice) {
             probe.close();
         }
@@ -537,7 +537,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
 
     "real device emit_meta_info=false produces tags without meta_info"_test = [] {
         gr::sdr::RTL2832Device probe;
-        bool                           hasDevice = probe.open(0).has_value();
+        bool                   hasDevice = probe.open(0).has_value();
         if (hasDevice) {
             probe.close();
         }

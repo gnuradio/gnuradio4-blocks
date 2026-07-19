@@ -199,7 +199,7 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
 
             "center RF frequency"_test = [&device] {
                 std::vector<gr::sdr::soapy::Range> ranges          = device.getOverallFrequencyRange(SOAPY_SDR_RX, 0);
-                double                                     centerFrequency = device.getCenterFrequency(SOAPY_SDR_RX, 0);
+                double                             centerFrequency = device.getCenterFrequency(SOAPY_SDR_RX, 0);
                 std::println("Rx freq ranges: [{}] - active: {} Hz", gr::join(ranges, ", "), centerFrequency);
 
                 expect(device.setCenterFrequency(SOAPY_SDR_RX, 0, 106e6).has_value());

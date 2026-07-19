@@ -10,8 +10,17 @@ set(errors "")
 
 foreach(header IN LISTS block_headers)
   file(READ "${header}" contents)
+  string(REGEX MATCHALL "GR_REGISTER_BLOCK\\(" registration_markers "${contents}")
   string(REGEX MATCHALL "GR_REGISTER_BLOCK\\([^\n\r]+\\)" registrations "${contents}")
-  if(NOT registrations)
+  list(LENGTH registration_markers marker_count)
+  list(LENGTH registrations parsed_count)
+
+  if(NOT marker_count EQUAL parsed_count)
+    string(APPEND errors
+           "\n  ${header}: every GR_REGISTER_BLOCK declaration must be written on one line so the namespace audit can validate it")
+  endif()
+
+  if(NOT registration_markers)
     continue()
   endif()
 
