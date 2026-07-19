@@ -11,7 +11,7 @@
 
 #include <gnuradio-4.0/sdr/SoapyRaiiWrapper.hpp>
 
-namespace gr::blocks::sdr {
+namespace gr::sdr {
 
 namespace detail {
 inline bool equalWithinOnePercent(const auto& a, const auto& b) {
@@ -20,8 +20,8 @@ inline bool equalWithinOnePercent(const auto& a, const auto& b) {
 inline std::uint64_t wallClockNs() { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count()); }
 } // namespace detail
 
-GR_REGISTER_BLOCK("gr::blocks::sdr::SoapySource", gr::blocks::sdr::SoapySource, ([T], 1UZ), [ uint8_t, int16_t, std::complex<float> ])
-GR_REGISTER_BLOCK("gr::blocks::sdr::SoapyDualSource", gr::blocks::sdr::SoapySource, ([T], 2UZ), [ uint8_t, int16_t, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::sdr::SoapySource", gr::sdr::SoapySource, ([T], 1UZ), [ uint8_t, int16_t, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::sdr::SoapyDualSource", gr::sdr::SoapySource, ([T], 2UZ), [ uint8_t, int16_t, std::complex<float> ])
 
 template<typename T, std::size_t nPorts = std::dynamic_extent>
 struct SoapySource : Block<SoapySource<T, nPorts>> {
@@ -843,6 +843,6 @@ using SoapySimpleSource = SoapySource<T, 1UZ>;
 template<typename T>
 using SoapyDualSource = SoapySource<T, 2UZ>;
 
-} // namespace gr::blocks::sdr
+} // namespace gr::sdr
 
 #endif // GNURADIO_SOAPY_SOURCE_HPP

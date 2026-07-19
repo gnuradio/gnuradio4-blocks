@@ -113,8 +113,8 @@ EMSCRIPTEN_KEEPALIVE void gr_requestAllPermissions() { gr::blocks::common::Devic
 
 EMSCRIPTEN_KEEPALIVE int rtl2832Connect() {
     // runs on main thread — Asyncify works here
-    static gr::blocks::sdr::RTL2832Device mainDevice;
-    int                                   ret = gr::blocks::sdr::js_rtl_open_device(0);
+    static gr::sdr::RTL2832Device mainDevice;
+    int                                   ret = gr::sdr::js_rtl_open_device(0);
     if (ret < 0) {
         std::println(stderr, "[RTL2832] WebUSB open failed");
         return -1;
@@ -132,7 +132,7 @@ EMSCRIPTEN_KEEPALIVE int rtl2832Connect() {
     mainDevice.setAgcMode(true);
     mainDevice.resetBuffer();
     mainDevice.startBulkRead();
-    if (auto* dev = gr::blocks::common::DeviceRegistry::instance().findAs<gr::blocks::sdr::WebUSBDevice>("usb")) {
+    if (auto* dev = gr::blocks::common::DeviceRegistry::instance().findAs<gr::sdr::WebUSBDevice>("usb")) {
         dev->deviceReady();
     }
     std::println("[RTL2832] device ready — IO thread can start reading");

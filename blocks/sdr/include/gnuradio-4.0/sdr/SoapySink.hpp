@@ -8,11 +8,11 @@
 #include <gnuradio-4.0/algorithm/BurstTaper.hpp>
 #include <gnuradio-4.0/sdr/SoapyRaiiWrapper.hpp>
 
-namespace gr::blocks::sdr {
+namespace gr::sdr {
 
-GR_REGISTER_BLOCK("gr::blocks::sdr::SoapySink", gr::blocks::sdr::SoapySink, ([T], 1UZ), [ uint8_t, int16_t, std::complex<float> ])
-GR_REGISTER_BLOCK("gr::blocks::sdr::SoapyDualSink", gr::blocks::sdr::SoapySink, ([T], 2UZ), [ uint8_t, int16_t, std::complex<float> ])
-GR_REGISTER_BLOCK("gr::blocks::sdr::SoapyQuadSink", gr::blocks::sdr::SoapySink, ([T], 4UZ), [ uint8_t, int16_t, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::sdr::SoapySink", gr::sdr::SoapySink, ([T], 1UZ), [ uint8_t, int16_t, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::sdr::SoapyDualSink", gr::sdr::SoapySink, ([T], 2UZ), [ uint8_t, int16_t, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::sdr::SoapyQuadSink", gr::sdr::SoapySink, ([T], 4UZ), [ uint8_t, int16_t, std::complex<float> ])
 
 template<typename T, std::size_t nPorts = std::dynamic_extent>
 struct SoapySink : Block<SoapySink<T, nPorts>> {
@@ -773,6 +773,6 @@ using SoapyDualSink = SoapySink<T, 2UZ>;
 template<typename T>
 using SoapyQuadSink = SoapySink<T, 4UZ>;
 
-} // namespace gr::blocks::sdr
+} // namespace gr::sdr
 
 #endif // GNURADIO_SOAPY_SINK_HPP

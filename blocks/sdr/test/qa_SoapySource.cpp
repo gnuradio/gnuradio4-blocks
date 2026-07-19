@@ -29,10 +29,10 @@
 #include <gnuradio-4.0/sdr/SoapySource.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
 
-namespace gr::blocks::sdr {
+namespace gr::sdr {
 static_assert(std::is_constructible_v<SoapySource<std::complex<float>>, gr::property_map>, "SoapySource not default constructible w/ property_map");
 static_assert(std::is_constructible_v<SoapySimpleSource<std::complex<float>>, gr::property_map>, "SoapySource not default constructible w/ property_map");
-} // namespace gr::blocks::sdr
+} // namespace gr::sdr
 
 namespace {
 // reset RTL-SDR USB devices between test suites to avoid PLL lock failures
@@ -60,10 +60,10 @@ inline void resetRtlSdrUsbDevices() {
 const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::blocks::sdr::soapy;
-    using gr::blocks::sdr::soapy::Range;
+    using namespace gr::sdr::soapy;
+    using gr::sdr::soapy::Range;
 
-    "helper functions"_test = [] { "range printer"_test = [] { expect(eq(std::format("{}", gr::blocks::sdr::soapy::Range{1.0, 10.0, 0.5}), std::string("Range{min: 1, max: 10, step: 0.5}"))); }; };
+    "helper functions"_test = [] { "range printer"_test = [] { expect(eq(std::format("{}", gr::sdr::soapy::Range{1.0, 10.0, 0.5}), std::string("Range{min: 1, max: 10, step: 0.5}"))); }; };
 
     "ModulesCheck"_test = [] {
         std::vector<std::string> modules = getSoapySDRModules();
@@ -198,7 +198,7 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
             };
 
             "center RF frequency"_test = [&device] {
-                std::vector<gr::blocks::sdr::soapy::Range> ranges          = device.getOverallFrequencyRange(SOAPY_SDR_RX, 0);
+                std::vector<gr::sdr::soapy::Range> ranges          = device.getOverallFrequencyRange(SOAPY_SDR_RX, 0);
                 double                                     centerFrequency = device.getCenterFrequency(SOAPY_SDR_RX, 0);
                 std::println("Rx freq ranges: [{}] - active: {} Hz", gr::join(ranges, ", "), centerFrequency);
 
@@ -257,7 +257,7 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
                     }
                     if (i < 10 || ret > 0 || ret < -1) {
                         std::print("{:3}: ", i);
-                        gr::blocks::sdr::soapy::detail::printSoapyReturnDebugInfo(ret, flags, time_ns);
+                        gr::sdr::soapy::detail::printSoapyReturnDebugInfo(ret, flags, time_ns);
                     }
                 }
                 expect(ge(receivedSamples, 1000)) << std::format("did not received enough samples for deviceDriver = {}\n", deviceDriver);
@@ -309,7 +309,7 @@ const boost::ut::suite<"Soapy Block API "> soapyBlockAPI = [] {
 
     tag("rtlsdr") / "basic RTL soapy data generation test"_test = [&createWatchdog] {
         using namespace gr;
-        using namespace gr::blocks::sdr;
+        using namespace gr::sdr;
         using namespace gr::testing;
         using scheduler = gr::scheduler::Simple<>;
         gr::Graph flow;
@@ -351,7 +351,7 @@ const boost::ut::suite<"Soapy Block API "> soapyBlockAPI = [] {
 
     tag("lime") / "basic Lime soapy data generation test"_test = [&createWatchdog] {
         using namespace gr;
-        using namespace gr::blocks::sdr;
+        using namespace gr::sdr;
         using namespace gr::testing;
         using scheduler = gr::scheduler::Simple<>;
         gr::Graph flow;

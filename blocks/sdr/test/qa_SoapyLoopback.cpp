@@ -11,7 +11,7 @@ using namespace boost::ut;
 using CF32 = std::complex<float>;
 
 const boost::ut::suite<"ChannelModel"> channelModelTests = [] {
-    using namespace gr::blocks::sdr::loopback;
+    using namespace gr::sdr::loopback;
 
     "passthrough copies input to output"_test = [] {
         auto              model = ChannelModel::passthrough();
@@ -92,7 +92,7 @@ const boost::ut::suite<"ChannelModel"> channelModelTests = [] {
 };
 
 const boost::ut::suite<"LoopbackDevice"> loopbackDeviceTests = [] {
-    using namespace gr::blocks::sdr::loopback;
+    using namespace gr::sdr::loopback;
 
     "direct construction and settings"_test = [] {
         LoopbackDevice dev(SoapySDR::Kwargs{});
@@ -639,7 +639,7 @@ const boost::ut::suite<"LoopbackDevice"> loopbackDeviceTests = [] {
 };
 
 const boost::ut::suite<"RxOnlyDevice"> rxOnlyTests = [] {
-    using namespace gr::blocks::sdr::loopback;
+    using namespace gr::sdr::loopback;
 
     "generates tone without TX"_test = [] {
         LoopbackDevice dev(SoapySDR::Kwargs{{"device_mode", "rx_only"}});
@@ -706,7 +706,7 @@ const boost::ut::suite<"RxOnlyDevice"> rxOnlyTests = [] {
 };
 
 const boost::ut::suite<"TxOnlyDevice"> txOnlyTests = [] {
-    using namespace gr::blocks::sdr::loopback;
+    using namespace gr::sdr::loopback;
 
     "accepts and discards TX data"_test = [] {
         LoopbackDevice dev(SoapySDR::Kwargs{{"device_mode", "tx_only"}});
@@ -735,7 +735,7 @@ const boost::ut::suite<"TxOnlyDevice"> txOnlyTests = [] {
 };
 
 const boost::ut::suite<"DeviceRegistry"> registryTests = [] {
-    using namespace gr::blocks::sdr::loopback;
+    using namespace gr::sdr::loopback;
 
     "findOrCreate returns same instance for same ID"_test = [] {
         auto dev1 = DeviceRegistry::findOrCreate(100UZ, {{"driver", "loopback#100"}});
@@ -803,7 +803,7 @@ const boost::ut::suite<"DeviceRegistry"> registryTests = [] {
 };
 
 const boost::ut::suite<"SoapySDR API completeness"> apiTests = [] {
-    using namespace gr::blocks::sdr::loopback;
+    using namespace gr::sdr::loopback;
 
     "identification API"_test = [] {
         LoopbackDevice dev(SoapySDR::Kwargs{});

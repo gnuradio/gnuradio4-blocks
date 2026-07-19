@@ -15,7 +15,7 @@
 gr::Graph createGraph(std::string fileName1, std::string fileName2, gr::Size_t maxFileSize, float sampleRate, double rxCenterFrequency, double bandwidth, double rxGains) {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::blocks::sdr;
+    using namespace gr::sdr;
     using namespace gr::fileio;
 
     Graph flow;
@@ -61,7 +61,7 @@ std::optional<std::tuple<std::string, std::string, gr::Size_t, float, double, do
 int main(int argc, char* argv[]) {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::blocks::sdr;
+    using namespace gr::sdr;
     using namespace gr::fileio;
 
     constexpr gr::Size_t defaultMaxFileSize       = 100 * 1UZ << 20; // 100 MB

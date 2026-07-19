@@ -34,7 +34,7 @@
 #include <gnuradio-4.0/Message.hpp>
 #include <gnuradio-4.0/meta/formatter.hpp>
 
-namespace gr::blocks::sdr::soapy {
+namespace gr::sdr::soapy {
 
 using Range      = SoapySDRRange;
 using Kwargs     = std::map<std::string, std::string>;
@@ -912,14 +912,14 @@ public:
 static_assert(std::is_default_constructible_v<Device>, "Device not default constructible");
 static_assert(std::is_default_constructible_v<Device::Stream<float, SOAPY_SDR_RX>>, "Stream not default constructible");
 
-} // namespace gr::blocks::sdr::soapy
+} // namespace gr::sdr::soapy
 
 template<>
 struct std::formatter<SoapySDRRange> {
     constexpr auto parse(std::format_parse_context& ctx) const noexcept { return ctx.begin(); }
 
     template<typename FormatContext>
-    auto format(const gr::blocks::sdr::soapy::Range& range, FormatContext& ctx) const noexcept {
+    auto format(const gr::sdr::soapy::Range& range, FormatContext& ctx) const noexcept {
         return std::format_to(ctx.out(), "Range{{min: {}, max: {}, step: {}}}", range.minimum, range.maximum, range.step);
     }
 };

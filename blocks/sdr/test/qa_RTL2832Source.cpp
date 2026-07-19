@@ -84,7 +84,7 @@ void printNoiseStats(std::span<const T> samples, double sampleRate) {
 #if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
 
 bool hasRtlDevice() {
-    gr::blocks::sdr::RTL2832Device probe;
+    gr::sdr::RTL2832Device probe;
     bool                           found = probe.open(0).has_value();
     if (found) {
         probe.close();
@@ -153,7 +153,7 @@ void sendNMEASequence(const PtyPair& pty, int startSecond, int count, int delayM
 
 const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
     "RTL2832Source<uint8_t> is constructible with timing defaults"_test = [] {
-        gr::blocks::sdr::RTL2832Source<std::uint8_t> block(gr::property_map{});
+        gr::sdr::RTL2832Source<std::uint8_t> block(gr::property_map{});
         expect(eq(block.frequency.value, 100.0e6));
         expect(eq(block.sample_rate.value, 2.048e6f));
         expect(block.auto_gain.value);
@@ -164,13 +164,13 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
     };
 
     "RTL2832Source<complex<float>> is constructible"_test = [] {
-        gr::blocks::sdr::RTL2832Source<std::complex<float>> block(gr::property_map{});
+        gr::sdr::RTL2832Source<std::complex<float>> block(gr::property_map{});
         expect(eq(block.frequency.value, 100.0e6));
         expect(eq(block.trigger_name.value, std::string("SDR_WALLCLOCK")));
     };
 
     "RTL2832Source clk_in port is optional"_test = [] {
-        gr::blocks::sdr::RTL2832Source<std::complex<float>> block(gr::property_map{});
+        gr::sdr::RTL2832Source<std::complex<float>> block(gr::property_map{});
         expect(decltype(block.clk_in)::kIsOptional) << "clk_in must be Optional";
         expect(decltype(block.clk_in)::kIsInput) << "clk_in must be an input port";
         expect(!block.clk_in.isConnected()) << "clk_in is not connected by default";
@@ -178,7 +178,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
 
     "RTL2832Source settings via emplaceBlock"_test = [] {
         Graph testGraph;
-        auto& block = testGraph.emplaceBlock<gr::blocks::sdr::RTL2832Source<std::complex<float>>>({
+        auto& block = testGraph.emplaceBlock<gr::sdr::RTL2832Source<std::complex<float>>>({
             {"frequency", 433.92e6},
             {"sample_rate", 1.024e6f},
             {"gain", 20.f},
@@ -201,7 +201,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
     };
 
     "E4000 PLL lookup table covers expected frequency ranges"_test = [] {
-        using namespace gr::blocks::sdr;
+        using namespace gr::sdr;
 
         // lowest entry should cover at least 72 MHz
         expect(gt(kE4kPllLut.front().maxFreqKhz, 70'000U));
@@ -221,7 +221,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
     };
 
     "E4000 LNA gain table has valid entries"_test = [] {
-        using namespace gr::blocks::sdr;
+        using namespace gr::sdr;
 
         // first entry (index 0) is the lowest gain
         expect(eq(kE4kLnaGainTenths[0], std::int16_t{-50})) << "-5.0 dB at index 0";
@@ -236,7 +236,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
     };
 
     "E4000 RF filter tables have 16 entries each"_test = [] {
-        using namespace gr::blocks::sdr;
+        using namespace gr::sdr;
 
         expect(eq(kE4kRfFilterUhfMhz.size(), 16UZ));
         expect(eq(kE4kRfFilterLbandMhz.size(), 16UZ));
@@ -253,7 +253,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
     };
 
     "TunerType includes e4000 variant"_test = [] {
-        using namespace gr::blocks::sdr;
+        using namespace gr::sdr;
 
         auto tuner = TunerType::e4000;
         expect(tuner != TunerType::none);
@@ -265,7 +265,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
         std::array<std::uint8_t, 8>        raw = {0, 255, 127, 128, 255, 0, 0, 0};
         std::array<std::complex<float>, 4> result{};
 
-        gr::blocks::sdr::detail::convertToComplex(raw.data(), result.data(), 4UZ);
+        gr::sdr::detail::convertToComplex(raw.data(), result.data(), 4UZ);
 
         // sample 0: I=0 → -1.0, Q=255 → +1.0
         expect(lt(std::abs(result[0].real() - (-1.f)), 0.01f));
@@ -281,7 +281,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
     };
 
     "real device complex<float> capture with noise stats"_test = [] {
-        gr::blocks::sdr::RTL2832Device probe;
+        gr::sdr::RTL2832Device probe;
         bool                           hasDevice = probe.open(0).has_value();
         auto                           tunerType = probe._tunerType;
         if (hasDevice) {
@@ -298,11 +298,11 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
         constexpr auto   kCaptureDuration = std::chrono::seconds(2);
         constexpr auto   kExpectedSamples = static_cast<std::size_t>(kSampleRate * 2);
 
-        const char* tunerName = tunerType == gr::blocks::sdr::TunerType::e4000 ? "E4000" : tunerType == gr::blocks::sdr::TunerType::r820t ? "R820T" : tunerType == gr::blocks::sdr::TunerType::r828d ? "R828D" : "unknown";
+        const char* tunerName = tunerType == gr::sdr::TunerType::e4000 ? "E4000" : tunerType == gr::sdr::TunerType::r820t ? "R820T" : tunerType == gr::sdr::TunerType::r828d ? "R828D" : "unknown";
         std::println("  [INFO] device detected (tuner: {})", tunerName);
 
         Graph testGraph;
-        auto& src  = testGraph.emplaceBlock<gr::blocks::sdr::RTL2832Source<std::complex<float>>>({
+        auto& src  = testGraph.emplaceBlock<gr::sdr::RTL2832Source<std::complex<float>>>({
             {"frequency", kFrequency},
             {"sample_rate", kSampleRate},
             {"auto_gain", true},
@@ -336,7 +336,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
     };
 
     "real device uint8_t raw capture with noise stats"_test = [] {
-        gr::blocks::sdr::RTL2832Device probe;
+        gr::sdr::RTL2832Device probe;
         bool                           hasDevice = probe.open(0).has_value();
         if (hasDevice) {
             probe.close();
@@ -352,7 +352,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
         constexpr auto   kCaptureDuration = std::chrono::seconds(3);
 
         Graph testGraph;
-        auto& src  = testGraph.emplaceBlock<gr::blocks::sdr::RTL2832Source<std::uint8_t>>({
+        auto& src  = testGraph.emplaceBlock<gr::sdr::RTL2832Source<std::uint8_t>>({
             {"frequency", kFrequency},
             {"sample_rate", kSampleRate},
             {"gain", 30.f},
@@ -384,7 +384,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
     };
 
     "real device timing tag format validation"_test = [] {
-        gr::blocks::sdr::RTL2832Device probe;
+        gr::sdr::RTL2832Device probe;
         bool                           hasDevice = probe.open(0).has_value();
         if (hasDevice) {
             probe.close();
@@ -400,7 +400,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
         constexpr auto   kCaptureDuration = std::chrono::seconds(1);
 
         Graph testGraph;
-        auto& src  = testGraph.emplaceBlock<gr::blocks::sdr::RTL2832Source<std::complex<float>>>({
+        auto& src  = testGraph.emplaceBlock<gr::sdr::RTL2832Source<std::complex<float>>>({
             {"frequency", kFrequency}, {"sample_rate", kSampleRate}, {"auto_gain", true}, {"trigger_name", std::string("TEST_TRIGGER")}, {"tag_interval", 0.f}, // emit every chunk for testing
         });
         auto& sink = testGraph.emplaceBlock<TagSink<std::complex<float>, ProcessFunction::USE_PROCESS_BULK>>({
@@ -496,7 +496,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
     };
 
     "real device emit_timing_tags=false suppresses tags"_test = [] {
-        gr::blocks::sdr::RTL2832Device probe;
+        gr::sdr::RTL2832Device probe;
         bool                           hasDevice = probe.open(0).has_value();
         if (hasDevice) {
             probe.close();
@@ -512,7 +512,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
         constexpr auto   kCaptureDuration = std::chrono::seconds(1);
 
         Graph testGraph;
-        auto& src  = testGraph.emplaceBlock<gr::blocks::sdr::RTL2832Source<std::complex<float>>>({
+        auto& src  = testGraph.emplaceBlock<gr::sdr::RTL2832Source<std::complex<float>>>({
             {"frequency", kFrequency},
             {"sample_rate", kSampleRate},
             {"emit_timing_tags", false},
@@ -536,7 +536,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
     };
 
     "real device emit_meta_info=false produces tags without meta_info"_test = [] {
-        gr::blocks::sdr::RTL2832Device probe;
+        gr::sdr::RTL2832Device probe;
         bool                           hasDevice = probe.open(0).has_value();
         if (hasDevice) {
             probe.close();
@@ -552,7 +552,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
         constexpr auto   kCaptureDuration = std::chrono::seconds(1);
 
         Graph testGraph;
-        auto& src  = testGraph.emplaceBlock<gr::blocks::sdr::RTL2832Source<std::complex<float>>>({
+        auto& src  = testGraph.emplaceBlock<gr::sdr::RTL2832Source<std::complex<float>>>({
             {"frequency", kFrequency},
             {"sample_rate", kSampleRate},
             {"emit_meta_info", false},
@@ -602,7 +602,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
         auto& pps  = testGraph.emplaceBlock<gr::timing::PpsSource>({
             {"clock_mode", std::string("NTP")},
         });
-        auto& rtl  = testGraph.emplaceBlock<gr::blocks::sdr::RTL2832Source<std::complex<float>>>({
+        auto& rtl  = testGraph.emplaceBlock<gr::sdr::RTL2832Source<std::complex<float>>>({
             {"frequency", kFrequency},
             {"sample_rate", kSampleRate},
             {"auto_gain", true},
@@ -683,7 +683,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
         auto& gps  = testGraph.emplaceBlock<gr::timing::GpsSource>({
             {"device_path", std::string(pty->slaveName)},
         });
-        auto& rtl  = testGraph.emplaceBlock<gr::blocks::sdr::RTL2832Source<std::complex<float>>>({
+        auto& rtl  = testGraph.emplaceBlock<gr::sdr::RTL2832Source<std::complex<float>>>({
             {"frequency", kFrequency},
             {"sample_rate", kSampleRate},
             {"auto_gain", true},

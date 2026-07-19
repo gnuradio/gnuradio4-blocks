@@ -16,8 +16,8 @@
 
 namespace {
 
-using gr::blocks::sdr::loopback::DeviceRegistry;
-using gr::blocks::sdr::loopback::LoopbackDevice;
+using gr::sdr::loopback::DeviceRegistry;
+using gr::sdr::loopback::LoopbackDevice;
 
 SoapySDR::KwargsList findLoopback(const SoapySDR::Kwargs& args) {
     if (!args.empty() && !DeviceRegistry::isLoopbackDriver(args)) {

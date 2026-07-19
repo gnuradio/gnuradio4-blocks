@@ -6,7 +6,7 @@
 #include <gnuradio-4.0/sdr/SoapyRaiiWrapper.hpp>
 
 using namespace boost::ut;
-using namespace gr::blocks::sdr;
+using namespace gr::sdr;
 using CF32 = std::complex<float>;
 
 const boost::ut::suite<"SoapyRaiiWrapper module loading"> moduleTests = [] {

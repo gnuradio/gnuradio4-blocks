@@ -18,7 +18,7 @@
 
 #include <gnuradio-4.0/sdr/RTL2832Device.hpp>
 
-namespace gr::blocks::sdr {
+namespace gr::sdr {
 
 namespace detail {
 
@@ -31,7 +31,7 @@ inline void convertToComplex(const std::uint8_t* raw, std::complex<float>* out, 
 
 } // namespace detail
 
-GR_REGISTER_BLOCK("gr::blocks::sdr::RTL2832Source", gr::blocks::sdr::RTL2832Source, [T], [ uint8_t, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::sdr::RTL2832Source", gr::sdr::RTL2832Source, [T], [ uint8_t, std::complex<float> ])
 
 template<typename T>
 struct RTL2832Source : gr::Block<RTL2832Source<T>> {
@@ -481,6 +481,6 @@ Operating modes:
     }
 };
 
-} // namespace gr::blocks::sdr
+} // namespace gr::sdr
 
 #endif // GNURADIO_RTL2832_SOURCE_HPP

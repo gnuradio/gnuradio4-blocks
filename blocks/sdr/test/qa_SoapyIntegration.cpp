@@ -36,7 +36,7 @@ auto runWithWatchdog(auto& sched, std::chrono::seconds timeout = std::chrono::se
 
 const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
     using namespace gr;
-    using namespace gr::blocks::sdr;
+    using namespace gr::sdr;
     using namespace gr::testing;
     using Sched = gr::scheduler::Simple<>;
 
@@ -276,7 +276,7 @@ const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
 
 const boost::ut::suite<"SoapySink + SoapySource shared device"> txRxTests = [] {
     using namespace gr;
-    using namespace gr::blocks::sdr;
+    using namespace gr::sdr;
     using namespace gr::testing;
     using Sched = gr::scheduler::Simple<>;
 
@@ -403,7 +403,7 @@ const boost::ut::suite<"SoapySink + SoapySource shared device"> txRxTests = [] {
 
 const boost::ut::suite<"LimeSDR hardware"> limeTests = [] {
     using namespace gr;
-    using namespace gr::blocks::sdr;
+    using namespace gr::sdr;
     using namespace gr::testing;
     using Sched = gr::scheduler::Simple<>;
 
@@ -559,8 +559,8 @@ int main() {
 }
 
 const boost::ut::suite<"SoapySink BurstTaper"> taperTests = [] {
-    using namespace gr::blocks::sdr;
-    namespace loopback = gr::blocks::sdr::loopback;
+    using namespace gr::sdr;
+    namespace loopback = gr::sdr::loopback;
 
     "taper shapes TX envelope through loopback"_test = [] {
         constexpr float       kSampleRate = 100'000.f;

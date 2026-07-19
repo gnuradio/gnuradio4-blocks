@@ -39,7 +39,7 @@
 #include <gnuradio-4.0/algorithm/rng/GaussianNoise.hpp>
 #include <gnuradio-4.0/algorithm/rng/Xoshiro256pp.hpp>
 
-namespace gr::blocks::sdr::loopback {
+namespace gr::sdr::loopback {
 
 using CF32 = std::complex<float>;
 
@@ -899,6 +899,6 @@ inline std::shared_ptr<LoopbackDevice> DeviceRegistry::findOrCreate(std::size_t 
     return device;
 }
 
-} // namespace gr::blocks::sdr::loopback
+} // namespace gr::sdr::loopback
 
 #endif // GNURADIO_LOOPBACK_DEVICE_HPP
