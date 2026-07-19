@@ -57,7 +57,7 @@ const suite<"SchmittTrigger Block"> triggerTests = [] {
             expect(funcGen.settings().set(createParabolicRampPropertyMap("CMD_BP_START", 1.1f, 0.1f, .3f, 0.02f), SettingsCtx{.context = "FAIR.SELECTOR.C=1:S=1:P=3"}).empty());
             expect(funcGen.settings().set(createConstPropertyMap("CMD_BP_START", 0.1f), SettingsCtx{.context = "FAIR.SELECTOR.C=1:S=1:P=4"}).empty());
 
-            auto& schmittTrigger = graph.emplaceBlock<gr::blocks::basic::SchmittTrigger<float, Method::value>>({
+            auto& schmittTrigger = graph.emplaceBlock<gr::basic::SchmittTrigger<float, Method::value>>({
                 {"name", "SchmittTrigger"},                      //
                 {"threshold", .1f},                              //
                 {"offset", .6f},                                 //

@@ -80,12 +80,12 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::testing::NullSink<gr::Tensor<float32>>"sv));
         expect(registry.contains("gr::testing::NullSink<gr::DataSet<float32>>"sv));
         expect(registry.contains("gr::blocks::fileio::BasicFileSink<float32>"sv));
-        expect(registry.contains("gr::blocks::type::converter::Convert<float32, float32>"sv));
-        expect(registry.contains("gr::blocks::type::converter::Convert<float32, float64>"sv));
-        expect(registry.contains("gr::blocks::type::converter::ScalingConvert<float32, float32>"sv));
-        expect(registry.contains("gr::blocks::type::converter::ScalingConvert<float32, float64>"sv));
+        expect(registry.contains("gr::basic::Convert<float32, float32>"sv));
+        expect(registry.contains("gr::basic::Convert<float32, float64>"sv));
+        expect(registry.contains("gr::basic::ScalingConvert<float32, float32>"sv));
+        expect(registry.contains("gr::basic::ScalingConvert<float32, float64>"sv));
         expect(registry.contains("gr::basic::DataSink<float32>"sv));
-        expect(registry.contains("gr::blocks::basic::SchmittTrigger<float32, (gr::trigger::InterpolationMethod)0>"sv));
+        expect(registry.contains("gr::basic::SchmittTrigger<float32, (gr::trigger::InterpolationMethod)0>"sv));
 #if defined(_WIN32)
         expect(registry.contains("gr::electrical::PowerMetrics<float32, 3ull>"sv));
 #else
