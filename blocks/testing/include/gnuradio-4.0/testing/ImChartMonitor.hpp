@@ -15,8 +15,8 @@
 
 namespace gr::testing {
 
-GR_REGISTER_BLOCK("ImChartMonitor", gr::testing::ImChartMonitor, ([T], true), [ float, double ]);
-GR_REGISTER_BLOCK("ConsoleDebugSink", gr::testing::ImChartMonitor, ([T], false), [ float, double ]);
+GR_REGISTER_BLOCK("gr::testing::ImChartMonitor", gr::testing::ImChartMonitor, ([T], true), [ float, double ]);
+GR_REGISTER_BLOCK("gr::testing::ConsoleDebugSink", gr::testing::ImChartMonitor, ([T], false), [ float, double ]);
 
 template<typename T, bool drawAsynchronously = true>
 requires(std::is_arithmetic_v<T> || gr::DataSetLike<T>)
