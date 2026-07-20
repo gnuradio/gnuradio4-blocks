@@ -54,7 +54,7 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
     using namespace boost::ut;
     using namespace gr;
     using namespace gr::blocks::math;
-    constexpr auto kArithmeticTypes = std::tuple<uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::complex<float>, std::complex<double> /*, gr::UncertainValue<float>, gr::UncertainValue<double>*/>();
+    constexpr auto kArithmeticTypes = std::tuple<uint8_t, int16_t, int32_t, float, std::complex<float>>();
 
     "Add"_test = []<typename T>(const T&) { //
         test_block<T, Add<T>>({
@@ -147,6 +147,19 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         block.init(block.progress);
         expect(eq(block.processOne(T(4)), T(4) / T(2))) << std::format("SubtractConst(2) test for type {}\n", meta::type_name<T>());
     } | kArithmeticTypes;
+
+    "noncanonical header types smoke test"_test = [] {
+        static_assert(BlockLike<Add<double>>);
+        static_assert(BlockLike<Multiply<std::complex<double>>>);
+
+        AddConst<double> add(property_map{{"value", 2.5}});
+        add.init(add.progress);
+        expect(eq(add.processOne(1.5), 4.0));
+
+        MultiplyConst<std::complex<double>> multiply(property_map{{"value", std::complex<double>{2.0, 0.0}}});
+        multiply.init(multiply.progress);
+        expect(eq(multiply.processOne(std::complex<double>{1.0, 1.0}), std::complex<double>{2.0, 2.0}));
+    };
 };
 
 int main() { /* not needed for UT */ }

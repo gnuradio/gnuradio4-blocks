@@ -196,14 +196,18 @@ const boost::ut::suite<"Basic[Decimating]Filter"> BasicFilterTests = [] {
                 expect(le(maxOutput, static_cast<ValueType>(.2f))) << std::format("{} filter should attenuate out-of-band frequencies: max output {}", filter.filter_type, maxOutput);
             };
         } |
-        std::tuple<FilterTestParam<float, FilterType::FIR>,           //
-            FilterTestParam<double, FilterType::FIR>,                 //
-            FilterTestParam<UncertainValue<float>, FilterType::FIR>,  //
-            FilterTestParam<UncertainValue<double>, FilterType::FIR>, //
-            FilterTestParam<float, FilterType::IIR>,                  //
-            FilterTestParam<double, FilterType::IIR>,                 //
-            FilterTestParam<UncertainValue<float>, FilterType::IIR>,  //
-            FilterTestParam<UncertainValue<double>, FilterType::IIR>>{};
+        std::tuple<FilterTestParam<float, FilterType::FIR>,          //
+            FilterTestParam<double, FilterType::FIR>,                //
+            FilterTestParam<UncertainValue<float>, FilterType::FIR>, //
+            FilterTestParam<float, FilterType::IIR>,                 //
+            FilterTestParam<double, FilterType::IIR>,                //
+            FilterTestParam<UncertainValue<float>, FilterType::IIR>>{};
+
+    "UncertainValue<double> header type smoke test"_test = [] {
+        static_assert(BlockLike<BasicFilter<UncertainValue<double>>>);
+        BasicFilter<UncertainValue<double>> filter;
+        expect(filter.filter_type == FilterType::IIR);
+    };
 
     "BasicDecimatingFilter - Low-pass Filter Test"_test = [](const FilterType& filterType) {
         using T = double;

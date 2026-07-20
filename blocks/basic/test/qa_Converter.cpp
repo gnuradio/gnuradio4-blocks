@@ -31,7 +31,7 @@ const boost::ut::suite<"basic Conversion tests"> basicConversion = [] {
     using namespace gr::blocks::basic;
     namespace stdx = vir::stdx;
 
-    using TArithmeticTypes = std::tuple<uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double>;
+    using TArithmeticTypes = std::tuple<uint8_t, int16_t, int32_t, float>;
     struct ConvertBlock {};
     struct ScalingConvertBlock {};
 

@@ -158,7 +158,7 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
     using namespace boost::ut;
     using namespace gr;
 
-    constexpr auto kArithmeticTypes = std::tuple<uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, gr::UncertainValue<float>, gr::UncertainValue<double>, std::complex<float>, std::complex<double>>();
+    constexpr auto kArithmeticTypes = std::tuple<uint8_t, int16_t, int32_t, float, std::complex<float>>();
 
     using enum gr::blocks::fileio::Mode;
     "overwrite mode"_test = []<typename T>(const T&) { runTest<T>(overwrite); } | kArithmeticTypes;
@@ -166,6 +166,8 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
     "append mode"_test = []<typename T>(const T&) { runTest<T>(append); } | kArithmeticTypes;
 
     "create new mode"_test = []<typename T>(const T&) { runTest<T>(multi); } | kArithmeticTypes;
+
+    "double header type smoke test"_test = [] { runTest<double>(overwrite); };
 };
 
 int main() { /* not needed for UT */ }

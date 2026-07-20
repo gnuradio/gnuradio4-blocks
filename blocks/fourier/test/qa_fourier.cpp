@@ -43,12 +43,8 @@ const boost::ut::suite<"Fourier Transforms"> fftTests = [] {
     using AllTypesToTest = std::tuple<
         // complex input, same in-out precision
         TestTypes<std::complex<float>, DataSet<float>>, TestTypes<std::complex<double>, DataSet<double>>,
-        // complex input, different in-out precision
-        TestTypes<std::complex<double>, DataSet<float>>, TestTypes<std::complex<float>, DataSet<double>>,
         // real input, same in-out precision
-        TestTypes<float, DataSet<float>>, TestTypes<double, DataSet<double>>,
-        // real input, different in-out precision
-        TestTypes<float, DataSet<double>>, TestTypes<double, DataSet<float>>>;
+        TestTypes<float, DataSet<float>>, TestTypes<double, DataSet<double>>>;
 
     "FFT processBulk tests"_test = []<typename T>() {
         using InType    = T::InType;

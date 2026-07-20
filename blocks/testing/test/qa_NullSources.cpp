@@ -11,7 +11,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
     using namespace gr;
     using namespace gr::blocks::testing;
 
-    constexpr auto kTestTypes = std::tuple<uint8_t, int16_t, int32_t, float, double>(); // only a limited set of test cases, could be improved to use pre-built modules
+    constexpr auto kTestTypes = std::tuple<uint8_t, int16_t, int32_t, float, std::complex<float>>();
 
     "NullSource->CountingSink"_test = []<typename T>(const T&) {
         constexpr gr::Size_t N = 12;
@@ -49,7 +49,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
 
     "ConstantSource->Copy->CountingSink"_test = []<typename T>(const T&) {
         constexpr gr::Size_t N     = 10;
-        constexpr T          value = T(7);
+        constexpr typename ConstantSource<T>::value_t value = typename ConstantSource<T>::value_t(7);
 
         Graph g;
         auto& src  = g.emplaceBlock<ConstantSource<T>>(property_map{{"default_value", value}, {"n_samples_max", N}});
@@ -92,7 +92,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
         constexpr gr::Size_t N = 5;
 
         Graph g;
-        auto& src  = g.emplaceBlock<ConstantSource<T>>(property_map{{"default_value", T(99)}, {"n_samples_max", N}});
+        auto& src  = g.emplaceBlock<ConstantSource<T>>(property_map{{"default_value", typename ConstantSource<T>::value_t(99)}, {"n_samples_max", N}});
         auto& sink = g.emplaceBlock<NullSink<T>>();
 
         expect(g.connect<"out", "in">(src, sink).has_value());
@@ -108,7 +108,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
         constexpr gr::Size_t N = 3;
 
         Graph g;
-        auto& src  = g.emplaceBlock<SlowSource<T>>(property_map{{"default_value", T(77)}, {"delay", 10U}});
+        auto& src  = g.emplaceBlock<SlowSource<T>>(property_map{{"default_value", typename SlowSource<T>::value_t(77)}, {"delay", 10U}});
         auto& sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
 
         expect(g.connect<"out", "in">(src, sink).has_value());
@@ -125,7 +125,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
         constexpr gr::Size_t N = 8;
 
         Graph g;
-        auto& src  = g.emplaceBlock<ConstantSource<T>>(property_map{{"default_value", T(5)}, {"n_samples_max", N}});
+        auto& src  = g.emplaceBlock<ConstantSource<T>>(property_map{{"default_value", typename ConstantSource<T>::value_t(5)}, {"n_samples_max", N}});
         auto& sim  = g.emplaceBlock<SimCompute<T>>(property_map{{"complexity_order", 0.0f}, {"busy_wait", true}});
         auto& sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
 
@@ -144,7 +144,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
         constexpr gr::Size_t N = 8;
 
         Graph g;
-        auto& src  = g.emplaceBlock<ConstantSource<T>>(property_map{{"default_value", T(5)}, {"n_samples_max", N}});
+        auto& src  = g.emplaceBlock<ConstantSource<T>>(property_map{{"default_value", typename ConstantSource<T>::value_t(5)}, {"n_samples_max", N}});
         auto& sim  = g.emplaceBlock<SimCompute<T>>(property_map{{"complexity_order", 1.0f}, {"busy_wait", true}});
         auto& sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
 
@@ -192,6 +192,17 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
         const double expected_sec = std::pow(double(N) / 1000.0, 2.0) * (1000.0 / 1e6);
 
         expect(approx(delay.count(), expected_sec, 1e-3));
+    };
+
+    "double header type smoke test"_test = [] {
+        static_assert(BlockLike<ConstantSource<double>>);
+        static_assert(BlockLike<NullSink<double>>);
+
+        ConstantSource<double> source;
+        NullSink<double>       sink;
+        source.default_value = 1.5;
+        expect(eq(source.processOne(), 1.5));
+        sink.processOne(1.5);
     };
 };
 
