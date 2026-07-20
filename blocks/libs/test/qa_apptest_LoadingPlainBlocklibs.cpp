@@ -23,16 +23,14 @@ int main() {
     std::ranges::sort(known);
     std::vector<std::string> desired{
         //
-        "gr::blocks::basic::DataSink<float32>"s,          //
-        "gr::blocks::basic::DataSink<float64>"s,          //
-        "gr::blocks::basic::DataSetSink<float32>"s,       //
-        "gr::blocks::basic::DataSetSink<float64>"s,       //
-        "gr::blocks::basic::FunctionGenerator<float32>"s, //
-        "gr::blocks::basic::FunctionGenerator<float64>"s, //
-        "gr::blocks::basic::Selector<float32>"s,          //
-        "gr::blocks::basic::Selector<float64>"s,          //
-        "gr::blocks::basic::SignalGenerator<float32>"s,   //
-        "gr::blocks::basic::SignalGenerator<float64>"s    //
+        "gr::blocks::basic::DataSink<float32>"s,                //
+        "gr::blocks::basic::DataSetSink<float32>"s,             //
+        "gr::blocks::basic::FunctionGenerator<int16>"s,         //
+        "gr::blocks::basic::FunctionGenerator<float32>"s,       //
+        "gr::blocks::basic::Selector<int32>"s,                  //
+        "gr::blocks::basic::Selector<float32>"s,                //
+        "gr::blocks::basic::SignalGenerator<float32>"s,         //
+        "gr::blocks::basic::SignalGenerator<complex<float32>>"s //
     };
     std::ranges::sort(desired);
 

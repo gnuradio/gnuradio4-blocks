@@ -122,7 +122,7 @@ inline constexpr bool equal_tag_lists(const std::vector<Tag>& tags1, const std::
     return true;
 }
 
-GR_REGISTER_BLOCK("gr::blocks::testing::TagSource", gr::blocks::testing::TagSource, ([T], gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE), [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::testing::TagSource", gr::blocks::testing::TagSource, ([T], gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE), [float])
 
 template<typename T, ProcessFunction UseProcessVariant = ProcessFunction::USE_PROCESS_BULK>
 struct TagSource : Block<TagSource<T, UseProcessVariant>> {
@@ -287,7 +287,7 @@ private:
     [[nodiscard]] bool isInfinite() const { return n_samples_max == 0U; }
 };
 
-GR_REGISTER_BLOCK("gr::blocks::testing::TagMonitor", gr::blocks::testing::TagMonitor, ([T], gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE), [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::testing::TagMonitor", gr::blocks::testing::TagMonitor, ([T], gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE), [float])
 
 template<typename T, ProcessFunction UseProcessVariant>
 struct TagMonitor : public Block<TagMonitor<T, UseProcessVariant>> {
@@ -372,7 +372,7 @@ struct TagMonitor : public Block<TagMonitor<T, UseProcessVariant>> {
     }
 };
 
-GR_REGISTER_BLOCK("gr::blocks::testing::TagSink", gr::blocks::testing::TagSink, ([T], gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE), [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::testing::TagSink", gr::blocks::testing::TagSink, ([T], gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE), [float])
 
 template<typename T, ProcessFunction UseProcessVariant>
 struct TagSink : public Block<TagSink<T, UseProcessVariant>> {

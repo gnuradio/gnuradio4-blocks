@@ -24,8 +24,8 @@
 
 namespace gr::blocks::filter {
 
-GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorTimeDomain", gr::blocks::filter::FrequencyEstimatorTimeDomain, [T], [ float, double ])
-GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorTimeDomainDecimating", gr::blocks::filter::FrequencyEstimatorTimeDomain, ([T], gr::Resampling<10U>), [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorTimeDomain", gr::blocks::filter::FrequencyEstimatorTimeDomain, [T], [float])
+GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorTimeDomainDecimating", gr::blocks::filter::FrequencyEstimatorTimeDomain, ([T], gr::Resampling<10U>), [float])
 
 template<typename T, typename... Args>
 requires std::floating_point<T>
@@ -179,8 +179,8 @@ private:
 template<typename T>
 using FrequencyEstimatorTimeDomainDecimating = FrequencyEstimatorTimeDomain<T, Resampling<10U>>;
 
-GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorFrequencyDomain", gr::blocks::filter::FrequencyEstimatorFrequencyDomain, [T], [ float, double ])
-GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorFrequencyDomainDecimating", gr::blocks::filter::FrequencyEstimatorFrequencyDomain, ([T], gr::Resampling<10U>), [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorFrequencyDomain", gr::blocks::filter::FrequencyEstimatorFrequencyDomain, [T], [float])
+GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorFrequencyDomainDecimating", gr::blocks::filter::FrequencyEstimatorFrequencyDomain, ([T], gr::Resampling<10U>), [float])
 
 template<typename T, typename... Args>
 requires std::floating_point<T>
@@ -383,7 +383,7 @@ template<typename T>
 inline constexpr bool is_derivative_v = is_derivative<T>::value;
 } // namespace detail
 
-GR_REGISTER_BLOCK("gr::blocks::filter::IQDemodulator", gr::blocks::filter::IQDemodulator, ([T], gr::Resampling<1024U, 1U, false>), [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::filter::IQDemodulator", gr::blocks::filter::IQDemodulator, ([T], gr::Resampling<1024U, 1U, false>), [float])
 
 template<typename T, typename... Args>
 requires std::floating_point<T>

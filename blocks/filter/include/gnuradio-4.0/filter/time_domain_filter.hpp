@@ -19,7 +19,7 @@ namespace gr::blocks::filter {
 
 using namespace gr;
 
-GR_REGISTER_BLOCK(gr::blocks::filter::fir_filter, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::filter::fir_filter, [T], [float])
 
 template<typename T>
 requires std::floating_point<T>
@@ -56,10 +56,10 @@ enum class IIRForm {
     DF_II_TRANSPOSED,
 };
 
-GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_I), [ float, double ])
-GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_II), [ float, double ])
-GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_I_TRANSPOSED), [ float, double ])
-GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_II_TRANSPOSED), [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_I), [float])
+GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_II), [float])
+GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_I_TRANSPOSED), [float])
+GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_II_TRANSPOSED), [float])
 
 template<typename T, IIRForm form = std::is_floating_point_v<T> ? IIRForm::DF_II : IIRForm::DF_I>
 requires std::floating_point<T>
@@ -123,8 +123,8 @@ a are the feedback coefficients
     }
 };
 
-GR_REGISTER_BLOCK(gr::blocks::filter::BasicFilter, ([T]), [ double, float, gr::UncertainValue<float>, gr::UncertainValue<double> ])
-GR_REGISTER_BLOCK(gr::blocks::filter::BasicFilterProto, ([T], gr::Resampling<1UZ, 1UZ, false>), [ double, float, gr::UncertainValue<float>, gr::UncertainValue<double> ])
+GR_REGISTER_BLOCK(gr::blocks::filter::BasicFilter, ([T]), [ float, gr::UncertainValue<float> ])
+GR_REGISTER_BLOCK(gr::blocks::filter::BasicFilterProto, ([T], gr::Resampling<1UZ, 1UZ, false>), [ float, gr::UncertainValue<float> ])
 
 enum class FilterType { FIR, IIR };
 
@@ -212,7 +212,7 @@ using BasicFilter = BasicFilterProto<T>;
 template<typename T>
 using BasicDecimatingFilter = BasicFilterProto<T, Resampling<1UZ, 1UZ, false>>;
 
-GR_REGISTER_BLOCK(gr::blocks::filter::Decimator, [T], [ uint8_t, int8_t, uint16_t, int16_t, uint32_t, int32_t, uint64_t, int64_t, float, double, std::complex<float>, std::complex<double>, gr::UncertainValue<float>, gr::UncertainValue<double> ])
+GR_REGISTER_BLOCK(gr::blocks::filter::Decimator, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float>, gr::UncertainValue<float> ])
 
 template<typename T>
 struct Decimator : Block<Decimator<T>, Resampling<1UZ, 1UZ, false>> {

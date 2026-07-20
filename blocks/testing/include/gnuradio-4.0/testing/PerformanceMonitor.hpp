@@ -58,7 +58,7 @@ std::string to_si_prefix(T value_base, std::string_view unit = "s", std::size_t 
 }
 } // namespace details
 
-GR_REGISTER_BLOCK(gr::blocks::testing::PerformanceMonitor, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::testing::PerformanceMonitor, [T], [float])
 
 template<typename T>
 struct PerformanceMonitor : Block<PerformanceMonitor<T>> {

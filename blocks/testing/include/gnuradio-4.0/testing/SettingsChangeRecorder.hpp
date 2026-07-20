@@ -44,7 +44,7 @@ inline void printChanges(const property_map& oldMap, const property_map& newMap)
 }
 } // namespace utils
 
-GR_REGISTER_BLOCK(gr::blocks::testing::SettingsChangeRecorder, [T], [ int32_t, float, double ])
+GR_REGISTER_BLOCK(gr::blocks::testing::SettingsChangeRecorder, [T], [ int32_t, float ])
 
 enum class TestEnum { TEST_STATE1, TEST_STATE2, TEST_STATE3 };
 

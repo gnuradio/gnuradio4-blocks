@@ -10,7 +10,7 @@
 
 namespace gr::blocks::testing {
 
-GR_REGISTER_BLOCK(gr::blocks::testing::Delay, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::testing::Delay, [T], [float])
 
 template<typename T>
 struct Delay : Block<Delay<T>> {

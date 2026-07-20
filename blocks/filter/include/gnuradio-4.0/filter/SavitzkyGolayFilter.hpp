@@ -16,7 +16,7 @@ using namespace gr;
 // Streaming Savitzky-Golay Filter (scalar T samples)
 // ============================================================================
 
-GR_REGISTER_BLOCK(gr::blocks::filter::SavitzkyGolayFilter, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::filter::SavitzkyGolayFilter, [T], [float])
 
 template<typename T>
 struct SavitzkyGolayFilter : Block<SavitzkyGolayFilter<T>> {
@@ -86,7 +86,7 @@ public:
 // DataSet Savitzky-Golay Filter (zero-phase batch processing)
 // ============================================================================
 
-GR_REGISTER_BLOCK(gr::blocks::filter::SavitzkyGolayDataSetFilter, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::filter::SavitzkyGolayDataSetFilter, [T], [ float ])
 
 template<typename T>
 struct SavitzkyGolayDataSetFilter : Block<SavitzkyGolayDataSetFilter<T>> {

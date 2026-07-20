@@ -62,7 +62,7 @@ struct vector_access_rtc : public exprtk::vector_access_runtime_check {
 
 } // namespace detail
 
-GR_REGISTER_BLOCK(gr::blocks::math::ExpressionSISO, [T], [ float, double ]);
+GR_REGISTER_BLOCK(gr::blocks::math::ExpressionSISO, [T], [float]);
 
 template<typename T>
 requires std::floating_point<T>
@@ -139,7 +139,7 @@ For full syntax, conditionals, loops, and advanced features:
     }
 };
 
-GR_REGISTER_BLOCK(gr::blocks::math::ExpressionDISO, [T], [ float, double ]);
+GR_REGISTER_BLOCK(gr::blocks::math::ExpressionDISO, [T], [float]);
 
 template<typename T>
 requires std::floating_point<T>
@@ -221,7 +221,7 @@ For full syntax, conditionals, loops, and advanced features:
     }
 };
 
-GR_REGISTER_BLOCK(gr::blocks::math::ExpressionBulk, [T], [ float, double ]);
+GR_REGISTER_BLOCK(gr::blocks::math::ExpressionBulk, [T], [float]);
 
 template<typename T>
 requires std::floating_point<T>

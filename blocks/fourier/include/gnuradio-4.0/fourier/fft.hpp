@@ -27,7 +27,7 @@ struct OutputDataSet<T> {
     using type = DataSet<typename T::value_type>;
 };
 
-GR_REGISTER_BLOCK("gr::blocks::fourier::FFT", gr::blocks::fourier::FFT, [T], [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::fourier::FFT", gr::blocks::fourier::FFT, [T], [float])
 
 template<typename T, typename U = OutputDataSet<T>::type, template<typename, typename> typename FourierAlgorithm = gr::algorithm::FFT>
 requires((gr::meta::complex_like<T> || std::floating_point<T>) && (std::is_same_v<U, DataSet<float>> || std::is_same_v<U, DataSet<double>>))
