@@ -18,6 +18,8 @@ gr_add_block_library(
   LINK_LIBRARIES
   gnuradio4::gr-http)
 
-if(TARGET gnuradio4::GrHttpBlocksShared AND ENABLE_TESTING AND GR4_ENABLE_HTTP_TESTS)
+if(TARGET gnuradio4::GrHttpBlocksShared
+   AND ENABLE_TESTING
+   AND GR4_ENABLE_HTTP_TESTS)
   add_subdirectory(test)
 endif()

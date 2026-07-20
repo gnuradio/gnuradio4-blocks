@@ -14,22 +14,22 @@ XMLHttpRequest = require('xhr2');
 const server = http.createServer((req, res) => {
     console.log(req.url);
     if (req.url == "/echo") {
-        res.writeHead(200, {"Content-Type": "text/plain"});
+        res.writeHead(200, {"Content-Type" : "text/plain"});
         res.write("Hello world!");
         res.end();
     } else if (req.url == "/notify") {
         // wait a bit before responding (we are testing long polling here)
         return setTimeout(() => {
-            res.writeHead(200, {"Content-Type": "text/plain"});
+            res.writeHead(200, {"Content-Type" : "text/plain"});
             res.write("event");
             res.end();
         }, 10);
     } else if (req.url == "/number") {
-        res.writeHead(200, {"Content-Type": "text/plain"});
+        res.writeHead(200, {"Content-Type" : "text/plain"});
         res.write("OK");
         res.end();
     } else {
-        res.writeHead(404, {"Content-Type": "text/plain"});
+        res.writeHead(404, {"Content-Type" : "text/plain"});
         res.write("Unknown route");
         res.end();
     }

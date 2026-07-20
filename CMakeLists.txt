@@ -22,7 +22,9 @@ option(GR4_ENABLE_SDR "Build the SDR block family" OFF)
 option(GR4_ENABLE_HTTP_TESTS "Build HTTP integration tests" OFF)
 option(GR_USE_FETCHCONTENT_DEPS "Allow CMake to download selected third-party dependencies with FetchContent" OFF)
 option(USE_CCACHE "Use ccache if available" ON)
-set(GR4_PKG_VERSION "${PROJECT_VERSION}-git" CACHE STRING "Version string used in gnuradio4Blocks.pc")
+set(GR4_PKG_VERSION
+    "${PROJECT_VERSION}-git"
+    CACHE STRING "Version string used in gnuradio4Blocks.pc")
 set(GR_TEST_HELPER_LIBRARIES "")
 set(PYTHON_AVAILABLE OFF)
 
@@ -127,8 +129,7 @@ set(GR4_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/gnuradio4Blocks")
 
 configure_package_config_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/gnuradio4BlocksConfig.cmake.in"
-  "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4BlocksConfig.cmake"
-  INSTALL_DESTINATION "${GR4_CMAKE_INSTALL_DIR}")
+  "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4BlocksConfig.cmake" INSTALL_DESTINATION "${GR4_CMAKE_INSTALL_DIR}")
 
 write_basic_package_version_file(
   "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4BlocksConfigVersion.cmake"
@@ -137,10 +138,11 @@ write_basic_package_version_file(
 
 configure_file(cmake/gnuradio4Blocks.pc.in "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4Blocks.pc" @ONLY)
 
-install(
-  FILES "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4BlocksConfig.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4BlocksConfigVersion.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4Blocks.pc"
-  DESTINATION "${GR4_CMAKE_INSTALL_DIR}")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4BlocksConfig.cmake"
+              "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4BlocksConfigVersion.cmake"
+              "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4Blocks.pc" DESTINATION "${GR4_CMAKE_INSTALL_DIR}")
 
-install(EXPORT ${GR4_EXPORT_NAME} NAMESPACE gnuradio4:: DESTINATION "${GR4_CMAKE_INSTALL_DIR}")
+install(
+  EXPORT ${GR4_EXPORT_NAME}
+  NAMESPACE gnuradio4::
+  DESTINATION "${GR4_CMAKE_INSTALL_DIR}")

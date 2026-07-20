@@ -17,6 +17,7 @@ endfunction()
 function(add_ut_test TEST_NAME)
   add_executable(${TEST_NAME} ${TEST_NAME}.cpp)
   setup_test(${TEST_NAME})
-  set_property(TEST ${TEST_NAME} PROPERTY ENVIRONMENT_MODIFICATION "GNURADIO4_PLUGIN_DIRECTORIES=set:${CMAKE_CURRENT_BINARY_DIR}/plugins")
+  set_property(TEST ${TEST_NAME} PROPERTY ENVIRONMENT_MODIFICATION
+                                          "GNURADIO4_PLUGIN_DIRECTORIES=set:${CMAKE_CURRENT_BINARY_DIR}/plugins")
   target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_FUNCTION_LIST_DIR})
 endfunction()

@@ -1,6 +1,7 @@
 add_library(gr-testing INTERFACE)
 add_library(gnuradio4::gr-testing ALIAS gr-testing)
-target_link_libraries(gr-testing INTERFACE gnuradio4::gnuradio-core gnuradio4::gnuradio-algorithm gnuradio4::ut-benchmark)
+target_link_libraries(gr-testing INTERFACE gnuradio4::gnuradio-core gnuradio4::gnuradio-algorithm
+                                           gnuradio4::ut-benchmark)
 target_include_directories(gr-testing INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
                                                 $<INSTALL_INTERFACE:include/>)
 install(TARGETS gr-testing EXPORT gnuradio4Targets)

@@ -96,6 +96,71 @@ Other installed family targets include `gnuradio4::gr-common`,
 `gnuradio4::gr-math`. Public headers are installed below
 `include/gnuradio-4.0`.
 
+## Formatting and Restyled
+
+Pull requests run [Restyled](https://restyled.io/) against every file changed by
+the PR. The repository's `.restyled.yaml` limits that check to the same formatter
+set used by `gnuradio4-core` and `gnuradio4-library`:
+
+- clang-format 18 for C and C++
+- cmake-format for CMake files
+- Prettier for Markdown and YAML
+- shellcheck for shell scripts
+- Black for Python
+- a general whitespace check
+
+The CI job uses `fail-on-differences`, so it fails whenever one of those tools
+would modify a changed file. The formatted result must be committed to the PR
+branch before the check will pass.
+
+The preferred local workflow uses the formatter versions pinned in
+`.pre-commit-config.yaml`. Follow the official
+[pre-commit installation instructions](https://pre-commit.com/), then install
+the Git hook from the repository root:
+
+```bash
+pre-commit install
+```
+
+The installed hook formats and validates staged files when committing. To check
+and format the entire tree explicitly before submitting a PR, run:
+
+```bash
+pre-commit run --all-files
+```
+
+Some hooks modify files on their first pass. Review those changes, stage them,
+and run the command again; a clean second run matches the expected Restyled
+result. To process only currently staged files, use:
+
+```bash
+pre-commit run
+```
+
+Alternatively, run the actual Restyled pipeline locally with the
+[Restyler CLI](https://github.com/restyled-io/restyler) and Docker. From the
+repository root, run:
+
+```bash
+restyle \
+  --no-commit \
+  --no-clean \
+  --fail-on-differences \
+  .
+```
+
+This reads `.restyled.yaml`, runs the configured formatter containers, and
+formats files in place. It exits nonzero when it makes changes. Review and commit
+those changes, then run the command again; a clean second run should pass. The
+`--no-clean` option prevents Restyle from removing untracked files, while
+`--no-commit` leaves all formatter changes for review. Running against `.` checks
+the entire repository; the GitHub check limits its input to files changed by the
+pull request.
+
+The formatter policies are defined by `.clang-format`, `.cmake-format.yaml`, and
+`.pre-commit-config.yaml`. Avoid substituting another formatter or version,
+because it may produce a different layout and fail the CI comparison.
+
 ## SDK Images
 
 Pushes to `main` publish profile-specific SDK images to the GitHub Container
