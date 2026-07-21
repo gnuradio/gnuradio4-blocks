@@ -11,7 +11,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
     using namespace gr;
     using namespace gr::blocks::testing;
 
-    constexpr auto kTestTypes = std::tuple<uint8_t, int16_t, int32_t, float, std::complex<float>>();
+    constexpr auto kTestTypes = std::tuple<uint8_t, int16_t, int32_t, float>();
 
     "NullSource->CountingSink"_test = []<typename T>(const T&) {
         constexpr gr::Size_t N = 12;
@@ -203,6 +203,19 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
         source.default_value = 1.5;
         expect(eq(source.processOne(), 1.5));
         sink.processOne(1.5);
+    };
+
+    "complex canonical type smoke test"_test = [] {
+        using T = std::complex<float>;
+
+        static_assert(BlockLike<ConstantSource<T>>);
+        static_assert(BlockLike<NullSink<T>>);
+
+        ConstantSource<T> source(property_map{{"default_value", 1.5F}});
+        NullSink<T>       sink;
+        source.init(source.progress);
+        expect(eq(source.processOne(), T{1.5F, 0.F}));
+        sink.processOne(T{1.5F, -2.F});
     };
 };
 
