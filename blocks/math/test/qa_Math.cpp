@@ -1,54 +1,6 @@
 #include <boost/ut.hpp>
 
-#include <gnuradio-4.0/math/Math.hpp>
-
-#include <gnuradio-4.0/Block.hpp>
-#include <gnuradio-4.0/Graph.hpp>
-#include <gnuradio-4.0/Scheduler.hpp>
-#include <gnuradio-4.0/testing/TagMonitors.hpp>
-
-template<typename T>
-struct TestParameters {
-    std::vector<gr::Tensor<T>> inputs;
-    gr::Tensor<T>              output;
-};
-
-template<typename T, typename BlockUnderTest>
-void test_block(const TestParameters<T> p) {
-    using namespace boost::ut;
-    using namespace gr;
-    using namespace gr::blocks::testing;
-    using namespace gr::blocks::math;
-    const Size_t n_inputs = static_cast<Size_t>(p.inputs.size());
-
-    // build test graph
-    Graph graph;
-    auto& block = graph.emplaceBlock<BlockUnderTest>({{"n_inputs", n_inputs}});
-    for (Size_t i = 0; i < n_inputs; ++i) {
-        auto& src = graph.emplaceBlock<TagSource<T>>({{"values", p.inputs[i]}, {"n_samples_max", static_cast<Size_t>(p.inputs[i].size())}});
-        expect(graph.connect(src, "out"s, block, "in#"s + std::to_string(i)).has_value()) << std::format("Failed to connect output port of src {} to input port 'in#{}' of block", i, i);
-    }
-    auto& sink = graph.emplaceBlock<TagSink<T, ProcessFunction::USE_PROCESS_ONE>>();
-    expect(graph.connect(block, "out"s, sink, "in"s).has_value()) << "Failed to connect output port 'out' of block to input port of sink";
-
-    // execute and confirm result
-    gr::scheduler::Simple sched;
-    if (auto ret = sched.exchange(std::move(graph)); !ret) {
-        throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
-    }
-    expect(sched.runAndWait().has_value()) << "Failed to run graph: No value";
-    expect(std::ranges::equal(sink._samples, p.output)) << std::format("Failed to validate block output: Expected {} but got {} for input {}", p.output, sink._samples, p.inputs);
-};
-
-template<typename T>
-constexpr T val(double x) {
-    if constexpr (gr::meta::complex_like<T>) {
-        using V = typename T::value_type;
-        return T{static_cast<V>(x), static_cast<V>(0)};
-    } else {
-        return static_cast<T>(x);
-    }
-}
+#include "MathTestHelpers.hpp"
 
 const boost::ut::suite<"basic math tests"> basicMath = [] {
     using namespace boost::ut;
@@ -89,37 +41,6 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
                 gr::Tensor<T>(gr::data_from, {0, 10, 50, 7})},                         //
             .output = gr::Tensor<T>(gr::data_from, {12, 16, 12, 4})});                 //
     } | kArithmeticTypes;
-
-    "Multiply"_test = []<typename T>(const T&) {
-        test_block<T, Multiply<T>>({
-            .inputs = {gr::Tensor<T>(gr::data_from, {1, 2, 8, 17})}, //
-            .output = gr::Tensor<T>(gr::data_from, {1, 2, 8, 17})    //
-        });
-        test_block<T, Multiply<T>>({                                                  //
-            .inputs = {gr::Tensor<T>(gr::data_from, {T(1), T(2), T(3), val<T>(4.0)}), //
-                gr::Tensor<T>(gr::data_from, {T(4), T(5), T(6), val<T>(7.1)})},       //
-            .output = gr::Tensor<T>(gr::data_from, {T(4), T(10), T(18), val<T>(28.4)})});
-        test_block<T, Multiply<T>>({                               //
-            .inputs = {gr::Tensor<T>(gr::data_from, {0, 1, 2, 3}), //
-                gr::Tensor<T>(gr::data_from, {4, 5, 6, 2}),        //
-                gr::Tensor<T>(gr::data_from, {8, 9, 10, 11})},     //
-            .output = gr::Tensor<T>(gr::data_from, {0, 45, 120, 66})});
-    } | kArithmeticTypes;
-
-    "Divide"_test = []<typename T>(const T&) {
-        test_block<T, Divide<T>>({
-            .inputs = {gr::Tensor<T>(gr::data_from, {1, 2, 8, 17})}, //
-            .output = gr::Tensor<T>(gr::data_from, {1, 2, 8, 17})    //
-        });
-        test_block<T, Divide<T>>({.inputs = {gr::Tensor<T>(gr::data_from, {T(9), T(4), T(5), val<T>(7.0)}), //
-                                      gr::Tensor<T>(gr::data_from, {T(3), T(4), T(1), val<T>(2.0)})},       //
-            .output                       = gr::Tensor<T>(gr::data_from, {T(3), T(1), T(5), val<T>(3.5)})});
-        test_block<T, Divide<T>>({.inputs = {gr::Tensor<T>(gr::data_from, {0, 10, 40, 80}), //
-                                      gr::Tensor<T>(gr::data_from, {1, 2, 4, 20}),          //
-                                      gr::Tensor<T>(gr::data_from, {1, 5, 5, 2})},          //
-            .output                       = gr::Tensor<T>(gr::data_from, {0, 1, 2, 2})});
-    } | kArithmeticTypes;
-
 };
 
 int main() { /* not needed for UT */ }

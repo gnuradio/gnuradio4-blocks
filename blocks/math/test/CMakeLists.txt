@@ -1,5 +1,7 @@
 add_ut_test(qa_Math)
 target_link_libraries(qa_Math PRIVATE gr-math gr-testing)
+add_ut_test(qa_MathMultiplyDivide)
+target_link_libraries(qa_MathMultiplyDivide PRIVATE gr-math gr-testing)
 add_ut_test(qa_MathConst)
 target_link_libraries(qa_MathConst PRIVATE gr-math)
 add_ut_test(qa_ExpressionBlocks)
