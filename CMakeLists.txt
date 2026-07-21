@@ -22,6 +22,13 @@ option(GR4_ENABLE_SDR "Build the SDR block family" OFF)
 option(GR4_ENABLE_HTTP_TESTS "Build HTTP integration tests" OFF)
 option(GR_USE_FETCHCONTENT_DEPS "Allow CMake to download selected third-party dependencies with FetchContent" OFF)
 option(USE_CCACHE "Use ccache if available" ON)
+
+# Keep the largest template-heavy test compilations from overlapping. This limits only targets assigned to the pool;
+# other Ninja work remains parallel.
+if(CMAKE_GENERATOR MATCHES "Ninja")
+  set_property(GLOBAL APPEND PROPERTY JOB_POOLS gr4_heavy_compile=1)
+endif()
+
 set(GR4_PKG_VERSION
     "${PROJECT_VERSION}-git"
     CACHE STRING "Version string used in gnuradio4Blocks.pc")
@@ -125,6 +132,17 @@ endif()
 
 add_subdirectory(bench)
 add_subdirectory(blocks)
+
+if(ENABLE_TESTING AND CMAKE_GENERATOR MATCHES "Ninja")
+  set_property(
+    TARGET qa_ExpressionBlocks
+           qa_ExpressionBulk
+           qa_BasicFileIo
+           qa_NullSources
+           qa_Math
+           qa_MathMultiplyDivide
+    PROPERTY JOB_POOL_COMPILE gr4_heavy_compile)
+endif()
 
 set(GR4_EXPORT_NAME gnuradio4Targets)
 set(GR4_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/gnuradio4Blocks")
