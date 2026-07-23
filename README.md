@@ -161,6 +161,36 @@ The formatter policies are defined by `.clang-format`, `.cmake-format.yaml`, and
 `.pre-commit-config.yaml`. Avoid substituting another formatter or version,
 because it may produce a different layout and fail the CI comparison.
 
+### Block namespaces and registry names
+
+Public block types and their plugin registry names use the namespace of their
+owning block module:
+
+| Module target | C++ namespace and registry prefix |
+| ------------- | --------------------------------- |
+| `audio`       | `gr::blocks::audio::`             |
+| `basic`       | `gr::blocks::basic::`             |
+| `electrical`  | `gr::blocks::electrical::`        |
+| `fileio`      | `gr::blocks::fileio::`            |
+| `filter`      | `gr::blocks::filter::`            |
+| `fourier`     | `gr::blocks::fourier::`           |
+| `http`        | `gr::blocks::http::`              |
+| `math`        | `gr::blocks::math::`              |
+| `sdr`         | `gr::blocks::sdr::`               |
+| `testing`     | `gr::blocks::testing::`           |
+| `timing`      | `gr::blocks::timing::`            |
+
+For example, use `gr::blocks::math::Multiply<float>` in C++ and
+`gr::blocks::math::Multiply<float32>` as its registry key. New blocks must
+follow the same `gr::blocks::<module>::<block>` convention for both their
+concrete C++ type and any quoted alias supplied to `GR_REGISTER_BLOCK`.
+
+Deprecated C++ namespace aliases or imports preserve source compatibility with
+the former flat `gr::<module>` names. They are a temporary migration aid and are
+not emitted as plugin registry aliases: serialized flowgraphs and runtime
+registry clients must use the canonical names above. Code that declares new
+members inside a compatibility namespace must migrate to the canonical namespace.
+
 ## SDK Images
 
 Pushes to `main` publish profile-specific SDK images to the GitHub Container
