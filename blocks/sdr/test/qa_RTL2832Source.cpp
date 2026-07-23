@@ -27,7 +27,7 @@
 
 using namespace boost::ut;
 using namespace gr;
-using namespace gr::testing;
+using namespace gr::blocks::testing;
 
 namespace {
 
@@ -133,7 +133,7 @@ struct PtyPair {
 };
 
 std::string nmeaWithChecksum(std::string_view body) {
-    auto cs = gr::timing::detail::computeNMEAChecksum(body.substr(1));
+    auto cs = gr::blocks::timing::detail::computeNMEAChecksum(body.substr(1));
     return std::format("{}*{:02X}", body, cs);
 }
 
@@ -599,7 +599,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
         constexpr auto   kCaptureDuration = std::chrono::milliseconds(2500);
 
         Graph testGraph;
-        auto& pps  = testGraph.emplaceBlock<gr::timing::PpsSource>({
+        auto& pps  = testGraph.emplaceBlock<gr::blocks::timing::PpsSource>({
             {"clock_mode", std::string("NTP")},
         });
         auto& rtl  = testGraph.emplaceBlock<gr::blocks::sdr::RTL2832Source<std::complex<float>>>({
@@ -680,7 +680,7 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
         constexpr double kFrequency  = 100.0e6;
 
         Graph testGraph;
-        auto& gps  = testGraph.emplaceBlock<gr::timing::GpsSource>({
+        auto& gps  = testGraph.emplaceBlock<gr::blocks::timing::GpsSource>({
             {"device_path", std::string(pty->slaveName)},
         });
         auto& rtl  = testGraph.emplaceBlock<gr::blocks::sdr::RTL2832Source<std::complex<float>>>({

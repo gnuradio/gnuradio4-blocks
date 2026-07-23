@@ -38,6 +38,7 @@
 #include <vector>
 
 #include <gnuradio-4.0/common/USBDevice.hpp>
+#include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
@@ -104,9 +105,9 @@ inline constexpr std::uint32_t kPllCalFreq  = 56'000'000;
 inline constexpr std::uint8_t  kVcoPowerRef = 2; // R820T reference; R828D uses 1
 
 inline constexpr std::array kKnownRTL2832Ids{
-    common::USBDeviceId{0x0BDA, 0x2832, "RTL2832U"},
-    common::USBDeviceId{0x0BDA, 0x2838, "RTL2838UHIDIR"},
-    common::USBDeviceId{0x0BDA, 0x2840, "RTL2840"},
+    gr::blocks::common::USBDeviceId{0x0BDA, 0x2832, "RTL2832U"},
+    gr::blocks::common::USBDeviceId{0x0BDA, 0x2838, "RTL2838UHIDIR"},
+    gr::blocks::common::USBDeviceId{0x0BDA, 0x2840, "RTL2840"},
 };
 
 // clang-format off
@@ -507,7 +508,7 @@ struct RTL2832Device {
     };
 
 #if !defined(__EMSCRIPTEN__)
-    common::USBDevice _usb;
+    gr::blocks::common::USBDevice _usb;
 #endif
     std::atomic<bool>                        _open{false};
     TunerType                                _tunerType    = TunerType::none;
@@ -529,7 +530,7 @@ struct RTL2832Device {
         if (_usb.isOpen()) {
             return {};
         }
-        auto devices = common::enumerateUSBDevices(kKnownRTL2832Ids);
+        auto devices = gr::blocks::common::enumerateUSBDevices(kKnownRTL2832Ids);
         if (deviceIndex >= devices.size()) {
             return std::unexpected("no RTL2832 device found");
         }

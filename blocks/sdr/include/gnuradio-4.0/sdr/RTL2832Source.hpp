@@ -18,6 +18,8 @@
 
 #include <gnuradio-4.0/sdr/RTL2832Device.hpp>
 
+#include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
+
 namespace gr::blocks::sdr {
 
 namespace detail {

@@ -37,7 +37,7 @@ auto runWithWatchdog(auto& sched, std::chrono::seconds timeout = std::chrono::se
 const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
     using namespace gr;
     using namespace gr::blocks::sdr;
-    using namespace gr::testing;
+    using namespace gr::blocks::testing;
     using Sched = gr::scheduler::Simple<>;
 
     "single-channel rxOnly delivers samples"_test = [] {
@@ -110,7 +110,7 @@ const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
         constexpr gr::Size_t nSamples = 10000;
         constexpr float      rate     = 1e6f;
 
-        auto& clock = flow.emplaceBlock<gr::basic::ClockSource<std::uint8_t>>({
+        auto& clock = flow.emplaceBlock<gr::blocks::basic::ClockSource<std::uint8_t>>({
             {"sample_rate", rate},
             {"n_samples_max", gr::Size_t{0}}, // unlimited — stopped by scheduler
             {"chunk_size", gr::Size_t{100}},
@@ -166,7 +166,7 @@ const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
         constexpr gr::Size_t nClockSamples = 500;
         constexpr float      rate          = 1e6f;
 
-        auto& clock = flow.emplaceBlock<gr::basic::ClockSource<std::uint8_t>>({
+        auto& clock = flow.emplaceBlock<gr::blocks::basic::ClockSource<std::uint8_t>>({
             {"sample_rate", rate},
             {"n_samples_max", nClockSamples},
             {"chunk_size", gr::Size_t{100}},
@@ -277,14 +277,14 @@ const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
 const boost::ut::suite<"SoapySink + SoapySource shared device"> txRxTests = [] {
     using namespace gr;
     using namespace gr::blocks::sdr;
-    using namespace gr::testing;
+    using namespace gr::blocks::testing;
     using Sched = gr::scheduler::Simple<>;
 
     "TX→RX round-trip through shared loopback device"_test = [] {
         gr::Graph            flow;
         constexpr gr::Size_t nSamples = 10000;
 
-        auto& txSource = flow.emplaceBlock<gr::basic::ClockSource<CF32>>({
+        auto& txSource = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({
             {"n_samples_max", nSamples},
             {"sample_rate", 1e6f},
             {"chunk_size", gr::Size_t{1024}},
@@ -335,7 +335,7 @@ const boost::ut::suite<"SoapySink + SoapySource shared device"> txRxTests = [] {
         gr::Graph            flow;
         constexpr gr::Size_t nSamples = 5000;
 
-        auto& txSource = flow.emplaceBlock<gr::basic::ClockSource<CF32>>({
+        auto& txSource = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({
             {"n_samples_max", nSamples},
             {"sample_rate", 1e6f},
             {"chunk_size", gr::Size_t{512}},
@@ -358,12 +358,12 @@ const boost::ut::suite<"SoapySink + SoapySource shared device"> txRxTests = [] {
         gr::Graph            flow;
         constexpr gr::Size_t nSamples = 5000;
 
-        auto& txSrc1  = flow.emplaceBlock<gr::basic::ClockSource<CF32>>({
+        auto& txSrc1  = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({
             {"n_samples_max", nSamples},
             {"sample_rate", 1e6f},
             {"chunk_size", gr::Size_t{512}},
         });
-        auto& txSrc2  = flow.emplaceBlock<gr::basic::ClockSource<CF32>>({
+        auto& txSrc2  = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({
             {"n_samples_max", nSamples},
             {"sample_rate", 1e6f},
             {"chunk_size", gr::Size_t{512}},
@@ -404,7 +404,7 @@ const boost::ut::suite<"SoapySink + SoapySource shared device"> txRxTests = [] {
 const boost::ut::suite<"LimeSDR hardware"> limeTests = [] {
     using namespace gr;
     using namespace gr::blocks::sdr;
-    using namespace gr::testing;
+    using namespace gr::blocks::testing;
     using Sched = gr::scheduler::Simple<>;
 
     auto limeAvailable = [] {
@@ -440,7 +440,7 @@ const boost::ut::suite<"LimeSDR hardware"> limeTests = [] {
         constexpr float      rate     = 1e6f;
         constexpr gr::Size_t nSamples = static_cast<gr::Size_t>(rate * 10);
 
-        auto& txSource = flow.emplaceBlock<gr::basic::ClockSource<CF32>>({
+        auto& txSource = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({
             {"n_samples_max", nSamples},
             {"sample_rate", rate},
             {"chunk_size", gr::Size_t{4096}},
@@ -490,12 +490,12 @@ const boost::ut::suite<"LimeSDR hardware"> limeTests = [] {
         constexpr float      rate     = 1e6f;
         constexpr gr::Size_t nSamples = static_cast<gr::Size_t>(rate * 10);
 
-        auto& txSrc1  = flow.emplaceBlock<gr::basic::ClockSource<CF32>>({
+        auto& txSrc1  = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({
             {"n_samples_max", nSamples},
             {"sample_rate", rate},
             {"chunk_size", gr::Size_t{4096}},
         });
-        auto& txSrc2  = flow.emplaceBlock<gr::basic::ClockSource<CF32>>({
+        auto& txSrc2  = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({
             {"n_samples_max", nSamples},
             {"sample_rate", rate},
             {"chunk_size", gr::Size_t{4096}},
@@ -628,7 +628,7 @@ const boost::ut::suite<"SoapySink BurstTaper"> taperTests = [] {
         gr::Size_t      nSamples = 50'000;
         gr::Graph       flow;
 
-        auto& clockSrc = flow.emplaceBlock<gr::basic::ClockSource<CF32>>({
+        auto& clockSrc = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({
             {"sample_rate", kRate},
             {"n_samples_max", nSamples},
         });
@@ -645,7 +645,7 @@ const boost::ut::suite<"SoapySink BurstTaper"> taperTests = [] {
             {"sample_rate", kRate},
             {"frequency", std::vector{107e6}},
         });
-        auto& rxSink   = flow.emplaceBlock<gr::testing::CountingSink<CF32>>({{"n_samples_max", nSamples}});
+        auto& rxSink   = flow.emplaceBlock<gr::blocks::testing::CountingSink<CF32>>({{"n_samples_max", nSamples}});
 
         expect(flow.connect<"out", "in">(clockSrc, txSink).has_value());
         expect(flow.connect<"out", "in">(source, rxSink).has_value());

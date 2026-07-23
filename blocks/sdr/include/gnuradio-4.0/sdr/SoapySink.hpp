@@ -8,6 +8,8 @@
 #include <gnuradio-4.0/algorithm/BurstTaper.hpp>
 #include <gnuradio-4.0/sdr/SoapyRaiiWrapper.hpp>
 
+#include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
+
 namespace gr::blocks::sdr {
 
 GR_REGISTER_BLOCK("gr::blocks::sdr::SoapySink", gr::blocks::sdr::SoapySink, ([T], 1UZ), [ uint8_t, int16_t, std::complex<float> ])

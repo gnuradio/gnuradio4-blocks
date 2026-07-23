@@ -11,6 +11,8 @@
 
 #include <gnuradio-4.0/sdr/SoapyRaiiWrapper.hpp>
 
+#include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
+
 namespace gr::blocks::sdr {
 
 namespace detail {

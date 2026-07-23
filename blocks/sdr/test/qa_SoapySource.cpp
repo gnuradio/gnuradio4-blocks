@@ -310,7 +310,7 @@ const boost::ut::suite<"Soapy Block API "> soapyBlockAPI = [] {
     tag("rtlsdr") / "basic RTL soapy data generation test"_test = [&createWatchdog] {
         using namespace gr;
         using namespace gr::blocks::sdr;
-        using namespace gr::testing;
+        using namespace gr::blocks::testing;
         using scheduler = gr::scheduler::Simple<>;
         gr::Graph flow;
         using ValueType = std::complex<float>;
@@ -352,7 +352,7 @@ const boost::ut::suite<"Soapy Block API "> soapyBlockAPI = [] {
     tag("lime") / "basic Lime soapy data generation test"_test = [&createWatchdog] {
         using namespace gr;
         using namespace gr::blocks::sdr;
-        using namespace gr::testing;
+        using namespace gr::blocks::testing;
         using scheduler = gr::scheduler::Simple<>;
         gr::Graph flow;
         using ValueType = std::complex<float>;
