@@ -1,6 +1,5 @@
 set(GrBasicBlocks_HDRS
     include/gnuradio-4.0/basic/ClockSource.hpp
-    include/gnuradio-4.0/basic/CommonBlocks.hpp
     include/gnuradio-4.0/basic/ConverterBlocks.hpp
     include/gnuradio-4.0/basic/DataSink.hpp
     include/gnuradio-4.0/basic/FunctionGenerator.hpp

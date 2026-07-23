@@ -1,20 +1,12 @@
-#ifndef TEST_COMMON_NODES
-#define TEST_COMMON_NODES
-
-#include <algorithm>
-#include <cstdlib> // std::size_t
-#include <list>
-#include <ranges>
-#include <span>
-#include <string>
-#include <string_view>
+#ifndef GR4_TESTING_BUILTIN_TEST_BLOCKS_HPP
+#define GR4_TESTING_BUILTIN_TEST_BLOCKS_HPP
 
 #include <gnuradio-4.0/Block.hpp>
-#include <gnuradio-4.0/BlockRegistry.hpp>
-#include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/meta/reflection.hpp>
 
-GR_REGISTER_BLOCK(builtin_multiply, [T], [ double, float ])
+#include <gnuradio-4.0/testing/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::testing {
 
 template<typename T>
 struct builtin_multiply : gr::Block<builtin_multiply<T>> {
@@ -27,7 +19,7 @@ struct builtin_multiply : gr::Block<builtin_multiply<T>> {
 
     builtin_multiply() = delete;
 
-    builtin_multiply(gr::property_map properties) {
+    explicit builtin_multiply(gr::property_map properties) {
         auto it = properties.find("factor");
         if (it != properties.cend()) {
             auto ptr = gr::checked_access_ptr{it->second.get_if<T>()};
@@ -37,10 +29,8 @@ struct builtin_multiply : gr::Block<builtin_multiply<T>> {
         }
     }
 
-    [[nodiscard]] constexpr auto processOne(T a) const noexcept { return a * factor; }
+    [[nodiscard]] constexpr auto processOne(T value) const noexcept { return value * factor; }
 };
-
-GR_REGISTER_BLOCK(builtin_counter, [T], [ double, float ])
 
 template<typename T>
 struct builtin_counter : gr::Block<builtin_counter<T>> {
@@ -51,13 +41,15 @@ struct builtin_counter : gr::Block<builtin_counter<T>> {
 
     GR_MAKE_REFLECTABLE(builtin_counter, in, out);
 
-    [[nodiscard]] constexpr auto processOne(T a) const noexcept {
+    [[nodiscard]] constexpr auto processOne(T value) const noexcept {
         s_event_count++;
-        return a;
+        return value;
     }
 };
 
 template<typename T>
 gr::Size_t builtin_counter<T>::s_event_count = 0;
 
-#endif // include guard
+} // namespace gr::blocks::testing
+
+#endif // GR4_TESTING_BUILTIN_TEST_BLOCKS_HPP

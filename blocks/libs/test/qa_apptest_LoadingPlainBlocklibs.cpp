@@ -23,20 +23,16 @@ int main() {
     std::ranges::sort(known);
     std::vector<std::string> desired{
         //
-        "builtin_counter<float32>"s,              //
-        "builtin_counter<float64>"s,              //
-        "builtin_multiply<float32>"s,             //
-        "builtin_multiply<float64>"s,             //
-        "gr::basic::DataSink<float32>"s,          //
-        "gr::basic::DataSink<float64>"s,          //
-        "gr::basic::DataSetSink<float32>"s,       //
-        "gr::basic::DataSetSink<float64>"s,       //
-        "gr::basic::FunctionGenerator<float32>"s, //
-        "gr::basic::FunctionGenerator<float64>"s, //
-        "gr::basic::Selector<float32>"s,          //
-        "gr::basic::Selector<float64>"s,          //
-        "gr::basic::SignalGenerator<float32>"s,   //
-        "gr::basic::SignalGenerator<float64>"s    //
+        "gr::blocks::basic::DataSink<float32>"s,          //
+        "gr::blocks::basic::DataSink<float64>"s,          //
+        "gr::blocks::basic::DataSetSink<float32>"s,       //
+        "gr::blocks::basic::DataSetSink<float64>"s,       //
+        "gr::blocks::basic::FunctionGenerator<float32>"s, //
+        "gr::blocks::basic::FunctionGenerator<float64>"s, //
+        "gr::blocks::basic::Selector<float32>"s,          //
+        "gr::blocks::basic::Selector<float64>"s,          //
+        "gr::blocks::basic::SignalGenerator<float32>"s,   //
+        "gr::blocks::basic::SignalGenerator<float64>"s    //
     };
     std::ranges::sort(desired);
 
