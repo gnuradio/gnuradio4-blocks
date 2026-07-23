@@ -9,7 +9,9 @@
 #include <string_view>
 #include <vector>
 
-namespace gr::timing {
+#include <gnuradio-4.0/timing/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::timing {
 
 // NMEA talker IDs: GP=GPS, GL=GLONASS, GA=Galileo, GN=mixed GNSS, BD=BeiDou
 // see https://gpsd.gitlab.io/gpsd/NMEA.html
@@ -319,6 +321,6 @@ private:
     }
 };
 
-} // namespace gr::timing
+} // namespace gr::blocks::timing
 
 #endif // GNURADIO_NMEA_PARSER_HPP

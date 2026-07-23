@@ -19,13 +19,13 @@
 
 using namespace boost::ut;
 using namespace gr;
-using namespace gr::timing;
-using namespace gr::testing;
+using namespace gr::blocks::timing;
+using namespace gr::blocks::testing;
 
 namespace {
 
 std::string nmea(std::string_view body) {
-    auto cs = gr::timing::detail::computeNMEAChecksum(body.substr(1)); // skip '$'
+    auto cs = gr::blocks::timing::detail::computeNMEAChecksum(body.substr(1)); // skip '$'
     return std::format("{}*{:02X}", body, cs);
 }
 

@@ -11,9 +11,11 @@
 #include <gnuradio-4.0/NMEADevice.hpp>
 #include <gnuradio-4.0/NMEAParser.hpp>
 
-namespace gr::timing {
+#include <gnuradio-4.0/timing/NamespaceCompatibility.hpp>
 
-GR_REGISTER_BLOCK("gr::timing::GpsSource", gr::timing::GpsSource)
+namespace gr::blocks::timing {
+
+GR_REGISTER_BLOCK("gr::blocks::timing::GpsSource", gr::blocks::timing::GpsSource)
 
 struct GpsSource : gr::Block<GpsSource> {
     using Description = Doc<R"(GPS/GNSS serial timing source. Reads NMEA sentences from a serial port (auto-detected
@@ -185,6 +187,6 @@ for synchronising otherwise undisciplined SDRs using their PPS)">;
     }
 };
 
-} // namespace gr::timing
+} // namespace gr::blocks::timing
 
 #endif // GNURADIO_GPS_SOURCE_HPP

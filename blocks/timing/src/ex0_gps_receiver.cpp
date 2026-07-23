@@ -17,7 +17,7 @@
 #include <gnuradio-4.0/common/DeviceRegistry.hpp>
 #endif
 
-using namespace gr::timing;
+using namespace gr::blocks::timing;
 
 namespace {
 

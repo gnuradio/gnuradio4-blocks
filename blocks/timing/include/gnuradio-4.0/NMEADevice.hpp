@@ -43,7 +43,9 @@
 #include <unistd.h>
 #endif
 
-namespace gr::timing {
+#include <gnuradio-4.0/timing/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::timing {
 
 enum class BaudRate : std::uint32_t { Baud4800 = 4800, Baud9600 = 9600, Baud19200 = 19200, Baud38400 = 38400, Baud57600 = 57600, Baud115200 = 115200, Baud230400 = 230400 };
 
@@ -1080,6 +1082,6 @@ private:
 #endif
 };
 
-} // namespace gr::timing
+} // namespace gr::blocks::timing
 
 #endif // GNURADIO_NMEA_DEVICE_HPP

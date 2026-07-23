@@ -20,7 +20,7 @@
 #endif
 
 using namespace gr;
-using namespace gr::timing;
+using namespace gr::blocks::timing;
 
 namespace {
 

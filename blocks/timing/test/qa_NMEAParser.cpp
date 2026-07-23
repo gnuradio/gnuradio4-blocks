@@ -3,12 +3,12 @@
 #include <gnuradio-4.0/NMEAParser.hpp>
 
 using namespace boost::ut;
-using namespace gr::timing;
+using namespace gr::blocks::timing;
 
 namespace {
 
 std::string nmea(std::string_view body) {
-    auto cs = gr::timing::detail::computeNMEAChecksum(body.substr(1)); // skip '$'
+    auto cs = gr::blocks::timing::detail::computeNMEAChecksum(body.substr(1)); // skip '$'
     return std::format("{}*{:02X}", body, cs);
 }
 
@@ -126,7 +126,7 @@ const boost::ut::suite<"NMEAParser"> nmeaParserTests = [] {
     };
 
     "nmeaToUTCNs produces correct timestamp"_test = [] {
-        auto ns = gr::timing::detail::nmeaToUTCNs("120000.00", "110326");
+        auto ns = gr::blocks::timing::detail::nmeaToUTCNs("120000.00", "110326");
         expect(ns > 0ULL);
 
         using namespace std::chrono;
@@ -136,23 +136,23 @@ const boost::ut::suite<"NMEAParser"> nmeaParserTests = [] {
     };
 
     "parseField handles invalid input"_test = [] {
-        expect(eq(gr::timing::detail::parseField<int>(""), 0));
-        expect(eq(gr::timing::detail::parseField<float>("abc"), 0.f));
-        expect(eq(gr::timing::detail::parseField<int>("42"), 42));
+        expect(eq(gr::blocks::timing::detail::parseField<int>(""), 0));
+        expect(eq(gr::blocks::timing::detail::parseField<float>("abc"), 0.f));
+        expect(eq(gr::blocks::timing::detail::parseField<int>("42"), 42));
     };
 
     "computeNMEAChecksum XORs payload bytes"_test = [] {
         // "GP" → 'G' ^ 'P' = 0x47 ^ 0x50 = 0x17
-        expect(eq(gr::timing::detail::computeNMEAChecksum("GP"), std::uint8_t{0x17}));
-        expect(eq(gr::timing::detail::computeNMEAChecksum(""), std::uint8_t{0}));
+        expect(eq(gr::blocks::timing::detail::computeNMEAChecksum("GP"), std::uint8_t{0x17}));
+        expect(eq(gr::blocks::timing::detail::computeNMEAChecksum(""), std::uint8_t{0}));
     };
 
     "validateNMEAChecksum accepts valid and rejects invalid"_test = [] {
         auto valid = nmea("$GPRMC,120000.00,A,5001.1900,N,00840.6570,E,0.0,0.0,110326,,,A");
-        expect(gr::timing::detail::validateNMEAChecksum(valid)) << "valid checksum accepted";
-        expect(!gr::timing::detail::validateNMEAChecksum("$GPRMC,test*FF")) << "wrong checksum rejected";
-        expect(gr::timing::detail::validateNMEAChecksum("$GPRMC,test")) << "no checksum accepted";
-        expect(!gr::timing::detail::validateNMEAChecksum("$GP*")) << "incomplete checksum rejected";
+        expect(gr::blocks::timing::detail::validateNMEAChecksum(valid)) << "valid checksum accepted";
+        expect(!gr::blocks::timing::detail::validateNMEAChecksum("$GPRMC,test*FF")) << "wrong checksum rejected";
+        expect(gr::blocks::timing::detail::validateNMEAChecksum("$GPRMC,test")) << "no checksum accepted";
+        expect(!gr::blocks::timing::detail::validateNMEAChecksum("$GP*")) << "incomplete checksum rejected";
     };
 
     "lastFix returns most recent completed fix"_test = [] {

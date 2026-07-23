@@ -3,46 +3,46 @@
 #include <gnuradio-4.0/NMEADevice.hpp>
 
 using namespace boost::ut;
-using namespace gr::timing;
+using namespace gr::blocks::timing;
 
 const boost::ut::suite<"NMEADevice"> nmeaDeviceTests = [] {
     "parseHex16 converts hex strings"_test = [] {
-        expect(eq(gr::timing::detail::parseHex16("0000"), std::uint16_t{0}));
-        expect(eq(gr::timing::detail::parseHex16("FFFF"), std::uint16_t{0xFFFF}));
-        expect(eq(gr::timing::detail::parseHex16("1546"), std::uint16_t{0x1546}));
-        expect(eq(gr::timing::detail::parseHex16("01a8"), std::uint16_t{0x01a8}));
-        expect(eq(gr::timing::detail::parseHex16("abCD"), std::uint16_t{0xabCD}));
+        expect(eq(gr::blocks::timing::detail::parseHex16("0000"), std::uint16_t{0}));
+        expect(eq(gr::blocks::timing::detail::parseHex16("FFFF"), std::uint16_t{0xFFFF}));
+        expect(eq(gr::blocks::timing::detail::parseHex16("1546"), std::uint16_t{0x1546}));
+        expect(eq(gr::blocks::timing::detail::parseHex16("01a8"), std::uint16_t{0x01a8}));
+        expect(eq(gr::blocks::timing::detail::parseHex16("abCD"), std::uint16_t{0xabCD}));
     };
 
     "parseHex16 handles trailing whitespace"_test = [] {
-        expect(eq(gr::timing::detail::parseHex16("1546\n"), std::uint16_t{0x1546}));
-        expect(eq(gr::timing::detail::parseHex16("01a8\r\n"), std::uint16_t{0x01a8}));
+        expect(eq(gr::blocks::timing::detail::parseHex16("1546\n"), std::uint16_t{0x1546}));
+        expect(eq(gr::blocks::timing::detail::parseHex16("01a8\r\n"), std::uint16_t{0x01a8}));
     };
 
     "isNMEALine recognises valid NMEA prefixes"_test = [] {
-        expect(gr::timing::detail::isNMEALine("$GPRMC,120000.00,A,,,,,,,,,*00"));
-        expect(gr::timing::detail::isNMEALine("$GNRMC,test"));
-        expect(gr::timing::detail::isNMEALine("$GPGGA,test"));
-        expect(!gr::timing::detail::isNMEALine("")) << "empty line";
-        expect(!gr::timing::detail::isNMEALine("GPRMC")) << "missing $";
-        expect(!gr::timing::detail::isNMEALine("$1234")) << "digits after $";
-        expect(!gr::timing::detail::isNMEALine("$GP")) << "too short";
+        expect(gr::blocks::timing::detail::isNMEALine("$GPRMC,120000.00,A,,,,,,,,,*00"));
+        expect(gr::blocks::timing::detail::isNMEALine("$GNRMC,test"));
+        expect(gr::blocks::timing::detail::isNMEALine("$GPGGA,test"));
+        expect(!gr::blocks::timing::detail::isNMEALine("")) << "empty line";
+        expect(!gr::blocks::timing::detail::isNMEALine("GPRMC")) << "missing $";
+        expect(!gr::blocks::timing::detail::isNMEALine("$1234")) << "digits after $";
+        expect(!gr::blocks::timing::detail::isNMEALine("$GP")) << "too short";
     };
 
     "isKnownGpsDevice matches known VID/PID pairs"_test = [] {
-        expect(gr::timing::detail::isKnownGpsDevice(0x1546, 0x01a8)) << "u-blox 8";
-        expect(gr::timing::detail::isKnownGpsDevice(0x067b, 0x2303)) << "Prolific PL2303";
-        expect(gr::timing::detail::isKnownGpsDevice(0x1a86, 0x7523)) << "CH340";
-        expect(!gr::timing::detail::isKnownGpsDevice(0x0000, 0x0000)) << "unknown device";
-        expect(!gr::timing::detail::isKnownGpsDevice(0x1546, 0xFFFF)) << "known vendor, wrong product";
+        expect(gr::blocks::timing::detail::isKnownGpsDevice(0x1546, 0x01a8)) << "u-blox 8";
+        expect(gr::blocks::timing::detail::isKnownGpsDevice(0x067b, 0x2303)) << "Prolific PL2303";
+        expect(gr::blocks::timing::detail::isKnownGpsDevice(0x1a86, 0x7523)) << "CH340";
+        expect(!gr::blocks::timing::detail::isKnownGpsDevice(0x0000, 0x0000)) << "unknown device";
+        expect(!gr::blocks::timing::detail::isKnownGpsDevice(0x1546, 0xFFFF)) << "known vendor, wrong product";
     };
 
     "lookupDescription returns description for known devices"_test = [] {
-        auto desc = gr::timing::detail::lookupDescription(0x1546, 0x01a8);
+        auto desc = gr::blocks::timing::detail::lookupDescription(0x1546, 0x01a8);
         expect(!desc.empty()) << "u-blox 8 has description";
         expect(desc.find("u-blox") != std::string::npos);
 
-        expect(gr::timing::detail::lookupDescription(0x0000, 0x0000).empty()) << "unknown device returns empty";
+        expect(gr::blocks::timing::detail::lookupDescription(0x0000, 0x0000).empty()) << "unknown device returns empty";
     };
 
     "kKnownGpsReceiverIds is non-empty and well-formed"_test = [] {

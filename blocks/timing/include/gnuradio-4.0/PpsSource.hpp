@@ -27,9 +27,11 @@
 
 #include <gnuradio-4.0/NMEAParser.hpp> // EmitMode
 
-namespace gr::timing {
+#include <gnuradio-4.0/timing/NamespaceCompatibility.hpp>
 
-GR_REGISTER_BLOCK("gr::timing::PpsSource", gr::timing::PpsSource)
+namespace gr::blocks::timing {
+
+GR_REGISTER_BLOCK("gr::blocks::timing::PpsSource", gr::blocks::timing::PpsSource)
 
 enum class ClockMode : std::uint8_t {
     NTP,   // CLOCK_REALTIME disciplined by ntpd/chrony
@@ -338,6 +340,6 @@ Linux only — uses clock_nanosleep, adjtimex, /dev/ptpN, and /dev/ppsN kernel i
     }
 };
 
-} // namespace gr::timing
+} // namespace gr::blocks::timing
 
 #endif // GNURADIO_PPS_SOURCE_HPP

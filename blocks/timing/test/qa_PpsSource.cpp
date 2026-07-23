@@ -8,8 +8,8 @@
 
 using namespace boost::ut;
 using namespace gr;
-using namespace gr::timing;
-using namespace gr::testing;
+using namespace gr::blocks::timing;
+using namespace gr::blocks::testing;
 
 const boost::ut::suite<"PpsSource"> ppsSourceTests = [] {
     "PpsSource NTP mode emits PPS tags"_test = [] {
@@ -133,7 +133,7 @@ const boost::ut::suite<"PpsSource"> ppsSourceTests = [] {
     };
 
     "queryKernelDiscipline returns plausible values"_test = [] {
-        auto d = gr::timing::detail::queryKernelDiscipline();
+        auto d = gr::blocks::timing::detail::queryKernelDiscipline();
         // on a running Linux system, these should be finite values
         expect(d.maxErrorNs >= 0) << "max_error >= 0";
         expect(d.estErrorNs >= 0) << "est_error >= 0";
@@ -143,25 +143,25 @@ const boost::ut::suite<"PpsSource"> ppsSourceTests = [] {
 
     "timespecToNs round-trips correctly"_test = [] {
         timespec ts{.tv_sec = 1000, .tv_nsec = 500};
-        auto     ns = gr::timing::detail::timespecToNs(ts);
+        auto     ns = gr::blocks::timing::detail::timespecToNs(ts);
         expect(eq(ns, 1000ULL * 1'000'000'000ULL + 500ULL));
     };
 
     "clockModeName covers all modes"_test = [] {
-        expect(eq(gr::timing::detail::clockModeName(ClockMode::NTP), std::string_view("NTP")));
-        expect(eq(gr::timing::detail::clockModeName(ClockMode::PTP), std::string_view("PTP")));
-        expect(eq(gr::timing::detail::clockModeName(ClockMode::TAI), std::string_view("TAI")));
-        expect(eq(gr::timing::detail::clockModeName(ClockMode::HwPps), std::string_view("HwPps")));
-        expect(eq(gr::timing::detail::clockModeName(ClockMode::Auto), std::string_view("Auto")));
+        expect(eq(gr::blocks::timing::detail::clockModeName(ClockMode::NTP), std::string_view("NTP")));
+        expect(eq(gr::blocks::timing::detail::clockModeName(ClockMode::PTP), std::string_view("PTP")));
+        expect(eq(gr::blocks::timing::detail::clockModeName(ClockMode::TAI), std::string_view("TAI")));
+        expect(eq(gr::blocks::timing::detail::clockModeName(ClockMode::HwPps), std::string_view("HwPps")));
+        expect(eq(gr::blocks::timing::detail::clockModeName(ClockMode::Auto), std::string_view("Auto")));
     };
 
     "leapStatusName covers all states"_test = [] {
-        expect(eq(gr::timing::detail::leapStatusName(TIME_OK), std::string_view("OK")));
-        expect(eq(gr::timing::detail::leapStatusName(TIME_INS), std::string_view("insert_leap")));
-        expect(eq(gr::timing::detail::leapStatusName(TIME_DEL), std::string_view("delete_leap")));
-        expect(eq(gr::timing::detail::leapStatusName(TIME_OOP), std::string_view("leap_in_progress")));
-        expect(eq(gr::timing::detail::leapStatusName(TIME_WAIT), std::string_view("leap_occurred")));
-        expect(eq(gr::timing::detail::leapStatusName(TIME_ERROR), std::string_view("unsynchronised")));
+        expect(eq(gr::blocks::timing::detail::leapStatusName(TIME_OK), std::string_view("OK")));
+        expect(eq(gr::blocks::timing::detail::leapStatusName(TIME_INS), std::string_view("insert_leap")));
+        expect(eq(gr::blocks::timing::detail::leapStatusName(TIME_DEL), std::string_view("delete_leap")));
+        expect(eq(gr::blocks::timing::detail::leapStatusName(TIME_OOP), std::string_view("leap_in_progress")));
+        expect(eq(gr::blocks::timing::detail::leapStatusName(TIME_WAIT), std::string_view("leap_occurred")));
+        expect(eq(gr::blocks::timing::detail::leapStatusName(TIME_ERROR), std::string_view("unsynchronised")));
     };
 
     "ClockMode enum values"_test = [] {
