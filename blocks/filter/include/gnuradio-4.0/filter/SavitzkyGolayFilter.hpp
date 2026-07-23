@@ -6,7 +6,9 @@
 #include <gnuradio-4.0/DataSet.hpp>
 #include <gnuradio-4.0/algorithm/filter/SavitzkyGolay.hpp>
 
-namespace gr::filter {
+#include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::filter {
 
 using namespace gr;
 
@@ -14,7 +16,7 @@ using namespace gr;
 // Streaming Savitzky-Golay Filter (scalar T samples)
 // ============================================================================
 
-GR_REGISTER_BLOCK(gr::filter::SavitzkyGolayFilter, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::filter::SavitzkyGolayFilter, [T], [ float, double ])
 
 template<typename T>
 struct SavitzkyGolayFilter : Block<SavitzkyGolayFilter<T>> {
@@ -84,7 +86,7 @@ public:
 // DataSet Savitzky-Golay Filter (zero-phase batch processing)
 // ============================================================================
 
-GR_REGISTER_BLOCK(gr::filter::SavitzkyGolayDataSetFilter, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::filter::SavitzkyGolayDataSetFilter, [T], [ float, double ])
 
 template<typename T>
 struct SavitzkyGolayDataSetFilter : Block<SavitzkyGolayDataSetFilter<T>> {
@@ -163,6 +165,6 @@ public:
     }
 };
 
-} // namespace gr::filter
+} // namespace gr::blocks::filter
 
 #endif // GNURADIO_SAVITZKY_GOLAY_FILTER_HPP

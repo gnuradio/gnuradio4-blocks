@@ -5,11 +5,13 @@
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/algorithm/filter/SvdFilter.hpp>
 
-namespace gr::filter {
+#include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::filter {
 
 using namespace gr;
 
-GR_REGISTER_BLOCK(gr::filter::SvdDenoiser, [T], [ float, double, std::complex<float>, std::complex<double> ])
+GR_REGISTER_BLOCK(gr::blocks::filter::SvdDenoiser, [T], [ float, double, std::complex<float>, std::complex<double> ])
 
 template<typename T>
 struct SvdDenoiser : Block<SvdDenoiser<T>> {
@@ -90,6 +92,6 @@ public:
     [[nodiscard]] constexpr T processOne(T input) noexcept { return _state.processOne(input); }
 };
 
-} // namespace gr::filter
+} // namespace gr::blocks::filter
 
 #endif // GNURADIO_SVD_DENOISER_HPP

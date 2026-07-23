@@ -20,10 +20,12 @@
 #include <gnuradio-4.0/algorithm/fourier/fft_common.hpp>
 #include <gnuradio-4.0/algorithm/fourier/window.hpp>
 
-namespace gr::filter {
+#include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
 
-GR_REGISTER_BLOCK("gr::filter::FrequencyEstimatorTimeDomain", gr::filter::FrequencyEstimatorTimeDomain, [T], [ float, double ])
-GR_REGISTER_BLOCK("gr::filter::FrequencyEstimatorTimeDomainDecimating", gr::filter::FrequencyEstimatorTimeDomain, ([T], gr::Resampling<10U>), [ float, double ])
+namespace gr::blocks::filter {
+
+GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorTimeDomain", gr::blocks::filter::FrequencyEstimatorTimeDomain, [T], [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorTimeDomainDecimating", gr::blocks::filter::FrequencyEstimatorTimeDomain, ([T], gr::Resampling<10U>), [ float, double ])
 
 template<typename T, typename... Args>
 requires std::floating_point<T>
@@ -55,9 +57,9 @@ This block estimates the frequency of a signal using the time-domain algorithm d
     T          _prevFrequency{T(50)};   // previous frequency value for continuity
     gr::Size_t _n_period_estimate{60U}; // number of samples for estimation period according to [0]
 
-    FilterCoefficients<T> _singleFilterSection;
-    HistoryBuffer<T>      _inputHistory{32UZ};
-    HistoryBuffer<T>      _outputHistory{32UZ};
+    gr::filter::FilterCoefficients<T> _singleFilterSection;
+    HistoryBuffer<T>                  _inputHistory{32UZ};
+    HistoryBuffer<T>                  _outputHistory{32UZ};
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         if (newSettings.contains("n_periods") || newSettings.contains("sample_rate") || newSettings.contains("f_expected") || newSettings.contains("f_min") || newSettings.contains("f_max")) {
@@ -72,9 +74,8 @@ This block estimates the frequency of a signal using the time-domain algorithm d
         // Calculate filter coefficients
         // * IIR over FIR: reduced numerical complexity and minimizes group delay
         // * BESSEL: optimizes phase linearity in the pass-band and in turn frequency accuracy
-        _n_period_estimate = n_periods * static_cast<gr::Size_t>(f_min > 0.f ? sample_rate / std::min(f_min.value, f_expected.value) : sample_rate / f_expected.value);
-        using namespace gr::filter::iir;
-        _singleFilterSection = iir::designFilter<T, 0UZ>(Type::LOWPASS, FilterParameters{.order = 2UZ, .fLow = static_cast<double>(f_max), .fs = static_cast<double>(sample_rate)}, Design::BESSEL);
+        _n_period_estimate   = n_periods * static_cast<gr::Size_t>(f_min > 0.f ? sample_rate / std::min(f_min.value, f_expected.value) : sample_rate / f_expected.value);
+        _singleFilterSection = gr::filter::iir::designFilter<T, 0UZ>(gr::filter::Type::LOWPASS, gr::filter::FilterParameters{.order = 2UZ, .fLow = static_cast<double>(f_max), .fs = static_cast<double>(sample_rate)}, gr::filter::iir::Design::BESSEL);
         _inputHistory        = HistoryBuffer<T>(std::bit_ceil(_singleFilterSection.b.size()));
         _outputHistory       = HistoryBuffer<T>(std::bit_ceil(std::max(_singleFilterSection.a.size(), std::size_t(_n_period_estimate))));
     }
@@ -178,8 +179,8 @@ private:
 template<typename T>
 using FrequencyEstimatorTimeDomainDecimating = FrequencyEstimatorTimeDomain<T, Resampling<10U>>;
 
-GR_REGISTER_BLOCK("gr::filter::FrequencyEstimatorFrequencyDomain", gr::filter::FrequencyEstimatorFrequencyDomain, [T], [ float, double ])
-GR_REGISTER_BLOCK("gr::filter::FrequencyEstimatorFrequencyDomainDecimating", gr::filter::FrequencyEstimatorFrequencyDomain, ([T], gr::Resampling<10U>), [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorFrequencyDomain", gr::blocks::filter::FrequencyEstimatorFrequencyDomain, [T], [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorFrequencyDomainDecimating", gr::blocks::filter::FrequencyEstimatorFrequencyDomain, ([T], gr::Resampling<10U>), [ float, double ])
 
 template<typename T, typename... Args>
 requires std::floating_point<T>
@@ -382,7 +383,7 @@ template<typename T>
 inline constexpr bool is_derivative_v = is_derivative<T>::value;
 } // namespace detail
 
-GR_REGISTER_BLOCK("gr::filter::IQDemodulator", gr::filter::IQDemodulator, ([T], gr::Resampling<1024U, 1U, false>), [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::filter::IQDemodulator", gr::blocks::filter::IQDemodulator, ([T], gr::Resampling<1024U, 1U, false>), [ float, double ])
 
 template<typename T, typename... Args>
 requires std::floating_point<T>
@@ -652,6 +653,6 @@ using IQDemodulatorDecimating = IQDemodulator<T, Resampling<1024U, 1U, false>>;
 template<typename T, DerivativeMethod M>
 using IQDemodulatorFixed = IQDemodulator<T, Resampling<1024U, 1U, false>, Derivative<M, true>>;
 
-} // namespace gr::filter
+} // namespace gr::blocks::filter
 
 #endif // FREQUENCY_ESTIMATOR_HPP

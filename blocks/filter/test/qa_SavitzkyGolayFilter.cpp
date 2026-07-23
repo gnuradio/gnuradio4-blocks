@@ -16,7 +16,7 @@
 
 const boost::ut::suite<"SavitzkyGolayFilter block"> sgFilterBlockTests = [] {
     using namespace boost::ut;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
 
     "float default parameters"_test = [] {
         SavitzkyGolayFilter<float> filter;
@@ -115,7 +115,7 @@ const boost::ut::suite<"SavitzkyGolayFilter block"> sgFilterBlockTests = [] {
 
 const boost::ut::suite<"SavitzkyGolayDataSetFilter block"> sgDataSetBlockTests = [] {
     using namespace boost::ut;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
 
     "basic processing"_test = [] {
         constexpr std::size_t N = 100UZ;
@@ -196,7 +196,7 @@ const boost::ut::suite<"SavitzkyGolayDataSetFilter block"> sgDataSetBlockTests =
 
 const boost::ut::suite<"SavitzkyGolayFilter edge cases"> sgFilterEdgeCaseTests = [] {
     using namespace boost::ut;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
 
     "sample_rate parameter"_test = [] {
         "sample_rate affects derivative scaling"_test = [] {
@@ -302,7 +302,7 @@ const boost::ut::suite<"SavitzkyGolayFilter edge cases"> sgFilterEdgeCaseTests =
 
 const boost::ut::suite<"SavitzkyGolayDataSetFilter edge cases"> sgDataSetEdgeCaseTests = [] {
     using namespace boost::ut;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
 
     "empty signal_values"_test = [] {
         gr::DataSet<double> input;
@@ -447,7 +447,7 @@ auto computeRms(const std::vector<double>& filtered, const std::vector<double>& 
 const boost::ut::suite<"SG vs SVD comparison"> comparisonTests = [] {
     using namespace boost::ut;
     using namespace gr::graphs;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
 
     constexpr std::size_t kChartWidth  = 160UZ;
     constexpr std::size_t kChartHeight = 50UZ;

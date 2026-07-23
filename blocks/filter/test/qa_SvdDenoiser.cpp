@@ -10,7 +10,7 @@
 
 const boost::ut::suite<"SvdDenoiser Block"> svdDenoiserBlockTests = [] {
     using namespace boost::ut;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
 
     "SvdDenoiser float default parameters"_test = [] {
         SvdDenoiser<float> denoiser;
@@ -119,7 +119,7 @@ const boost::ut::suite<"SvdDenoiser Block"> svdDenoiserBlockTests = [] {
 
 const boost::ut::suite<"SvdDenoiser complex support"> svdDenoiserComplexTests = [] {
     using namespace boost::ut;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
 
     "complex float"_test = [] {
         using C = std::complex<float>;
@@ -158,7 +158,7 @@ const boost::ut::suite<"SvdDenoiser complex support"> svdDenoiserComplexTests = 
 
 const boost::ut::suite<"SvdDenoiser edge cases"> svdDenoiserEdgeCaseTests = [] {
     using namespace boost::ut;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
 
     "hankel_rows parameter"_test = [] {
         "default hankel_rows = 0 uses window_size/2"_test = [] {

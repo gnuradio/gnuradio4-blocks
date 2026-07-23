@@ -13,11 +13,13 @@
 
 #include <magic_enum.hpp>
 
-namespace gr::filter {
+#include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::filter {
 
 using namespace gr;
 
-GR_REGISTER_BLOCK(gr::filter::fir_filter, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::filter::fir_filter, [T], [ float, double ])
 
 template<typename T>
 requires std::floating_point<T>
@@ -54,10 +56,10 @@ enum class IIRForm {
     DF_II_TRANSPOSED,
 };
 
-GR_REGISTER_BLOCK(gr::filter::iir_filter, ([T], gr::filter::IIRForm::DF_I), [ float, double ])
-GR_REGISTER_BLOCK(gr::filter::iir_filter, ([T], gr::filter::IIRForm::DF_II), [ float, double ])
-GR_REGISTER_BLOCK(gr::filter::iir_filter, ([T], gr::filter::IIRForm::DF_I_TRANSPOSED), [ float, double ])
-GR_REGISTER_BLOCK(gr::filter::iir_filter, ([T], gr::filter::IIRForm::DF_II_TRANSPOSED), [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_I), [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_II), [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_I_TRANSPOSED), [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_II_TRANSPOSED), [ float, double ])
 
 template<typename T, IIRForm form = std::is_floating_point_v<T> ? IIRForm::DF_II : IIRForm::DF_I>
 requires std::floating_point<T>
@@ -121,8 +123,8 @@ a are the feedback coefficients
     }
 };
 
-GR_REGISTER_BLOCK(gr::filter::BasicFilter, ([T]), [ double, float, gr::UncertainValue<float>, gr::UncertainValue<double> ])
-GR_REGISTER_BLOCK(gr::filter::BasicFilterProto, ([T], gr::Resampling<1UZ, 1UZ, false>), [ double, float, gr::UncertainValue<float>, gr::UncertainValue<double> ])
+GR_REGISTER_BLOCK(gr::blocks::filter::BasicFilter, ([T]), [ double, float, gr::UncertainValue<float>, gr::UncertainValue<double> ])
+GR_REGISTER_BLOCK(gr::blocks::filter::BasicFilterProto, ([T], gr::Resampling<1UZ, 1UZ, false>), [ double, float, gr::UncertainValue<float>, gr::UncertainValue<double> ])
 
 enum class FilterType { FIR, IIR };
 
@@ -140,19 +142,19 @@ with selectable filter type (low-pass, high-pass, band-pass, band-stop), and sup
     PortIn<T>  in;
     PortOut<T> out;
 
-    using FilterImpl = std::conditional_t<UncertainValueLike<T>, filter::ErrorPropagatingFilter<T>, filter::Filter<T>>;
+    using FilterImpl = std::conditional_t<UncertainValueLike<T>, gr::filter::ErrorPropagatingFilter<T>, gr::filter::Filter<T>>;
 
     FilterImpl _filter;
 
     // Public settings
-    Annotated<FilterType, "filter_type", Doc<"Filter type ('FIR' or 'IIR')">, Visible>                                                         filter_type     = FilterType::IIR;
-    Annotated<filter::Type, "filter_response", Doc<"Filter response ('LOWPASS', 'HIGHPASS', 'BANDPASS', 'BANDSTOP')">, Visible>                filter_response = filter::Type::LOWPASS;
-    Annotated<gr::Size_t, "filter_order", Doc<"Filter order">>                                                                                 filter_order{3};
-    Annotated<float, "f_low", Doc<"Low cutoff frequency in Hz">, Visible>                                                                      f_low{0.1f};
-    Annotated<float, "f_high", Doc<"High cutoff frequency in Hz (only for BANDPASS/BANDSTOP)">, Visible>                                       f_high{0.2f};
-    Annotated<float, "sample rate", Doc<"Sample rate in Hz">, Visible>                                                                         sample_rate{1.0f};
-    Annotated<gr::Size_t, "decimation factor", Doc<"1: none, i.e. preserving the relationship: N_out = N_in/decimate">>                        decimate{1U};
-    Annotated<filter::iir::Design, "iir_design_method", Doc<"IIR Filter design method ('BUTTERWORTH', 'BESSEL', 'CHEBYSHEV1', 'CHEBYSHEV2')">> iir_design_method = filter::iir::Design::BUTTERWORTH;
+    Annotated<FilterType, "filter_type", Doc<"Filter type ('FIR' or 'IIR')">, Visible>                                                             filter_type     = FilterType::IIR;
+    Annotated<gr::filter::Type, "filter_response", Doc<"Filter response ('LOWPASS', 'HIGHPASS', 'BANDPASS', 'BANDSTOP')">, Visible>                filter_response = gr::filter::Type::LOWPASS;
+    Annotated<gr::Size_t, "filter_order", Doc<"Filter order">>                                                                                     filter_order{3};
+    Annotated<float, "f_low", Doc<"Low cutoff frequency in Hz">, Visible>                                                                          f_low{0.1f};
+    Annotated<float, "f_high", Doc<"High cutoff frequency in Hz (only for BANDPASS/BANDSTOP)">, Visible>                                           f_high{0.2f};
+    Annotated<float, "sample rate", Doc<"Sample rate in Hz">, Visible>                                                                             sample_rate{1.0f};
+    Annotated<gr::Size_t, "decimation factor", Doc<"1: none, i.e. preserving the relationship: N_out = N_in/decimate">>                            decimate{1U};
+    Annotated<gr::filter::iir::Design, "iir_design_method", Doc<"IIR Filter design method ('BUTTERWORTH', 'BESSEL', 'CHEBYSHEV1', 'CHEBYSHEV2')">> iir_design_method = gr::filter::iir::Design::BUTTERWORTH;
     Annotated<algorithm::window::Type, "fir_design_method", Doc<"FIR Filter design method ('None', 'Rectangular', 'Hamming', 'Hann', 'HannExp', 'Blackman', 'Nuttall', 'BlackmanHarris', 'BlackmanNuttall', 'FlatTop', 'Exponential', 'Kaiser')">> //
         fir_design_method = algorithm::window::Type::Kaiser;
 
@@ -210,7 +212,7 @@ using BasicFilter = BasicFilterProto<T>;
 template<typename T>
 using BasicDecimatingFilter = BasicFilterProto<T, Resampling<1UZ, 1UZ, false>>;
 
-GR_REGISTER_BLOCK(gr::filter::Decimator, [T], [ uint8_t, int8_t, uint16_t, int16_t, uint32_t, int32_t, uint64_t, int64_t, float, double, std::complex<float>, std::complex<double>, gr::UncertainValue<float>, gr::UncertainValue<double> ])
+GR_REGISTER_BLOCK(gr::blocks::filter::Decimator, [T], [ uint8_t, int8_t, uint16_t, int16_t, uint32_t, int32_t, uint64_t, int64_t, float, double, std::complex<float>, std::complex<double>, gr::UncertainValue<float>, gr::UncertainValue<double> ])
 
 template<typename T>
 struct Decimator : Block<Decimator<T>, Resampling<1UZ, 1UZ, false>> {
@@ -244,6 +246,6 @@ aliasing and sub-sampling related effects.
     }
 };
 
-} // namespace gr::filter
+} // namespace gr::blocks::filter
 
 #endif // GNURADIO_TIME_DOMAIN_FILTER_HPP

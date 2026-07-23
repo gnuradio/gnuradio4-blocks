@@ -45,7 +45,7 @@ constexpr size_t estimate_settling_time(const Range& step_response, std::size_t 
 
 const boost::ut::suite SequenceTests = [] {
     using namespace boost::ut;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
 
     "FIR and IIR general tests"_test = [] {
         Tensor<double> fir_coeffs(10, 0.1); // box car filter
@@ -125,7 +125,7 @@ const boost::ut::suite SequenceTests = [] {
     };
 };
 
-template<typename T, gr::filter::FilterType type>
+template<typename T, gr::blocks::filter::FilterType type>
 struct FilterTestParam {
     using value_type                  = T;
     static constexpr auto filter_type = type;
@@ -133,7 +133,7 @@ struct FilterTestParam {
 
 const boost::ut::suite<"Basic[Decimating]Filter"> BasicFilterTests = [] {
     using namespace boost::ut;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
     using namespace std::string_literals;
 
     constexpr static auto maxOp = []<typename T>(const T a, const T b) -> bool { return std::abs(gr::value(a)) < std::abs(gr::value(b)); };
@@ -262,14 +262,14 @@ const boost::ut::suite<"Basic[Decimating]Filter"> BasicFilterTests = [] {
     } | std::vector<FilterType>({FilterType::FIR, FilterType::IIR});
 
     "Decimator - Low-pass Filter Test"_test = [] {
-        using namespace gr::testing;
+        using namespace gr::blocks::testing;
         using T = int;
 
         constexpr gr::Size_t decimationFactor = 10;
 
         gr::Graph flow;
         auto&     source    = flow.emplaceBlock<CountingSource<T>>({{"n_samples_max", 10 * decimationFactor}});
-        auto&     decimator = flow.emplaceBlock<gr::filter::Decimator<T>>({{"decim", decimationFactor}});
+        auto&     decimator = flow.emplaceBlock<gr::blocks::filter::Decimator<T>>({{"decim", decimationFactor}});
         auto&     sink      = flow.emplaceBlock<CountingSink<T>>();
         expect(flow.connect<"out", "in">(source, decimator).has_value());
         expect(flow.connect<"out", "in">(decimator, sink).has_value());

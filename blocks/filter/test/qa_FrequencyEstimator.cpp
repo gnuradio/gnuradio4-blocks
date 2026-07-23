@@ -66,7 +66,7 @@ void testFrequencyEstimator(EstimatorType& estimator, ProcessFunc processFunc, s
 
 const boost::ut::suite<"FrequencyEstimatorTests"> FrequencyEstimatorTests = [] {
     using namespace boost::ut;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
 
     constexpr static std::array<float, 30> testFrequencies{
         49.9f,                                                                                  //
@@ -215,7 +215,7 @@ auto generateIQTestSignals(float freq, float fs, T ampRatio, T phaseShift, T dcO
 
 const boost::ut::suite<"IQDemodulator"> iqDemodulatorTests = [] {
     using namespace boost::ut;
-    using namespace gr::filter;
+    using namespace gr::blocks::filter;
 
     // test parameters: {carrier_freq, sample_rate} - must satisfy Nyquist: freq < fs/2
     struct TestCase {
