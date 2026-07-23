@@ -15,6 +15,8 @@
 #include <span>
 #include <string_view>
 
+#include <gnuradio-4.0/fileio/NamespaceCompatibility.hpp>
+
 namespace gr::blocks::fileio {
 
 namespace detail {

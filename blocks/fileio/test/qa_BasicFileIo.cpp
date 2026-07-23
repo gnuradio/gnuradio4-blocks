@@ -47,7 +47,7 @@ template<typename DataType>
 void runTest(const gr::blocks::fileio::Mode mode) {
     using namespace boost::ut;
     using namespace gr::blocks::fileio;
-    using namespace gr::testing;
+    using namespace gr::blocks::testing;
     using scheduler = gr::scheduler::Simple<>;
 
     constexpr gr::Size_t nSamples    = 1024U;

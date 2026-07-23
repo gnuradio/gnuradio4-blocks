@@ -30,6 +30,8 @@
 #include <utility>
 #include <vector>
 
+#include <gnuradio-4.0/fileio/NamespaceCompatibility.hpp>
+
 namespace gr::blocks::fileio {
 namespace detail {
 
