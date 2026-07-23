@@ -7,7 +7,9 @@
 
 #include <gnuradio-4.0/algorithm/signal/SignalGeneratorCore.hpp>
 
-namespace gr::basic {
+#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::basic {
 
 using namespace gr;
 
@@ -19,7 +21,7 @@ inline static constexpr gr::meta::fixed_string TypeNames = "[Const, Sin, Cos, Sq
 
 } // namespace signal_generator
 
-GR_REGISTER_BLOCK(gr::basic::SignalGenerator, [T], [ uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::complex<float>, std::complex<double> ])
+GR_REGISTER_BLOCK(gr::blocks::basic::SignalGenerator, [T], [ uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::complex<float>, std::complex<double> ])
 
 template<typename T>
 struct SignalGenerator : Block<SignalGenerator<T>>, BlockingSync<SignalGenerator<T>> {
@@ -85,6 +87,6 @@ Signal types (A = amplitude, f = frequency, P = phase, O = offset):
     [[nodiscard]] T generateSample() noexcept { return _core.generateSample(); }
 };
 
-} // namespace gr::basic
+} // namespace gr::blocks::basic
 
 #endif // GNURADIO_SIGNAL_GENERATOR_HPP

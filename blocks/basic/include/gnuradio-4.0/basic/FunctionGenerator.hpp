@@ -13,7 +13,9 @@
 #include <magic_enum.hpp>
 #include <magic_enum_utility.hpp>
 
-namespace gr::basic {
+#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::basic {
 
 using namespace gr;
 
@@ -132,7 +134,7 @@ template<typename T>
 
 } // namespace function_generator
 
-GR_REGISTER_BLOCK(gr::basic::FunctionGenerator, [T], [ uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::complex<float>, std::complex<double> ])
+GR_REGISTER_BLOCK(gr::blocks::basic::FunctionGenerator, [T], [ uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::complex<float>, std::complex<double> ])
 
 template<typename T>
 struct FunctionGenerator : Block<FunctionGenerator<T>>, BlockingSync<FunctionGenerator<T>> {
@@ -360,6 +362,6 @@ private:
     }
 };
 
-} // namespace gr::basic
+} // namespace gr::blocks::basic
 
 #endif // GNURADIO_FUNCTION_GENERATOR_HPP

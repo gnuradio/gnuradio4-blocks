@@ -16,7 +16,9 @@
 #include <limits>
 #include <print>
 
-namespace gr::basic {
+#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::basic {
 
 enum class OverflowPolicy : std::uint8_t {
     Backpressure = 0U, /// creates backpressure on the upstream flow-graph, guaranteeing reliable delivery at the expense of potential stalling.
@@ -425,7 +427,7 @@ inline constexpr void checkTag([[maybe_unused]] const Tag& tag) {
 }
 } // namespace detail
 
-GR_REGISTER_BLOCK(gr::basic::DataSink, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::basic::DataSink, [T], [ float, double ])
 
 /**
  * @brief generic data sink for exporting streams to non-GR C++ APIs.
@@ -1034,7 +1036,7 @@ private:
     };
 };
 
-GR_REGISTER_BLOCK(gr::basic::DataSetSink, [T], [ float, double ])
+GR_REGISTER_BLOCK(gr::blocks::basic::DataSetSink, [T], [ float, double ])
 /**
  * @brief data sink for exporting data set streams to non-GR C++ APIs.
  *
@@ -1193,6 +1195,6 @@ private:
     }; // Listener
 };
 
-} // namespace gr::basic
+} // namespace gr::blocks::basic
 
 #endif

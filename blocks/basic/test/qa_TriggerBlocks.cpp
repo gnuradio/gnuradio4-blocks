@@ -13,8 +13,8 @@
 using namespace boost::ut;
 
 const suite<"SchmittTrigger Block"> triggerTests = [] {
-    using namespace gr::basic;
-    using namespace gr::testing;
+    using namespace gr::blocks::basic;
+    using namespace gr::blocks::testing;
 
     constexpr static float sample_rate       = 1000.f; // 100 Hz
     bool                   enableVisualTests = false;
@@ -30,7 +30,7 @@ const suite<"SchmittTrigger Block"> triggerTests = [] {
             Graph graph;
 
             // create blocks
-            auto& clockSrc = graph.emplaceBlock<gr::basic::ClockSource<std::uint8_t>>({//
+            auto& clockSrc = graph.emplaceBlock<gr::blocks::basic::ClockSource<std::uint8_t>>({//
                 {"sample_rate", sample_rate}, {"n_samples_max", 1000U}, {"name", "ClockSource"},
                 {"tag_times",
                     std::vector<std::uint64_t>{
@@ -64,7 +64,7 @@ const suite<"SchmittTrigger Block"> triggerTests = [] {
                 {"trigger_name_rising_edge", "MY_RISING_EDGE"},  //
                 {"trigger_name_falling_edge", "MY_FALLING_EDGE"} //
             });
-            auto& tagSink        = graph.emplaceBlock<TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}, {"log_tags", true}, {"log_samples", false}, {"verbose_console", false}});
+            auto& tagSink        = graph.emplaceBlock<TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}, {"log_tags", true}, {"log_samples", false}, {"verbose_console", false}});
 
             // connect non-UI blocks
             expect(graph.connect<"out", "clk_in">(clockSrc, funcGen).has_value()) << "connect clockSrc->funcGen";

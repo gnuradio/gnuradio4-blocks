@@ -24,8 +24,8 @@ struct TestParams {
 void runTest(const TestParams& par) {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::basic;
-    using namespace gr::testing;
+    using namespace gr::blocks::basic;
+    using namespace gr::blocks::testing;
 
     expect(eq(par.inValues.size(), par.inTags.size()));
 
@@ -104,8 +104,8 @@ gr::Tag genDropSyncTag(std::size_t index, std::size_t nSamplesDropped, std::uint
 const boost::ut::suite SyncBlockTests = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::basic;
-    using namespace gr::testing;
+    using namespace gr::blocks::basic;
+    using namespace gr::blocks::testing;
 
     "SyncBlock basic test"_test = [] {
         runTest({                                                                                                                   //

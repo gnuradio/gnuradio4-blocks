@@ -15,8 +15,8 @@
 const boost::ut::suite TagTests = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::basic;
-    using namespace gr::testing;
+    using namespace gr::blocks::basic;
+    using namespace gr::blocks::testing;
 
     static const auto mismatchedKey = [](const property_map& map) {
         Tensor<pmt::Value> keys;
@@ -263,7 +263,7 @@ const boost::ut::suite TagTests = [] {
 
         expect(eq(funcGen.settings().getNStoredParameters(), 9UZ)); // +1 for default
 
-        auto& sink = testGraph.emplaceBlock<gr::testing::TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+        auto& sink = testGraph.emplaceBlock<gr::blocks::testing::TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
 
         expect(testGraph.connect<"out", "clk_in">(clockSrc, funcGen).has_value());
         expect(testGraph.connect<"out", "in">(funcGen, sink).has_value());
@@ -331,7 +331,7 @@ const boost::ut::suite TagTests = [] {
         expect(funcGen.settings().set(createImpulseResponsePropertyMap("CMD_BP_START", 10.f, 20.f, .02f, .06f), SettingsCtx{now, "FAIR.SELECTOR.C=1:S=1:P=8"}).empty());
 
         expect(eq(funcGen.settings().getNStoredParameters(), 9UZ)); // +1 for default
-        auto& sink = testGraph.emplaceBlock<gr::testing::TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+        auto& sink = testGraph.emplaceBlock<gr::blocks::testing::TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
 
         expect(testGraph.connect<"out", "clk_in">(clockSrc, funcGen).has_value());
         expect(testGraph.connect<"out", "in">(funcGen, sink).has_value());
@@ -546,7 +546,7 @@ const boost::ut::suite TagTests = [] {
         expect(funcGen.settings().set(createSinPropertyMap("", 50.f, 5.f, 0.f, 1.f, 0.f), SettingsCtx{now, "2"}).empty());
         expect(funcGen.settings().set(createConstPropertyMap("", 1.f), SettingsCtx{now, "3"}).empty());
 
-        auto& sink = testGraph.emplaceBlock<gr::testing::TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+        auto& sink = testGraph.emplaceBlock<gr::blocks::testing::TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
         expect(testGraph.connect<"out", "clk_in">(clockSrc, funcGen).has_value());
         expect(testGraph.connect<"out", "in">(funcGen, sink).has_value());
 

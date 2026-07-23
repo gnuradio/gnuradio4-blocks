@@ -17,10 +17,12 @@
 #include <ranges>
 #include <vector>
 
-namespace gr::basic {
+#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
 
-GR_REGISTER_BLOCK("gr::basic::StreamToDataSet", gr::basic::StreamFilterImpl, ([T], false), [ uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::complex<float>, std::complex<double> ]);
-GR_REGISTER_BLOCK("gr::basic::StreamFilter", gr::basic::StreamFilterImpl, ([T], true), [ uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::complex<float>, std::complex<double> ]);
+namespace gr::blocks::basic {
+
+GR_REGISTER_BLOCK("gr::blocks::basic::StreamToDataSet", gr::blocks::basic::StreamFilterImpl, ([T], false), [ uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::complex<float>, std::complex<double> ]);
+GR_REGISTER_BLOCK("gr::blocks::basic::StreamFilter", gr::blocks::basic::StreamFilterImpl, ([T], true), [ uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::complex<float>, std::complex<double> ]);
 
 template<typename T, bool streamOut = false, trigger::Matcher TMatcher = trigger::BasicTriggerNameCtxMatcher::Filter>
 requires(std::is_arithmetic_v<T> || gr::meta::complex_like<T>)
@@ -573,6 +575,6 @@ using StreamToDataSet = StreamFilterImpl<T, false>;
 template<typename T>
 using StreamFilter = StreamFilterImpl<T, true>;
 
-} // namespace gr::basic
+} // namespace gr::blocks::basic
 
 #endif // GNURADIO_STREAMTODATASET_HPP

@@ -1,7 +1,7 @@
 #include <gnuradio-4.0/basic/function_generator.hpp>
 
 int main() {
-    using namespace gr::basic;
+    using namespace gr::blocks::basic;
     const double f_s = 1000.0; // 1 kHz
     Generator    generator(f_s);
 

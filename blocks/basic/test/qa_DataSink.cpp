@@ -18,7 +18,7 @@
 
 using namespace std::chrono_literals;
 
-namespace gr::basic::data_sink_test {
+namespace gr::blocks::basic::data_sink_test {
 
 constexpr auto kProcessingDelayMs = 600u;
 
@@ -202,15 +202,15 @@ void checkDataSet(const DataSet<float>& dataset, std::vector<float>& receivedDat
     nReceivedTags += dataset.timingEvents(0UZ).size();
 };
 
-} // namespace gr::basic::data_sink_test
+} // namespace gr::blocks::basic::data_sink_test
 
 using Scheduler = gr::scheduler::Simple<gr::scheduler::ExecutionPolicy::multiThreaded>;
 
 const boost::ut::suite DataSinkTests = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::basic;
-    using namespace gr::basic::data_sink_test;
+    using namespace gr::blocks::basic;
+    using namespace gr::blocks::basic::data_sink_test;
     using namespace std::string_literals;
     using namespace gr::test;
 
@@ -222,7 +222,7 @@ const boost::ut::suite DataSinkTests = [] {
         const std::vector<Tag> srcTags = makeTestTags(0, 1234, 1);
 
         gr::Graph testGraph;
-        auto&     src   = testGraph.emplaceBlock<gr::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}, //
+        auto&     src   = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}, //
                   {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_MIN.shortKey(), -42.f}, {SIGNAL_MAX.shortKey(), 42.f}});
         auto&     delay = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
         delay.settings().autoForwardParameters().insert({"DAY", "MONTH", "YEAR"}); // custom auto forward keys
@@ -315,7 +315,7 @@ const boost::ut::suite DataSinkTests = [] {
 
         // Add sources tags
         srcAndMetaTags.insert(srcAndMetaTags.end(), srcTags.begin(), srcTags.end());
-        expect(gr::testing::equal_tag_lists(receivedTags, srcAndMetaTags));
+        expect(gr::blocks::testing::equal_tag_lists(receivedTags, srcAndMetaTags));
     };
 
     "continuous mode - blocking/non-blocking polling"_test = [](bool isBlocking) {
@@ -325,7 +325,7 @@ const boost::ut::suite DataSinkTests = [] {
 
         gr::Graph  testGraph;
         const auto srcTags = makeTestTags(0, 1234, 2);
-        auto&      src     = testGraph.emplaceBlock<gr::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}, //
+        auto&      src     = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}, //
                      {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_MIN.shortKey(), -42.f}, {SIGNAL_MAX.shortKey(), 42.f}});
         src._tags          = srcTags;
         auto& delay        = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
@@ -410,7 +410,7 @@ const boost::ut::suite DataSinkTests = [] {
                                                  {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}});
             // Add sources tags
             srcAndMetaTags.insert(srcAndMetaTags.end(), srcTags.begin(), srcTags.end());
-            expect(gr::testing::equal_tag_lists(receivedTags, srcAndMetaTags));
+            expect(gr::blocks::testing::equal_tag_lists(receivedTags, srcAndMetaTags));
 
             expect(eq(received1.size(), expected.size()));
             expect(eq(received1, expected));
@@ -447,7 +447,7 @@ const boost::ut::suite DataSinkTests = [] {
         srcTags.push_back(Tag{22000, {{TRIGGER_NAME.shortKey(), "NO_TRIGGER3"}, {TRIGGER_TIME.shortKey(), timeCounter + 3}}});
 
         gr::Graph testGraph;
-        auto&     src = testGraph.emplaceBlock<gr::testing::TagSource<float>>({{"n_samples_max", nSamples}, {"mark_tag", false}, {"verbose_console", true}, //
+        auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", nSamples}, {"mark_tag", false}, {"verbose_console", true}, //
                 {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_MIN.shortKey(), -2.f}, {SIGNAL_MAX.shortKey(), 2.f}});
 
         src._tags   = srcTags;
@@ -540,7 +540,7 @@ const boost::ut::suite DataSinkTests = [] {
         srcTags.push_back(Tag{22000, {{TRIGGER_NAME.shortKey(), "NO_TRIGGER3"}, {TRIGGER_TIME.shortKey(), timeCounter + 3}}});
 
         gr::Graph testGraph;
-        auto&     src = testGraph.emplaceBlock<gr::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false},                                                 //
+        auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false},                                         //
                 {SAMPLE_RATE.shortKey(), kSampleRate}, {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, //
                 {SIGNAL_MIN.shortKey(), 0.f}, {SIGNAL_MAX.shortKey(), static_cast<float>(kSamples - 1)}});
         src._tags     = srcTags;
@@ -617,7 +617,7 @@ const boost::ut::suite DataSinkTests = [] {
 
         const gr::Size_t n_samples = static_cast<gr::Size_t>(tags.size() * 10000 + 100000);
         gr::Graph        testGraph;
-        auto&            src = testGraph.emplaceBlock<gr::testing::TagSource<int32_t>>({{"n_samples_max", n_samples}, {"mark_tag", false}});
+        auto&            src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<int32_t>>({{"n_samples_max", n_samples}, {"mark_tag", false}});
         src._tags            = tags;
         auto& delay          = testGraph.emplaceBlock<testing::Delay<int32_t>>({{"delay_ms", 2500u}});
         delay.settings().autoForwardParameters().insert({"DAY", "MONTH", "YEAR"}); // custom auto forward keys

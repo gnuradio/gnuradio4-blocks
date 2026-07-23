@@ -6,10 +6,12 @@
 
 #include <gnuradio-4.0/meta/utils.hpp>
 
-namespace gr::basic {
+#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::basic {
 using namespace gr;
 
-GR_REGISTER_BLOCK(gr::basic::Selector, [T], [ uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double ])
+GR_REGISTER_BLOCK(gr::blocks::basic::Selector, [T], [ uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double ])
 
 template<typename T>
 struct Selector : Block<Selector<T>, NoTagPropagation> {
@@ -252,6 +254,6 @@ you can set the `backPressure` property to false.
         return work::Status::OK;
     }
 };
-} // namespace gr::basic
+} // namespace gr::blocks::basic
 
 #endif // include guard

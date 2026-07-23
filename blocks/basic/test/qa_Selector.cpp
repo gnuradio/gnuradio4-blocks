@@ -39,7 +39,7 @@ std::vector<gr::Tensor<double>> values(std::initializer_list<std::initializer_li
 
 void execute_selector_test(TestParams params, std::source_location location = std::source_location::current()) {
     using namespace boost::ut;
-    using namespace gr::testing;
+    using namespace gr::blocks::testing;
 
     const gr::Size_t nSources = static_cast<gr::Size_t>(params.inValues.size());
     const gr::Size_t nSinks   = static_cast<gr::Size_t>(params.outValues.size());
@@ -47,14 +47,14 @@ void execute_selector_test(TestParams params, std::source_location location = st
     gr::Graph                                                       graph;
     std::vector<TagSource<double>*>                                 sources;
     std::vector<TagSink<double, ProcessFunction::USE_PROCESS_ONE>*> sinks;
-    gr::basic::Selector<double>*                                    selector;
+    gr::blocks::basic::Selector<double>*                            selector;
 
     gr::Tensor<gr::Size_t> mapIn(gr::extents_from, {params.mapping.size()});
     gr::Tensor<gr::Size_t> mapOut(gr::extents_from, {params.mapping.size()});
     std::ranges::transform(params.mapping, mapIn.begin(), [](auto& p) { return p.first; });
     std::ranges::transform(params.mapping, mapOut.begin(), [](auto& p) { return p.second; });
 
-    selector = std::addressof(graph.emplaceBlock<gr::basic::Selector<double>>({{"n_inputs", nSources}, {"n_outputs", nSinks}, {"map_in", mapIn}, {"map_out", mapOut}, {"back_pressure", params.backPressure}, {"sync_combined_ports", params.syncCombinedPorts}, {"disconnect_on_done", false}}));
+    selector = std::addressof(graph.emplaceBlock<gr::blocks::basic::Selector<double>>({{"n_inputs", nSources}, {"n_outputs", nSinks}, {"map_in", mapIn}, {"map_out", mapOut}, {"back_pressure", params.backPressure}, {"sync_combined_ports", params.syncCombinedPorts}, {"disconnect_on_done", false}}));
 
     for (gr::Size_t i = 0; i < nSources; ++i) {
         sources.push_back(std::addressof(graph.emplaceBlock<TagSource<double>>({{"n_samples_max", params.nSamples}, {"values", params.inValues[i]}, {"disconnect_on_done", false}})));
@@ -99,7 +99,7 @@ void execute_selector_test(TestParams params, std::source_location location = st
 
 const boost::ut::suite SelectorTest = [] {
     using namespace boost::ut;
-    using namespace gr::basic;
+    using namespace gr::blocks::basic;
 
     "Selector<T> constructor"_test = [] {
         Selector<double> block_nop({{"name", "block_nop"}});

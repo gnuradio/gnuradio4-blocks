@@ -28,7 +28,7 @@ inline constexpr std::ostream& operator<<(std::ostream& os, const std::tuple<Ts.
 const boost::ut::suite<"basic Conversion tests"> basicConversion = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::blocks::type::converter;
+    using namespace gr::blocks::basic;
     namespace stdx = vir::stdx;
 
     using TArithmeticTypes = std::tuple<uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double>;
@@ -117,7 +117,7 @@ const boost::ut::suite<"basic Conversion tests"> basicConversion = [] {
 const boost::ut::suite<"complex To/From conversion tests"> complexConversion = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::blocks::type::converter;
+    using namespace gr::blocks::basic;
     namespace stdx = vir::stdx;
 
     constexpr auto kArithmeticTypes = std::tuple<float, double>();

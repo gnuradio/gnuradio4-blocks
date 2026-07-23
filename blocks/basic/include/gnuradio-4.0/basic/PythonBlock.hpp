@@ -11,11 +11,13 @@
 template<typename T>
 inline PyModuleDef* myBlockPythonDefinitions(void);
 
-namespace gr::basic {
+#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::basic {
 
 using namespace gr;
 
-GR_REGISTER_BLOCK(gr::basic::PythonBlock, [T], [ int32_t, float ])
+GR_REGISTER_BLOCK(gr::blocks::basic::PythonBlock, [T], [ int32_t, float ])
 
 template<typename T>
 requires std::is_arithmetic_v<T> /* || std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>> */
@@ -240,13 +242,13 @@ private:
     }
 };
 
-} // namespace gr::basic
+} // namespace gr::blocks::basic
 
 template<typename T>
-gr::basic::PythonBlock<T>* getPythonBlockFromCapsule(PyObject* capsule) {
-    static std::string pyBlockName = gr::python::sanitizedPythonBlockName<gr::basic::PythonBlock<T>>();
+gr::blocks::basic::PythonBlock<T>* getPythonBlockFromCapsule(PyObject* capsule) {
+    static std::string pyBlockName = gr::python::sanitizedPythonBlockName<gr::blocks::basic::PythonBlock<T>>();
     if (void* objPointer = PyCapsule_GetPointer(capsule, pyBlockName.c_str()); objPointer != nullptr) {
-        return static_cast<gr::basic::PythonBlock<T>*>(objPointer);
+        return static_cast<gr::blocks::basic::PythonBlock<T>*>(objPointer);
     }
     gr::python::throwCurrentPythonError("could not retrieve obj pointer from capsule");
     return nullptr;
@@ -258,7 +260,7 @@ PyObject* PythonBlock_TagAvailable_Template(PyObject* /*self*/, PyObject* args) 
     if (!PyArg_ParseTuple(args, "O", &capsule)) {
         return nullptr;
     }
-    gr::basic::PythonBlock<T>* myBlock = getPythonBlockFromCapsule<T>(capsule);
+    gr::blocks::basic::PythonBlock<T>* myBlock = getPythonBlockFromCapsule<T>(capsule);
     return myBlock->tagAvailable() ? gr::python::TrueObj : gr::python::FalseObj;
 }
 
@@ -268,7 +270,7 @@ PyObject* PythonBlock_GetTag_Template(PyObject* /*self*/, PyObject* args) {
     if (!PyArg_ParseTuple(args, "O", &capsule)) {
         return nullptr;
     }
-    gr::basic::PythonBlock<T>* myBlock = getPythonBlockFromCapsule<T>(capsule);
+    gr::blocks::basic::PythonBlock<T>* myBlock = getPythonBlockFromCapsule<T>(capsule);
     return PyUnicode_FromString(myBlock->getTag().c_str());
 }
 
@@ -278,7 +280,7 @@ PyObject* PythonBlock_GetSettings_Template(PyObject* /*self*/, PyObject* args) {
     if (!PyArg_ParseTuple(args, "O", &capsule)) {
         return nullptr;
     }
-    const gr::basic::PythonBlock<T>* myBlock = getPythonBlockFromCapsule<T>(capsule);
+    const gr::blocks::basic::PythonBlock<T>* myBlock = getPythonBlockFromCapsule<T>(capsule);
     if (myBlock == nullptr) {
         gr::python::throwCurrentPythonError(std::format("could not retrieve myBLock<{}> {}", gr::meta::type_name<T>(), gr::python::toString(capsule)));
         return nullptr;
@@ -317,15 +319,15 @@ PyObject* PythonBlock_SetSettings_Template(PyObject* /*self*/, PyObject* args) {
     if (!PyArg_ParseTuple(args, "OO", &capsule, &settingsDict)) {
         return nullptr;
     }
-    gr::basic::PythonBlock<T>* myBlock = getPythonBlockFromCapsule<T>(capsule);
+    gr::blocks::basic::PythonBlock<T>* myBlock = getPythonBlockFromCapsule<T>(capsule);
     if (!gr::python::isPyDict(settingsDict)) {
         PyErr_SetString(PyExc_TypeError, "Settings must be a dictionary");
         return nullptr;
     }
 
-    typename gr::basic::PythonBlock<T>::poc_property_map newSettings;
-    PyObject *                                           key, *value;
-    Py_ssize_t                                           pos = 0;
+    typename gr::blocks::basic::PythonBlock<T>::poc_property_map newSettings;
+    PyObject *                                                   key, *value;
+    Py_ssize_t                                                   pos = 0;
     while (PyDict_Next(settingsDict, &pos, &key, &value)) {
         const char* keyStr   = PyUnicode_AsUTF8(key);
         const char* valueStr = PyUnicode_AsUTF8(value);
@@ -375,10 +377,10 @@ inline PyModuleDef* myBlockPythonDefinitions(void) {
 #pragma GCC diagnostic ignored "-Wuseless-cast"
 #endif
 #endif
-    static std::string  pyBlockName    = gr::python::sanitizedPythonBlockName<gr::basic::PythonBlock<T>>();
+    static std::string  pyBlockName    = gr::python::sanitizedPythonBlockName<gr::blocks::basic::PythonBlock<T>>();
     static PyMethodDef* pyBlockMethods = blockMethods<T>();
 
-    constexpr auto            blockDescription = static_cast<std::string_view>(gr::basic::PythonBlock<T>::Description::value);
+    constexpr auto            blockDescription = static_cast<std::string_view>(gr::blocks::basic::PythonBlock<T>::Description::value);
     static struct PyModuleDef myBlockModule    = {.m_base = PyModuleDef_HEAD_INIT, .m_name = pyBlockName.c_str(), .m_doc = blockDescription.data(), .m_size = -1, .m_methods = pyBlockMethods, .m_slots = nullptr, .m_traverse = nullptr, .m_clear = nullptr, .m_free = nullptr};
     return &myBlockModule;
 #ifdef __GNUC__

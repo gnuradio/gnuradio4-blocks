@@ -33,14 +33,14 @@ const boost::ut::suite<"python::<C-API abstraction interfaces>"> pythonInterface
 
 const boost::ut::suite<"PythonBlock"> pythonBlockTests = [] {
     using namespace boost::ut;
-    using namespace gr::basic;
+    using namespace gr::blocks::basic;
     using namespace std::string_literals;
     using namespace std::string_view_literals;
 
-    static_assert(gr::HasRequiredProcessFunction<gr::basic::PythonBlock<std::int32_t>>);
-    static_assert(gr::HasProcessBulkFunction<gr::basic::PythonBlock<std::int32_t>>);
-    static_assert(gr::HasRequiredProcessFunction<gr::basic::PythonBlock<float>>);
-    static_assert(gr::HasProcessBulkFunction<gr::basic::PythonBlock<float>>);
+    static_assert(gr::HasRequiredProcessFunction<gr::blocks::basic::PythonBlock<std::int32_t>>);
+    static_assert(gr::HasProcessBulkFunction<gr::blocks::basic::PythonBlock<std::int32_t>>);
+    static_assert(gr::HasRequiredProcessFunction<gr::blocks::basic::PythonBlock<float>>);
+    static_assert(gr::HasProcessBulkFunction<gr::blocks::basic::PythonBlock<float>>);
 
     "nominal PoC"_test = [] {
         // Your Python script
@@ -183,7 +183,7 @@ def process_bulk(ins, outs):
         outs[i][:] = ins[i] * 2
 )";
 
-        using namespace gr::testing;
+        using namespace gr::blocks::testing;
         Graph graph;
         auto& src   = graph.emplaceBlock<TagSource<int32_t>>({{"n_samples_max", 5U}, {"mark_tag", false}});
         auto& block = graph.emplaceBlock<PythonBlock<int32_t>>({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}});
@@ -248,7 +248,7 @@ def process_bulk(ins, outs):
         outs[i][:] = ins[i] * 2
 )x";
 
-        using namespace gr::testing;
+        using namespace gr::blocks::testing;
         Graph graph;
         auto& src   = graph.emplaceBlock<TagSource<float>>({{"n_samples_max", 5U}, {"mark_tag", false}});
         auto& block = graph.emplaceBlock<PythonBlock<float>>({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}});

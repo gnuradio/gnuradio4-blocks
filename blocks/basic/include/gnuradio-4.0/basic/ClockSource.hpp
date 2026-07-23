@@ -13,13 +13,15 @@
 #include <gnuradio-4.0/meta/formatter.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
-namespace gr::basic {
+#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::basic {
 
 template<typename T, gr::meta::fixed_string description = "", typename... Arguments>
 using A = gr::Annotated<T, description, Arguments...>;
 using namespace gr;
 
-GR_REGISTER_BLOCK("gr::basic::ClockSource", gr::basic::DefaultClockSource)
+GR_REGISTER_BLOCK("gr::blocks::basic::ClockSource", gr::blocks::basic::DefaultClockSource)
 
 template<typename T, typename ClockSourceType = std::chrono::system_clock>
 struct ClockSource : Block<ClockSource<T, ClockSourceType>>, BlockingSync<ClockSource<T, ClockSourceType>, ClockSourceType> {
@@ -131,7 +133,7 @@ Terminates when n_samples_max is reached (0 = unlimited).)"">;
             if (_nextTagIndex < tags.size() && samplesToNextTag <= samplesToProduce) {
                 const auto tagDeltaIndex = tags[_nextTagIndex].index - static_cast<std::size_t>(n_samples_produced);
                 if (verbose_console) {
-                    gr::testing::print_tag(tags[_nextTagIndex], std::format("{}::processBulk(...)\t publish tag at {:6}", this->name, n_samples_produced + tagDeltaIndex));
+                    gr::blocks::testing::print_tag(tags[_nextTagIndex], std::format("{}::processBulk(...)\t publish tag at {:6}", this->name, n_samples_produced + tagDeltaIndex));
                 }
                 outSpan.publishTag(tags[_nextTagIndex].map, tagDeltaIndex);
                 samplesToProduce = std::max(samplesToNextTag, gr::Size_t{1});
@@ -145,7 +147,7 @@ Terminates when n_samples_max is reached (0 = unlimited).)"">;
                 [[maybe_unused]] bool triggerNameNegated;
                 std::string           triggerContext;
                 [[maybe_unused]] bool triggerContextNegated;
-                gr::basic::trigger::detail::parse(value, triggerName, triggerNameNegated, triggerContext, triggerContextNegated);
+                gr::blocks::basic::trigger::detail::parse(value, triggerName, triggerNameNegated, triggerContext, triggerContextNegated);
 
                 property_map triggerTag;
                 uint64_t     triggerTime = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count());
@@ -175,8 +177,8 @@ Terminates when n_samples_max is reached (0 = unlimited).)"">;
 
 using DefaultClockSource = ClockSource<std::uint8_t, std::chrono::system_clock>;
 
-} // namespace gr::basic
+} // namespace gr::blocks::basic
 
-static_assert(gr::HasProcessBulkFunction<gr::basic::ClockSource<std::uint8_t>>);
+static_assert(gr::HasProcessBulkFunction<gr::blocks::basic::ClockSource<std::uint8_t>>);
 
 #endif // GNURADIO_CLOCK_SOURCE_HPP

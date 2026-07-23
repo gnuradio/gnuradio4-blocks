@@ -27,8 +27,8 @@ const boost::ut::suite<"StreamToDataSet Block"> selectorTest = [] {
 
     auto runUIExample = [](std::uint32_t lengthSeconds, std::string filter, gr::Size_t preSamples = 0U, gr::Size_t postSamples = 0U, gr::Size_t maxSamples = 10000U) {
         using namespace gr;
-        using namespace gr::basic;
-        using namespace gr::testing;
+        using namespace gr::blocks::basic;
+        using namespace gr::blocks::testing;
 
         using namespace function_generator;
         const std::uint32_t kN_SAMPLES_MAX = 1000U * lengthSeconds;
@@ -38,7 +38,7 @@ const boost::ut::suite<"StreamToDataSet Block"> selectorTest = [] {
 
         // all times are in nanoseconds
         constexpr std::uint64_t ms       = 1'000'000; // ms -> ns conversion factor (wish we had a proper C++ units-lib integration)
-        auto&                   clockSrc = graph.emplaceBlock<gr::basic::ClockSource<std::uint8_t>>({
+        auto&                   clockSrc = graph.emplaceBlock<gr::blocks::basic::ClockSource<std::uint8_t>>({
             {"sample_rate", sample_rate},
             {"n_samples_max", kN_SAMPLES_MAX},
             {"name", "ClockSource"},                                                                                                                     //
@@ -165,15 +165,15 @@ gr::Tag mergedAutoForwardTag(std::size_t index, std::initializer_list<gr::Tag> t
 void printTagList(std::string_view label, const std::vector<gr::Tag>& tags) {
     std::println("{} tags ({}):", label, tags.size());
     for (const gr::Tag& tag : tags) {
-        gr::testing::print_tag(tag, "  ");
+        gr::blocks::testing::print_tag(tag, "  ");
     }
 }
 
 void runTestStream(gr::Size_t nSamples, std::string filter, gr::Size_t preSamples, gr::Size_t postSamples, const std::vector<float>& expectedValues, const std::vector<gr::Tag>& expectedTags, std::source_location srcLocation = std::source_location::current()) {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::basic;
-    using namespace gr::testing;
+    using namespace gr::blocks::basic;
+    using namespace gr::blocks::testing;
 
     const auto locationStr = std::format("{}:{} ", srcLocation.file_name(), srcLocation.line());
 
@@ -217,8 +217,8 @@ void runTestStream(gr::Size_t nSamples, std::string filter, gr::Size_t preSample
 const boost::ut::suite<"StreamToStream test"> streamToStreamTest = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::basic;
-    using namespace gr::testing;
+    using namespace gr::blocks::basic;
+    using namespace gr::blocks::testing;
 
     // We always test scenarios where no overlaps occur. If accumulation is currently active in the block, no new "Start" should happen.
     // Any new Start events are ignored, and this behavior is considered undefined for stream-to-stream mode
@@ -306,8 +306,8 @@ const boost::ut::suite<"StreamToStream test"> streamToStreamTest = [] {
 void runTestDataSet(gr::Size_t nSamples, std::string filter, gr::Size_t preSamples, gr::Size_t postSamples, const std::vector<std::vector<float>>& expectedValues, const std::vector<std::vector<gr::Tag>>& expectedTags, gr::Size_t maxSamples = 100000U, std::source_location srcLocation = std::source_location::current()) {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::basic;
-    using namespace gr::testing;
+    using namespace gr::blocks::basic;
+    using namespace gr::blocks::testing;
 
     const auto locationStr = std::format("{}:{} ", srcLocation.file_name(), srcLocation.line());
 
@@ -374,8 +374,8 @@ void runTestDataSet(gr::Size_t nSamples, std::string filter, gr::Size_t preSampl
 const boost::ut::suite<"StreamToDataSet test"> streamToDataSetTest = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::basic;
-    using namespace gr::testing;
+    using namespace gr::blocks::basic;
+    using namespace gr::blocks::testing;
 
     const std::vector<std::vector<float>> expectedValues1 = { //
         {5, 6, 7, 8, 9},                                      //
