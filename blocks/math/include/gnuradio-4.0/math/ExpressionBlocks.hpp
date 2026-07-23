@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
+#include <gnuradio-4.0/math/NamespaceCompatibility.hpp>
 
 #include <exprtk.hpp>
 

@@ -17,7 +17,7 @@ template<typename T, typename BlockUnderTest>
 void test_block(const TestParameters<T> p) {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::testing;
+    using namespace gr::blocks::testing;
     using namespace gr::blocks::math;
     const Size_t n_inputs = static_cast<Size_t>(p.inputs.size());
 
