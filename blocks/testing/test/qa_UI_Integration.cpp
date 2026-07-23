@@ -15,11 +15,11 @@
 const boost::ut::suite TagTests = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::basic;
-    using namespace gr::testing;
+    using namespace gr::blocks::basic;
+    using namespace gr::blocks::testing;
 
     constexpr static auto initClockSource = [](auto& clockSrc) {
-        auto addTimeTagEntry = []<typename T>(gr::basic::ClockSource<T>& clockSource, std::uint64_t timeInNanoseconds, const std::string& value) {
+        auto addTimeTagEntry = []<typename T>(gr::blocks::basic::ClockSource<T>& clockSource, std::uint64_t timeInNanoseconds, const std::string& value) {
             clockSource.tag_times.value.push_back(timeInNanoseconds);
             clockSource.tag_values.value.push_back(value);
         };
@@ -59,7 +59,7 @@ const boost::ut::suite TagTests = [] {
         constexpr float         sample_rate   = 1'000.f;
 
         Graph testGraph;
-        auto& clockSrc = testGraph.emplaceBlock<gr::basic::ClockSource<std::uint8_t>>({{"sample_rate", sample_rate}, {"n_samples_max", N}, {"name", "ClockSource"}, {"verbose_console", false}});
+        auto& clockSrc = testGraph.emplaceBlock<gr::blocks::basic::ClockSource<std::uint8_t>>({{"sample_rate", sample_rate}, {"n_samples_max", N}, {"name", "ClockSource"}, {"verbose_console", false}});
         initClockSource(clockSrc);
 
         auto& funcGen = testGraph.emplaceBlock<FunctionGenerator<float>>({{"sample_rate", sample_rate}, {"name", "FunctionGenerator"}});
@@ -100,7 +100,7 @@ const boost::ut::suite TagTests = [] {
         constexpr float         sample_rate   = 1'000.f;
 
         Graph testGraph;
-        auto& clockSrc = testGraph.emplaceBlock<gr::basic::ClockSource<std::uint8_t>>({{"sample_rate", sample_rate}, {"n_samples_max", N}, {"name", "ClockSource"}, {"verbose_console", false}});
+        auto& clockSrc = testGraph.emplaceBlock<gr::blocks::basic::ClockSource<std::uint8_t>>({{"sample_rate", sample_rate}, {"n_samples_max", N}, {"name", "ClockSource"}, {"verbose_console", false}});
         initClockSource(clockSrc);
 
         auto& funcGen = testGraph.emplaceBlock<FunctionGenerator<float>>({{"sample_rate", sample_rate}, {"name", "FunctionGenerator"}});

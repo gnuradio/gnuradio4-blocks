@@ -13,10 +13,12 @@
 #include <format>
 #include <gnuradio-4.0/meta/formatter.hpp>
 
-namespace gr::testing {
+#include <gnuradio-4.0/testing/NamespaceCompatibility.hpp>
 
-GR_REGISTER_BLOCK("ImChartMonitor", gr::testing::ImChartMonitor, ([T], true), [ float, double ]);
-GR_REGISTER_BLOCK("ConsoleDebugSink", gr::testing::ImChartMonitor, ([T], false), [ float, double ]);
+namespace gr::blocks::testing {
+
+GR_REGISTER_BLOCK("gr::blocks::testing::ImChartMonitor", gr::blocks::testing::ImChartMonitor, ([T], true), [ float, double ]);
+GR_REGISTER_BLOCK("gr::blocks::testing::ConsoleDebugSink", gr::blocks::testing::ImChartMonitor, ([T], false), [ float, double ]);
 
 template<typename T, bool drawAsynchronously = true>
 requires(std::is_arithmetic_v<T> || gr::DataSetLike<T>)
@@ -251,6 +253,6 @@ struct ImChartMonitor : Block<ImChartMonitor<T, drawAsynchronously>, std::condit
     }
 };
 
-} // namespace gr::testing
+} // namespace gr::blocks::testing
 
 #endif // GNURADIO_IMCHARTMONITOR_HPP

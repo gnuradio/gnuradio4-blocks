@@ -9,7 +9,7 @@
 const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
     using namespace boost::ut;
     using namespace gr;
-    using namespace gr::testing;
+    using namespace gr::blocks::testing;
 
     constexpr auto kTestTypes = std::tuple<uint8_t, int16_t, int32_t, float, double>(); // only a limited set of test cases, could be improved to use pre-built modules
 
@@ -179,7 +179,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
     } | kTestTypes;
 
     "SimCompute.compute_delay_seconds"_test = [] {
-        using namespace gr::testing;
+        using namespace gr::blocks::testing;
 
         SimCompute<float> sim;
         sim.target_throughput   = 1e6f;  // 1 MS/s

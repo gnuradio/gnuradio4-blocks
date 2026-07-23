@@ -6,9 +6,11 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 
-namespace gr::testing {
+#include <gnuradio-4.0/testing/NamespaceCompatibility.hpp>
 
-GR_REGISTER_BLOCK(gr::testing::Delay, [T], [ float, double ])
+namespace gr::blocks::testing {
+
+GR_REGISTER_BLOCK(gr::blocks::testing::Delay, [T], [ float, double ])
 
 template<typename T>
 struct Delay : Block<Delay<T>> {
@@ -46,6 +48,6 @@ struct Delay : Block<Delay<T>> {
     }
 };
 
-} // namespace gr::testing
+} // namespace gr::blocks::testing
 
 #endif // GNURADIO_TESTING_DELAY_HPP

@@ -4,7 +4,9 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Port.hpp>
 
-namespace gr::testing {
+#include <gnuradio-4.0/testing/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::testing {
 
 namespace utils {
 
@@ -42,7 +44,7 @@ inline void printChanges(const property_map& oldMap, const property_map& newMap)
 }
 } // namespace utils
 
-GR_REGISTER_BLOCK(gr::testing::SettingsChangeRecorder, [T], [ int32_t, float, double ])
+GR_REGISTER_BLOCK(gr::blocks::testing::SettingsChangeRecorder, [T], [ int32_t, float, double ])
 
 enum class TestEnum { TEST_STATE1, TEST_STATE2, TEST_STATE3 };
 
@@ -96,5 +98,5 @@ struct SettingsChangeRecorder : Block<SettingsChangeRecorder<T>> {
     }
 };
 
-} // namespace gr::testing
+} // namespace gr::blocks::testing
 #endif // GNURADIO_TESTING_SETTINGS_CHANGE_RECORDER_H
