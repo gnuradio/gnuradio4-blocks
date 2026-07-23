@@ -37,7 +37,7 @@ struct TestTypes {
 
 const boost::ut::suite<"Fourier Transforms"> fftTests = [] {
     using namespace boost::ut;
-    using namespace gr::blocks::fft;
+    using namespace gr::blocks::fourier;
     using namespace boost::ut::reflection;
 
     using AllTypesToTest = std::tuple<
@@ -122,7 +122,7 @@ const boost::ut::suite<"Fourier Transforms"> fftTests = [] {
         using namespace boost::ut;
         using Scheduler = gr::scheduler::Simple<>;
         gr::Graph flow1;
-        auto&     source1  = flow1.emplaceBlock<gr::testing::TagSource<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"mark_tag", false}});
+        auto&     source1  = flow1.emplaceBlock<gr::blocks::testing::TagSource<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"mark_tag", false}});
         auto&     fftBlock = flow1.emplaceBlock<FFT<float>>({{"fftSize", static_cast<gr::Size_t>(16)}});
         expect(flow1.connect<"out", "in">(source1, fftBlock).has_value());
         Scheduler sched1;
@@ -134,7 +134,7 @@ const boost::ut::suite<"Fourier Transforms"> fftTests = [] {
         // run 2 times to check potential memory problems
         for (int i = 0; i < 2; i++) {
             gr::Graph flow2;
-            auto&     source2 = flow2.emplaceBlock<gr::testing::TagSource<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"mark_tag", false}});
+            auto&     source2 = flow2.emplaceBlock<gr::blocks::testing::TagSource<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"mark_tag", false}});
             auto&     fft2    = flow2.emplaceBlock<FFT<float>>({{"fftSize", static_cast<gr::Size_t>(16)}});
             expect(flow2.connect<"out", "in">(source2, fft2).has_value());
             Scheduler sched2;

@@ -7,12 +7,13 @@
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/DataSet.hpp>
 #include <gnuradio-4.0/HistoryBuffer.hpp>
+#include <gnuradio-4.0/fourier/NamespaceCompatibility.hpp>
 
 #include <gnuradio-4.0/algorithm/fourier/fft.hpp>
 #include <gnuradio-4.0/algorithm/fourier/fft_common.hpp>
 #include <gnuradio-4.0/algorithm/fourier/window.hpp>
 
-namespace gr::blocks::fft {
+namespace gr::blocks::fourier {
 
 using namespace gr;
 
@@ -26,7 +27,7 @@ struct OutputDataSet<T> {
     using type = DataSet<typename T::value_type>;
 };
 
-GR_REGISTER_BLOCK("gr::blocks::fft::FFT", gr::blocks::fft::FFT, [T], [ float, double ])
+GR_REGISTER_BLOCK("gr::blocks::fourier::FFT", gr::blocks::fourier::FFT, [T], [ float, double ])
 
 template<typename T, typename U = OutputDataSet<T>::type, template<typename, typename> typename FourierAlgorithm = gr::algorithm::FFT>
 requires((gr::meta::complex_like<T> || std::floating_point<T>) && (std::is_same_v<U, DataSet<float>> || std::is_same_v<U, DataSet<double>>))
@@ -253,6 +254,6 @@ On the choice of window (mathematically aka. apodisation) functions
 template<typename T>
 using DefaultFFT = FFT<T, typename OutputDataSet<T>::type, gr::algorithm::FFT>;
 
-} // namespace gr::blocks::fft
+} // namespace gr::blocks::fourier
 
 #endif // GNURADIO_FFT_HPP
