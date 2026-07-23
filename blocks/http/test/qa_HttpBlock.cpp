@@ -29,8 +29,8 @@
 #include <httplib.h>
 #endif
 
-static_assert(gr::BlockLike<gr::http::HttpSource>);
-static_assert(gr::BlockLike<gr::http::HttpSink>);
+static_assert(gr::BlockLike<gr::blocks::http::HttpSource>);
+static_assert(gr::BlockLike<gr::blocks::http::HttpSink>);
 
 template<typename T>
 class HttpTestSink : public gr::Block<HttpTestSink<T>> {
@@ -90,7 +90,7 @@ const boost::ut::suite HttpBlocktests = [] {
 #endif
 
         gr::Graph graph;
-        auto&     httpSource = graph.emplaceBlock<gr::http::HttpSource>({{"url", gr::pmt::Value("http://127.0.0.1:8080/echo")}});
+        auto&     httpSource = graph.emplaceBlock<gr::blocks::http::HttpSource>({{"url", gr::pmt::Value("http://127.0.0.1:8080/echo")}});
         auto&     sink       = graph.emplaceBlock<HttpTestSink<pmt::Value::Map>>();
 #ifdef __EMSCRIPTEN__
         httpSource._emscriptenRunOnMainThread = false;
@@ -121,7 +121,7 @@ const boost::ut::suite HttpBlocktests = [] {
 #endif
 
         gr::Graph graph;
-        auto&     httpSource = graph.emplaceBlock<gr::http::HttpSource>({{"url", gr::pmt::Value("http://127.0.0.1:8080/does-not-exist")}});
+        auto&     httpSource = graph.emplaceBlock<gr::blocks::http::HttpSource>({{"url", gr::pmt::Value("http://127.0.0.1:8080/does-not-exist")}});
         auto&     sink       = graph.emplaceBlock<HttpTestSink<pmt::Value::Map>>();
 #ifdef __EMSCRIPTEN__
         httpSource._emscriptenRunOnMainThread = false;
@@ -162,8 +162,8 @@ const boost::ut::suite HttpBlocktests = [] {
         gr::Graph  graph;
         const auto payload   = byteTensor("param=42");
         const auto chunkSize = payload.size();
-        auto&      source    = graph.emplaceBlock<gr::testing::TagSource<std::uint8_t, gr::testing::ProcessFunction::USE_PROCESS_BULK>>({{"values", payload}, {"n_samples_max", gr::Size_t(0)}});
-        auto&      sink      = graph.emplaceBlock<gr::http::HttpSink>({{"url", gr::pmt::Value("http://127.0.0.1:8080/number")}, {"content_type", gr::pmt::Value("application/x-www-form-urlencoded")}});
+        auto&      source    = graph.emplaceBlock<gr::blocks::testing::TagSource<std::uint8_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"values", payload}, {"n_samples_max", gr::Size_t(0)}});
+        auto&      sink      = graph.emplaceBlock<gr::blocks::http::HttpSink>({{"url", gr::pmt::Value("http://127.0.0.1:8080/number")}, {"content_type", gr::pmt::Value("application/x-www-form-urlencoded")}});
 #ifdef __EMSCRIPTEN__
         sink._emscriptenRunOnMainThread = false;
 #endif
@@ -212,7 +212,7 @@ const boost::ut::suite HttpBlocktests = [] {
 #endif
 
         gr::Graph graph;
-        auto&     httpSource = graph.emplaceBlock<gr::http::HttpSource>({{"url", gr::pmt::Value("http://127.0.0.1:8080/notify")}, {"type", gr::pmt::Value("SUBSCRIBE")}});
+        auto&     httpSource = graph.emplaceBlock<gr::blocks::http::HttpSource>({{"url", gr::pmt::Value("http://127.0.0.1:8080/notify")}, {"type", gr::pmt::Value("SUBSCRIBE")}});
         auto&     sink       = graph.emplaceBlock<HttpTestSink<pmt::Value::Map>>();
 #ifdef __EMSCRIPTEN__
         httpSource._emscriptenRunOnMainThread = false;

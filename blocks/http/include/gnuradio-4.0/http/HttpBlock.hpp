@@ -29,7 +29,9 @@
 
 using namespace gr;
 
-namespace gr::http {
+#include <gnuradio-4.0/http/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::http {
 
 namespace fileio = gr::algorithm::fileio;
 
@@ -38,7 +40,7 @@ enum class SourceMode : char {
     SUBSCRIBE = 2,
 };
 
-GR_REGISTER_BLOCK(gr::http::HttpSource)
+GR_REGISTER_BLOCK(gr::blocks::http::HttpSource)
 struct HttpSource : Block<HttpSource> {
     using Description = Doc<R""(
 Read data from an HTTP endpoint.
@@ -57,7 +59,7 @@ Internally this uses FileIo.
     PortOut<pmt::Value::Map> out;
 
     gr::Annotated<std::string, "URI">                                                       url;
-    gr::Annotated<gr::http::SourceMode, "type", gr::Doc<"GET, SUBSCRIBE">>                  type        = gr::http::SourceMode::GET;
+    gr::Annotated<gr::blocks::http::SourceMode, "type", gr::Doc<"GET, SUBSCRIBE">>          type        = gr::blocks::http::SourceMode::GET;
     gr::Annotated<gr::Size_t, "chunk_bytes", gr::Doc<"Chunk size in bytes, 0 = no limits">> chunk_bytes = 0U;
 
     GR_MAKE_REFLECTABLE(HttpSource, out, url, type, chunk_bytes);
@@ -151,7 +153,7 @@ Internally this uses FileIo.
     }
 };
 
-GR_REGISTER_BLOCK(gr::http::HttpSink)
+GR_REGISTER_BLOCK(gr::blocks::http::HttpSink)
 struct HttpSink : Block<HttpSink> {
     using Description = Doc<R""(
 Send incoming bytes to an HTTP endpoint with POST.
@@ -227,6 +229,6 @@ Internally this uses FileIo.
     }
 };
 
-} // namespace gr::http
+} // namespace gr::blocks::http
 
 #endif // GNURADIO_HTTP_BLOCK_HPP
