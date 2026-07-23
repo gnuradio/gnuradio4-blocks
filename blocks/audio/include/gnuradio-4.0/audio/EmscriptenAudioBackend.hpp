@@ -23,7 +23,9 @@
 #include <emscripten/webaudio.h>
 #include <malloc.h>
 
-namespace gr::audio::detail {
+#include <gnuradio-4.0/audio/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::audio::detail {
 
 // -- worklet runtime types --
 
@@ -886,7 +888,7 @@ struct WebAudioDevice : gr::blocks::common::DeviceBase {
 
 inline gr::blocks::common::AutoRegister autoRegWebAudio(std::make_shared<WebAudioDevice>());
 
-} // namespace gr::audio::detail
+} // namespace gr::blocks::audio::detail
 
 #endif // __EMSCRIPTEN__
 

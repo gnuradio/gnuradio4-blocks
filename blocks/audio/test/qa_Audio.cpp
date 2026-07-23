@@ -168,7 +168,7 @@ void runLocalSourceCases(const std::vector<WavSourceTestCase<T>>& cases, TSample
 
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<TSource>({{"uri", file.path.string()}});
-        auto&     sink   = graph.emplaceBlock<gr::testing::TagSink<T, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        auto&     sink   = graph.emplaceBlock<gr::blocks::testing::TagSink<T, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
         gr::scheduler::Simple<> sched;
@@ -201,7 +201,7 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
 
         gr::Graph graph;
         auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
-        auto&     sink                = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        auto&     sink                = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -219,9 +219,9 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         constexpr std::string_view caseName = "AudioSource soundio dummy backend";
 
         gr::Graph graph;
-        auto&     source                = graph.emplaceBlock<gr::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(2)}, {"io_buffer_size", 0.1f}});
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(2)}, {"io_buffer_size", 0.1f}});
         source._useDummyBackendForTests = true;
-        auto& sink                      = graph.emplaceBlock<gr::testing::TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        auto& sink                      = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
         gr::scheduler::Simple<> sched;
@@ -240,8 +240,8 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         constexpr std::string_view caseName = "AudioSource to AudioSink soundio dummy backend";
 
         gr::Graph graph;
-        auto&     source                = graph.emplaceBlock<gr::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(2)}, {"io_buffer_size", 0.1f}});
-        auto&     sink                  = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(2)}, {"io_buffer_size", 0.1f}});
+        auto&     sink                  = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
         source._useDummyBackendForTests = true;
         sink._useDummyBackendForTests   = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
@@ -263,9 +263,9 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         constexpr std::string_view caseName = "available_devices populated";
 
         gr::Graph graph;
-        auto&     source                = graph.emplaceBlock<gr::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}});
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}});
         source._useDummyBackendForTests = true;
-        auto& sink                      = graph.emplaceBlock<gr::testing::TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        auto& sink                      = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
         gr::scheduler::Simple<> sched;
@@ -287,7 +287,7 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
 
         gr::Graph graph;
         auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
-        auto&     sink                = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        auto&     sink                = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -303,8 +303,8 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
 
 const boost::ut::suite<"audio device resolution"> _deviceResolutionTests = [] {
     using namespace boost::ut;
-    using gr::audio::detail::AudioDeviceInfo;
-    using gr::audio::detail::resolveDeviceIndex;
+    using gr::blocks::audio::detail::AudioDeviceInfo;
+    using gr::blocks::audio::detail::resolveDeviceIndex;
 
     const std::vector<AudioDeviceInfo> devices{
         {.name = "Built-in Audio Output", .id = "hw:0,0"},
@@ -355,9 +355,9 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         constexpr std::string_view caseName = "AudioSource timing tags";
 
         gr::Graph graph;
-        auto&     source                = graph.emplaceBlock<gr::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"emit_timing_tags", true}, {"tag_interval", 0.0f}});
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"emit_timing_tags", true}, {"tag_interval", 0.0f}});
         source._useDummyBackendForTests = true;
-        auto& sink                      = graph.emplaceBlock<gr::testing::TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        auto& sink                      = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
         gr::scheduler::Simple<> sched;
@@ -454,9 +454,9 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         constexpr std::string_view caseName = "timing tags disabled";
 
         gr::Graph graph;
-        auto&     source                = graph.emplaceBlock<gr::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"emit_timing_tags", false}});
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"emit_timing_tags", false}});
         source._useDummyBackendForTests = true;
-        auto& sink                      = graph.emplaceBlock<gr::testing::TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        auto& sink                      = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
         gr::scheduler::Simple<> sched;
@@ -478,9 +478,9 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         constexpr std::string_view caseName = "meta info disabled";
 
         gr::Graph graph;
-        auto&     source                = graph.emplaceBlock<gr::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"emit_timing_tags", true}, {"emit_meta_info", false}, {"tag_interval", 0.0f}});
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"emit_timing_tags", true}, {"emit_meta_info", false}, {"tag_interval", 0.0f}});
         source._useDummyBackendForTests = true;
-        auto& sink                      = graph.emplaceBlock<gr::testing::TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        auto& sink                      = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
         gr::scheduler::Simple<> sched;
@@ -506,9 +506,9 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
 
         gr::Graph graph;
         // large interval — should emit at most 1-2 timing tags in 300ms
-        auto& source                    = graph.emplaceBlock<gr::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"emit_timing_tags", true}, {"tag_interval", 10.0f}});
+        auto& source                    = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"emit_timing_tags", true}, {"tag_interval", 10.0f}});
         source._useDummyBackendForTests = true;
-        auto& sink                      = graph.emplaceBlock<gr::testing::TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        auto& sink                      = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
         gr::scheduler::Simple<> sched;
@@ -529,9 +529,9 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         constexpr std::string_view caseName = "rate estimator convergence";
 
         gr::Graph graph;
-        auto&     source                = graph.emplaceBlock<gr::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"ppm_estimator_cutoff", 0.5f}});
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"ppm_estimator_cutoff", 0.5f}});
         source._useDummyBackendForTests = true;
-        auto& sink                      = graph.emplaceBlock<gr::testing::TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        auto& sink                      = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
         gr::scheduler::Simple<> sched;
@@ -553,7 +553,7 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
 
         gr::Graph graph;
         auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
-        auto&     sink                = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}, {"ppm_estimator_cutoff", 0.5f}});
+        auto&     sink                = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}, {"ppm_estimator_cutoff", 0.5f}});
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -569,11 +569,11 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         constexpr std::string_view caseName = "clk_in forwarding";
 
         gr::Graph graph;
-        auto&     source                = graph.emplaceBlock<gr::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"emit_timing_tags", true}, {"tag_interval", 0.0f}});
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"emit_timing_tags", true}, {"tag_interval", 0.0f}});
         source._useDummyBackendForTests = true;
 
         // clock source: emits a TRIGGER_TIME tag at sample 0 with a known UTC timestamp
-        auto& clkSource = graph.emplaceBlock<gr::testing::TagSource<std::uint8_t, gr::testing::ProcessFunction::USE_PROCESS_ONE>>({{"n_samples_max", gr::Size_t(0)}, {"mark_tag", false}});
+        auto& clkSource = graph.emplaceBlock<gr::blocks::testing::TagSource<std::uint8_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE>>({{"n_samples_max", gr::Size_t(0)}, {"mark_tag", false}});
 
         constexpr std::uint64_t kFakeUtcNs = 1700000000'000000000ULL; // a fixed UTC timestamp
         gr::property_map        clkTagMap;
@@ -581,7 +581,7 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         gr::tag::put(clkTagMap, gr::tag::TRIGGER_NAME, std::string("GPS:TEST"));
         clkSource._tags = {{0U, std::move(clkTagMap)}};
 
-        auto& sink = graph.emplaceBlock<gr::testing::TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        auto& sink = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "clk_in">(clkSource, source).has_value()) << caseName;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -613,9 +613,9 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         constexpr std::string_view caseName = "AudioSource permission";
 
         gr::Graph graph;
-        auto&     source                = graph.emplaceBlock<gr::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}});
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}});
         source._useDummyBackendForTests = true;
-        auto& sink                      = graph.emplaceBlock<gr::testing::TagSink<float, gr::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        auto& sink                      = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
         gr::scheduler::Simple<> sched;
@@ -636,7 +636,7 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
 
         gr::Graph graph;
         auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
-        auto&     sink                = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        auto&     sink                = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 

@@ -28,7 +28,9 @@
 #include <source_location>
 #include <string_view>
 
-namespace gr::audio::detail {
+#include <gnuradio-4.0/audio/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::audio::detail {
 
 #if !defined(__EMSCRIPTEN__)
 
@@ -537,6 +539,6 @@ private:
 
 #endif
 
-} // namespace gr::audio::detail
+} // namespace gr::blocks::audio::detail
 
 #endif // GNURADIO_AUDIO_SOUNDIO_BACKEND_HPP

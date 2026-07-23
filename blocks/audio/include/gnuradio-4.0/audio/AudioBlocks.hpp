@@ -24,9 +24,11 @@
 #include <thread>
 #include <vector>
 
-namespace gr::audio {
+#include <gnuradio-4.0/audio/NamespaceCompatibility.hpp>
 
-GR_REGISTER_BLOCK(gr::audio::AudioSource, [T], [ float, int16_t ])
+namespace gr::blocks::audio {
+
+GR_REGISTER_BLOCK(gr::blocks::audio::AudioSource, [T], [ float, int16_t ])
 
 template<detail::AudioSample T>
 struct AudioSource : gr::Block<AudioSource<T>> {
@@ -351,7 +353,7 @@ private:
 
 static_assert(gr::BlockLike<AudioSource<float>>);
 
-GR_REGISTER_BLOCK(gr::audio::AudioSink, [T], [ float, int16_t ])
+GR_REGISTER_BLOCK(gr::blocks::audio::AudioSink, [T], [ float, int16_t ])
 
 template<detail::AudioSample T>
 struct AudioSink : gr::Block<AudioSink<T>> {
@@ -696,6 +698,6 @@ private:
 
 static_assert(gr::BlockLike<AudioSink<float>>);
 
-} // namespace gr::audio
+} // namespace gr::blocks::audio
 
 #endif // GNURADIO_AUDIO_BLOCKS_HPP

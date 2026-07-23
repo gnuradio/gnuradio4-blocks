@@ -20,7 +20,9 @@
 #include <type_traits>
 #include <vector>
 
-namespace gr::audio::detail {
+#include <gnuradio-4.0/audio/NamespaceCompatibility.hpp>
+
+namespace gr::blocks::audio::detail {
 
 template<typename T>
 concept AudioSample = std::same_as<T, float> || std::same_as<T, std::int16_t>;
@@ -276,6 +278,6 @@ struct AudioSourceState : AudioStateBase<T> {
     }
 };
 
-} // namespace gr::audio::detail
+} // namespace gr::blocks::audio::detail
 
 #endif // GNURADIO_AUDIO_BACKENDS_HPP

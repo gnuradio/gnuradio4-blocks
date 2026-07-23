@@ -147,7 +147,7 @@ void runPlaybackGraph(std::shared_ptr<Scheduler> scheduler, std::string uri, std
         gr::Graph graph;
         auto&     source  = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", std::move(uri)}, {"repeat", repeat}});
         auto&     monitor = graph.emplaceBlock<audio_test_app_detail::LevelMonitor>();
-        auto&     sink    = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"device", std::move(outputDevice)}, {"debug_console", true}});
+        auto&     sink    = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"device", std::move(outputDevice)}, {"debug_console", true}});
 
         monitor.linePrefix = "[AudioTest] play ";
         graph.connect<"out", "in">(source, monitor).value();
@@ -167,9 +167,9 @@ void runMicGraph(std::shared_ptr<Scheduler> scheduler, std::string inputDevice, 
         std::println("[AudioTest] main runtime thread: {}", fileio::isMainThread());
 
         gr::Graph graph;
-        auto&     source  = graph.emplaceBlock<gr::audio::AudioSource<float>>({{"device", std::move(inputDevice)}});
+        auto&     source  = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"device", std::move(inputDevice)}});
         auto&     monitor = graph.emplaceBlock<audio_test_app_detail::LevelMonitor>();
-        auto&     sink    = graph.emplaceBlock<gr::audio::AudioSink<float>>({{"device", std::move(outputDevice)}, {"debug_console", true}});
+        auto&     sink    = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"device", std::move(outputDevice)}, {"debug_console", true}});
 
         monitor.linePrefix = "[AudioTest] mic ";
         graph.connect<"out", "in">(source, monitor).value();
@@ -271,7 +271,7 @@ EMSCRIPTEN_KEEPALIVE void gr_requestAllPermissions() { gr::blocks::common::Devic
 
 EMSCRIPTEN_KEEPALIVE int gr_isAudioGranted() { return gr::blocks::common::DeviceRegistry::instance().isGranted("audio") ? 1 : 0; }
 
-EMSCRIPTEN_KEEPALIVE void gr_resumeAudioContexts() { gr::audio::detail::gr_webaudio_resume_all_contexts(); }
+EMSCRIPTEN_KEEPALIVE void gr_resumeAudioContexts() { gr::blocks::audio::detail::gr_webaudio_resume_all_contexts(); }
 
 } // extern "C"
 
