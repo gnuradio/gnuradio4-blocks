@@ -22,6 +22,7 @@ option(GR4_ENABLE_SDR "Build the SDR block family" OFF)
 option(GR4_ENABLE_HTTP_TESTS "Build HTTP integration tests" OFF)
 option(GR_USE_FETCHCONTENT_DEPS "Allow CMake to download selected third-party dependencies with FetchContent" OFF)
 option(USE_CCACHE "Use ccache if available" ON)
+option(WARNINGS_AS_ERRORS "Enable -Werror flags" ON)
 
 # Keep the largest template-heavy test compilations from overlapping. This limits only targets assigned to the pool;
 # other Ninja work remains parallel.
@@ -61,8 +62,18 @@ endif()
 if(NOT TARGET gnuradio-algorithm AND TARGET gnuradio4::gnuradio-algorithm)
   add_library(gnuradio-algorithm ALIAS gnuradio4::gnuradio-algorithm)
 endif()
+# the installed gnuradio4::gnuradio-options keeps its warning flags behind $<BUILD_INTERFACE:...>, so they do not reach
+# this project through the export; recreate them on a local wrapper target so this project's own targets compile with
+# -Wall/-Werror & co. — gr_add_block_library object libraries pick this target up automatically. The battery sits on an
+# interface target of its own, listed after the imported one, because a target's own options precede the ones it
+# inherits: carried directly on the wrapper, a local suppression would land ahead of the flags an SDK built from an
+# older core still exports, and have no effect.
 if(NOT TARGET gnuradio-options AND TARGET gnuradio4::gnuradio-options)
-  add_library(gnuradio-options ALIAS gnuradio4::gnuradio-options)
+  include(cmake/CompilerWarnings.cmake)
+  add_library(gnuradio-blocks-warnings INTERFACE)
+  set_project_warnings(gnuradio-blocks-warnings)
+  add_library(gnuradio-options INTERFACE)
+  target_link_libraries(gnuradio-options INTERFACE gnuradio4::gnuradio-options gnuradio-blocks-warnings)
 endif()
 if(NOT TARGET gnuradio-blocklib-core AND TARGET gnuradio4::gnuradio-blocklib-core)
   add_library(gnuradio-blocklib-core ALIAS gnuradio4::gnuradio-blocklib-core)

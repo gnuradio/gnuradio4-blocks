@@ -14,10 +14,11 @@ if(TARGET SoapySDR)
   # loopback device: static library for tests + optional shared module for system-wide use
   add_library(gr-sdr-loopback-static STATIC src/SoapyLoopbackModule.cpp)
   target_link_libraries(gr-sdr-loopback-static PUBLIC gr-sdr SoapySDR)
+  target_link_libraries(gr-sdr-loopback-static PRIVATE gnuradio-options)
   set_target_properties(gr-sdr-loopback-static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
   add_library(gr-sdr-loopback MODULE src/SoapyLoopbackModule.cpp)
-  target_link_libraries(gr-sdr-loopback PRIVATE gr-sdr SoapySDR)
+  target_link_libraries(gr-sdr-loopback PRIVATE gr-sdr SoapySDR gnuradio-options)
   set_target_properties(gr-sdr-loopback PROPERTIES PREFIX "") # SoapySDR expects no lib prefix
 endif()
 

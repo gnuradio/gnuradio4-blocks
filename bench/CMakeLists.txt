@@ -9,7 +9,7 @@ endif()
 
 function(add_benchmark BM_NAME)
   add_executable(${BM_NAME} ${BM_NAME}.cpp)
-  target_link_libraries(${BM_NAME} PRIVATE gnuradio4::gnuradio-options ut gnuradio4::ut-benchmark)
+  target_link_libraries(${BM_NAME} PRIVATE gnuradio-options ut gnuradio4::ut-benchmark)
 endfunction()
 
 add_benchmark(bm_example)
