@@ -30,10 +30,13 @@ set(GR_QA_OPTIMIZATION_LEVEL
     "-O1"
     CACHE STRING "Optimization level for test executables in optimized build types (empty = build-type default)")
 
-# Keep the largest template-heavy test compilations from overlapping. This limits only targets assigned to the pool;
-# other Ninja work remains parallel.
+# Bound the concurrency of the largest template-heavy test compilations, whose peak memory dominates the build. The pool
+# limits only targets assigned to it; other Ninja work remains parallel.
+set(GR_HEAVY_COMPILE_JOBS
+    "2"
+    CACHE STRING "Concurrent compile jobs for the largest template-heavy test TUs")
 if(CMAKE_GENERATOR MATCHES "Ninja")
-  set_property(GLOBAL APPEND PROPERTY JOB_POOLS gr4_heavy_compile=1)
+  set_property(GLOBAL APPEND PROPERTY JOB_POOLS gr4_heavy_compile=${GR_HEAVY_COMPILE_JOBS})
 endif()
 
 set(GR4_PKG_VERSION
@@ -42,10 +45,24 @@ set(GR4_PKG_VERSION
 set(GR_TEST_HELPER_LIBRARIES "")
 set(PYTHON_AVAILABLE OFF)
 
+# limit parallel compile/link jobs so template-heavy TUs cannot exhaust memory, override with
+# -DGR_BUILD_PARALLEL_LEVEL=<N> (mirrors gnuradio4-core). The default is a conservative floor rather than a constant:
+# the safe level follows the host's free memory and what else is running, so measure before raising it.
+set(GR_BUILD_PARALLEL_LEVEL
+    "4"
+    CACHE STRING "Maximum parallel compile/link jobs")
+if(CMAKE_GENERATOR MATCHES "Ninja")
+  set_property(GLOBAL APPEND PROPERTY JOB_POOLS compile_pool=${GR_BUILD_PARALLEL_LEVEL} link_pool=2)
+  set(CMAKE_JOB_POOL_COMPILE compile_pool)
+  set(CMAKE_JOB_POOL_LINK link_pool)
+endif()
+
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM AND USE_CCACHE)
   message(STATUS "ccache found and will be used")
   set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
+elseif(USE_CCACHE)
+  message(WARNING "USE_CCACHE is ON but ccache was not found on PATH — builds will not be cached")
 else()
   message(STATUS "ccache will not be used")
 endif()
