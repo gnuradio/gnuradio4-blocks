@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <expected>
 #include <format>
@@ -157,8 +158,10 @@ struct SoundIoSinkBackend {
         }
 
         if (_outstream->layout_error != SoundIoErrorNone) {
-            shutdown();
-            return std::unexpected(makeSoundIoError("soundio_outstream_open(): layout", _outstream->layout_error));
+            // advisory per the libsoundio docs (JACK/PipeWire report it whenever the device port
+            // count differs from the request) — continue with the device-provided layout; the
+            // actual channel count reaches the caller via AudioStreamFormat below
+            std::fprintf(stderr, "[gr-audio] output layout not honored (%s); using device layout (%d ch)\n", soundio_strerror(_outstream->layout_error), _outstream->layout.channel_count);
         }
 
         _state.recreateBuffer(AudioSinkState<T>::bufferCapacitySamples(config.numChannels, config.bufferFrames));
@@ -368,8 +371,8 @@ struct SoundIoSourceBackend {
         }
 
         if (_instream->layout_error != SoundIoErrorNone) {
-            shutdown();
-            return std::unexpected(makeSoundIoError("soundio_instream_open(): layout", _instream->layout_error));
+            // advisory per the libsoundio docs — see the outstream path
+            std::fprintf(stderr, "[gr-audio] input layout not honored (%s); using device layout (%d ch)\n", soundio_strerror(_instream->layout_error), _instream->layout.channel_count);
         }
 
         const auto activeChannelCount = static_cast<std::uint32_t>(std::max(1, _instream->layout.channel_count));
