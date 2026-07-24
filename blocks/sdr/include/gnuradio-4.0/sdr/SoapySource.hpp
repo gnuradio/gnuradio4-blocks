@@ -13,6 +13,9 @@
 
 #include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
 
+#include <chrono>
+#include <thread>
+
 namespace gr::blocks::sdr {
 
 namespace detail {
@@ -259,30 +262,39 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
 
                 drainClockInput(clkReader, clkTagRdr);
 
-                auto span = outWriter.template tryReserve<SpanReleasePolicy::ProcessNone>(nSamples);
-                if (span.empty()) {
-                    continue;
-                }
-                auto nCopy = std::min(nSamples, span.size());
-                std::memcpy(span.data(), readBuf.data(), nCopy * sizeof(T));
-
-                if constexpr (std::is_same_v<T, std::complex<float>>) {
-                    if (dc_blocker_enabled) {
-                        applyDcBlocker(span.data(), nCopy);
+                // an already-read chunk is never dropped: a gap in a continuous IQ stream is a phase
+                // discontinuity downstream, while a genuine device overrun surfaces as SOAPY_SDR_OVERFLOW
+                std::size_t done = 0UZ;
+                while (done < nSamples && lifecycle::isActive(this->state())) {
+                    auto span = outWriter.template tryReserve<SpanReleasePolicy::ProcessNone>(nSamples - done);
+                    if (span.empty()) {
+                        std::this_thread::sleep_for(std::chrono::microseconds(200));
+                        this->applyChangedSettings();
+                        applyDirtyFlags();
+                        continue;
                     }
-                }
+                    const auto nCopy = std::min(nSamples - done, span.size());
+                    std::memcpy(span.data(), readBuf.data() + done, nCopy * sizeof(T));
 
-                if (emit_timing_tags) {
-                    auto intervalNs = static_cast<std::uint64_t>(tag_interval.value * 1e9f);
-                    if (intervalNs == 0UL || _lastTagTimeNs == 0UL || (tWallNs - _lastTagTimeNs) >= intervalNs) {
-                        emitTimingTag(nCopy, tWallNs);
-                        _lastTagTimeNs = tWallNs;
+                    if constexpr (std::is_same_v<T, std::complex<float>>) {
+                        if (dc_blocker_enabled) {
+                            applyDcBlocker(span.data(), nCopy);
+                        }
                     }
-                }
 
-                span.publish(nCopy);
-                this->progress->incrementAndGet();
-                this->progress->notify_all();
+                    if (done == 0UZ && emit_timing_tags) {
+                        auto intervalNs = static_cast<std::uint64_t>(tag_interval.value * 1e9f);
+                        if (intervalNs == 0UL || _lastTagTimeNs == 0UL || (tWallNs - _lastTagTimeNs) >= intervalNs) {
+                            emitTimingTag(nCopy, tWallNs);
+                            _lastTagTimeNs = tWallNs;
+                        }
+                    }
+
+                    span.publish(nCopy);
+                    done += nCopy;
+                    this->progress->incrementAndGet();
+                    this->progress->notify_all();
+                }
             }
         } else {
             std::vector<std::vector<T>> readBufs(nCh, std::vector<T>(kReadSize));
@@ -329,9 +341,16 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
 
                 drainClockInput(clkReader, clkTagRdr);
 
+                // hold the chunk until every writer has space, as on the 1-port path
                 bool allAvailable = std::ranges::all_of(outWriters, [nSamples](auto& w) { return w.get().available() >= nSamples; });
+                while (!allAvailable && lifecycle::isActive(this->state())) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(200));
+                    this->applyChangedSettings();
+                    applyDirtyFlags();
+                    allAvailable = std::ranges::all_of(outWriters, [nSamples](auto& w) { return w.get().available() >= nSamples; });
+                }
                 if (!allAvailable) {
-                    continue;
+                    continue; // stopping
                 }
 
                 using OutSpanType = decltype(outWriters[0].get().template tryReserve<SpanReleasePolicy::ProcessNone>(0UZ));
