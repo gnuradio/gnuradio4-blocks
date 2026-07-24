@@ -126,7 +126,17 @@ struct SoundIoSinkBackend {
             return std::unexpected(gr::Error("soundio_create(): out of memory"));
         }
 
-        const int connectError = config.useDummyBackendForTests ? soundio_connect_backend(_soundio, SoundIoBackendDummy) : soundio_connect(_soundio);
+        // prefer PulseAudio: the desktop default-device path with server-managed routing;
+        // soundio_connect() would pick JACK first and address raw device ports
+        int connectError;
+        if (config.useDummyBackendForTests) {
+            connectError = soundio_connect_backend(_soundio, SoundIoBackendDummy);
+        } else {
+            connectError = soundio_connect_backend(_soundio, SoundIoBackendPulseAudio);
+            if (connectError != SoundIoErrorNone) {
+                connectError = soundio_connect(_soundio); // fall back to soundio's own preference
+            }
+        }
         if (connectError != SoundIoErrorNone) {
             shutdown();
             return std::unexpected(makeSoundIoError("soundio_connect()", connectError));
@@ -377,7 +387,17 @@ struct SoundIoSourceBackend {
             return std::unexpected(gr::Error("soundio_create(): out of memory"));
         }
 
-        const int connectError = config.useDummyBackendForTests ? soundio_connect_backend(_soundio, SoundIoBackendDummy) : soundio_connect(_soundio);
+        // prefer PulseAudio: the desktop default-device path with server-managed routing;
+        // soundio_connect() would pick JACK first and address raw device ports
+        int connectError;
+        if (config.useDummyBackendForTests) {
+            connectError = soundio_connect_backend(_soundio, SoundIoBackendDummy);
+        } else {
+            connectError = soundio_connect_backend(_soundio, SoundIoBackendPulseAudio);
+            if (connectError != SoundIoErrorNone) {
+                connectError = soundio_connect(_soundio); // fall back to soundio's own preference
+            }
+        }
         if (connectError != SoundIoErrorNone) {
             shutdown();
             return std::unexpected(makeSoundIoError("soundio_connect()", connectError));
