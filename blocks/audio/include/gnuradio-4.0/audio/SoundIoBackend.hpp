@@ -21,8 +21,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <expected>
 #include <format>
@@ -91,12 +93,14 @@ inline gr::Error makeSoundIoError(std::string_view operation, int error, std::so
 
 template<AudioSample T>
 struct SoundIoSinkBackend {
-    AudioSinkState<T>        _state{};
-    SoundIo*                 _soundio{nullptr};
-    SoundIoDevice*           _device{nullptr};
-    SoundIoOutStream*        _outstream{nullptr};
-    std::atomic<int>         _pendingError{SoundIoErrorNone};
-    std::vector<std::string> _availableDevices;
+    AudioSinkState<T>          _state{};
+    SoundIo*                   _soundio{nullptr};
+    SoundIoDevice*             _device{nullptr};
+    SoundIoOutStream*          _outstream{nullptr};
+    std::atomic<int>           _pendingError{SoundIoErrorNone};
+    std::atomic<std::uint64_t> _starvedFills{0}; // writeCallback latency-floor servo fills; diagnostic
+    std::atomic<std::uint64_t> _underflows{0};   // backend underflow_callback fires; diagnostic
+    std::vector<std::string>   _availableDevices;
 
     [[nodiscard]] std::expected<AudioStreamFormat, gr::Error> start(const AudioDeviceConfig& config) {
         shutdown();
@@ -141,11 +145,12 @@ struct SoundIoSinkBackend {
             return std::unexpected(gr::Error(std::format("libsoundio does not provide a default layout for {} channels", channelCount)));
         }
 
-        _outstream->userdata           = this;
-        _outstream->format             = soundIoFormatFor<T>();
-        _outstream->sample_rate        = static_cast<int>(config.sampleRate);
-        _outstream->layout             = *layout;
-        _outstream->software_latency   = static_cast<double>(std::max<std::size_t>(1U, config.bufferFrames)) / static_cast<double>(config.sampleRate);
+        _outstream->userdata    = this;
+        _outstream->format      = soundIoFormatFor<T>();
+        _outstream->sample_rate = static_cast<int>(config.sampleRate);
+        _outstream->layout      = *layout;
+        // leave software_latency at its default: a non-default value requests PA_STREAM_ADJUST_LATENCY
+        // with tlength = maxlength, a tight buffer PipeWire suspends the node over after a few underruns
         _outstream->write_callback     = &SoundIoSinkBackend::writeCallback;
         _outstream->underflow_callback = &SoundIoSinkBackend::underflowCallback;
         _outstream->error_callback     = &SoundIoSinkBackend::errorCallback;
@@ -183,6 +188,12 @@ struct SoundIoSinkBackend {
     void shutdown() {
         _state.stopRequested.store(true, std::memory_order_release);
 
+        if (const auto sf = _starvedFills.exchange(0, std::memory_order_relaxed); sf > 0 && std::getenv("GR_AUDIO_DEBUG") != nullptr) {
+            std::fprintf(stderr, "[gr-audio] latency-floor servo fills this stream: %llu\n", static_cast<unsigned long long>(sf));
+        }
+        if (const auto uf = _underflows.exchange(0, std::memory_order_relaxed); uf > 0 && std::getenv("GR_AUDIO_DEBUG") != nullptr) {
+            std::fprintf(stderr, "[gr-audio] backend underflows this stream: %llu\n", static_cast<unsigned long long>(uf));
+        }
         if (_outstream != nullptr) {
             soundio_outstream_destroy(_outstream);
             _outstream = nullptr;
@@ -219,7 +230,11 @@ struct SoundIoSinkBackend {
     }
 
 private:
-    static void underflowCallback(SoundIoOutStream* /*outstream*/) {}
+    static void underflowCallback(SoundIoOutStream* outstream) {
+        if (auto* self = static_cast<SoundIoSinkBackend*>(outstream->userdata); self != nullptr) {
+            self->_underflows.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
 
     static void errorCallback(SoundIoOutStream* outstream, int error) {
         auto* self = static_cast<SoundIoSinkBackend*>(outstream->userdata);
@@ -233,14 +248,32 @@ private:
         std::ignore  = _pendingError.compare_exchange_strong(expected, error, std::memory_order_acq_rel);
     }
 
-    static void writeCallback(SoundIoOutStream* outstream, int /*frameCountMin*/, int frameCountMax) {
+    static void writeCallback(SoundIoOutStream* outstream, int frameCountMin, int frameCountMax) {
         auto* self = static_cast<SoundIoSinkBackend*>(outstream->userdata);
         if (self == nullptr || frameCountMax <= 0) {
             return;
         }
 
         const std::size_t channelCount = std::max<std::size_t>(1U, static_cast<std::size_t>(outstream->layout.channel_count));
-        int               framesLeft   = frameCountMax;
+
+        // real samples up to frameCountMax, zeros only up to frameCountMin, and padding to
+        // kLatencyFloorSeconds of queued audio: the Pulse stream runs with prebuf=0, so a callback that
+        // writes less than the device consumed lets the server's read pointer pass the write pointer
+        constexpr double  kLatencyFloorSeconds = 0.15;
+        const std::size_t availFrames          = channelCount > 0U ? self->_state.reader.available() / channelCount : 0U;
+        double            queuedSeconds        = 0.0;
+        if (soundio_outstream_get_latency(outstream, &queuedSeconds) != SoundIoErrorNone || !std::isfinite(queuedSeconds) || queuedSeconds < 0.0) {
+            queuedSeconds = 0.0;
+        }
+        std::size_t padFrames = 0U;
+        if (queuedSeconds < kLatencyFloorSeconds) {
+            padFrames = static_cast<std::size_t>((kLatencyFloorSeconds - queuedSeconds) * static_cast<double>(outstream->sample_rate));
+            self->_starvedFills.fetch_add(1, std::memory_order_relaxed);
+        }
+        int framesLeft = static_cast<int>(std::clamp<std::size_t>(availFrames + padFrames, static_cast<std::size_t>(std::max(0, frameCountMin)), static_cast<std::size_t>(frameCountMax)));
+        if (framesLeft <= 0) {
+            return;
+        }
 
         while (framesLeft > 0) {
             SoundIoChannelArea* areas      = nullptr;
