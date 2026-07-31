@@ -1,19 +1,10 @@
 #ifndef GNURADIO_PYTHONINTERPRETER_HPP
 #define GNURADIO_PYTHONINTERPRETER_HPP
 
-#include <atomic>
-#include <cassert>
-#include <cctype>
-#include <complex>
-#include <cstdint>
-#include <regex>
-#include <span>
-#include <sstream>
-#include <string>
-#include <string_view>
-
-#include <gnuradio-4.0/Message.hpp>
-
+// Circumvent a POSIX violation in pyconfig.h by making it the first include
+// See for details:
+//   1. https://github.com/python/cpython/issues/61322
+//   2. http://pubs.opengroup.org/onlinepubs/007904975/functions/xsh_chap02_02.html
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmacro-redefined"
@@ -26,6 +17,19 @@
 #endif
 #endif
 #include <Python.h>
+
+#include <atomic>
+#include <cassert>
+#include <cctype>
+#include <complex>
+#include <cstdint>
+#include <regex>
+#include <span>
+#include <sstream>
+#include <string>
+#include <string_view>
+
+#include <gnuradio-4.0/Message.hpp>
 
 #include <numpy/numpyconfig.h>
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
