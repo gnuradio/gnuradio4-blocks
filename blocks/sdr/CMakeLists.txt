@@ -3,7 +3,10 @@ target_include_directories(gr-sdr INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SO
                                             $<INSTALL_INTERFACE:include/>)
 target_link_libraries(gr-sdr INTERFACE gnuradio-core gr-common gnuradio-algorithm)
 
+# NamespaceCompatibility.hpp is unconditional: every installed sdr header includes it, so omitting it leaves an
+# installed tree that cannot be compiled against.
 install(FILES include/gnuradio-4.0/sdr/RTL2832Device.hpp include/gnuradio-4.0/sdr/RTL2832Source.hpp
+              include/gnuradio-4.0/sdr/NamespaceCompatibility.hpp
         DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gnuradio-4.0/sdr")
 
 if(TARGET SoapySDR)
