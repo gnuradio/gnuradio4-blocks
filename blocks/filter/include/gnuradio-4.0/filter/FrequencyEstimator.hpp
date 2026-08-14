@@ -134,8 +134,7 @@ private:
         }
 
         // implement reference algorithm from [0] (fast, low-group delay)
-        // Step 3: compute accumulator A, B, and C
-        T accA = T(0);
+        // Step 3: compute accumulators B and C
         T accB = T(0);
         T accC = T(0);
 
@@ -155,7 +154,6 @@ private:
             T b_n = data[n];
 
             // Equations (8)
-            accA += a_n * a_n;
             accB += b_n * b_n;
             accC += T(2) * a_n * b_n;
         }
