@@ -13,6 +13,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/http"
 gr_add_block_library(
   GrHttpBlocks
   MAKE_SHARED_LIBRARY
+  ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
   include/gnuradio-4.0/http/HttpBlock.hpp
   LINK_LIBRARIES

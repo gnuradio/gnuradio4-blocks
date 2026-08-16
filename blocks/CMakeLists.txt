@@ -1,3 +1,8 @@
+set(GR4_BLOCK_STATIC_LIBRARY "")
+if(EMSCRIPTEN)
+  set(GR4_BLOCK_STATIC_LIBRARY MAKE_STATIC_LIBRARY)
+endif()
+
 add_subdirectory(common)
 add_subdirectory(testing)
 add_subdirectory(basic)

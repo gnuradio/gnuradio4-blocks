@@ -11,6 +11,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/testing"
 gr_add_block_library(
   GrTestingBlocks
   MAKE_SHARED_LIBRARY
+  ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
   include/gnuradio-4.0/testing/NullSources.hpp
   include/gnuradio-4.0/testing/ImChartMonitor.hpp
