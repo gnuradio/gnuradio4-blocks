@@ -91,6 +91,69 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         }
     } | kArithmeticTypes;
 
+    "Rotator - sample_rate change preserves the commanded Hz shift"_test = [] {
+        using T = std::complex<double>;
+        Rotator<T> rot({{"frequency_shift", 10.f}, {"sample_rate", 1000.f}});
+        rot.settings().init();
+        std::ignore = rot.settings().applyStagedParameters();
+
+        const double incrementAt1k = static_cast<double>(rot.phase_increment);
+        expect(approx(incrementAt1k, 2.0 * std::numbers::pi * 10.0 / 1000.0, 1e-6));
+
+        std::ignore = rot.settings().setStaged({{"sample_rate", 2000.f}});
+        std::ignore = rot.settings().applyStagedParameters();
+
+        expect(approx(static_cast<float>(rot.frequency_shift), 10.f, 1e-4f)) << "commanded shift must survive a sample_rate change";
+        expect(approx(static_cast<double>(rot.phase_increment), incrementAt1k / 2.0, 1e-9)) << "increment must rescale with sample_rate";
+    };
+
+    "Rotator - settings change without initial_phase keeps phase continuity"_test = [] {
+        using T = std::complex<double>;
+        Rotator<T> rot({{"frequency_shift", 1.f}, {"sample_rate", 64.f}});
+        rot.settings().init();
+        std::ignore = rot.settings().applyStagedParameters();
+
+        std::vector<T> first(32UZ);
+        for (std::size_t i = 0; i < first.size(); i++) {
+            first[i] = rot.processOne(T(1.0, 0.0));
+        }
+
+        std::ignore = rot.settings().setStaged({{"frequency_shift", 1.f}});
+        std::ignore = rot.settings().applyStagedParameters();
+
+        std::vector<T> second(32UZ);
+        for (std::size_t i = 0; i < second.size(); i++) {
+            second[i] = rot.processOne(T(1.0, 0.0));
+        }
+
+        const T continued = first.back() * std::polar(1.0, static_cast<double>(rot.phase_increment));
+        expect(approx(second.front().real(), continued.real(), 1e-9)) << "phase must not reset on a settings change that omits initial_phase";
+        expect(approx(second.front().imag(), continued.imag(), 1e-9)) << "phase must not reset on a settings change that omits initial_phase";
+    };
+
+    "Rotator - initial_phase in the staged keys resets the accumulator"_test = [] {
+        using T = std::complex<double>;
+        Rotator<T> rot({{"frequency_shift", 1.f}, {"sample_rate", 64.f}});
+        rot.settings().init();
+        std::ignore = rot.settings().applyStagedParameters();
+
+        for (std::size_t i = 0; i < 32UZ; i++) {
+            std::ignore = rot.processOne(T(1.0, 0.0));
+        }
+
+        std::ignore = rot.settings().setStaged({{"initial_phase", 0.0}});
+        std::ignore = rot.settings().applyStagedParameters();
+
+        std::vector<T> restarted(32UZ);
+        for (std::size_t i = 0; i < restarted.size(); i++) {
+            restarted[i] = rot.processOne(T(1.0, 0.0));
+        }
+
+        const double increment = static_cast<double>(rot.phase_increment);
+        expect(approx(restarted.front().real(), std::cos(increment), 1e-9));
+        expect(approx(restarted.front().imag(), std::sin(increment), 1e-9));
+    };
+
     constexpr static float fs    = 100.0; // sampling rate
     constexpr static float tMax  = 2.0;   // seconds
     constexpr static auto  nSamp = static_cast<std::size_t>(fs * tMax);
