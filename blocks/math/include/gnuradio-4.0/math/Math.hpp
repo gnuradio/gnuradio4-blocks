@@ -21,6 +21,17 @@ T defaultValue() noexcept {
         return T{};
     }
 }
+
+// integral division by zero is undefined (SIGFPE on x86); Divide/DivideConst define it as 0
+template<typename T, typename op>
+struct SafeOp {
+    [[nodiscard]] constexpr T operator()(const T& a, const T& b) const noexcept { return op{}(a, b); }
+};
+
+template<std::integral T>
+struct SafeOp<T, std::divides<T>> {
+    [[nodiscard]] constexpr T operator()(const T& a, const T& b) const noexcept { return b == T{} ? T{} : static_cast<T>(a / b); }
+};
 } // namespace detail
 
 GR_REGISTER_BLOCK("gr::blocks::math::AddConst", gr::blocks::math::MathOpImpl, ([T], std::plus<[T]>), [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
@@ -38,6 +49,11 @@ struct MathOpImpl : Block<MathOpImpl<T, op>> {
 
     template<gr::meta::t_or_simd<T> V>
     [[nodiscard]] constexpr V processOne(const V& a) const noexcept {
+        if constexpr (std::same_as<op, std::divides<T>> && std::integral<T>) {
+            if (value == T{}) {
+                return V{};
+            }
+        }
         if constexpr (gr::meta::any_simd<V, T>) {
             if constexpr (std::same_as<op, std::multiplies<T>>) {
                 return a * value;
@@ -81,6 +97,8 @@ struct MathOpMultiPortImpl : Block<MathOpMultiPortImpl<T, op>> {
     - Divide: out = in_1 / in_2 / in_3 / ...
     - Add: out = in_1 + in_2 + in_3 + ...
     - Subtract: out = in_1 - in_2 - in_3 - ...
+
+    For integral types, division by a zero divisor yields 0.
     )"">;
 
     // ports
@@ -102,7 +120,7 @@ struct MathOpMultiPortImpl : Block<MathOpMultiPortImpl<T, op>> {
     gr::work::Status processBulk(const std::span<TInSpan>& ins, gr::OutputSpanLike auto& sout) const {
         std::copy(ins[0].begin(), ins[0].end(), sout.begin());
         for (std::size_t n = 1; n < ins.size(); n++) {
-            std::transform(sout.begin(), sout.end(), ins[n].begin(), sout.begin(), op{});
+            std::transform(sout.begin(), sout.end(), ins[n].begin(), sout.begin(), detail::SafeOp<T, op>{});
         }
         return gr::work::Status::OK;
     }

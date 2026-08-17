@@ -37,6 +37,12 @@ const boost::ut::suite<"constant math tests"> constantMath = [] {
         expect(eq(block.processOne(T(4)), T(4) / T(2))) << std::format("DivideConst(2) test for type {}\n", meta::type_name<T>());
     } | kArithmeticTypes;
 
+    "DivideConst by a zero value yields zero for integral types"_test = []<typename T>(const T&) {
+        auto block = DivideConst<T>(property_map{{"value", T(0)}});
+        block.init(block.progress);
+        expect(eq(block.processOne(T(4)), T(0))) << std::format("DivideConst(0) test for type {}\n", meta::type_name<T>());
+    } | std::tuple<uint8_t, int16_t, int32_t>();
+
     "noncanonical header types smoke test"_test = [] {
         static_assert(BlockLike<Add<double>>);
         static_assert(BlockLike<Multiply<std::complex<double>>>);
