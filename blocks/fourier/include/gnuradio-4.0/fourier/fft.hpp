@@ -118,12 +118,18 @@ On the choice of window (mathematically aka. apodisation) functions
 
     // semi-private caching vectors (need to be public for unit-test) -> TODO: move to FFT implementations, casting from T -> U::value_type should be done there
     std::vector<InDataType>  _inData             = std::vector<InDataType>(fftSize, 0);
-    std::vector<OutDataType> _outData            = std::vector<OutDataType>(gr::meta::complex_like<T> ? fftSize.value : (1U + fftSize.value / 2U), 0);
+    std::vector<OutDataType> _outData            = std::vector<OutDataType>(fftSize, 0);
     std::vector<value_type>  _magnitudeSpectrum  = std::vector<value_type>(gr::meta::complex_like<T> ? fftSize.value : (1U + fftSize.value / 2U), 0);
     std::vector<value_type>  _phaseSpectrum      = std::vector<value_type>(gr::meta::complex_like<T> ? fftSize.value : (1U + fftSize.value / 2U), 0);
     constexpr static bool    computeFullSpectrum = gr::meta::complex_like<T>;
 
+    // settings-invariant part of the output DataSet, rebuilt only when settings change
+    U    _dataSetSkeleton{};
+    bool _dataSetSkeletonDirty{true};
+
     void settingsChanged(const property_map& /*old_settings*/, const property_map& newSettings) noexcept {
+        _dataSetSkeletonDirty = true;
+
         if (!newSettings.contains("fftSize") && !newSettings.contains("window")) {
             // do need to only handle interdependent settings -> can early return
             return;
@@ -140,7 +146,7 @@ On the choice of window (mathematically aka. apodisation) functions
 
         // N.B. this should become part of the Fourier transform implementation
         _inData.resize(fftSize, 0);
-        _outData.resize(computeFullSpectrum ? newSize : (1U + newSize / 2), 0);
+        _outData.resize(newSize, 0);
         _magnitudeSpectrum.resize(computeFullSpectrum ? newSize : (newSize / 2), 0);
         _phaseSpectrum.resize(computeFullSpectrum ? newSize : (newSize / 2), 0);
     }
@@ -162,20 +168,24 @@ On the choice of window (mathematically aka. apodisation) functions
             }
         }
 
-        _outData           = _fftImpl.compute(_inData);
-        _magnitudeSpectrum = gr::algorithm::fft::computeMagnitudeSpectrum(_outData, _magnitudeSpectrum, algorithm::fft::ConfigMagnitude{.computeHalfSpectrum = !computeFullSpectrum, .outputInDb = outputInDb, .shiftSpectrum = true});
-        _phaseSpectrum     = gr::algorithm::fft::computePhaseSpectrum(_outData, _phaseSpectrum, algorithm::fft::ConfigPhase{.computeHalfSpectrum = !computeFullSpectrum, .outputInDeg = outputInDeg, .unwrapPhase = unwrapPhase, .shiftSpectrum = true});
+        _fftImpl.compute(_inData, std::span<OutDataType>(_outData));
 
-        output[0] = createDataset();
+        _magnitudeSpectrum = gr::algorithm::fft::computeMagnitudeSpectrum(_outData, std::move(_magnitudeSpectrum), algorithm::fft::ConfigMagnitude{.computeHalfSpectrum = !computeFullSpectrum, .outputInDb = outputInDb, .shiftSpectrum = true});
+        _phaseSpectrum     = gr::algorithm::fft::computePhaseSpectrum(_outData, std::move(_phaseSpectrum), algorithm::fft::ConfigPhase{.computeHalfSpectrum = !computeFullSpectrum, .outputInDeg = outputInDeg, .unwrapPhase = unwrapPhase, .shiftSpectrum = true});
+
+        createDataset(output[0]);
 
         return work::Status::OK;
     }
 
-    constexpr U createDataset() {
-        U ds{};
-        ds.timestamp = 0;
+    // (re-)creates the DataSet skeleton: everything but the per-frame values, ranges and timestamp
+    void rebuildDataSetSkeleton() {
         const std::size_t     N{_magnitudeSpectrum.size()};
         constexpr std::size_t nSignals = 4;
+
+        U& ds        = _dataSetSkeleton;
+        ds           = U{};
+        ds.timestamp = 0;
 
         ds.extents = {static_cast<int32_t>(N)};
         ds.layout  = gr::LayoutRight{}; // row-major
@@ -205,6 +215,38 @@ On the choice of window (mathematically aka. apodisation) functions
         ds.signal_values.resize(nSignals * N);
         ds.signal_ranges.resize(nSignals);
 
+        // setup storage and populate timing events and basic additional meta-information that is not already stored for each signal
+        const auto& meta_info = property_map{                                                 //
+            {std::pmr::string("sample_rate"), pmt::Value(sample_rate)},                       //
+            {std::pmr::string("window"), pmt::Value(window.value)},                           //
+            {std::pmr::string("output_in_db"), pmt::Value(outputInDb)},                       //
+            {std::pmr::string("output_in_deg"), pmt::Value(outputInDeg)},                     //
+            {std::pmr::string("unwrap_phase"), pmt::Value(unwrapPhase)},                      //
+            {std::pmr::string("input_chunk_size"), pmt::Value(this->input_chunk_size)},       //
+            {std::pmr::string("output_chunk_size"), gr::pmt::Value(this->output_chunk_size)}, //
+            {std::pmr::string("stride"), gr::pmt::Value(this->stride)}};
+
+        ds.meta_information.resize(nSignals);
+        for (std::size_t i = 0UZ; i < nSignals; i++) {
+            ds.meta_information[i] = meta_info;
+        }
+
+        ds.timing_events.resize(nSignals);
+        // TODO: propagation of timing events is missing
+    }
+
+    constexpr void createDataset(U& ds) {
+        const std::size_t     N{_magnitudeSpectrum.size()};
+        constexpr std::size_t nSignals = 4;
+
+        if (_dataSetSkeletonDirty || _dataSetSkeleton.signal_values.size() != nSignals * N) {
+            rebuildDataSetSkeleton();
+            _dataSetSkeletonDirty = false;
+        }
+
+        ds           = _dataSetSkeleton; // copy-assign, so a recycled 'ds' re-uses its storage
+        ds.timestamp = 0;
+
         assert(_magnitudeSpectrum.size() == ds.signalValues(0UZ).size());
         std::copy_n(_magnitudeSpectrum.begin(), N, ds.signalValues(0UZ).begin());
         assert(_phaseSpectrum.size() == ds.signalValues(1UZ).size());
@@ -227,27 +269,6 @@ On the choice of window (mathematically aka. apodisation) functions
             const auto mm       = std::minmax_element(std::next(ds.signal_values.begin(), static_cast<std::ptrdiff_t>(i * N)), std::next(ds.signal_values.begin(), static_cast<std::ptrdiff_t>((i + 1U) * N)));
             ds.signal_ranges[i] = {*mm.first, *mm.second};
         }
-
-        // setup storage and populate timing events and basic additional meta-information that is not already stored for each signal
-        const auto& meta_info = property_map{                                                 //
-            {std::pmr::string("sample_rate"), pmt::Value(sample_rate)},                       //
-            {std::pmr::string("window"), pmt::Value(window.value)},                           //
-            {std::pmr::string("output_in_db"), pmt::Value(outputInDb)},                       //
-            {std::pmr::string("output_in_deg"), pmt::Value(outputInDeg)},                     //
-            {std::pmr::string("unwrap_phase"), pmt::Value(unwrapPhase)},                      //
-            {std::pmr::string("input_chunk_size"), pmt::Value(this->input_chunk_size)},       //
-            {std::pmr::string("output_chunk_size"), gr::pmt::Value(this->output_chunk_size)}, //
-            {std::pmr::string("stride"), gr::pmt::Value(this->stride)}};
-
-        ds.meta_information.resize(nSignals);
-        for (std::size_t i = 0UZ; i < nSignals; i++) {
-            ds.meta_information[i] = meta_info;
-        }
-
-        ds.timing_events.resize(nSignals);
-        // TODO: propagation of timing events is missing
-
-        return ds;
     }
 };
 
