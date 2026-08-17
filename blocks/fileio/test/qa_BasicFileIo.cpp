@@ -169,6 +169,19 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
 
     "double header type smoke test"_test = [] { runTest<double>(overwrite); };
 
+    "BasicFileSink rejects a rotation cap outside multi mode"_test = [] {
+        using namespace gr::blocks::fileio;
+        const auto applySettings = [](const char* modeName, gr::Size_t cap) {
+            BasicFileSink<float> sink({{"file_name", "/tmp/gr4_file_sink_test/cap.bin"}, {"mode", modeName}, {"max_bytes_per_file", cap}});
+            sink.settings().init();
+            std::ignore = sink.settings().applyStagedParameters();
+        };
+        expect(throws([&] { applySettings("overwrite", 256U); }));
+        expect(throws([&] { applySettings("append", 256U); }));
+        expect(nothrow([&] { applySettings("multi", 256U); }));
+        expect(nothrow([&] { applySettings("overwrite", 0U); }));
+    };
+
     "round-trip of a recording larger than one output span"_test = [] {
         using namespace gr::blocks::fileio;
         using namespace gr::blocks::testing;

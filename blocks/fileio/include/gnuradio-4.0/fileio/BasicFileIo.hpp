@@ -87,8 +87,17 @@ Important: this implementation assumes a host-order, CPU architecture specific b
     std::size_t _fileCounter{0UZ};
     std::string _actualFileName;
 
-    void settingsChanged(const property_map& /*oldSettings*/, const property_map& /*newSettings*/) {
-        if (lifecycle::isActive(this->state())) {
+    // only Mode::multi has a next file to rotate to: in overwrite mode the cap would truncate the
+    // recording in place and in append mode it would do nothing, so reject the combination outright
+    void settingsChanged(const property_map& oldSettings, const property_map& newSettings) {
+        if (max_bytes_per_file.value != 0U && mode.value != Mode::multi) {
+            throw gr::exception(std::format("max_bytes_per_file ({}) requires mode 'multi', got '{}'", max_bytes_per_file.value, magic_enum::enum_name(mode.value)));
+        }
+        if (!lifecycle::isActive(this->state())) {
+            return;
+        }
+        const auto changed = [&oldSettings, &newSettings](const char* key) { return newSettings.contains(key) && (!oldSettings.contains(key) || oldSettings.at(key) != newSettings.at(key)); };
+        if (changed("file_name") || changed("mode")) {
             closeFile();
             openNextFile();
         }
