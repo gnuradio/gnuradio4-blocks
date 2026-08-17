@@ -1,6 +1,9 @@
 #ifndef GNURADIO_ROTATOR_HPP
 #define GNURADIO_ROTATOR_HPP
 
+#include <algorithm>
+#include <array>
+#include <cassert>
 #include <cmath>
 #include <complex>
 #include <gnuradio-4.0/Block.hpp>
@@ -37,7 +40,9 @@ is attached to.
     Annotated<value_type, "phase_increment", Unit<"rad">, Doc<"how many radians to add per sample">> phase_increment{0};
     Annotated<value_type, "initial_phase", Unit<"rad">, Doc<"starting offset for each new chunk">>   initial_phase{0};
 
-    value_type _accumulated_phase{0};
+    // kept in double regardless of T: a value_type accumulator rounds the re-seed phase once per call,
+    // which for 'complex<float>' is ~2.4e-7 rad and dominates every other error over a stream
+    double _accumulated_phase{0.};
 
     GR_MAKE_REFLECTABLE(Rotator, in, out, sample_rate, frequency_shift, initial_phase, phase_increment);
 
@@ -57,7 +62,7 @@ is attached to.
         }
 
         if (newSettings.contains("initial_phase")) {
-            _accumulated_phase = initial_phase;
+            _accumulated_phase = static_cast<double>(initial_phase);
         }
     }
 
@@ -96,16 +101,63 @@ is attached to.
         }
     }
 
-    [[nodiscard]] constexpr T processOne(const T& inSample) noexcept {
-        _accumulated_phase += phase_increment;
-        // optional: wrap angle if too large
-        if (_accumulated_phase > value_type(2) * std::numbers::pi_v<value_type>) {
-            _accumulated_phase -= value_type(2) * std::numbers::pi_v<value_type>;
-        } else if (_accumulated_phase < value_type(0)) {
-            _accumulated_phase += value_type(2) * std::numbers::pi_v<value_type>;
+    [[nodiscard]] constexpr work::Status processBulk(std::span<const T> input, std::span<T> output) noexcept {
+        assert(output.size() >= input.size());
+
+        // e^{j(phi + k*dphi)} == e^{j*phi} * (e^{j*dphi})^k: kLanes phasors advanced by (e^{j*dphi})^kLanes cover
+        // kLanes consecutive samples with no dependency carried between them, so the sample loop vectorizes;
+        // re-seeding from an exact phase keeps phase and magnitude drift bounded however long the stream is
+        constexpr std::size_t kLanes          = 16UZ;
+        constexpr std::size_t kReseedInterval = 4096UZ;
+        constexpr double      twoPi           = 2. * std::numbers::pi_v<double>;
+
+        const double                   startPhase = _accumulated_phase;
+        const double                   phaseStep  = static_cast<double>(phase_increment);
+        const std::complex<value_type> increment  = std::polar(value_type(1), static_cast<value_type>(phase_increment));
+        const std::complex<double>     laneStep   = std::polar(1., static_cast<double>(kLanes) * phaseStep);
+        const value_type               stepRe     = static_cast<value_type>(laneStep.real());
+        const value_type               stepIm     = static_cast<value_type>(laneStep.imag());
+
+        std::array<value_type, kLanes> laneRe;
+        std::array<value_type, kLanes> laneIm;
+
+        const std::size_t nSamples = input.size();
+        for (std::size_t base = 0UZ; base < nSamples; base += kReseedInterval) {
+            const std::complex<double> seed = std::polar(1., std::fmod(startPhase + static_cast<double>(base + 1UZ) * phaseStep, twoPi));
+            laneRe[0UZ]                     = static_cast<value_type>(seed.real());
+            laneIm[0UZ]                     = static_cast<value_type>(seed.imag());
+            for (std::size_t w = 1UZ; w < kLanes; ++w) {
+                laneRe[w] = laneRe[w - 1UZ] * increment.real() - laneIm[w - 1UZ] * increment.imag();
+                laneIm[w] = laneRe[w - 1UZ] * increment.imag() + laneIm[w - 1UZ] * increment.real();
+            }
+
+            const std::size_t end = std::min(nSamples, base + kReseedInterval);
+            std::size_t       i   = base;
+            for (; i + kLanes <= end; i += kLanes) {
+                for (std::size_t w = 0UZ; w < kLanes; ++w) {
+                    const value_type re = input[i + w].real();
+                    const value_type im = input[i + w].imag();
+                    const value_type pr = laneRe[w];
+                    const value_type pi = laneIm[w];
+                    output[i + w]       = T(re * pr - im * pi, re * pi + im * pr);
+                    laneRe[w]           = pr * stepRe - pi * stepIm;
+                    laneIm[w]           = pr * stepIm + pi * stepRe;
+                }
+            }
+            for (std::size_t w = 0UZ; i + w < end; ++w) {
+                const value_type re = input[i + w].real();
+                const value_type im = input[i + w].imag();
+                output[i + w]       = T(re * laneRe[w] - im * laneIm[w], re * laneIm[w] + im * laneRe[w]);
+            }
         }
 
-        return inSample * std::complex<value_type>(std::cos(_accumulated_phase), std::sin(_accumulated_phase));
+        double phase = std::fmod(startPhase + static_cast<double>(nSamples) * phaseStep, twoPi);
+        if (phase < 0.) {
+            phase += twoPi;
+        }
+        _accumulated_phase = phase;
+
+        return work::Status::OK;
     }
 };
 

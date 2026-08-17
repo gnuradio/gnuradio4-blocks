@@ -21,3 +21,7 @@ gr_add_block_library(
 if(TARGET gnuradio4::GrMathBlocksShared AND ENABLE_TESTING)
   add_subdirectory(test)
 endif()
+
+if(ENABLE_EXAMPLES)
+  add_subdirectory(benchmarks)
+endif()

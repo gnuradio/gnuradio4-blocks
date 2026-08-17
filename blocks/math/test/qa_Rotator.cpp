@@ -1,7 +1,10 @@
+#include <algorithm>
 #include <boost/ut.hpp>
 #include <cmath>
 #include <complex>
 #include <numbers>
+#include <span>
+#include <vector>
 
 #include <gnuradio-4.0/math/Rotator.hpp>
 
@@ -13,6 +16,44 @@
 
 namespace {
 
+struct RotationError {
+    double phase     = 0.;
+    double magnitude = 0.;
+};
+
+// worst deviation of the block's output from exp(j*(k+1)*phase_increment) over a stream fed in `chunk`-sized calls
+template<typename T>
+RotationError rotationError(std::size_t nSamples, double increment, std::size_t chunk) {
+    using value_t = typename T::value_type;
+
+    gr::blocks::math::Rotator<T> rot({{"phase_increment", static_cast<value_t>(increment)}, {"initial_phase", value_t(0)}});
+    rot.settings().init();
+    std::ignore = rot.settings().applyStagedParameters();
+
+    const double applied = static_cast<double>(rot.phase_increment);
+
+    std::vector<T> input(nSamples);
+    for (std::size_t i = 0UZ; i < nSamples; ++i) {
+        const double angle = 0.00037 * static_cast<double>(i);
+        input[i]           = T(static_cast<value_t>(std::cos(angle)), static_cast<value_t>(std::sin(angle)));
+    }
+
+    std::vector<T> output(nSamples);
+    for (std::size_t i = 0UZ; i < nSamples; i += chunk) {
+        const std::size_t n = std::min(chunk, nSamples - i);
+        std::ignore         = rot.processBulk(std::span<const T>(input.data() + i, n), std::span<T>(output.data() + i, n));
+    }
+
+    RotationError worst;
+    for (std::size_t i = 0UZ; i < nSamples; ++i) {
+        const std::complex<double> want = std::complex<double>(input[i]) * std::polar(1., static_cast<double>(i + 1UZ) * applied);
+        const std::complex<double> have = std::complex<double>(output[i]);
+        worst.phase                     = std::max(worst.phase, std::abs(std::arg(have / want)));
+        worst.magnitude                 = std::max(worst.magnitude, std::abs(std::abs(have) / std::abs(want) - 1.));
+    }
+    return worst;
+}
+
 template<typename T>
 std::vector<std::complex<T>> execRotator(const std::vector<std::complex<T>>& input, const gr::property_map& initSettings) {
     gr::blocks::math::Rotator<std::complex<T>> rot(initSettings);
@@ -20,9 +61,7 @@ std::vector<std::complex<T>> execRotator(const std::vector<std::complex<T>>& inp
     std::ignore = rot.settings().applyStagedParameters(); // needed for unit-test only when executed outside a Scheduler/Graph
 
     std::vector<std::complex<T>> output(input.size());
-    for (std::size_t i = 0; i < input.size(); i++) {
-        output[i] = rot.processOne(input[i]);
-    }
+    std::ignore = rot.processBulk(std::span<const std::complex<T>>(input), std::span<std::complex<T>>(output));
     return output;
 }
 
@@ -79,10 +118,9 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         expect(approx(rot.frequency_shift, 0.25f, 1e-3f));
         expect(approx(rot.initial_phase, value_t(0), value_t(1e-3f)));
 
-        std::vector<T> output(8UZ);
-        for (std::size_t i = 0; i < 8; i++) {
-            output[i] = rot.processOne(std::complex<value_t>(1, 0));
-        }
+        const std::vector<T> input(8UZ, std::complex<value_t>(1, 0));
+        std::vector<T>       output(8UZ);
+        std::ignore = rot.processBulk(std::span<const T>(input), std::span<T>(output));
 
         for (std::size_t i = 0; i < 8; i++) {
             value_t wantAngle = value_t(i + 1) * phase_shift;
@@ -152,18 +190,15 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         rot.settings().init();
         std::ignore = rot.settings().applyStagedParameters();
 
-        std::vector<T> first(32UZ);
-        for (std::size_t i = 0; i < first.size(); i++) {
-            first[i] = rot.processOne(T(1.0, 0.0));
-        }
+        const std::vector<T> input(32UZ, T(1.0, 0.0));
+        std::vector<T>       first(32UZ);
+        std::ignore = rot.processBulk(std::span<const T>(input), std::span<T>(first));
 
         std::ignore = rot.settings().setStaged({{"frequency_shift", 1.f}});
         std::ignore = rot.settings().applyStagedParameters();
 
         std::vector<T> second(32UZ);
-        for (std::size_t i = 0; i < second.size(); i++) {
-            second[i] = rot.processOne(T(1.0, 0.0));
-        }
+        std::ignore = rot.processBulk(std::span<const T>(input), std::span<T>(second));
 
         const T continued = first.back() * std::polar(1.0, static_cast<double>(rot.phase_increment));
         expect(approx(second.front().real(), continued.real(), 1e-9)) << "phase must not reset on a settings change that omits initial_phase";
@@ -176,21 +211,80 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         rot.settings().init();
         std::ignore = rot.settings().applyStagedParameters();
 
-        for (std::size_t i = 0; i < 32UZ; i++) {
-            std::ignore = rot.processOne(T(1.0, 0.0));
-        }
+        const std::vector<T> input(32UZ, T(1.0, 0.0));
+        std::vector<T>       discard(32UZ);
+        std::ignore = rot.processBulk(std::span<const T>(input), std::span<T>(discard));
 
         std::ignore = rot.settings().setStaged({{"initial_phase", 0.0}});
         std::ignore = rot.settings().applyStagedParameters();
 
         std::vector<T> restarted(32UZ);
-        for (std::size_t i = 0; i < restarted.size(); i++) {
-            restarted[i] = rot.processOne(T(1.0, 0.0));
-        }
+        std::ignore = rot.processBulk(std::span<const T>(input), std::span<T>(restarted));
 
         const double increment = static_cast<double>(rot.phase_increment);
         expect(approx(restarted.front().real(), std::cos(increment), 1e-9));
         expect(approx(restarted.front().imag(), std::sin(increment), 1e-9));
+    };
+
+    // 65536 samples is 16 re-seed intervals; the increments span slow, fast and near-pi rotations
+    "Rotator - long stream stays on the exact rotation"_test = []<typename T> {
+        constexpr std::size_t nSamples  = 65536UZ;
+        constexpr double      tolerance = std::is_same_v<typename T::value_type, float> ? 1e-4 : 1e-9;
+
+        for (double increment : {1e-4, 0.05, 1.0, 3.0, -2.7, 6.0}) {
+            const auto error = rotationError<T>(nSamples, increment, nSamples);
+            expect(lt(error.phase, tolerance)) << std::format("phase drift over {} samples, increment {}", nSamples, increment);
+            expect(lt(error.magnitude, tolerance)) << std::format("magnitude drift over {} samples, increment {}", nSamples, increment);
+        }
+    } | kArithmeticTypes;
+
+    // the same bound has to survive call boundaries that land off both the lane width and the re-seed interval
+    "Rotator - odd chunk sizes stay on the exact rotation"_test = []<typename T> {
+        constexpr std::size_t nSamples  = 65536UZ;
+        constexpr double      tolerance = std::is_same_v<typename T::value_type, float> ? 1e-4 : 1e-9;
+
+        for (std::size_t chunk : {1000UZ, 4095UZ, 4096UZ, 4097UZ, 16384UZ}) {
+            const auto error = rotationError<T>(nSamples, 0.2718281828, chunk);
+            expect(lt(error.phase, tolerance)) << std::format("phase drift over {} samples in {}-sample calls", nSamples, chunk);
+            expect(lt(error.magnitude, tolerance)) << std::format("magnitude drift over {} samples in {}-sample calls", nSamples, chunk);
+        }
+    } | kArithmeticTypes;
+
+    // short calls re-seed from '_accumulated_phase' every call, so its rounding is the floor here rather
+    // than the loop's: in double that floor is flat, i.e. the bound does not grow with the call count
+    "Rotator - short calls stay bounded as the stream grows"_test = []<typename T> {
+        constexpr double tolerance = std::is_same_v<typename T::value_type, float> ? 1e-5 : 1e-9;
+
+        for (std::size_t nSamples : {16384UZ, 65536UZ}) {
+            for (std::size_t chunk : {1UZ, 3UZ, 64UZ}) {
+                for (double increment : {0.2718281828, 6.0}) {
+                    const auto error = rotationError<T>(nSamples, increment, chunk);
+                    expect(lt(error.phase, tolerance)) << std::format("phase drift over {} samples in {}-sample calls, increment {}", nSamples, chunk, increment);
+                    expect(lt(error.magnitude, tolerance)) << std::format("magnitude drift over {} samples in {}-sample calls, increment {}", nSamples, chunk, increment);
+                }
+            }
+        }
+    } | kArithmeticTypes;
+
+    "Rotator - phase is continuous across a frequency change mid-stream"_test = [] {
+        using T = std::complex<double>;
+        Rotator<T> rot({{"frequency_shift", 2.f}, {"sample_rate", 64.f}});
+        rot.settings().init();
+        std::ignore = rot.settings().applyStagedParameters();
+
+        const std::vector<T> input(4100UZ, T(1.0, 0.0)); // spans a re-seed boundary and ends mid-lane
+        std::vector<T>       before(4100UZ);
+        std::ignore = rot.processBulk(std::span<const T>(input), std::span<T>(before));
+
+        std::ignore = rot.settings().setStaged({{"frequency_shift", -7.f}});
+        std::ignore = rot.settings().applyStagedParameters();
+
+        std::vector<T> after(4100UZ);
+        std::ignore = rot.processBulk(std::span<const T>(input), std::span<T>(after));
+
+        const T continued = before.back() * std::polar(1.0, static_cast<double>(rot.phase_increment));
+        expect(approx(after.front().real(), continued.real(), 1e-9)) << "a frequency change must advance the phase, not restart it";
+        expect(approx(after.front().imag(), continued.imag(), 1e-9)) << "a frequency change must advance the phase, not restart it";
     };
 
     constexpr static float fs    = 100.0; // sampling rate
