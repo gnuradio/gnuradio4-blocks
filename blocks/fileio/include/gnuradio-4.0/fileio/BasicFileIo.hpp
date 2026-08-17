@@ -336,11 +336,15 @@ private:
         _totalBytesReadFile  = 0UZ;
         _emittedStartTrigger = false;
 
+        // the reader hands one chunk to one processBulk call, so the chunk must fit an output span:
+        // size it from the actual ring, capped so a large ring does not turn into a whole-file read
+        constexpr std::size_t               kMaxChunkSamples = 64UZ * 1024UZ / sizeof(T);
         gr::algorithm::fileio::ReaderConfig config;
-        std::size_t                         chunkBytes = std::max<std::size_t>(sizeof(T), out.max_buffer_size() * sizeof(T));
+        std::size_t                         chunkSamples = std::clamp(out.bufferSize(), 1UZ, kMaxChunkSamples);
         if (length.value != 0U) {
-            chunkBytes = std::min(chunkBytes, static_cast<std::size_t>(length.value) * sizeof(T));
+            chunkSamples = std::min(chunkSamples, static_cast<std::size_t>(length.value));
         }
+        const std::size_t chunkBytes = chunkSamples * sizeof(T);
 
         config.offset              = static_cast<std::size_t>(offset.value) * sizeof(T);
         config.chunkBytes          = chunkBytes;

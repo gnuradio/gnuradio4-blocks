@@ -364,6 +364,46 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         }
     };
 
+    "WavSink/WavSource round-trip above the 1MB header scan limit"_test = [] {
+        constexpr std::string_view caseName = "WavSink large roundtrip";
+        constexpr std::size_t      nSamples = 600'000UZ; // 1.14 MiB as int16, past WavSource's 1 MiB header-scan cap
+
+        std::vector<std::int16_t> reference(nSamples);
+        for (std::size_t i = 0UZ; i < nSamples; ++i) {
+            reference[i] = static_cast<std::int16_t>(i % 1000UZ);
+        }
+        const auto wavBytes = makeWav(1U, 1U, 16U, 48000U, encodePcm16(reference));
+        TempFile   inputFile{writeTempAudioFile(wavBytes)};
+
+        const auto outputPath = std::filesystem::temp_directory_path() / std::format("gr4-wavsink-large-{}.wav", std::chrono::steady_clock::now().time_since_epoch().count());
+        TempFile   outputFile{outputPath};
+
+        {
+            gr::Graph graph;
+            auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", inputFile.path.string()}});
+            auto&     sink   = graph.emplaceBlock<gr::blocks::fileio::WavSink<std::int16_t>>({{"uri", outputPath.string()}, {"sample_rate", 48000.f}, {"num_channels", gr::Size_t(1)}});
+            expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
+
+            gr::scheduler::Simple<> sched;
+            expect(sched.exchange(std::move(graph)).has_value()) << caseName;
+            expect(sched.runAndWait().has_value()) << caseName;
+            expect(eq(sink.total_samples_written.value, static_cast<gr::Size_t>(nSamples))) << caseName;
+        }
+
+        {
+            gr::Graph graph;
+            auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", outputPath.string()}});
+            auto&     sink   = graph.emplaceBlock<gr::blocks::testing::TagSink<std::int16_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
+            expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
+
+            gr::scheduler::Simple<> sched;
+            expect(sched.exchange(std::move(graph)).has_value()) << caseName;
+            expect(sched.runAndWait().has_value()) << caseName;
+            expect(eq(sink._samples.size(), nSamples)) << caseName;
+            expect(std::ranges::equal(sink._samples, reference)) << caseName;
+        }
+    };
+
     "WavSource loop restarts from beginning"_test = [] {
         constexpr std::string_view caseName = "WavSource loop";
 
