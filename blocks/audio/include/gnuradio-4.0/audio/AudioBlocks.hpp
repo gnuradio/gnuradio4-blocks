@@ -409,31 +409,53 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
     StagingReader                  _stagingReader{_stagingBuffer.new_reader()};
     bool                           _ioThreadDone{true};
     bool                           _ioStopRequested{false};
+    bool                           _ioAbortRequested{false};
+    bool                           _reconfigureRequested{false};
+    detail::AudioDeviceConfig      _pendingConfig{};
     std::size_t                    _totalStagedSamples{0U};
     std::size_t                    _totalIoWrittenSamples{0U};
 
+    // declared last so it destructs first: the I/O task must be joined before any state it touches
+    struct IoThreadGuard {
+        AudioSink& parent;
+        ~IoThreadGuard() {
+            gr::atomic_ref(parent._ioStopRequested).store_release(true);
+            gr::atomic_ref(parent._ioAbortRequested).store_release(true);
+            gr::atomic_ref(parent._ioThreadDone).wait(false);
+        }
+    };
+
     void start() {
         std::lock_guard deviceLock(_deviceMutex);
+        gr::atomic_ref(_reconfigureRequested).store_release(false);
         if (auto result = initialiseBackendUnlocked(); !result) {
             failUnlocked("AudioSink::start()", result.error());
             return;
         }
         // start I/O thread that drains the staging buffer into the backend
+        gr::atomic_ref(_ioAbortRequested).store_release(false);
         gr::atomic_ref(_ioStopRequested).store_release(false);
         gr::atomic_ref(_ioThreadDone).store_release(false);
         gr::thread_pool::Manager::defaultIoPool()->execute([this]() { ioWriteLoop(); });
     }
 
+    // the drain the I/O thread runs after a stop request is bounded by io_buffer_size + 2 s, so this
+    // must wait at least that long or shutdownDevice() frees the backend under a live thread
     void stop() {
         gr::atomic_ref(_ioStopRequested).store_release(true);
-        // wait for I/O thread with timeout
-        const auto stopDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int>(io_buffer_size.value * 1000.f + 1000.f));
+        const auto stopDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int>(io_buffer_size.value * 1000.f + 3000.f));
         while (!gr::atomic_ref(_ioThreadDone).load_acquire() && std::chrono::steady_clock::now() < stopDeadline) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!gr::atomic_ref(_ioThreadDone).load_acquire()) {
+            gr::atomic_ref(_ioAbortRequested).store_release(true);
+            gr::atomic_ref(_ioThreadDone).wait(false);
         }
         shutdownDevice();
     }
 
+    // reconfiguring rebuilds the rings and the stream the I/O thread holds spans into, and opens a
+    // device (hundreds of ms) under Settings::_mutex, so only the request is recorded here
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& /*newSettings*/) {
         if (_activeConfig.sampleRate == 0U) {
             return;
@@ -441,10 +463,8 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
         if (currentSampleRate() == _activeConfig.sampleRate && currentChannelCount() == _activeConfig.numChannels && device.value == _activeConfig.device) {
             return;
         }
-        std::lock_guard deviceLock(_deviceMutex);
-        if (auto result = initialiseBackendUnlocked(); !result) {
-            failUnlocked("AudioSink::settingsChanged()", result.error());
-        }
+        _pendingConfig = {.sampleRate = currentSampleRate(), .numChannels = currentChannelCount(), .bufferFrames = backendBufferFrames(), .device = device.value, .useDummyBackendForTests = _useDummyBackendForTests};
+        gr::atomic_ref(_reconfigureRequested).store_release(true);
     }
 
     [[nodiscard]] gr::work::Status processBulk(gr::InputSpanLike auto& inSpan) {
@@ -503,8 +523,8 @@ private:
     void ioWriteLoop() {
         gr::thread_pool::thread::setThreadName(std::format("audio-sink:{}", this->name.value));
 
-        const std::size_t channelCount = std::max<std::size_t>(1U, static_cast<std::size_t>(num_channels.value));
-        const double      nominalRate  = static_cast<double>(sample_rate.value);
+        std::size_t channelCount = std::max<std::size_t>(1U, static_cast<std::size_t>(num_channels.value));
+        double      nominalRate  = static_cast<double>(sample_rate.value);
 
         // pre-fill: wait for staging buffer to accumulate ~50ms before feeding the backend
         const std::size_t prefillSamples  = static_cast<std::size_t>(nominalRate * 0.05) * channelCount;
@@ -517,6 +537,12 @@ private:
         }
 
         while (!gr::atomic_ref(_ioStopRequested).load_acquire()) {
+            if (gr::atomic_ref(_reconfigureRequested).load_acquire()) {
+                applyPendingReconfigure();
+                channelCount = std::max<std::size_t>(1U, static_cast<std::size_t>(num_channels.value));
+                nominalRate  = static_cast<double>(sample_rate.value);
+            }
+
             if (auto pollResult = _backendImpl.poll(); !pollResult) {
                 if (debug_console.value) {
                     std::println(stderr, "[AudioSink] poll error: {}", pollResult.error().message);
@@ -591,7 +617,7 @@ private:
         const auto drainDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int>(io_buffer_size.value * 1000.f + 2000.f));
 
         // phase 1: transfer all remaining staging samples into the backend ring buffer
-        while (_stagingReader.available() > 0U && std::chrono::steady_clock::now() < drainDeadline) {
+        while (_stagingReader.available() > 0U && !gr::atomic_ref(_ioAbortRequested).load_acquire() && std::chrono::steady_clock::now() < drainDeadline) {
             if (auto pollResult = _backendImpl.poll(); !pollResult) {
                 break;
             }
@@ -627,7 +653,7 @@ private:
         }
 
         // phase 2: wait for the audio callback to consume the backend buffer (playout)
-        while (_backendImpl._state.reader.available() > channelCount && _backendImpl.isStreamActive() && std::chrono::steady_clock::now() < drainDeadline) {
+        while (_backendImpl._state.reader.available() > channelCount && _backendImpl.isStreamActive() && !gr::atomic_ref(_ioAbortRequested).load_acquire() && std::chrono::steady_clock::now() < drainDeadline) {
             if (auto pollResult = _backendImpl.poll(); !pollResult) {
                 break;
             }
@@ -648,6 +674,20 @@ private:
         this->emitErrorMessage(endpoint, error);
         _backendImpl.shutdown();
         _failed = true;
+    }
+
+    // runs on the I/O thread between spans, so no span into the rings or the stream being replaced
+    // is live, and the device open does not happen under Settings::_mutex
+    void applyPendingReconfigure() {
+        std::lock_guard deviceLock(_deviceMutex);
+        gr::atomic_ref(_reconfigureRequested).store_release(false);
+        const auto pending = _pendingConfig;
+        if (pending.sampleRate == _activeConfig.sampleRate && pending.numChannels == _activeConfig.numChannels && pending.device == _activeConfig.device) {
+            return;
+        }
+        if (auto result = initialiseBackendUnlocked(); !result) {
+            failUnlocked("AudioSink::applyPendingReconfigure()", result.error());
+        }
     }
 
     [[nodiscard]] std::expected<void, gr::Error> initialiseBackendUnlocked() {
@@ -694,6 +734,8 @@ private:
         std::lock_guard deviceLock(_deviceMutex);
         _backendImpl.shutdown();
     }
+
+    IoThreadGuard _ioGuard{*this};
 };
 
 static_assert(gr::BlockLike<AudioSink<float>>);
