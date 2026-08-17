@@ -38,15 +38,24 @@ given 'sample_rate' in Hz (N.B sample_rate is normalised to '1' by default).
 
     GR_MAKE_REFLECTABLE(Rotator, in, out, sample_rate, frequency_shift, initial_phase, phase_increment);
 
+    // 'frequency_shift' is the commanded quantity and survives a 'sample_rate' change;
+    // setting 'phase_increment' instead commands the increment and re-derives the shift.
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
-        if (newSettings.contains("frequency_shift") && !newSettings.contains("phase_increment")) {
-            phase_increment = value_type(2) * static_cast<value_type>(std::numbers::pi_v<float> * frequency_shift / sample_rate);
-        } else if (!newSettings.contains("frequency_shift") && newSettings.contains("phase_increment")) {
-            frequency_shift = static_cast<float>(phase_increment / (value_type(2) * std::numbers::pi_v<value_type>)) * sample_rate;
-        } else if (newSettings.contains("frequency_shift") && newSettings.contains("phase_increment")) {
+        const bool haveShift     = newSettings.contains("frequency_shift");
+        const bool haveIncrement = newSettings.contains("phase_increment");
+        if (haveShift && haveIncrement) {
             throw gr::exception(std::format("cannot set both 'frequency_shift' and 'phase_increment' in new setting (XOR): {}", newSettings));
         }
-        _accumulated_phase = initial_phase;
+
+        if (haveIncrement) {
+            frequency_shift = static_cast<float>(phase_increment / (value_type(2) * std::numbers::pi_v<value_type>)) * sample_rate;
+        } else if (haveShift || newSettings.contains("sample_rate")) {
+            phase_increment = value_type(2) * static_cast<value_type>(std::numbers::pi_v<float> * frequency_shift / sample_rate);
+        }
+
+        if (newSettings.contains("initial_phase")) {
+            _accumulated_phase = initial_phase;
+        }
     }
 
     [[nodiscard]] constexpr T processOne(const T& inSample) noexcept {
