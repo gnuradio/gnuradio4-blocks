@@ -399,6 +399,43 @@ const boost::ut::suite<"SoapySink + SoapySource shared device"> txRxTests = [] {
         expect(ge(rxSink1.count.value, kMinExpected)) << std::format("channel 0: got {}, expected at least {}", rxSink1.count.value, kMinExpected);
         expect(ge(rxSink2.count.value, kMinExpected)) << std::format("channel 1: got {}, expected at least {}", rxSink2.count.value, kMinExpected);
     };
+
+    "2-channel TX with a small staging buffer keeps both channels fed"_test = [] {
+        gr::Graph            flow;
+        constexpr gr::Size_t nSamples = 20000;
+
+        auto& txSrc1  = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({{"n_samples_max", nSamples}, {"sample_rate", 1e6f}, {"chunk_size", gr::Size_t{128}}});
+        auto& txSrc2  = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({{"n_samples_max", nSamples}, {"sample_rate", 1e6f}, {"chunk_size", gr::Size_t{128}}});
+        auto& sink    = flow.emplaceBlock<SoapySink<CF32, 2UZ>>({
+            {"device", "loopback"},
+            {"device_parameter", std::string("num_channels=2")},
+            {"sample_rate", 1e6f},
+            {"num_channels", gr::Size_t{2}},
+            {"max_chunk_size", std::uint32_t{512}},
+        });
+        auto& source  = flow.emplaceBlock<SoapySource<CF32, 2UZ>>({
+            {"device", "loopback"},
+            {"device_parameter", std::string("num_channels=2")},
+            {"sample_rate", 1e6f},
+            {"num_channels", gr::Size_t{2}},
+        });
+        auto& rxSink1 = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", nSamples}});
+        auto& rxSink2 = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", nSamples}});
+
+        expect(flow.connect<"out", "in#0">(txSrc1, sink).has_value());
+        expect(flow.connect<"out", "in#1">(txSrc2, sink).has_value());
+        expect(flow.connect<"out#0", "in">(source, rxSink1).has_value());
+        expect(flow.connect<"out#1", "in">(source, rxSink2).has_value());
+
+        Sched sched;
+        expect(sched.exchange(std::move(flow)).has_value());
+        expect(runWithWatchdog(sched, std::chrono::seconds{20}).has_value());
+
+        // a per-channel accounting error starves one channel while the other keeps flowing
+        constexpr auto kMinExpected = static_cast<gr::Size_t>(nSamples * 0.9);
+        expect(ge(rxSink1.count.value, kMinExpected)) << std::format("channel 0: got {}", rxSink1.count.value);
+        expect(ge(rxSink2.count.value, kMinExpected)) << std::format("channel 1: got {}", rxSink2.count.value);
+    };
 };
 
 const boost::ut::suite<"LimeSDR hardware"> limeTests = [] {
