@@ -244,6 +244,48 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         expectSingleFormatTag(sink._tags, source.sample_rate.value, source.num_channels.value, caseName);
     };
 
+    "AudioSource accounts for every captured sample"_test = [] {
+        constexpr std::string_view caseName = "AudioSource sample accounting";
+
+        gr::Graph graph;
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}});
+        source._useDummyBackendForTests = true;
+        auto& sink                      = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
+
+        gr::scheduler::Simple<> sched;
+        expect(sched.exchange(std::move(graph)).has_value()) << caseName;
+        expect(runSchedulerFor(sched, 200ms).has_value()) << caseName;
+        expect(sched.state() != gr::lifecycle::State::ERROR) << caseName;
+
+        // a consumer that keeps up must see no loss, and any loss that does happen must be counted
+        // rather than inferred from a gap in the stream
+        expect(gt(sink._nSamplesProduced, 0UZ)) << caseName;
+        expect(eq(source.dropped_samples.value, gr::Size_t(0))) << std::format("{}: a keeping-up consumer must not lose samples, dropped {}", caseName, source.dropped_samples.value);
+    };
+
+    "AudioSink accounts for samples the device ring refused"_test = [] {
+        constexpr std::string_view      caseName = "AudioSink sample accounting";
+        const std::vector<std::int16_t> reference(8000, std::int16_t(1000)); // 3.6x the 0.1 s staging ring
+        const auto                      wavBytes = makeWav(1U, 1U, 16U, 22050U, encodePcm16(reference));
+        TempFile                        file{writeTempAudioFile(wavBytes)};
+
+        gr::Graph graph;
+        auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
+        auto&     sink                = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        sink._useDummyBackendForTests = true;
+        expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
+
+        gr::scheduler::Simple<> sched;
+        expect(sched.exchange(std::move(graph)).has_value()) << caseName;
+        expect(sched.runAndWait().has_value()) << caseName;
+        expect(sched.state() != gr::lifecycle::State::ERROR) << caseName;
+
+        // staged, written and dropped must together account for everything the block accepted
+        expect(eq(sink._totalStagedSamples, sink._totalIoWrittenSamples + static_cast<std::size_t>(sink.dropped_samples.value))) //
+            << std::format("{}: staged={} written={} dropped={}", caseName, sink._totalStagedSamples, sink._totalIoWrittenSamples, sink.dropped_samples.value);
+    };
+
     "AudioSource loops back into AudioSink with soundio dummy backend"_test = [] {
         constexpr std::string_view caseName = "AudioSource to AudioSink soundio dummy backend";
 

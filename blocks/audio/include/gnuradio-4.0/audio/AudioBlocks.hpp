@@ -242,8 +242,15 @@ private:
             }
         }
 
+        // the capture callback drops when the backend ring is full and marks driver holes as silence;
+        // fold both into dropped_samples so the block's loss count covers the whole path
+        const auto backendDropped = _backendImpl._state.droppedSamples.exchange(0U, std::memory_order_relaxed);
+        reportDiscardedSamples(backendDropped);
+
         const auto overflows = _backendImpl._state.overflowCount.load(std::memory_order_relaxed);
         if (overflows > _lastReportedOverflows) {
+            const auto silence = _backendImpl._state.silenceSamples.load(std::memory_order_relaxed);
+            std::println(stderr, "[AudioSource] device overflow #{} (silence-filled holes: {} samples)", overflows, silence);
             _lastReportedOverflows = overflows;
         }
 
@@ -448,6 +455,7 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
     detail::AudioDeviceConfig      _pendingConfig{};
     std::size_t                    _totalStagedSamples{0U};
     std::size_t                    _totalIoWrittenSamples{0U};
+    std::uint64_t                  _lastDropLogNs{0U};
 
     // declared last so it destructs first: the I/O task must be joined before any state it touches
     struct IoThreadGuard {
@@ -628,6 +636,11 @@ private:
 
             const std::size_t nBackendWritten = _backendImpl._state.writeFromInput(std::span<const T>(adjustedBuf.data(), nAdjusted), channelCount);
             _totalIoWrittenSamples += nBackendWritten;
+            // the drift compensator may resample, so what did not reach the backend is measured
+            // against its output, not against the staging samples that produced it
+            if (nBackendWritten < nAdjusted) {
+                reportDroppedSamples(nAdjusted - nBackendWritten);
+            }
 
             const std::uint64_t tNowNs = detail::wallClockNs();
             _rateEstimator.update(static_cast<double>(tNowNs) * 1e-9, nFrameAligned / channelCount);
@@ -683,6 +696,9 @@ private:
             }
             const auto nDrained = _backendImpl._state.writeFromInput(std::span<const T>(readSpan.begin(), readSpan.size()), channelCount);
             _totalIoWrittenSamples += nDrained;
+            if (nDrained < readSpan.size()) {
+                reportDroppedSamples(readSpan.size() - nDrained);
+            }
             std::ignore = readSpan.consume(readSpan.size());
         }
 
@@ -699,9 +715,22 @@ private:
             const std::size_t overflows = _backendImpl._state.overflowCount.load(std::memory_order_relaxed);
             std::println(stderr, "[AudioSink] I/O thread done: staged={} ioWritten={} dropped={} backendAvail={} underruns={} overflows={}", _totalStagedSamples, _totalIoWrittenSamples, dropped_samples.value, _backendImpl._state.reader.available(), underruns, overflows);
         }
-
         gr::atomic_ref(_ioThreadDone).store_release(true);
         gr::atomic_ref(_ioThreadDone).notify_all();
+    }
+
+    void reportDroppedSamples(std::size_t nDropped) {
+        if (nDropped == 0UZ) {
+            return;
+        }
+        dropped_samples = dropped_samples.value + static_cast<gr::Size_t>(nDropped);
+
+        constexpr std::uint64_t kLogIntervalNs = 1'000'000'000ULL;
+        const std::uint64_t     tNowNs         = detail::wallClockNs();
+        if (tNowNs - _lastDropLogNs >= kLogIntervalNs) {
+            _lastDropLogNs = tNowNs;
+            std::println(stderr, "[AudioSink] dropped {} samples (total {}) — the device ring could not take them", nDropped, dropped_samples.value);
+        }
     }
 
     void failUnlocked(std::string_view endpoint, gr::Error error) {
