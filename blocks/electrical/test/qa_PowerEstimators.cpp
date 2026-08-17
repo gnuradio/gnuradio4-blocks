@@ -80,10 +80,10 @@ const boost::ut::suite<"Power Metrics Estimators"> powerEstimatorTests = [] {
             }
 
             // prepare actual unit-test
-            const std::string         testName = std::format("{}", gr::meta::type_name<PowerMetrics<T, kNPhases>>());
-            PowerMetrics<T, kNPhases> block;
-            block.decimate = sample_rate / output_rate;
-            block.initFilters();
+            const std::string testName = std::format("{}", gr::meta::type_name<PowerMetrics<T, kNPhases>>());
+            gr::Graph         graph;
+            auto&             block = graph.emplaceBlock<PowerMetrics<T, kNPhases>>({{"decimate", static_cast<gr::Size_t>(sample_rate / output_rate)}});
+            block.start();
 
             // prepare input spans
             std::vector<std::span<const T>> voltageSpans;
@@ -179,6 +179,43 @@ const boost::ut::suite<"Power Metrics Estimators"> powerEstimatorTests = [] {
             std::pair<float, std::integral_constant<std::size_t, 3>>{},                     //
             std::pair<gr::UncertainValue<float>, std::integral_constant<std::size_t, 3>>{}  //
         };
+
+    "PowerMetrics with default settings AC-couples its inputs"_test = [] {
+        using T                        = float;
+        constexpr std::size_t kNPhases = 1UZ;
+        constexpr std::size_t nIn      = 20000UZ;
+
+        gr::Graph graph;
+        auto&     block = graph.emplaceBlock<PowerMetrics<T, kNPhases>>();
+        block.start();
+
+        const std::size_t nOut = nIn / static_cast<std::size_t>(block.decimate);
+        std::vector<T>    dcVoltage(nIn, V_rms);
+        std::vector<T>    dcCurrent(nIn, I_rms);
+        std::vector<T>    activePowerVec(nOut), reactivePowerVec(nOut), apparentPowerVec(nOut), rmsVoltageVec(nOut), rmsCurrentVec(nOut);
+
+        std::vector<std::span<const T>> inVoltage{std::span<const T>(dcVoltage)};
+        std::vector<std::span<const T>> inCurrent{std::span<const T>(dcCurrent)};
+        std::vector<std::span<T>>       outActive{std::span<T>(activePowerVec)};
+        std::vector<std::span<T>>       outReactive{std::span<T>(reactivePowerVec)};
+        std::vector<std::span<T>>       outApparent{std::span<T>(apparentPowerVec)};
+        std::vector<std::span<T>>       outRmsU{std::span<T>(rmsVoltageVec)};
+        std::vector<std::span<T>>       outRmsI{std::span<T>(rmsCurrentVec)};
+
+        std::span<std::span<const T>> spanInVoltage(inVoltage);
+        std::span<std::span<const T>> spanInCurrent(inCurrent);
+        std::span<std::span<T>>       spanActive(outActive);
+        std::span<std::span<T>>       spanReactive(outReactive);
+        std::span<std::span<T>>       spanApparent(outApparent);
+        std::span<std::span<T>>       spanRmsU(outRmsU);
+        std::span<std::span<T>>       spanRmsI(outRmsI);
+
+        expect(block.processBulk(spanInVoltage, spanInCurrent, spanActive, spanReactive, spanApparent, spanRmsU, spanRmsI) == gr::work::Status::OK);
+
+        const std::size_t lastIdx = nOut - 1UZ;
+        expect(lt(spanRmsU[0][lastIdx], 1.0f)) << std::format("DC input must be rejected by the high-pass, got U_rms = {}", spanRmsU[0][lastIdx]);
+        expect(lt(spanRmsI[0][lastIdx], 1.0f)) << std::format("DC input must be rejected by the high-pass, got I_rms = {}", spanRmsI[0][lastIdx]);
+    };
 
     "PowerFactor"_test = []<typename TestParam>() {
         using T                        = typename TestParam::first_type;
