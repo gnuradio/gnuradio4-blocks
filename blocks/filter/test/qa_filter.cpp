@@ -241,8 +241,12 @@ const boost::ut::suite<"Basic[Decimating]Filter"> BasicFilterTests = [] {
             std::ranges::generate(inputSignal, generateSample);
             expect(filter.processBulk(inputSignal, outputSignal) == work::Status::OK) << "second processing failed";
 
-            double maxOutput = std::abs(*std::ranges::max_element(outputSignal, maxOp));
-            expect(ge(maxOutput, T{0.9})) << std::format("{} filter should pass in-band frequencies: max output {}", filter.filter_type, maxOutput);
+            double sumSq = 0.0;
+            for (const auto& v : outputSignal) {
+                sumSq += static_cast<double>(v) * static_cast<double>(v);
+            }
+            double amplitude = std::sqrt(2.0 * sumSq / static_cast<double>(outputSignal.size()));
+            expect(ge(amplitude, T{0.9})) << std::format("{} filter should pass in-band frequencies: amplitude {}", filter.filter_type, amplitude);
         };
 
         "verify out-of-band signal is attenuated"_test = [&filter] {
