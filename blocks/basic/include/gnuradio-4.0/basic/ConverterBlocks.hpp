@@ -1,6 +1,7 @@
 #ifndef CONVERTERBLOCKS_HPP
 #define CONVERTERBLOCKS_HPP
 
+#include <cstring>
 #include <tuple>
 
 #include <gnuradio-4.0/Block.hpp>
@@ -246,9 +247,16 @@ For every complex input item, we produce two output items that alternate between
     GR_MAKE_REFLECTABLE(ComplexToInterleaved, in, interleaved);
 
     [[nodiscard]] constexpr work::Status processBulk(std::span<const T> complexInput, std::span<R> interleavedOut) const noexcept { // some SIMD-fication potential here (needs permute)
-        for (std::size_t i = 0; i < complexInput.size(); ++i) {
-            interleavedOut[2 * i]     = static_cast<R>(complexInput[i].real());
-            interleavedOut[2 * i + 1] = static_cast<R>(complexInput[i].imag());
+        if constexpr (std::is_same_v<R, typename T::value_type>) {
+            static_assert(sizeof(T) == 2UZ * sizeof(R) && alignof(T) >= alignof(R), "std::complex<R> is not layout-compatible with R[2]");
+            if (!complexInput.empty()) {
+                std::memcpy(static_cast<void*>(interleavedOut.data()), static_cast<const void*>(complexInput.data()), complexInput.size() * sizeof(T));
+            }
+        } else {
+            for (std::size_t i = 0; i < complexInput.size(); ++i) {
+                interleavedOut[2 * i]     = static_cast<R>(complexInput[i].real());
+                interleavedOut[2 * i + 1] = static_cast<R>(complexInput[i].imag());
+            }
         }
         return work::Status::OK;
     }
@@ -270,8 +278,15 @@ For every pair of interleaved input items (real, imag), we produce one complex o
     GR_MAKE_REFLECTABLE(InterleavedToComplex, interleaved, out);
 
     [[nodiscard]] constexpr work::Status processBulk(std::span<const T> interleavedInput, std::span<R> complexOut) const noexcept { // some SIMD-fication potential here (needs permute)
-        for (std::size_t i = 0; i < complexOut.size(); ++i) {
-            complexOut[i] = R{static_cast<typename R::value_type>(interleavedInput[2 * i]), static_cast<typename R::value_type>(interleavedInput[2 * i + 1])};
+        if constexpr (std::is_same_v<T, typename R::value_type>) {
+            static_assert(sizeof(R) == 2UZ * sizeof(T) && alignof(R) >= alignof(T), "std::complex<T> is not layout-compatible with T[2]");
+            if (!complexOut.empty()) {
+                std::memcpy(static_cast<void*>(complexOut.data()), static_cast<const void*>(interleavedInput.data()), complexOut.size() * sizeof(R));
+            }
+        } else {
+            for (std::size_t i = 0; i < complexOut.size(); ++i) {
+                complexOut[i] = R{static_cast<typename R::value_type>(interleavedInput[2 * i]), static_cast<typename R::value_type>(interleavedInput[2 * i + 1])};
+            }
         }
         return work::Status::OK;
     }
