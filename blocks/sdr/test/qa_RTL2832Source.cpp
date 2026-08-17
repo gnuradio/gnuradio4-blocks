@@ -280,6 +280,54 @@ const boost::ut::suite<"RTL2832Source"> rtl2832Tests = [] {
         expect(lt(std::abs(result[2].imag() - (-1.f)), 0.01f));
     };
 
+    "publishSamples delivers a whole chunk even when the ring is smaller than it"_test = [] {
+        using namespace std::chrono_literals;
+
+        constexpr std::size_t kRingSize  = 1024UZ;
+        constexpr std::size_t kChunkSize = 8192UZ;
+
+        // publishSamples only needs an active state; going through start() would launch the capture
+        // thread, which without a device sleeps 2 s between open retries and holds up stop()
+        struct TestSource : gr::blocks::sdr::RTL2832Source<std::uint8_t> {
+            void forceState(lifecycle::State state) { this->setAndNotifyState(state); }
+        };
+
+        TestSource block;
+        block.emit_timing_tags = false;
+        block.init(block.progress);
+        block.forceState(lifecycle::State::RUNNING);
+
+        gr::CircularBuffer<std::uint8_t> ring(kRingSize);
+        auto                             writer = ring.new_writer();
+        auto                             reader = ring.new_reader();
+
+        std::vector<std::uint8_t> chunk(kChunkSize);
+        for (std::size_t i = 0UZ; i < kChunkSize; ++i) {
+            chunk[i] = static_cast<std::uint8_t>(i & 0xFFU);
+        }
+
+        std::vector<std::uint8_t> received;
+        received.reserve(kChunkSize);
+        std::thread producer([&block, &writer, &chunk] { block.publishSamples(writer, chunk.data(), chunk.size(), 0ULL); });
+
+        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        while (received.size() < kChunkSize && std::chrono::steady_clock::now() < deadline) {
+            const auto available = reader.available();
+            if (available == 0UZ) {
+                std::this_thread::sleep_for(100us);
+                continue;
+            }
+            auto span = reader.get(available);
+            received.insert(received.end(), span.begin(), span.end());
+            std::ignore = span.consume(span.size());
+        }
+        producer.join();
+        block.forceState(lifecycle::State::STOPPED);
+
+        expect(eq(received.size(), kChunkSize)) << "a USB chunk larger than the output ring must still be delivered in full";
+        expect(std::ranges::equal(received, chunk)) << "delivered samples must arrive in order with no gaps";
+    };
+
     "real device complex<float> capture with noise stats"_test = [] {
         gr::blocks::sdr::RTL2832Device probe;
         bool                           hasDevice = probe.open(0).has_value();
