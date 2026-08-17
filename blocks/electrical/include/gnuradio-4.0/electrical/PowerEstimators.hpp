@@ -94,7 +94,15 @@ applies low-pass filters to calculate average values, and outputs decimated resu
         std::ranges::transform(indices, _lpActivePower.begin(), lp_filter_init);
     }
 
-    void settingsChanged(const property_map& /*oldSettings*/, const property_map& /*newSettings*/) { initFilters(); }
+    void start() { initFilters(); }
+
+    // re-designing resets the filter state, so only the keys the design depends on may trigger it
+    void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
+        static constexpr std::array kDesignKeys{"sample_rate", "decimate", "high_pass", "low_pass"};
+        if (std::ranges::any_of(kDesignKeys, [&newSettings](std::string_view key) { return newSettings.contains(key); })) {
+            initFilters();
+        }
+    }
 
     template<typename TInputSpanType, typename TOutputSpanType>
     constexpr work::Status processBulk(std::span<TInputSpanType>& voltage, std::span<TInputSpanType>& current,                         // inputs
