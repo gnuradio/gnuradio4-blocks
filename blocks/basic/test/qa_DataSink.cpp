@@ -430,6 +430,37 @@ const boost::ut::suite DataSinkTests = [] {
         }
     } | std::vector<bool>{true, false};
 
+    "continuous mode - a stalled blocking poller does not freeze the graph"_test = [] {
+        using namespace gr::tag;
+        constexpr gr::Size_t kSamples = 200000; // 3x the 65536-sample poller ring, so backpressure is unavoidable
+
+        gr::Graph testGraph;
+        auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        // only needs to hold the stream until the poller is registered, which spinUntil does at once
+        auto& delay = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", 100u}});
+        auto& sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "stalled_sink"}, {SIGNAL_NAME.shortKey(), "StalledName"}});
+        expect(testGraph.connect<"out", "in">(src, delay).has_value());
+        expect(testGraph.connect<"out", "in">(delay, sink).has_value());
+
+        auto run = std::async([&testGraph] {
+            Scheduler sched;
+            if (auto ret = sched.exchange(std::move(testGraph)); !ret) {
+                throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+            }
+            return sched.runAndWait().has_value();
+        });
+
+        std::shared_ptr<StreamingPoller<float>> poller;
+        expect(spinUntil(4s, [&poller] {
+            poller = globalDataSinkRegistry().getStreamingPoller<float>(DataSinkQuery::sinkName("stalled_sink"), {.overflowPolicy = OverflowPolicy::Backpressure});
+            return poller != nullptr;
+        })) << boost::ut::fatal;
+
+        expect(run.wait_for(10s) == std::future_status::ready) << "graph must finish although the blocking poller never consumes" << boost::ut::fatal;
+        expect(run.get());
+        expect(gt(poller->droppedSampleCount.load(), 0UZ)) << "samples the stalled poller could not take must be counted";
+    };
+
     "trigger mode - polling/callback overlapping/non-overlapping"_test = [] {
         using namespace gr::tag;
         const std::uint32_t nSamples    = 150000;

@@ -15,6 +15,7 @@
 #include <deque>
 #include <limits>
 #include <print>
+#include <thread>
 
 #include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
 
@@ -70,6 +71,29 @@ constexpr std::size_t data_sink_data_set_buffer_size = 1024;
 inline std::size_t calculateNSamplesToProcess(std::size_t available, std::size_t requested, std::size_t minRequired, std::size_t maxRequired) {
     const std::size_t clampRequested = std::clamp(requested, minRequired, maxRequired);
     return std::min(available, clampRequested);
+}
+
+// The Backpressure poller policy applies for at most this long. Past it the listener drops and
+// counts, so a consumer that stopped polling cannot freeze the scheduler thread running the graph.
+constexpr std::chrono::milliseconds data_sink_blocking_deadline{100};
+
+template<typename TWriter>
+[[nodiscard]] inline bool awaitWriterSpace(TWriter& writer, std::size_t nRequested) {
+    constexpr std::size_t kSpins = 64UZ;
+    for (std::size_t i = 0UZ; i < kSpins; ++i) {
+        if (writer.available() >= nRequested) {
+            return true;
+        }
+        std::this_thread::yield();
+    }
+    const auto deadline = std::chrono::steady_clock::now() + data_sink_blocking_deadline;
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (writer.available() >= nRequested) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace detail
@@ -706,7 +730,7 @@ private:
                     return;
                 }
 
-                if (_isBlocking || poller->writer.available() > 0) {
+                if (poller->writer.available() > 0UZ || (_isBlocking && detail::awaitWriterSpace(poller->writer, 1UZ))) {
                     auto writeData = poller->writer.reserve(1UZ);
                     writeData[0UZ] = std::move(data);
                     writeData.publish(1UZ);
@@ -798,10 +822,16 @@ private:
                     return;
                 }
 
-                const std::size_t nSamplesToPublish  = _isBlocking ? data.size() : std::min(data.size(), poller->writer.available());
+                if (_isBlocking && poller->writer.available() < data.size()) {
+                    std::ignore = detail::awaitWriterSpace(poller->writer, data.size());
+                }
+                const std::size_t nSamplesToPublish  = std::min(data.size(), poller->writer.available());
                 const auto        nTagsInRange       = static_cast<std::size_t>(std::ranges::count_if(tags, [nSamplesToPublish](const Tag& tag) { return tag.index < nSamplesToPublish; }));
                 const std::size_t availableInputTags = _pendingMetadata.has_value() ? nTagsInRange + 1UZ : nTagsInRange;
-                const std::size_t nTagsToPublish     = _isBlocking ? availableInputTags : std::min(availableInputTags, poller->tagWriter.available());
+                if (_isBlocking && poller->tagWriter.available() < availableInputTags) {
+                    std::ignore = detail::awaitWriterSpace(poller->tagWriter, availableInputTags);
+                }
+                const std::size_t nTagsToPublish = std::min(availableInputTags, poller->tagWriter.available());
 
                 if (nSamplesToPublish > 0UZ) {
                     if (nTagsToPublish > 0UZ) {
@@ -1170,7 +1200,7 @@ private:
                     return;
                 }
 
-                if (block || poller->writer.available() > 0) {
+                if (poller->writer.available() > 0UZ || (block && detail::awaitWriterSpace(poller->writer, 1UZ))) {
                     auto writeData = poller->writer.reserve(1UZ);
                     writeData[0UZ] = std::move(data);
                     writeData.publish(1UZ);
