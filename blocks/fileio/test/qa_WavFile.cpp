@@ -415,6 +415,29 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         }
     };
 
+    "WavSource falls back to the physical length when the declared data size is unusable"_test = [] {
+        const std::vector<std::int16_t> reference{100, 200, 300, 400, 500, 600};
+
+        const auto readBack = [&reference](std::uint32_t declaredDataBytes, std::string_view caseName) {
+            auto wavBytes = makeWav(1U, 1U, 16U, 8000U, encodePcm16(reference));
+            patchLe32(wavBytes, wavBytes.size() - reference.size() * sizeof(std::int16_t) - 4U, declaredDataBytes);
+            TempFile file{writeTempAudioFile(wavBytes)};
+
+            gr::Graph graph;
+            auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", file.path.string()}});
+            auto&     sink   = graph.emplaceBlock<gr::blocks::testing::TagSink<std::int16_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
+            expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
+
+            gr::scheduler::Simple<> sched;
+            expect(sched.exchange(std::move(graph)).has_value()) << caseName;
+            expect(sched.runAndWait().has_value()) << caseName;
+            expect(eq(std::vector<std::int16_t>(sink._samples.begin(), sink._samples.end()), reference)) << caseName;
+        };
+
+        readBack(0U, "declared data size 0 (recording cut short by a crash)");
+        readBack(0xFFFF'0000U, "declared data size beyond the physical file");
+    };
+
     "WavSink rotates on a cap that is not a multiple of sizeof(T)"_test = [] {
         constexpr std::string_view caseName = "WavSink odd rotation cap";
 
