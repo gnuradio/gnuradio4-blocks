@@ -430,4 +430,63 @@ const boost::ut::suite<"SoapyRaiiWrapper streaming"> streamTests = [] {
     };
 };
 
+const boost::ut::suite<"SoapyRaiiWrapper device registry"> registryTests = [] {
+    using Registration = soapy::detail::DeviceRegistry::Registration;
+
+    "activation waits for every registered user"_test = [] {
+        const soapy::Kwargs args{{"driver", "registry-test-a"}};
+        int                 firedFirst  = 0;
+        int                 firedSecond = 0;
+
+        Registration first(args);
+        Registration second(args);
+
+        first.activate([&firedFirst] { ++firedFirst; });
+        expect(eq(firedFirst, 0)) << "the first user must wait for the second";
+
+        second.activate([&firedSecond] { ++firedSecond; });
+        expect(eq(firedFirst, 1)) << "the last user settling releases every queued callback";
+        expect(eq(firedSecond, 1));
+    };
+
+    "a user that fails to configure does not stall the next one"_test = [] {
+        const soapy::Kwargs args{{"driver", "registry-test-b"}};
+        int                 fired = 0;
+
+        {
+            Registration failed(args); // never activates: mirrors an early return in reinitDevice
+        }
+
+        Registration good(args);
+        good.activate([&fired] { ++fired; });
+        expect(eq(fired, 1)) << "an abandoned registration must not hold the device pending forever";
+    };
+
+    "a destroyed registration fires no stale callback"_test = [] {
+        const soapy::Kwargs args{{"driver", "registry-test-c"}};
+        int                 firedStale = 0;
+        int                 firedLive  = 0;
+
+        Registration live(args);
+        {
+            Registration stale(args);
+            stale.activate([&firedStale] { ++firedStale; });
+        }
+        expect(eq(firedStale, 0)) << "a callback withdrawn before activation must never run";
+
+        live.activate([&firedLive] { ++firedLive; });
+        expect(eq(firedStale, 0)) << "destroying a registration must deregister its callback";
+        expect(eq(firedLive, 1));
+    };
+
+    "a single user activates immediately"_test = [] {
+        const soapy::Kwargs args{{"driver", "registry-test-d"}};
+        int                 fired = 0;
+
+        Registration only(args);
+        only.activate([&fired] { ++fired; });
+        expect(eq(fired, 1));
+    };
+};
+
 int main() { /* not needed for UT */ }

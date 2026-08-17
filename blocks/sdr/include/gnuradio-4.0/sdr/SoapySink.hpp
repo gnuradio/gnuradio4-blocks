@@ -66,16 +66,17 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
 
     GR_MAKE_REFLECTABLE(SoapySink, in, device, device_parameter, master_clock_rate, clock_source, sample_rate, num_channels, tx_antennae, frequency, tx_bandwidths, tx_gains, gain_mode, frequency_correction, dc_offset_mode, dc_offset, iq_balance, time_source, reference_clock_rate, stream_args, tune_args, frontend_mapping, device_settings, max_chunk_size, max_time_out_us, max_underflow_count, verbose_underflow, burst_taper_enabled, burst_ramp_time, burst_taper_type, burst_shape_param, burst_safety_rampdown);
 
-    soapy::Device                          _device{};
-    soapy::Device::Stream<T, SOAPY_SDR_TX> _txStream{};
-    soapy::Kwargs                          _devKwargs{};
-    std::atomic<gr::Size_t>                _underflowCount{0U};
-    bool                                   _ioThreadDone = true;
-    std::atomic<bool>                      _ioThreadStarted{false};
-    algorithm::BurstTaper<float>           _taper;
-    std::vector<StagingBuffer>             _stagingBuffers;
-    std::vector<StagingWriter>             _stagingWriters;
-    std::vector<StagingReader>             _stagingReaders;
+    soapy::Device                               _device{};
+    soapy::Device::Stream<T, SOAPY_SDR_TX>      _txStream{};
+    soapy::Kwargs                               _devKwargs{};
+    std::atomic<gr::Size_t>                     _underflowCount{0U};
+    bool                                        _ioThreadDone = true;
+    std::atomic<bool>                           _ioThreadStarted{false};
+    algorithm::BurstTaper<float>                _taper;
+    std::vector<StagingBuffer>                  _stagingBuffers;
+    std::vector<StagingWriter>                  _stagingWriters;
+    std::vector<StagingReader>                  _stagingReaders;
+    soapy::detail::DeviceRegistry::Registration _activation;
 
     struct IoThreadGuard {
         bool& done;
@@ -89,6 +90,7 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
         configureTaper();
         reinitDevice();
         if (!_txStream.get()) {
+            _activation.reset(); // release the slot so the other users of this device can still activate
             return;
         }
 
@@ -106,7 +108,7 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
             _stagingReaders.push_back(_stagingBuffers.back().new_reader());
         }
 
-        soapy::detail::DeviceRegistry::registerActivation(_devKwargs, [this] {
+        _activation.activate([this] {
             if (auto r = _txStream.activate(); !r) {
                 this->emitErrorMessage("start()", r.error());
                 this->requestStop();
@@ -119,6 +121,7 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
     }
 
     void stop() {
+        _activation.reset();
         if (_ioThreadStarted.load(std::memory_order_acquire)) {
             gr::atomic_ref(_ioThreadDone).wait(false);
         }
@@ -511,6 +514,8 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
         if (!device_parameter->empty()) {
             _devKwargs.merge(soapy::parseKwargsString(device_parameter.value));
         }
+        _activation = soapy::detail::DeviceRegistry::Registration(_devKwargs);
+
         auto devResult = soapy::Device::make(_devKwargs);
         if (!devResult) {
             this->emitErrorMessage("reinitDevice()", devResult.error());
