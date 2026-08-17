@@ -1,6 +1,7 @@
 #ifndef GNURADIO_TAGMONITORS_HPP
 #define GNURADIO_TAGMONITORS_HPP
 
+#include <algorithm>
 #include <complex>
 #include <limits>
 
@@ -225,7 +226,10 @@ struct TagSource : Block<TagSource<T, UseProcessVariant>> {
             }
         } else {
             if (mark_tag) {
-                outSpan[0] = nGeneratedTags > 0 ? detail::make_sample_value<T>(std::size_t{1}) : detail::make_sample_value<T>(std::size_t{0});
+                std::fill_n(outSpan.begin(), nSamples, detail::make_sample_value<T>(std::size_t{0}));
+                if (nGeneratedTags > 0 && nSamples > 0UZ) {
+                    outSpan[0] = detail::make_sample_value<T>(std::size_t{1});
+                }
             } else {
                 for (std::size_t i = 0; i < nSamples; ++i) {
                     outSpan[i] = detail::make_sample_value<T>(_nSamplesProduced + i);

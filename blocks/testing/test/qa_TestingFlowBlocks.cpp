@@ -3,6 +3,7 @@
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
+#include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
     using namespace boost::ut;
@@ -49,6 +50,29 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
         }
         expect(sch.runAndWait().has_value());
         expect(eq(sink.count, N_head));
+    } | kTestTypes;
+
+    "TagSource mark_tag publishes only 0 and 1"_test = []<typename T>(const T&) {
+        constexpr gr::Size_t N = 16;
+
+        Graph g;
+        auto& src  = g.emplaceBlock<TagSource<T, ProcessFunction::USE_PROCESS_BULK>>(property_map{{"n_samples_max", N}, {"mark_tag", true}});
+        auto& sink = g.emplaceBlock<TagSink<T, ProcessFunction::USE_PROCESS_ONE>>(property_map{{"n_samples_expected", N}});
+        src._tags  = {{3UZ, {{"key", "a"}}}, {11UZ, {{"key", "b"}}}};
+
+        expect(g.connect<"out", "in">(src, sink).has_value());
+
+        gr::scheduler::Simple sch;
+        if (auto ret = sch.exchange(std::move(g)); !ret) {
+            throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+        }
+        expect(sch.runAndWait().has_value());
+
+        expect(eq(sink._samples.size(), static_cast<std::size_t>(N)));
+        std::vector<T> expected(N, T(0));
+        expected[3]  = T(1);
+        expected[11] = T(1);
+        expect(std::ranges::equal(sink._samples, expected)) << std::format("mark_tag must publish 1 at tagged offsets and 0 everywhere else, got {}", sink._samples);
     } | kTestTypes;
 };
 
