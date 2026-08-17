@@ -490,6 +490,7 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
     StagingBuffer                  _stagingBuffer{1U};
     StagingWriter                  _stagingWriter{_stagingBuffer.new_writer()};
     StagingReader                  _stagingReader{_stagingBuffer.new_reader()};
+    std::vector<T>                 _driftAdjustedBuffer{};
     bool                           _ioThreadDone{true};
     bool                           _ioStopRequested{false};
     bool                           _ioAbortRequested{false};
@@ -720,12 +721,13 @@ private:
             const double     servoRatio = 1.0 + fillError * kServoGain;
 
             // apply drift compensation
-            const std::size_t           nFrameAligned = detail::wholeFrameSamples(readSpan.size(), channelCount);
-            thread_local std::vector<T> adjustedBuf;
-            adjustedBuf.resize(nFrameAligned + channelCount);
-            const std::size_t nAdjusted = _driftCompensator.compensateSink(std::span<const T>(readSpan.begin(), nFrameAligned), std::span<T>(adjustedBuf), nFrameAligned, nominalRate * servoRatio, nominalRate, channelCount);
+            const std::size_t nFrameAligned = detail::wholeFrameSamples(readSpan.size(), channelCount);
+            if (_driftAdjustedBuffer.size() < nFrameAligned + channelCount) {
+                _driftAdjustedBuffer.resize(nFrameAligned + channelCount);
+            }
+            const std::size_t nAdjusted = _driftCompensator.compensateSink(std::span<const T>(readSpan.begin(), nFrameAligned), std::span<T>(_driftAdjustedBuffer.data(), nFrameAligned + channelCount), nFrameAligned, nominalRate * servoRatio, nominalRate, channelCount);
 
-            const std::size_t nBackendWritten = _backendImpl._state.writeFromInput(std::span<const T>(adjustedBuf.data(), nAdjusted), channelCount);
+            const std::size_t nBackendWritten = _backendImpl._state.writeFromInput(std::span<const T>(_driftAdjustedBuffer.data(), nAdjusted), channelCount);
             _totalIoWrittenSamples += nBackendWritten;
             // the drift compensator may resample, so what did not reach the backend is measured
             // against its output, not against the staging samples that produced it
