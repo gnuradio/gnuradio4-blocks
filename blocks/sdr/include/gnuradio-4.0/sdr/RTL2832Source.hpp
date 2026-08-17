@@ -7,6 +7,7 @@
 #include <cstring>
 #include <print>
 #include <string_view>
+#include <thread>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
@@ -339,36 +340,52 @@ Operating modes:
         std::ignore  = clkSpan.consume(nAvailable);
     }
 
+    // an already-read USB chunk is never dropped: a gap in a continuous IQ stream is a phase
+    // discontinuity downstream. tryReserve is all-or-nothing, so each request asks for what the ring reports
     void publishSamples(auto& writer, const std::uint8_t* data, std::size_t nBytes, std::uint64_t tWallNs) {
-        std::size_t nOutputSamples = std::is_same_v<T, std::uint8_t> ? nBytes : nBytes / 2UZ;
+        const std::size_t nOutputSamples = std::is_same_v<T, std::uint8_t> ? nBytes : nBytes / 2UZ;
 
-        auto span = writer.template tryReserve<SpanReleasePolicy::ProcessNone>(nOutputSamples);
-        if (span.empty()) {
-            return;
-        }
-
-        if constexpr (std::is_same_v<T, std::uint8_t>) {
-            std::memcpy(span.data(), data, nBytes);
-        } else if constexpr (std::is_same_v<T, std::complex<float>>) {
-            detail::convertToComplex(data, span.data(), nOutputSamples);
-            if (dc_blocker_enabled) {
-                applyDcBlocker(span.data(), nOutputSamples);
+        std::size_t done = 0UZ;
+        while (done < nOutputSamples && lifecycle::isActive(this->state())) {
+            const std::size_t remaining = nOutputSamples - done;
+            const std::size_t nRequest  = std::min(remaining, writer.available());
+            if (nRequest == 0UZ) {
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+                this->applyChangedSettings();
+                continue;
             }
-        }
-
-        if (emit_timing_tags) {
-            auto intervalNs = static_cast<std::uint64_t>(tag_interval.value * 1e9f);
-            if (intervalNs == 0UL || _lastTagTimeNs == 0UL || (tWallNs - _lastTagTimeNs) >= intervalNs) {
-                emitTimingTag(nOutputSamples, tWallNs);
-                _lastTagTimeNs = tWallNs;
-            } else {
-                emitPpmTagIfNeeded();
+            auto span = writer.template tryReserve<SpanReleasePolicy::ProcessNone>(nRequest);
+            if (span.empty()) {
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+                this->applyChangedSettings();
+                continue;
             }
-        }
+            const std::size_t nCopy = std::min(remaining, span.size());
 
-        span.publish(nOutputSamples);
-        this->progress->incrementAndGet();
-        this->progress->notify_all();
+            if constexpr (std::is_same_v<T, std::uint8_t>) {
+                std::memcpy(span.data(), data + done, nCopy);
+            } else if constexpr (std::is_same_v<T, std::complex<float>>) {
+                detail::convertToComplex(data + 2UZ * done, span.data(), nCopy);
+                if (dc_blocker_enabled) {
+                    applyDcBlocker(span.data(), nCopy);
+                }
+            }
+
+            if (done == 0UZ && emit_timing_tags) {
+                auto intervalNs = static_cast<std::uint64_t>(tag_interval.value * 1e9f);
+                if (intervalNs == 0UL || _lastTagTimeNs == 0UL || (tWallNs - _lastTagTimeNs) >= intervalNs) {
+                    emitTimingTag(nCopy, tWallNs);
+                    _lastTagTimeNs = tWallNs;
+                } else {
+                    emitPpmTagIfNeeded();
+                }
+            }
+
+            span.publish(nCopy);
+            done += nCopy;
+            this->progress->incrementAndGet();
+            this->progress->notify_all();
+        }
     }
 
     void emitTimingTag(std::size_t nSamples, std::uint64_t tWallNs) {
