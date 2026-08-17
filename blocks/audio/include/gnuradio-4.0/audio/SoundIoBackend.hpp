@@ -52,6 +52,18 @@ template<>
 
 inline gr::Error makeSoundIoError(std::string_view operation, int error, std::source_location location = std::source_location::current()) { return gr::Error(std::format("{}: {}", operation, soundio_strerror(error)), location); }
 
+// true when the channel areas form one interleaved block that can be copied in one go
+template<AudioSample T>
+[[nodiscard]] inline bool areasAreInterleaved(const SoundIoChannelArea* areas, std::size_t channelCount) {
+    const auto step = static_cast<int>(channelCount * sizeof(T));
+    for (std::size_t channel = 0U; channel < channelCount; ++channel) {
+        if (areas[channel].step != step || areas[channel].ptr != areas[0].ptr + static_cast<int>(channel * sizeof(T))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] inline std::vector<AudioDeviceInfo> enumerateSoundIoDevices(SoundIo* sio, bool isInput) {
     const int                    count = isInput ? soundio_input_device_count(sio) : soundio_output_device_count(sio);
     std::vector<AudioDeviceInfo> result;
@@ -304,15 +316,26 @@ private:
             const std::size_t availableFrames = channelCount > 0U ? self->_state.reader.available() / channelCount : 0U;
             const std::size_t copiedFrames    = std::min(requestedFrames, availableFrames);
 
+            const bool interleaved = areasAreInterleaved<T>(areas, channelCount);
+
             if (copiedFrames > 0U) {
                 auto readSpan = self->_state.reader.get(copiedFrames * channelCount);
-                for (std::size_t frame = 0U; frame < requestedFrames; ++frame) {
-                    for (std::size_t channel = 0U; channel < channelCount; ++channel) {
-                        const T value = frame < copiedFrames ? readSpan[frame * channelCount + channel] : T{};
-                        std::memcpy(areas[channel].ptr + areas[channel].step * static_cast<int>(frame), &value, sizeof(T));
+                if (interleaved) {
+                    std::memcpy(areas[0].ptr, readSpan.data(), copiedFrames * channelCount * sizeof(T));
+                    if (requestedFrames > copiedFrames) {
+                        std::memset(areas[0].ptr + copiedFrames * channelCount * sizeof(T), 0, (requestedFrames - copiedFrames) * channelCount * sizeof(T));
+                    }
+                } else {
+                    for (std::size_t frame = 0U; frame < requestedFrames; ++frame) {
+                        for (std::size_t channel = 0U; channel < channelCount; ++channel) {
+                            const T value = frame < copiedFrames ? readSpan[frame * channelCount + channel] : T{};
+                            std::memcpy(areas[channel].ptr + areas[channel].step * static_cast<int>(frame), &value, sizeof(T));
+                        }
                     }
                 }
                 std::ignore = readSpan.consume(copiedFrames * channelCount);
+            } else if (interleaved) {
+                std::memset(areas[0].ptr, 0, requestedFrames * channelCount * sizeof(T));
             } else {
                 for (std::size_t frame = 0U; frame < requestedFrames; ++frame) {
                     for (std::size_t channel = 0U; channel < channelCount; ++channel) {
@@ -551,12 +574,19 @@ private:
         }
 
         const std::size_t chunkFrames = published / channelCount;
-        for (std::size_t frame = 0U; frame < chunkFrames; ++frame) {
+        if (areasAreInterleaved<T>(areas, channelCount)) {
+            std::memcpy(writeSpan.data(), areas[0].ptr, published * sizeof(T));
             for (std::size_t channel = 0U; channel < channelCount; ++channel) {
-                T value{};
-                std::memcpy(&value, areas[channel].ptr, sizeof(T));
-                writeSpan[frame * channelCount + channel] = value;
-                areas[channel].ptr += areas[channel].step;
+                areas[channel].ptr += areas[channel].step * static_cast<int>(chunkFrames);
+            }
+        } else {
+            for (std::size_t frame = 0U; frame < chunkFrames; ++frame) {
+                for (std::size_t channel = 0U; channel < channelCount; ++channel) {
+                    T value{};
+                    std::memcpy(&value, areas[channel].ptr, sizeof(T));
+                    writeSpan[frame * channelCount + channel] = value;
+                    areas[channel].ptr += areas[channel].step;
+                }
             }
         }
 
