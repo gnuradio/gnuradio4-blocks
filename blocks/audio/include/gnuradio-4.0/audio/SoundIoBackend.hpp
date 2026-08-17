@@ -462,7 +462,11 @@ struct SoundIoSourceBackend {
     [[nodiscard]] std::size_t readToOutput(std::span<T> output, std::size_t channelCount) { return _state.readToOutput(output, channelCount); }
 
 private:
-    static void overflowCallback(SoundIoInStream* /*instream*/) {}
+    static void overflowCallback(SoundIoInStream* instream) {
+        if (auto* self = static_cast<SoundIoSourceBackend*>(instream->userdata); self != nullptr) {
+            self->_state.overflowCount.fetch_add(1U, std::memory_order_relaxed);
+        }
+    }
 
     static void errorCallback(SoundIoInStream* instream, int error) {
         auto* self = static_cast<SoundIoSourceBackend*>(instream->userdata);
@@ -476,47 +480,64 @@ private:
         std::ignore  = _pendingError.compare_exchange_strong(expected, error, std::memory_order_acq_rel);
     }
 
+    // every path that writes fewer samples than the device offered loses capture: count the shortfall
+    void countDroppedSamples(std::size_t offered, std::size_t written) {
+        if (written < offered) {
+            _state.droppedSamples.fetch_add(offered - written, std::memory_order_relaxed);
+        }
+    }
+
     void writeSilenceFrames(std::size_t frameCount, std::size_t channelCount) {
         if (frameCount == 0U || channelCount == 0U) {
             return;
         }
+        const std::size_t offered = frameCount * channelCount;
+        _state.silenceSamples.fetch_add(offered, std::memory_order_relaxed);
 
-        const std::size_t nSamplesToWrite = std::min(frameCount * channelCount, wholeFrameSamples(_state.writer.available(), channelCount));
+        const std::size_t nSamplesToWrite = std::min(offered, wholeFrameSamples(_state.writer.available(), channelCount));
         if (nSamplesToWrite == 0U) {
+            countDroppedSamples(offered, 0UZ);
             return;
         }
 
         auto writeSpan = _state.writer.tryReserve(nSamplesToWrite);
         if (writeSpan.empty()) {
+            countDroppedSamples(offered, 0UZ);
             return;
         }
 
         const std::size_t published = wholeFrameSamples(writeSpan.size(), channelCount);
         if (published == 0U) {
+            countDroppedSamples(offered, 0UZ);
             return;
         }
 
         std::fill_n(writeSpan.begin(), static_cast<std::ptrdiff_t>(published), T{});
         writeSpan.publish(published);
+        countDroppedSamples(offered, published);
     }
 
     void writeFramesFromAreas(SoundIoChannelArea* areas, std::size_t frameCount, std::size_t channelCount) {
         if (areas == nullptr || frameCount == 0U || channelCount == 0U) {
             return;
         }
+        const std::size_t offered = frameCount * channelCount;
 
-        const std::size_t nSamplesToWrite = std::min(frameCount * channelCount, wholeFrameSamples(_state.writer.available(), channelCount));
+        const std::size_t nSamplesToWrite = std::min(offered, wholeFrameSamples(_state.writer.available(), channelCount));
         if (nSamplesToWrite == 0U) {
+            countDroppedSamples(offered, 0UZ);
             return;
         }
 
         auto writeSpan = _state.writer.tryReserve(nSamplesToWrite);
         if (writeSpan.empty()) {
+            countDroppedSamples(offered, 0UZ);
             return;
         }
 
         const std::size_t published = wholeFrameSamples(writeSpan.size(), channelCount);
         if (published == 0U) {
+            countDroppedSamples(offered, 0UZ);
             return;
         }
 
@@ -531,6 +552,7 @@ private:
         }
 
         writeSpan.publish(published);
+        countDroppedSamples(offered, published);
     }
 
     static void readCallback(SoundIoInStream* instream, int /*frameCountMin*/, int frameCountMax) {

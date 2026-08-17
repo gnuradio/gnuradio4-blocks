@@ -103,6 +103,8 @@ struct AudioStateBase {
     std::atomic<bool>        stopRequested{false};
     std::atomic<std::size_t> overflowCount{0U};
     std::atomic<std::size_t> underrunCount{0U};
+    std::atomic<std::size_t> droppedSamples{0U}; // offered by the device (or the producer) but not stored
+    std::atomic<std::size_t> silenceSamples{0U}; // holes the driver reported with no data behind them
     SampleBuffer             buffer{1U};
     SampleWriter             writer{buffer.new_writer()};
     SampleReader             reader{buffer.new_reader()};
@@ -115,6 +117,8 @@ struct AudioStateBase {
         reader = buffer.new_reader();
         overflowCount.store(0U, std::memory_order_relaxed);
         underrunCount.store(0U, std::memory_order_relaxed);
+        droppedSamples.store(0U, std::memory_order_relaxed);
+        silenceSamples.store(0U, std::memory_order_relaxed);
     }
 };
 
@@ -129,6 +133,7 @@ struct AudioSinkState : AudioStateBase<T> {
     using AudioStateBase<T>::stopRequested;
     using AudioStateBase<T>::writer;
 
+    // returns what reached the ring; the caller must not consume more than that from its own staging
     template<typename InputSpan>
     [[nodiscard]] std::size_t writeFromInput(const InputSpan& inSpan, std::size_t channelCount) {
         if (stopRequested.load(std::memory_order_acquire)) {
