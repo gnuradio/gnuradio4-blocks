@@ -58,9 +58,10 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
 #endif
     gr::Annotated<algorithm::DriftCorrection, "drift_correction", gr::Doc<"Drift compensation mode: None, Linear, Cubic, or AdaptiveResampling">> drift_correction = algorithm::DriftCorrection::Linear;
     gr::Annotated<bool, "permission", gr::Doc<"Read-only: whether microphone/input device permission has been granted">>                          permission       = false;
+    gr::Annotated<gr::Size_t, "dropped_samples", gr::Doc<"Read-only: captured samples discarded because downstream could not keep up">>           dropped_samples  = 0U;
     bool                                                                                                                                          _useDummyBackendForTests{false};
 
-    GR_MAKE_REFLECTABLE(AudioSource, clk_in, out, sample_rate, num_channels, io_buffer_size, device, available_devices, emit_timing_tags, emit_meta_info, tag_interval, trigger_name, ppm_estimator_cutoff, drift_correction, permission);
+    GR_MAKE_REFLECTABLE(AudioSource, clk_in, out, sample_rate, num_channels, io_buffer_size, device, available_devices, emit_timing_tags, emit_meta_info, tag_interval, trigger_name, ppm_estimator_cutoff, drift_correction, permission, dropped_samples);
 
     using gr::Block<AudioSource<T>>::Block;
 #if defined(__EMSCRIPTEN__)
@@ -81,6 +82,7 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
     bool                           _clockOffsetValid{false};
     std::string                    _clockTriggerName;
     std::size_t                    _lastReportedOverflows{0U};
+    std::uint64_t                  _lastDropLogNs{0U};
 
     struct IoThreadGuard {
         bool& done;
@@ -180,16 +182,34 @@ private:
 
     [[nodiscard]] std::size_t backendBufferFrames() const { return std::max<std::size_t>(8192UZ, ioBufferSamples()); }
 
+    // the backend ring holds io_buffer_size seconds (240k samples at the 5 s default) against a far
+    // smaller port ring, so the take is clamped to what the port ring can accept
     void publishSamples(auto& writer, std::size_t nFrameAligned, std::size_t channelCount) {
-        auto outSpan = writer.template tryReserve<gr::SpanReleasePolicy::ProcessNone>(nFrameAligned + channelCount);
-        if (outSpan.empty()) {
-            // downstream buffer full — discard captured samples to prevent backend overflow
-            auto discardSpan = _backendImpl._state.reader.get(nFrameAligned);
-            std::ignore      = discardSpan.consume(discardSpan.size());
+        const std::size_t headroom  = channelCount;
+        const std::size_t available = writer.available();
+        const std::size_t capacity  = available > headroom ? detail::wholeFrameSamples(available - headroom, channelCount) : 0UZ;
+        const std::size_t nToTake   = std::min(nFrameAligned, capacity);
+
+        if (nToTake == 0UZ) {
+            // drop only what would overflow the backend ring, keeping the rest for the next call
+            const std::size_t backendCapacity = _backendImpl._state.buffer.size();
+            const std::size_t backlog         = _backendImpl._state.reader.available();
+            if (backlog >= backendCapacity) {
+                const std::size_t excess      = detail::wholeFrameSamples(backlog - backendCapacity + channelCount, channelCount);
+                auto              discardSpan = _backendImpl._state.reader.get(std::min(excess, backlog));
+                const std::size_t nDiscarded  = discardSpan.size();
+                std::ignore                   = discardSpan.consume(nDiscarded);
+                reportDiscardedSamples(nDiscarded);
+            }
             return;
         }
 
-        std::size_t nProduced = _backendImpl.readToOutput(std::span<T>(outSpan.data(), nFrameAligned), channelCount);
+        auto outSpan = writer.template tryReserve<gr::SpanReleasePolicy::ProcessNone>(nToTake + headroom);
+        if (outSpan.empty()) {
+            return;
+        }
+
+        std::size_t nProduced = _backendImpl.readToOutput(std::span<T>(outSpan.data(), nToTake), channelCount);
 
         const bool streamActive = _backendImpl.isStreamActive();
         if (static_cast<bool>(permission.value) != streamActive) {
@@ -230,6 +250,20 @@ private:
         outSpan.publish(nProduced);
         this->progress->incrementAndGet();
         this->progress->notify_all();
+    }
+
+    void reportDiscardedSamples(std::size_t nDiscarded) {
+        if (nDiscarded == 0UZ) {
+            return;
+        }
+        dropped_samples = dropped_samples.value + static_cast<gr::Size_t>(nDiscarded);
+
+        constexpr std::uint64_t kLogIntervalNs = 1'000'000'000ULL;
+        const std::uint64_t     tNowNs         = detail::wallClockNs();
+        if (tNowNs - _lastDropLogNs >= kLogIntervalNs) {
+            _lastDropLogNs = tNowNs;
+            std::println(stderr, "[AudioSource] discarded {} captured samples (total {}) — downstream is not keeping up", nDiscarded, dropped_samples.value);
+        }
     }
 
     void maybeEmitTimingTag(std::uint64_t tNowNs, std::size_t /*nSamples*/, std::size_t /*channelCount*/) {
