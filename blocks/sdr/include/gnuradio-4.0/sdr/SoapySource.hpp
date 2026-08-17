@@ -255,6 +255,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
                     continue;
                 }
 
+                _overflowCount.store(0U, std::memory_order_relaxed);
                 handleStreamFlags(flags);
                 auto nSamples = static_cast<std::size_t>(ret);
                 auto tWallNs  = detail::wallClockNs();
@@ -334,6 +335,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
                     continue;
                 }
 
+                _overflowCount.store(0U, std::memory_order_relaxed);
                 handleStreamFlags(flags);
                 auto nSamples = static_cast<std::size_t>(ret);
                 auto tWallNs  = detail::wallClockNs();
@@ -809,14 +811,6 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
             emitOverflowTag();
             if (max_overflow_count > 0 && count >= max_overflow_count) {
                 this->emitErrorMessage("ioReadLoop()", std::format("OVERFLOW: {} of max {}", count, max_overflow_count));
-                this->requestStop();
-                return false;
-            }
-            if (auto r = _rxStream.deactivate(); !r) {
-                this->emitErrorMessage("ioReadLoop()", r.error());
-            }
-            if (auto r = _rxStream.activate(); !r) {
-                this->emitErrorMessage("ioReadLoop()", r.error());
                 this->requestStop();
                 return false;
             }
