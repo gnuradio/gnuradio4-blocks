@@ -168,6 +168,48 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
     "create new mode"_test = []<typename T>(const T&) { runTest<T>(multi); } | kArithmeticTypes;
 
     "double header type smoke test"_test = [] { runTest<double>(overwrite); };
+
+    "round-trip of a recording larger than one output span"_test = [] {
+        using namespace gr::blocks::fileio;
+        using namespace gr::blocks::testing;
+        using scheduler = gr::scheduler::Simple<>;
+
+        constexpr gr::Size_t nSamples = 100'000U; // 24x the 4096-sample output ring: one span cannot hold it
+        const std::string    fileName = "/tmp/gr4_file_sink_test/TestLargeRoundTrip.bin";
+        gr::blocks::fileio::detail::deleteFilesContaining(fileName);
+
+        gr::Graph writeFlow;
+        auto&     source   = writeFlow.emplaceBlock<ConstantSource<float>>({{"n_samples_max", nSamples}});
+        auto&     fileSink = writeFlow.emplaceBlock<BasicFileSink<float>>({{"file_name", fileName}, {"mode", "overwrite"}});
+        expect(writeFlow.connect<"out", "in">(source, fileSink).has_value());
+
+        scheduler schedWrite;
+        if (auto ret = schedWrite.exchange(std::move(writeFlow)); !ret) {
+            throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+        }
+        expect(runSchedulerAndWait(schedWrite).has_value());
+        expect(eq(fileSink._totalBytesWritten, nSamples * sizeof(float)));
+
+        gr::Graph readFlow;
+        auto&     fileSource = readFlow.emplaceBlock<BasicFileSource<float>>({{"file_name", fileName}, {"mode", "overwrite"}});
+        auto&     sink       = readFlow.emplaceBlock<CountingSink<float>>();
+        expect(readFlow.connect<"out", "in">(fileSource, sink).has_value());
+
+        scheduler schedRead;
+        if (auto ret = schedRead.exchange(std::move(readFlow)); !ret) {
+            throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+        }
+        auto [watchdogThread, externalInterventionNeeded] = createWatchdog(schedRead, 5s);
+        expect(runSchedulerAndWait(schedRead).has_value());
+        if (watchdogThread.joinable()) {
+            watchdogThread.join();
+        }
+        expect(!externalInterventionNeeded->load(std::memory_order_relaxed)) << "reading a multi-span recording must not stall";
+        expect(eq(sink.count, nSamples));
+        expect(eq(fileSource._totalBytesRead, nSamples * sizeof(float)));
+
+        expect(!gr::blocks::fileio::detail::deleteFilesContaining(fileName).empty());
+    };
 };
 
 int main() { /* not needed for UT */ }

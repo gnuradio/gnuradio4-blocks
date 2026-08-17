@@ -448,8 +448,11 @@ private:
         }
         resetFileState();
 
+        // the header scan buffers whole chunks, so the chunk must stay well under kMaxHeaderBytes and
+        // must also fit one output span once decoding starts: size it from the actual ring, capped
+        constexpr std::size_t               kMaxChunkBytes = 64UZ * 1024UZ;
         gr::algorithm::fileio::ReaderConfig config{};
-        config.chunkBytes          = std::max<std::size_t>(1U, out.max_buffer_size() * sizeof(T) / 4U);
+        config.chunkBytes          = std::clamp(out.bufferSize() * sizeof(T), sizeof(T), kMaxChunkBytes);
         config.chunkAlignmentBytes = 1U;
 
         auto readerExp = gr::algorithm::fileio::readAsync(_filesToRead[_currentFileIndex].string(), std::move(config));
