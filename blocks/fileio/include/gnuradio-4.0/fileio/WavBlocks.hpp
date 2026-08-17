@@ -204,6 +204,7 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
     std::array<std::uint8_t, 4>        _partialSample{};
     std::size_t                        _partialSampleSize{0U};
     bool                               _formatTagPending{true};
+    std::size_t                        _fileBytes{0U}; // 0 when the source is not a local file
 
     using gr::Block<WavSource<T>>::Block;
 
@@ -220,6 +221,7 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
         _offsetBytesRemaining = 0U;
         _partialSampleSize    = 0U;
         _formatTagPending     = true;
+        _fileBytes            = 0U;
     }
 
     void fail(std::string_view endpoint, gr::Error error) {
@@ -455,6 +457,10 @@ private:
         config.chunkBytes          = std::clamp(out.bufferSize() * sizeof(T), sizeof(T), kMaxChunkBytes);
         config.chunkAlignmentBytes = 1U;
 
+        std::error_code sizeError;
+        const auto      physicalSize = std::filesystem::file_size(_filesToRead[_currentFileIndex], sizeError);
+        _fileBytes                   = sizeError ? 0UZ : static_cast<std::size_t>(physicalSize);
+
         auto readerExp = gr::algorithm::fileio::readAsync(_filesToRead[_currentFileIndex].string(), std::move(config));
         if (!readerExp) {
             fail("WavSource::openNextFile()", readerExp.error());
@@ -503,10 +509,16 @@ private:
                 if (!haveFmt) {
                     return std::unexpected(gr::Error("WAV data chunk before fmt chunk"));
                 }
-                if ((chunkSize % _format.blockAlign) != 0U) {
+                // a recording cut short by a crash declares 0 (or a stale over-long size), so the
+                // physical file length is trusted over the header
+                const std::size_t physicalRemaining = _fileBytes > pos ? _fileBytes - pos : 0UZ;
+                std::size_t       dataBytes         = chunkSize;
+                if (_fileBytes != 0UZ && (dataBytes == 0UZ || dataBytes > physicalRemaining)) {
+                    dataBytes = physicalRemaining - (physicalRemaining % _format.blockAlign);
+                } else if ((dataBytes % _format.blockAlign) != 0U) {
                     return std::unexpected(gr::Error("WAV data chunk size is not a multiple of block_align"));
                 }
-                _dataBytesRemaining = chunkSize;
+                _dataBytesRemaining = dataBytes;
 
                 // apply sample offset
                 const std::size_t offsetBytes = static_cast<std::size_t>(offset.value) * _format.bytesPerSample();
@@ -658,11 +670,15 @@ In multi mode, rotates to a new timestamped file when max_bytes_per_file is reac
     static constexpr std::size_t   kHeaderSize  = 44U;
     static constexpr std::uint16_t kFormatTag   = std::same_as<T, float> ? std::uint16_t(3U) : std::uint16_t(1U);
     static constexpr std::uint16_t kBitsPerSamp = std::same_as<T, float> ? std::uint16_t(32U) : std::uint16_t(16U);
+    // re-patch and flush the RIFF/data sizes this often so an interrupted recording stays readable;
+    // at 48 kHz stereo float this costs two seeks roughly every 45 s
+    static constexpr std::size_t kCheckpointBytes = 16UZ * 1024UZ * 1024UZ;
 
     std::ofstream _file;
     bool          _headerWritten{false};
     std::size_t   _fileSamplesWritten{0U};
     std::size_t   _fileCounter{0U};
+    std::size_t   _bytesSinceCheckpoint{0U};
 
     using gr::Block<WavSink<T>>::Block;
 
@@ -704,8 +720,20 @@ In multi mode, rotates to a new timestamped file when max_bytes_per_file is reac
         }
 
         _file.write(reinterpret_cast<const char*>(inSpan.data()), static_cast<std::streamsize>(n * sizeof(T)));
+        if (!_file) {
+            this->emitErrorMessage("WavSink::processBulk()", gr::Error(std::format("write of {} bytes failed (disk full or I/O error)", n * sizeof(T))));
+            std::ignore = inSpan.consume(0U);
+            return gr::work::Status::ERROR;
+        }
         _fileSamplesWritten += n;
         total_samples_written = total_samples_written.value + static_cast<gr::Size_t>(n);
+
+        _bytesSinceCheckpoint += n * sizeof(T);
+        if (_bytesSinceCheckpoint >= kCheckpointBytes) {
+            patchHeaderSizes();
+            _file.flush();
+            _bytesSinceCheckpoint = 0U;
+        }
 
         std::ignore = inSpan.consume(n);
         return gr::work::Status::OK;
@@ -725,8 +753,9 @@ private:
     }
 
     void openNextFile() {
-        _headerWritten      = false;
-        _fileSamplesWritten = 0U;
+        _headerWritten        = false;
+        _fileSamplesWritten   = 0U;
+        _bytesSinceCheckpoint = 0U;
 
         if (uri.value.empty()) {
             this->emitErrorMessage("WavSink::start()", gr::Error("uri is empty"));
@@ -754,10 +783,17 @@ private:
     }
 
     void closeFile() {
-        if (_file.is_open() && _headerWritten) {
+        if (!_file.is_open()) {
+            return;
+        }
+        if (_headerWritten) {
             patchHeaderSizes();
         }
         _file.close();
+        if (_file.fail()) {
+            this->emitErrorMessage("WavSink::closeFile()", gr::Error("closing the WAV file failed; the recording may be truncated or its header stale"));
+        }
+        _file.clear();
     }
 
     void writeHeader() {
@@ -782,11 +818,16 @@ private:
         detail::writeLe32(hdr.data() + 40U, 0U); // patched on close
 
         _file.write(reinterpret_cast<const char*>(hdr.data()), static_cast<std::streamsize>(kHeaderSize));
+        if (!_file) {
+            this->emitErrorMessage("WavSink::writeHeader()", gr::Error("writing the WAV header failed"));
+        }
     }
 
+    // restores the write position so this can also run as a mid-recording checkpoint
     void patchHeaderSizes() {
         const auto dataBytes = static_cast<std::uint32_t>(_fileSamplesWritten * sizeof(T));
         const auto riffSize  = static_cast<std::uint32_t>(kHeaderSize - 8U + dataBytes);
+        const auto endPos    = _file.tellp();
 
         std::array<std::uint8_t, 4> buf{};
         detail::writeLe32(buf.data(), riffSize);
@@ -796,6 +837,11 @@ private:
         detail::writeLe32(buf.data(), dataBytes);
         _file.seekp(40);
         _file.write(reinterpret_cast<const char*>(buf.data()), 4);
+
+        _file.seekp(endPos);
+        if (!_file) {
+            this->emitErrorMessage("WavSink::patchHeaderSizes()", gr::Error("patching the WAV header sizes failed"));
+        }
     }
 };
 
