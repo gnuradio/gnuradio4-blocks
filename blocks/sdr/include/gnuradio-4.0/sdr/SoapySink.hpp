@@ -76,6 +76,7 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
     std::vector<StagingBuffer>                  _stagingBuffers;
     std::vector<StagingWriter>                  _stagingWriters;
     std::vector<StagingReader>                  _stagingReaders;
+    std::vector<T>                              _lastTransmitted; // per-channel, for the shutdown ramp-down
     soapy::detail::DeviceRegistry::Registration _activation;
 
     struct IoThreadGuard {
@@ -186,35 +187,41 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
         for (const auto& input : inputs) {
             minSize = std::min(minSize, input.size());
         }
-        auto nToWrite = std::min(minSize, static_cast<std::size_t>(max_chunk_size));
+        const std::size_t nToWrite = std::min(minSize, static_cast<std::size_t>(max_chunk_size));
         if (nToWrite == 0UZ) {
             return gr::work::Status::INSUFFICIENT_INPUT_ITEMS;
         }
 
-        for (std::size_t ch = 0UZ; ch < _stagingWriters.size() && ch < inputs.size(); ++ch) {
-            if (_stagingWriters[ch].available() < nToWrite) {
-                for (auto& input : inputs) {
-                    std::ignore = input.consume(0UZ);
-                }
-                return gr::work::Status::INSUFFICIENT_OUTPUT_ITEMS;
+        // reserve every channel before publishing any, and publish the same count on all of them:
+        // a partial publish advances some staging buffers and not others, desynchronizing the channels
+        const std::size_t nCh = std::min(_stagingWriters.size(), inputs.size());
+        using StagingSpan     = decltype(_stagingWriters[0].template tryReserve<SpanReleasePolicy::ProcessNone>(0UZ));
+        std::vector<StagingSpan> spans;
+        spans.reserve(nCh);
+        std::size_t nCopy = nToWrite;
+        for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
+            spans.push_back(_stagingWriters[ch].template tryReserve<SpanReleasePolicy::ProcessNone>(nToWrite));
+            if (spans.back().empty()) {
+                nCopy = 0UZ;
+                break;
             }
+            nCopy = std::min(nCopy, spans.back().size());
+        }
+        if (nCopy == 0UZ) {
+            spans.clear();
+            for (auto& input : inputs) {
+                std::ignore = input.consume(0UZ);
+            }
+            return gr::work::Status::INSUFFICIENT_OUTPUT_ITEMS;
         }
 
-        for (std::size_t ch = 0UZ; ch < _stagingWriters.size() && ch < inputs.size(); ++ch) {
-            auto span = _stagingWriters[ch].template tryReserve<SpanReleasePolicy::ProcessNone>(nToWrite);
-            if (span.empty()) {
-                for (auto& input : inputs) {
-                    std::ignore = input.consume(0UZ);
-                }
-                return gr::work::Status::INSUFFICIENT_OUTPUT_ITEMS;
-            }
-            auto nCopy     = std::min(nToWrite, span.size());
+        for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
             auto inputSpan = std::span<const T>(inputs[ch].begin(), nCopy);
-            std::memcpy(span.data(), inputSpan.data(), nCopy * sizeof(T));
-            span.publish(nCopy);
+            std::memcpy(spans[ch].data(), inputSpan.data(), nCopy * sizeof(T));
+            spans[ch].publish(nCopy);
         }
         for (auto& input : inputs) {
-            std::ignore = input.consume(nToWrite);
+            std::ignore = input.consume(nCopy);
         }
         return gr::work::Status::OK;
     }
@@ -295,61 +302,15 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
             while (lifecycle::isActive(this->state())) {
                 this->applyChangedSettings();
 
-                std::size_t minAvail = std::numeric_limits<std::size_t>::max();
-                for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
-                    minAvail = std::min(minAvail, static_cast<std::size_t>(_stagingReaders[ch].available()));
-                }
-                if (minAvail == 0UZ) {
+                const auto [nConsumed, ok] = taperAndWriteMulti(chScratch);
+                if (nConsumed == 0UZ && ok) {
                     std::this_thread::yield();
-                    continue;
-                }
-
-                auto nToWrite     = std::min(minAvail, static_cast<std::size_t>(max_chunk_size));
-                auto savedPhase   = _taper._phase;
-                auto savedRampPos = _taper._rampPosition;
-
-                using RSpanType = decltype(_stagingReaders[0].get(0UZ));
-                std::vector<RSpanType>          rSpans;
-                std::vector<std::span<const T>> writeSpans;
-                rSpans.reserve(nCh);
-                writeSpans.reserve(nCh);
-                for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
-                    rSpans.push_back(_stagingReaders[ch].get(nToWrite));
-                    auto n = std::min(rSpans.back().size(), nToWrite);
-                    std::memcpy(chScratch[ch].data(), &(*rSpans.back().begin()), n * sizeof(T));
-                    if (burst_taper_enabled && ch == 0UZ) {
-                        applyTaper(chScratch[ch].data(), n);
-                    } else if (burst_taper_enabled) {
-                        _taper._phase        = savedPhase;
-                        _taper._rampPosition = savedRampPos;
-                        applyTaper(chScratch[ch].data(), n);
-                    }
-                    writeSpans.push_back(std::span<const T>(chScratch[ch].data(), n));
-                }
-
-                int  flags = 0;
-                auto ret   = _txStream.writeStreamFromBufferList(flags, 0LL, static_cast<long>(max_time_out_us), std::span<std::span<const T>>(writeSpans));
-
-                if (ret == SOAPY_SDR_TIMEOUT || ret < 0) {
-                    _taper._phase        = savedPhase;
-                    _taper._rampPosition = savedRampPos;
-                }
-                auto nConsumed = (ret > 0) ? static_cast<std::size_t>(ret) : 0UZ;
-                if (ret > 0 && nConsumed < nToWrite) {
-                    _taper._phase        = savedPhase;
-                    _taper._rampPosition = savedRampPos;
-                    for (std::size_t i = 0UZ; i < nConsumed; ++i) {
-                        std::ignore = _taper.processOne();
-                    }
-                }
-                for (auto& rSpan : rSpans) {
-                    std::ignore = rSpan.consume(nConsumed);
                 }
                 if (nConsumed > 0UZ) {
                     this->progress->incrementAndGet();
                     this->progress->notify_all();
                 }
-                if (ret < 0 && ret != SOAPY_SDR_TIMEOUT && !handleStreamError(ret)) {
+                if (!ok) {
                     break;
                 }
             }
@@ -396,7 +357,85 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
                 std::ignore = _taper.processOne();
             }
         }
+        if (nWritten > 0UZ) {
+            rememberLastTransmitted(0UZ, scratch[nWritten - 1UZ]);
+        }
         return {nWritten, true};
+    }
+
+    // one transfer of the N-port path: reads what every channel has, tapers each channel from the
+    // same phase, and consumes exactly what the device accepted on all channels
+    std::pair<std::size_t, bool> taperAndWriteMulti(std::vector<std::vector<T>>& chScratch) {
+        const std::size_t nCh      = _stagingReaders.size();
+        std::size_t       minAvail = std::numeric_limits<std::size_t>::max();
+        for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
+            minAvail = std::min(minAvail, static_cast<std::size_t>(_stagingReaders[ch].available()));
+        }
+        if (minAvail == 0UZ) {
+            return {0UZ, true};
+        }
+
+        const std::size_t nToWrite     = std::min(minAvail, static_cast<std::size_t>(max_chunk_size));
+        const auto        savedPhase   = _taper._phase;
+        const auto        savedRampPos = _taper._rampPosition;
+
+        using RSpanType = decltype(_stagingReaders[0].get(0UZ));
+        std::vector<RSpanType>          rSpans;
+        std::vector<std::span<const T>> writeSpans;
+        rSpans.reserve(nCh);
+        writeSpans.reserve(nCh);
+        std::size_t nActual = nToWrite;
+        for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
+            rSpans.push_back(_stagingReaders[ch].get(nToWrite));
+            nActual = std::min(nActual, rSpans.back().size());
+        }
+        if (nActual == 0UZ) {
+            return {0UZ, true};
+        }
+        for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
+            std::memcpy(chScratch[ch].data(), &(*rSpans[ch].begin()), nActual * sizeof(T));
+            if (burst_taper_enabled) {
+                _taper._phase        = savedPhase;
+                _taper._rampPosition = savedRampPos;
+                applyTaper(chScratch[ch].data(), nActual);
+            }
+            writeSpans.push_back(std::span<const T>(chScratch[ch].data(), nActual));
+        }
+
+        int  flags = 0;
+        auto ret   = _txStream.writeStreamFromBufferList(flags, 0LL, static_cast<long>(max_time_out_us), std::span<std::span<const T>>(writeSpans));
+
+        if (ret == SOAPY_SDR_TIMEOUT || ret < 0) {
+            _taper._phase        = savedPhase;
+            _taper._rampPosition = savedRampPos;
+        }
+        const std::size_t nConsumed = (ret > 0) ? static_cast<std::size_t>(ret) : 0UZ;
+        if (ret > 0 && nConsumed < nActual) {
+            _taper._phase        = savedPhase;
+            _taper._rampPosition = savedRampPos;
+            for (std::size_t i = 0UZ; i < nConsumed; ++i) {
+                std::ignore = _taper.processOne();
+            }
+        }
+        for (auto& rSpan : rSpans) {
+            std::ignore = rSpan.consume(nConsumed);
+        }
+        if (nConsumed > 0UZ) {
+            for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
+                rememberLastTransmitted(ch, chScratch[ch][nConsumed - 1UZ]);
+            }
+        }
+        if (ret < 0 && ret != SOAPY_SDR_TIMEOUT) {
+            return {nConsumed, handleStreamError(ret)};
+        }
+        return {nConsumed, true};
+    }
+
+    void rememberLastTransmitted(std::size_t channel, const T& sample) {
+        if (_lastTransmitted.size() <= channel) {
+            _lastTransmitted.resize(channel + 1UZ, T{});
+        }
+        _lastTransmitted[channel] = sample;
     }
 
     void applyTaper(T* samples, std::size_t n) {
@@ -427,15 +466,11 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
                 }
             }
         } else {
-            // multi-channel drain omitted for brevity — same pattern as single-channel per reader
-            for (auto& reader : _stagingReaders) {
-                while (true) {
-                    auto avail = reader.available();
-                    if (avail == 0UZ) {
-                        break;
-                    }
-                    auto rSpan  = reader.get(std::min(static_cast<std::size_t>(avail), static_cast<std::size_t>(max_chunk_size)));
-                    std::ignore = rSpan.consume(rSpan.size());
+            std::vector<std::vector<T>> chScratch(_stagingReaders.size(), std::vector<T>(static_cast<std::size_t>(max_chunk_size)));
+            while (true) {
+                const auto [written, ok] = taperAndWriteMulti(chScratch);
+                if (written == 0UZ || !ok) {
+                    break;
                 }
             }
         }
@@ -454,21 +489,56 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
             std::println(stderr, "[SoapySink] safety ramp-down clamped to 1s (configured: {}s)", burst_ramp_time.value);
         }
 
-        std::fill_n(scratch.data(), std::min(scratch.size(), maxSamples), T{0});
+        // taper from the last transmitted sample, not from a zeroed buffer: tapering silence emits
+        // silence, so the carrier would still stop in one sample and splatter the spectrum
+        const std::size_t               nCh = std::max<std::size_t>(1UZ, _stagingReaders.size());
+        std::vector<std::vector<T>>     chScratch;
+        std::vector<std::span<const T>> writeSpans;
+        if constexpr (nPorts != 1U) {
+            chScratch.assign(nCh, std::vector<T>(scratch.size()));
+            writeSpans.reserve(nCh);
+        }
+
         std::size_t written = 0UZ;
         while (!_taper.isOff() && written < maxSamples) {
-            auto n = std::min(scratch.size(), maxSamples - written);
-            for (std::size_t i = 0UZ; i < n; ++i) {
-                std::ignore = _taper.processOne();
+            const std::size_t n            = std::min(scratch.size(), maxSamples - written);
+            const auto        savedPhase   = _taper._phase;
+            const auto        savedRampPos = _taper._rampPosition;
+
+            int flags = 0;
+            int ret   = 0;
+            if constexpr (nPorts == 1U) {
+                std::fill_n(scratch.data(), n, lastTransmitted(0UZ));
+                applyTaper(scratch.data(), n);
+                ret = _txStream.writeStream(flags, 0LL, static_cast<long>(max_time_out_us), std::span<const T>(scratch.data(), n));
+            } else {
+                writeSpans.clear();
+                for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
+                    _taper._phase        = savedPhase;
+                    _taper._rampPosition = savedRampPos;
+                    std::fill_n(chScratch[ch].data(), n, lastTransmitted(ch));
+                    applyTaper(chScratch[ch].data(), n);
+                    writeSpans.push_back(std::span<const T>(chScratch[ch].data(), n));
+                }
+                ret = _txStream.writeStreamFromBufferList(flags, 0LL, static_cast<long>(max_time_out_us), std::span<std::span<const T>>(writeSpans));
             }
-            int  flags = 0;
-            auto ret   = _txStream.writeStream(flags, 0LL, static_cast<long>(max_time_out_us), std::span<const T>(scratch.data(), n));
+
             if (ret <= 0 && ret != SOAPY_SDR_TIMEOUT) {
                 break;
             }
-            written += (ret > 0) ? static_cast<std::size_t>(ret) : 0UZ;
+            const std::size_t nWritten = (ret > 0) ? static_cast<std::size_t>(ret) : 0UZ;
+            if (nWritten < n) {
+                _taper._phase        = savedPhase;
+                _taper._rampPosition = savedRampPos;
+                for (std::size_t i = 0UZ; i < nWritten; ++i) {
+                    std::ignore = _taper.processOne();
+                }
+            }
+            written += nWritten;
         }
     }
+
+    [[nodiscard]] T lastTransmitted(std::size_t channel) const { return channel < _lastTransmitted.size() ? _lastTransmitted[channel] : T{}; }
 
     void configureTaper() {
         if (!burst_taper_enabled) {
