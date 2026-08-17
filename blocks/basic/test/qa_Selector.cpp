@@ -200,6 +200,23 @@ const boost::ut::suite SelectorTest = [] {
             .ignoreOrder                 = false});
     };
 
+    "Selector<T> combined ports that exclude input 0"_test = [tag1, tag2, tag3] {
+        const Tag newTag2{4, tag2.map};
+        const Tag newTag3{7, tag3.map};
+        execute_selector_test({.nSamples = 5,                                            //
+            .mapping                     = {{1, 1}, {2, 1}},                             //
+            .inValues                    = values({{1}, {2}, {3}}),                      //
+            .outValues                   = values({{}, {2, 3, 2, 3, 2, 3, 2, 3, 2, 3}}), //
+            .inTags                      = {{tag1}, {tag2}, {tag3}},                     //
+            .outTags                     = {{}, {newTag2, newTag3}},
+            .monitorSource               = -1U, //
+            .monitorValues               = {},  //
+            .backPressure                = false,
+            .nSamplesSelectorInput       = {0, 0, 0},
+            .syncCombinedPorts           = true,
+            .ignoreOrder                 = false});
+    };
+
     "Selector<T> one for all"_test = [tag1, tag2, tag3] {
         execute_selector_test({.nSamples = 5,                                                           //
             .mapping                     = {{1, 0}, {1, 1}, {1, 2}},                                    //
