@@ -208,7 +208,8 @@ Internally this uses FileIo.
 
         if (_writer.has_value()) {
             if (!_writer->finished()) {
-                return work::Status::OK;
+                std::ignore = inSpan.consume(0UZ);
+                return work::Status::INSUFFICIENT_INPUT_ITEMS;
             }
 
             auto writeResultExp = _writer->result();
