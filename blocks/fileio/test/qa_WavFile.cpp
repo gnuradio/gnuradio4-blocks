@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <future>
+#include <numeric>
 #include <optional>
 #include <span>
 #include <string>
@@ -187,6 +189,15 @@ void runLocalSourceCases(const std::vector<WavSourceTestCase<T>>& cases, TSample
         sampleCheck(std::vector<T>(sink._samples.begin(), sink._samples.end()), testCase.expectedSamples, caseName);
         expectSingleFormatTag(sink._tags, testCase.sampleRate, testCase.numChannels, caseName);
     }
+}
+
+// returns as soon as the graph finishes; the timeout is a failure cap for a wedged graph, not a wait
+std::expected<void, gr::Error> runSchedulerUntilDone(gr::scheduler::Simple<>& sched, std::chrono::milliseconds timeout) {
+    auto run = std::async(std::launch::async, [&sched] { return sched.runAndWait(); });
+    if (run.wait_for(timeout) != std::future_status::ready) {
+        sched.requestStop();
+    }
+    return run.get();
 }
 
 std::expected<void, gr::Error> runSchedulerFor(gr::scheduler::Simple<>& sched, std::chrono::milliseconds duration) {
@@ -402,6 +413,38 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
             expect(eq(sink._samples.size(), nSamples)) << caseName;
             expect(std::ranges::equal(sink._samples, reference)) << caseName;
         }
+    };
+
+    "WavSink rotates on a cap that is not a multiple of sizeof(T)"_test = [] {
+        constexpr std::string_view caseName = "WavSink odd rotation cap";
+
+        std::vector<std::int16_t> reference(64UZ);
+        std::iota(reference.begin(), reference.end(), std::int16_t(1));
+        const auto wavBytes = makeWav(1U, 1U, 16U, 8000U, encodePcm16(reference));
+        TempFile   inputFile{writeTempAudioFile(wavBytes)};
+
+        const auto outputStem = std::filesystem::temp_directory_path() / std::format("gr4-wavsink-odd-{}.wav", std::chrono::steady_clock::now().time_since_epoch().count());
+
+        gr::Graph graph;
+        auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", inputFile.path.string()}});
+        auto&     sink   = graph.emplaceBlock<gr::blocks::fileio::WavSink<std::int16_t>>({{"uri", outputStem.string()}, {"mode", "multi"}, {"max_bytes_per_file", gr::Size_t(75)}, {"sample_rate", 8000.f}, {"num_channels", gr::Size_t(1)}});
+        expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
+
+        gr::scheduler::Simple<> sched;
+        expect(sched.exchange(std::move(graph)).has_value()) << caseName;
+        expect(runSchedulerUntilDone(sched, 2s).has_value()) << caseName;
+
+        expect(eq(sink.total_samples_written.value, static_cast<gr::Size_t>(reference.size()))) << "an odd cap must rotate rather than wedge the graph";
+
+        std::size_t rotatedFiles = 0UZ;
+        for (const auto& entry : std::filesystem::directory_iterator(outputStem.parent_path())) {
+            if (entry.is_regular_file() && entry.path().string().find(outputStem.filename().string()) != std::string::npos) {
+                ++rotatedFiles;
+                std::error_code ec;
+                std::filesystem::remove(entry.path(), ec);
+            }
+        }
+        expect(gt(rotatedFiles, 1UZ)) << caseName;
     };
 
     "WavSource loop restarts from beginning"_test = [] {
