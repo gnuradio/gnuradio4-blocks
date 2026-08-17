@@ -29,6 +29,7 @@
 #include <source_location>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gnuradio-4.0/Message.hpp>
@@ -199,13 +200,16 @@ inline void printSoapyReturnDebugInfo(int ret, int flags, long long time_ns) {
     std::println("ret = {}, flags({}) = [{}], time_ns = {}", ret, flags, getSoapyFlagNames(flags), time_ns);
 }
 
+// Full-duplex blocks share one SoapySDRDevice and must not activate their streams until every block
+// using that device has finished configuring it. Registration owns a block's pending-user slot and
+// its queued activation callback, and releases both when it is destroyed.
 struct DeviceRegistry {
     static constexpr std::size_t kMaxUsersPerDevice = 2UZ; // one RX (Source) + one TX (Sink)
 
     struct DeviceState {
-        std::weak_ptr<SoapySDRDevice>      device;
-        std::size_t                        pendingUsers = 0UZ;
-        std::vector<std::function<void()>> activationCallbacks;
+        std::weak_ptr<SoapySDRDevice>                device;
+        std::size_t                                  pendingUsers = 0UZ;
+        std::map<std::size_t, std::function<void()>> activationCallbacks;
     };
 
     static std::mutex& mutex() {
@@ -217,18 +221,53 @@ struct DeviceRegistry {
         return *map;
     }
 
-    static std::shared_ptr<SoapySDRDevice> findOrCreate(const Kwargs& args) {
-        auto  lock = std::lock_guard(mutex());
-        auto& map  = devices();
-        if (auto it = map.find(args); it != map.end()) {
-            if (auto existing = it->second.device.lock()) {
-                it->second.pendingUsers++;
-                if (it->second.pendingUsers > kMaxUsersPerDevice) {
-                    std::println(stderr, "[SoapySDR] DeviceRegistry: {} blocks sharing device {} — expected at most {} (one Source + one Sink)", it->second.pendingUsers, args, kMaxUsersPerDevice);
-                }
-                return existing;
+    class Registration {
+        Kwargs      _args{};
+        std::size_t _token{0UZ};
+        bool        _registered{false};
+        bool        _pending{false};
+
+    public:
+        Registration() = default;
+        explicit Registration(Kwargs args) : _args(std::move(args)), _token(DeviceRegistry::addPendingUser(_args)), _registered(true), _pending(true) {}
+        Registration(const Registration&)            = delete;
+        Registration& operator=(const Registration&) = delete;
+        Registration(Registration&& other) noexcept : _args(std::move(other._args)), _token(other._token), _registered(std::exchange(other._registered, false)), _pending(std::exchange(other._pending, false)) {}
+        Registration& operator=(Registration&& other) noexcept {
+            if (this != &other) {
+                reset();
+                _args       = std::move(other._args);
+                _token      = other._token;
+                _registered = std::exchange(other._registered, false);
+                _pending    = std::exchange(other._pending, false);
             }
-            map.erase(it);
+            return *this;
+        }
+        ~Registration() { reset(); }
+
+        // marks this user ready; 'callback' runs once every user of the device is ready
+        void activate(std::function<void()> callback) {
+            if (!_pending) {
+                return;
+            }
+            _pending = false;
+            DeviceRegistry::settlePendingUser(_args, _token, std::move(callback));
+        }
+
+        void reset() {
+            if (_registered) {
+                DeviceRegistry::removeUser(_args, _token, _pending);
+            }
+            _registered = false;
+            _pending    = false;
+        }
+    };
+
+    static std::shared_ptr<SoapySDRDevice> findOrCreate(const Kwargs& args) {
+        auto  lock  = std::lock_guard(mutex());
+        auto& state = devices()[args];
+        if (auto existing = state.device.lock()) {
+            return existing;
         }
         KwargsWrapper cArgs(args);
         if (!cArgs.valid()) {
@@ -238,31 +277,86 @@ struct DeviceRegistry {
         if (!raw) {
             return nullptr;
         }
-        auto device = std::shared_ptr<SoapySDRDevice>(raw, [](SoapySDRDevice* dev) {
+        auto device  = std::shared_ptr<SoapySDRDevice>(raw, [](SoapySDRDevice* dev) {
             if (dev) {
                 SoapySDRDevice_unmake(dev);
             }
         });
-        map[args]   = DeviceState{.device = device, .pendingUsers = 1UZ, .activationCallbacks = {}};
+        state.device = device;
         return device;
     }
 
-    static void registerActivation(const Kwargs& args, std::function<void()> callback) {
-        auto  lock = std::lock_guard(mutex());
-        auto& map  = devices();
-        auto  it   = map.find(args);
-        if (it == map.end()) {
-            callback();
-            return;
+private:
+    static std::size_t& tokenCounter() {
+        static auto* counter = new std::size_t{0UZ}; // intentional leak, guarded by mutex()
+        return *counter;
+    }
+
+    static std::size_t addPendingUser(const Kwargs& args) {
+        auto  lock  = std::lock_guard(mutex());
+        auto& state = devices()[args];
+        state.pendingUsers++;
+        if (state.pendingUsers > kMaxUsersPerDevice) {
+            std::println(stderr, "[SoapySDR] DeviceRegistry: {} blocks sharing device {} — expected at most {} (one Source + one Sink)", state.pendingUsers, args, kMaxUsersPerDevice);
         }
-        auto& state = it->second;
-        state.activationCallbacks.push_back(std::move(callback));
-        state.pendingUsers--;
-        if (state.pendingUsers == 0UZ) {
-            for (auto& cb : state.activationCallbacks) {
+        return ++tokenCounter();
+    }
+
+    // callbacks run outside the registry mutex: they activate streams and start I/O threads
+    static void settlePendingUser(const Kwargs& args, std::size_t token, std::function<void()> callback) {
+        std::vector<std::function<void()>> ready;
+        {
+            auto lock = std::lock_guard(mutex());
+            auto it   = devices().find(args);
+            if (it == devices().end()) {
+                ready.push_back(std::move(callback));
+            } else {
+                auto& state = it->second;
+                if (callback) {
+                    state.activationCallbacks.insert_or_assign(token, std::move(callback));
+                }
+                if (state.pendingUsers > 0UZ) {
+                    state.pendingUsers--;
+                }
+                if (state.pendingUsers == 0UZ) {
+                    for (auto& [key, cb] : state.activationCallbacks) {
+                        ready.push_back(std::move(cb));
+                    }
+                    state.activationCallbacks.clear();
+                }
+            }
+        }
+        for (auto& cb : ready) {
+            if (cb) {
                 cb();
             }
-            state.activationCallbacks.clear();
+        }
+    }
+
+    static void removeUser(const Kwargs& args, std::size_t token, bool stillPending) {
+        std::vector<std::function<void()>> ready;
+        {
+            auto lock = std::lock_guard(mutex());
+            auto it   = devices().find(args);
+            if (it == devices().end()) {
+                return;
+            }
+            auto& state = it->second;
+            state.activationCallbacks.erase(token);
+            if (stillPending && state.pendingUsers > 0UZ) {
+                state.pendingUsers--;
+                if (state.pendingUsers == 0UZ) {
+                    for (auto& [key, cb] : state.activationCallbacks) {
+                        ready.push_back(std::move(cb));
+                    }
+                    state.activationCallbacks.clear();
+                }
+            }
+        }
+        for (auto& cb : ready) {
+            if (cb) {
+                cb();
+            }
         }
     }
 };

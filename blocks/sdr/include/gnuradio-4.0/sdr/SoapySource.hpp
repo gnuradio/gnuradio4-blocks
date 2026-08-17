@@ -85,27 +85,28 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
 
     GR_MAKE_REFLECTABLE(SoapySource, clk_in, out, device, device_parameter, master_clock_rate, clock_source, sample_rate, num_channels, rx_antennae, frequency, rx_bandwidths, rx_gains, gain_mode, frequency_correction, dc_offset_mode, dc_offset, iq_balance, time_source, reference_clock_rate, stream_args, tune_args, frontend_mapping, device_settings, max_chunk_size, max_time_out_us, max_overflow_count, max_fragment_count, verbose_overflow, trigger_name, emit_timing_tags, emit_meta_info, tag_interval, dc_blocker_enabled, dc_blocker_cutoff, ppm_estimator_cutoff, ppm_tag_threshold);
 
-    soapy::Device                          _device{};
-    soapy::Device::Stream<T, SOAPY_SDR_RX> _rxStream{};
-    soapy::Kwargs                          _devKwargs{};
-    bool                                   _ioThreadDone = true;
-    std::atomic<gr::Size_t>                _overflowCount{0U};
-    std::atomic<gr::Size_t>                _fragmentCount{0U};
-    std::int64_t                           _clockOffsetNs    = 0;
-    bool                                   _clockOffsetValid = false;
-    std::string                            _clockTriggerName;
-    bool                                   _firstEmission  = true;
-    std::uint64_t                          _lastTagTimeNs  = 0UL;
-    float                                  _prevSampleRate = 0.f;
-    double                                 _prevFrequency  = 0.0;
-    filter::Filter<float>                  _dcFilterI;
-    filter::Filter<float>                  _dcFilterQ;
-    algorithm::SampleRateEstimator         _rateEstimator;
-    float                                  _ppmLastEmitted   = 0.0f;
-    bool                                   _clockEosReceived = false;
-    std::atomic<bool>                      _ioThreadStarted{false};
-    std::atomic<bool>                      _dcFilterDirty{false};
-    std::atomic<bool>                      _rateEstimatorDirty{false};
+    soapy::Device                               _device{};
+    soapy::Device::Stream<T, SOAPY_SDR_RX>      _rxStream{};
+    soapy::Kwargs                               _devKwargs{};
+    bool                                        _ioThreadDone = true;
+    std::atomic<gr::Size_t>                     _overflowCount{0U};
+    std::atomic<gr::Size_t>                     _fragmentCount{0U};
+    std::int64_t                                _clockOffsetNs    = 0;
+    bool                                        _clockOffsetValid = false;
+    std::string                                 _clockTriggerName;
+    bool                                        _firstEmission  = true;
+    std::uint64_t                               _lastTagTimeNs  = 0UL;
+    float                                       _prevSampleRate = 0.f;
+    double                                      _prevFrequency  = 0.0;
+    filter::Filter<float>                       _dcFilterI;
+    filter::Filter<float>                       _dcFilterQ;
+    algorithm::SampleRateEstimator              _rateEstimator;
+    float                                       _ppmLastEmitted   = 0.0f;
+    bool                                        _clockEosReceived = false;
+    std::atomic<bool>                           _ioThreadStarted{false};
+    std::atomic<bool>                           _dcFilterDirty{false};
+    std::atomic<bool>                           _rateEstimatorDirty{false};
+    soapy::detail::DeviceRegistry::Registration _activation;
 
     struct IoThreadGuard {
         bool& done;
@@ -181,9 +182,10 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         rebuildRateEstimator();
         reinitDevice();
         if (!_device.get() || !_rxStream.get()) {
+            _activation.reset(); // release the slot so the other users of this device can still activate
             return;
         }
-        soapy::detail::DeviceRegistry::registerActivation(_devKwargs, [this] {
+        _activation.activate([this] {
             if (auto r = _rxStream.activate(); !r) {
                 this->emitErrorMessage("start()", r.error());
                 this->requestStop();
@@ -196,6 +198,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     }
 
     void stop() {
+        _activation.reset();
         if (_ioThreadStarted.load(std::memory_order_acquire)) {
             gr::atomic_ref(_ioThreadDone).wait(false);
         }
@@ -513,6 +516,8 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         if (!device_parameter->empty()) {
             _devKwargs.merge(soapy::parseKwargsString(device_parameter.value));
         }
+        _activation = soapy::detail::DeviceRegistry::Registration(_devKwargs);
+
         auto devResult = soapy::Device::make(_devKwargs);
         if (!devResult) {
             this->emitErrorMessage("reinitDevice()", devResult.error());
