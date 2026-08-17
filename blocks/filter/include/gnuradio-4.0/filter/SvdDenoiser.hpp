@@ -47,7 +47,7 @@ Singular values are kept if ALL criteria are satisfied:
         absolute_threshold = std::numeric_limits<RealT>::epsilon();
 
     Annotated<RealT, "energy fraction", Doc<"fraction of total energy to retain (1.0 = all)">, Unit<"ratio">>
-        energy_fraction = RealT{1};
+        energy_fraction = RealT(0.95);
 
     Annotated<RealT, "hop fraction", Doc<"SVD recomputation interval as fraction of window_size">, Unit<"ratio">>
         hop_fraction = RealT{0.25};

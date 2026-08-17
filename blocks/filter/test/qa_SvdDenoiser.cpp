@@ -15,7 +15,7 @@ const boost::ut::suite<"SvdDenoiser Block"> svdDenoiserBlockTests = [] {
     "SvdDenoiser float default parameters"_test = [] {
         SvdDenoiser<float> denoiser;
         expect(eq(denoiser.window_size.value, static_cast<gr::Size_t>(64)));
-        expect(eq(denoiser.energy_fraction.value, 1.0f));
+        expect(eq(denoiser.energy_fraction.value, 0.95f));
         expect(eq(denoiser.hop_fraction.value, 0.25f));
     };
 
