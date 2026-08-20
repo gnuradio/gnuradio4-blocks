@@ -1,4 +1,7 @@
 add_ut_test(qa_BasicFileIo)
 target_link_libraries(qa_BasicFileIo PRIVATE gr-fileio gr-basic gr-testing)
 add_ut_test(qa_WavFile)
-target_link_libraries(qa_WavFile PRIVATE gr-fileio gr-testing httplib::httplib)
+target_link_libraries(qa_WavFile PRIVATE gr-fileio gr-testing)
+if(GR4_ENABLE_HTTP_TESTS AND NOT EMSCRIPTEN)
+  target_link_libraries(qa_WavFile PRIVATE httplib::httplib)
+endif()

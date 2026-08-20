@@ -92,6 +92,13 @@ jobs:
             cxx: clang++
             cmake-build-type: Debug
             extra_cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
+          - name: "Ubuntu 24.04 | Emscripten | Release"
+            library_sdk_tag: main-ubuntu-24.04-emscripten-release
+            cc: emcc
+            cxx: em++
+            cmake_wrapper: emcmake
+            cmake-build-type: Release
+            extra_cmake_flags: ""
 
     steps:
       - uses: actions/checkout@v6
@@ -99,6 +106,7 @@ jobs:
           fetch-depth: 0
 
       - name: Configure
+        if: matrix.cmake_wrapper == null
         shell: bash
         env:
           CC: "${{ matrix.cc }}"
@@ -116,6 +124,24 @@ jobs:
             -DENABLE_TESTING=ON \
             "${extra_cmake_flags[@]}"
 
+      - name: Configure CMake Emscripten
+        if: matrix.cmake_wrapper == 'emcmake'
+        shell: bash
+        run: |
+          system_node="$(command -v node)"
+          emcmake cmake -S . -B ../build \
+            -DCMAKE_COLOR_DIAGNOSTICS=ON \
+            -DDISABLE_EXTERNAL_DEPS_WARNINGS=ON \
+            -DCMAKE_PREFIX_PATH=/opt/gnuradio4 \
+            -DCMAKE_FIND_ROOT_PATH=/opt/gnuradio4 \
+            -DCMAKE_CROSSCOMPILING_EMULATOR="${system_node}" \
+            -DCMAKE_BUILD_TYPE=${{ matrix.cmake-build-type }} \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DENABLE_TESTING=ON \
+            -DGR4_ENABLE_AUDIO=OFF \
+            -DGR4_ENABLE_SDR=OFF \
+            -DGR4_ENABLE_HTTP_TESTS=OFF
+
       - name: Build
         shell: bash
         run: cmake --build ../build
@@ -126,3 +152,17 @@ jobs:
         working-directory: ${{ runner.workspace }}/build
         shell: bash
         run: ctest --output-on-failure
+
+      - name: Validate installed Emscripten SDK
+        if: matrix.cmake_wrapper == 'emcmake'
+        shell: bash
+        run: |
+          system_node="$(command -v node)"
+          install_prefix="${{ runner.workspace }}/install-blocks"
+          cmake --install ../build --prefix "${install_prefix}"
+          emcmake cmake -S test_external/minimal_consumer -B "${{ runner.workspace }}/build-smoke" \
+            -DCMAKE_PREFIX_PATH="${install_prefix};/opt/gnuradio4" \
+            -DCMAKE_FIND_ROOT_PATH="${install_prefix};/opt/gnuradio4" \
+            -DCMAKE_CROSSCOMPILING_EMULATOR="${system_node}"
+          cmake --build "${{ runner.workspace }}/build-smoke"
+          "${system_node}" "${{ runner.workspace }}/build-smoke/gnuradio4_blocks_consumer.js"

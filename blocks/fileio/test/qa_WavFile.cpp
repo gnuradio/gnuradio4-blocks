@@ -22,7 +22,9 @@
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
+#if GR4_ENABLE_HTTP_TESTS && !defined(__EMSCRIPTEN__)
 #include <httplib.h>
+#endif
 
 using namespace boost::ut;
 using namespace std::chrono_literals;
