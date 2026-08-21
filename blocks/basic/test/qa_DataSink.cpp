@@ -226,9 +226,8 @@ const boost::ut::suite DataSinkTests = [] {
         auto&     src   = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}, //
                   {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_MIN.shortKey(), -42.f}, {SIGNAL_MAX.shortKey(), 42.f}});
         auto&     delay = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
-        delay.settings().addAutoForwardParameters({"DAY", "MONTH", "YEAR"}); // custom auto forward keys
-        auto& sink = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.shortKey(), "TestName"}});
-        src._tags  = srcTags;
+        auto&     sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.shortKey(), "TestName"}});
+        src._tags       = srcTags;
 
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, sink).has_value());
@@ -330,8 +329,7 @@ const boost::ut::suite DataSinkTests = [] {
                      {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_MIN.shortKey(), -42.f}, {SIGNAL_MAX.shortKey(), 42.f}});
         src._tags          = srcTags;
         auto& delay        = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
-        delay.settings().addAutoForwardParameters({"DAY", "MONTH", "YEAR"}); // custom auto forward keys
-        auto& sink = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.shortKey(), "TestName"}});
+        auto& sink         = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.shortKey(), "TestName"}});
 
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, sink).has_value());
@@ -652,8 +650,7 @@ const boost::ut::suite DataSinkTests = [] {
         auto&            src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<int32_t>>({{"n_samples_max", n_samples}, {"mark_tag", false}});
         src._tags            = tags;
         auto& delay          = testGraph.emplaceBlock<testing::Delay<int32_t>>({{"delay_ms", 2500u}});
-        delay.settings().addAutoForwardParameters({"DAY", "MONTH", "YEAR"}); // custom auto forward keys
-        auto& sink = testGraph.emplaceBlock<DataSink<int32_t>>({{"name", "test_sink"}, {"signal_name", "test signal"}});
+        auto& sink           = testGraph.emplaceBlock<DataSink<int32_t>>({{"name", "test_sink"}, {"signal_name", "test signal"}});
 
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, sink).has_value());
