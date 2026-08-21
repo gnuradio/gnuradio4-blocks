@@ -155,7 +155,7 @@ with selectable filter type (low-pass, high-pass, band-pass, band-stop), and sup
     Annotated<float, "sample rate", Doc<"Sample rate in Hz">, Visible>                                                                             sample_rate{1.0f};
     Annotated<gr::Size_t, "decimation factor", Doc<"1: none, i.e. preserving the relationship: N_out = N_in/decimate">>                            decimate{1U};
     Annotated<gr::filter::iir::Design, "iir_design_method", Doc<"IIR Filter design method ('BUTTERWORTH', 'BESSEL', 'CHEBYSHEV1', 'CHEBYSHEV2')">> iir_design_method = gr::filter::iir::Design::BUTTERWORTH;
-    Annotated<algorithm::window::Type, "fir_design_method", Doc<"FIR Filter design method ('None', 'Rectangular', 'Hamming', 'Hann', 'HannExp', 'Blackman', 'Nuttall', 'BlackmanHarris', 'BlackmanNuttall', 'FlatTop', 'Exponential', 'Kaiser')">> //
+    Annotated<algorithm::window::Type, "fir_design_method", Doc<"FIR Filter design method ('None', 'Rectangular', 'Hamming', 'Hann', 'Blackman', 'Nuttall', 'BlackmanHarris', 'BlackmanNuttall', 'FlatTop', 'Exponential', 'Kaiser', 'Bartlett', 'Welch', 'Parzen', 'Tukey', 'Gaussian')">> //
         fir_design_method = algorithm::window::Type::Kaiser;
 
     GR_MAKE_REFLECTABLE(BasicFilterProto, in, out, filter_type, filter_response, filter_order, f_low, f_high, sample_rate, decimate, iir_design_method, fir_design_method);
