@@ -26,7 +26,15 @@
 #endif
 
 #ifndef __EMSCRIPTEN__
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+// GCC 16 misreads the inlined gzip_compressor dtor as indexing past a compressor[2] object
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 #include <httplib.h>
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 #endif
 
 static_assert(gr::BlockLike<gr::blocks::http::HttpSource>);

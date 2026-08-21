@@ -23,7 +23,15 @@
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 #if GR4_ENABLE_HTTP_TESTS && !defined(__EMSCRIPTEN__)
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+// GCC 16 misreads the inlined gzip_compressor dtor as indexing past a compressor[2] object
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 #include <httplib.h>
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 #endif
 
 using namespace boost::ut;
