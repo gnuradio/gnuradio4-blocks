@@ -59,32 +59,47 @@ On the choice of window (mathematically aka. apodisation) functions
    - Best for: Spectral analysis, especially when resolving closely spaced frequencies or for
      ensuring minimal leakage when multiple signals are present. This makes it an ideal default
      choice for most applications.
- * HannExp (4):
-   - SA: ~50 ... 90 dB (estimate) | FR: Moderate | MR: Variable.
- * Blackman (5):
+ * Blackman (4):
    - SA: ~58 ... 80 dB | FR: Wider than Hamming | MR: ~0.002% ripple.
    - Reduced leakage at the expense of a wider main-lobe.
- * Nuttall (6):
+ * Nuttall (5):
    - SA: ~64 ... 90 dB | FR: Wider than Blackman | MR: ~0.001% ripple.
    - Very low side-lobe but reduced frequency resolution.
    - Best for: Spectral purity.
- * BlackmanHarris (7):
+ * BlackmanHarris (6):
    - SA: ~67 ... 92 dB | FR: Similar to Blackman | MR: ~0.0002% ripple.
    - High side-lobe attenuation, lesser frequency resolution than Hamming.
- * BlackmanNuttall (8):
+ * BlackmanNuttall (7):
    - SA: ~65 ... 88 dB | FR: Similar to Blackman | MR: ~0.0001% ripple.
    - Blend of Blackman & Nuttall properties.
- * FlatTop (9):
+ * FlatTop (8):
    - SA: ~44 ... 70 dB | FR: Widest among all | MR: Very precise (minimal ripple).
    - Precision amplitude measurements but poor frequency resolution.
    - Best for: Precise amplitude measurements.
- * Exponential (10):
+ * Exponential (9):
    - SA: Variable | FR: Moderate | MR: Variable.
    - Best for: signals with decaying amplitudes.
- * Kaiser (11):
+ * Kaiser (10):
    - SA: Adjustable | FR: Adjustable | MR: Variable.
    - Customizable side-lobe attenuation and frequency resolution trade-off.
    - Best for: Custom trade-offs between SA and FR.
+ * Bartlett (11):
+   - SA: ~27 dB peak side-lobe, -12 dB/octave roll-off | FR: Wider than Rectangular | ENBW 1.33.
+   - Triangular taper, exactly zero at both ends, non-negative transform.
+ * Welch (12):
+   - SA: ~21 dB peak side-lobe, -12 dB/octave roll-off | FR: Narrower than Bartlett | ENBW 1.20.
+   - Parabolic taper. Best for: keeping resolution when only mild leakage control is needed.
+ * Parzen (13):
+   - SA: ~53 dB peak side-lobe, -24 dB/octave roll-off | FR: Wider than Blackman | ENBW 1.92.
+   - Piecewise-cubic B-spline taper, non-negative transform.
+ * Tukey (14):
+   - SA: ~13 dB (alpha 0) ... ~31 dB (alpha 1) | FR: Adjustable | ENBW 1.00 ... 1.50.
+   - Cosine-tapered rectangle; alpha is the tapered fraction of the length, default 0.5.
+   - Best for: a flat passband with softened edges.
+ * Gaussian (15):
+   - SA: ~32 dB (sigma 0.5) ... ~129 dB (sigma 0.2) | FR: Adjustable | ENBW 1.23 ... 2.82.
+   - sigma is a fraction of the half-length, default 0.4.
+   - Best for: joint time-frequency compactness.
 
 @tparam T type of the input signal.
 @tparam U type of the output data (presently limited to DataSet<float> and DataSet<double>)
