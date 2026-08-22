@@ -821,7 +821,7 @@ private:
                         outTags.publish(nTagsToPublish);
                     }
                     WriterSpanLike auto outSamples = poller->writer.reserve(nSamplesToPublish);
-                    std::ranges::copy(data | std::views::take(nSamplesToPublish), outSamples.begin());
+                    std::ranges::copy_n(data.begin(), static_cast<std::ptrdiff_t>(std::min(nSamplesToPublish, outSamples.size())), outSamples.begin());
                     outSamples.publish(nSamplesToPublish);
                 }
                 poller->droppedSampleCount += data.size() - nSamplesToPublish;
