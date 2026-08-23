@@ -24,6 +24,12 @@ option(GR_USE_FETCHCONTENT_DEPS "Allow CMake to download selected third-party de
 option(USE_CCACHE "Use ccache if available" ON)
 option(WARNINGS_AS_ERRORS "Enable -Werror flags" ON)
 
+# Test executables check correctness, not performance; a lower optimization level roughly halves their compile time and
+# peak RSS. Benchmarks pin their own level and are unaffected. Empty keeps the build type's default.
+set(GR_QA_OPTIMIZATION_LEVEL
+    "-O1"
+    CACHE STRING "Optimization level for test executables in optimized build types (empty = build-type default)")
+
 # Keep the largest template-heavy test compilations from overlapping. This limits only targets assigned to the pool;
 # other Ninja work remains parallel.
 if(CMAKE_GENERATOR MATCHES "Ninja")
