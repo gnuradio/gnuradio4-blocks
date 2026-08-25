@@ -21,7 +21,7 @@ using namespace gr;
 
 namespace function_generator {
 enum class SignalType : int { Const, LinearRamp, ParabolicRamp, CubicSpline, ImpulseResponse, UniformNoise, TriangularNoise, GaussianNoise, Sin, Cos, FastSin, FastCos };
-enum class ParameterType : int { signal_trigger, signal_type, start_value, final_value, duration, round_off_time, impulse_time0, impulse_time1, frequency, phase };
+enum class ParameterType : int { signal_trigger, signal_type, start_value, final_value, duration, round_off_time, impulse_time0, impulse_time1, tone_frequency, phase };
 
 using enum SignalType;
 using enum ParameterType;
@@ -109,7 +109,7 @@ template<typename T>
 
 template<typename T>
 [[nodiscard]] property_map createTonePropertyMap(std::string_view triggerName, SignalType toneType, T freq, T amplitude, T phase, T offset, T durationValue) {
-    return {createPropertyMapEntry(signal_trigger, std::string(triggerName)), createPropertyMapEntry(signal_type, toneType), createPropertyMapEntry(frequency, freq), createPropertyMapEntry(final_value, amplitude), createPropertyMapEntry(ParameterType::phase, phase), createPropertyMapEntry(start_value, offset), createPropertyMapEntry(duration, durationValue)};
+    return {createPropertyMapEntry(signal_trigger, std::string(triggerName)), createPropertyMapEntry(signal_type, toneType), createPropertyMapEntry(tone_frequency, freq), createPropertyMapEntry(final_value, amplitude), createPropertyMapEntry(ParameterType::phase, phase), createPropertyMapEntry(start_value, offset), createPropertyMapEntry(duration, durationValue)};
 }
 
 template<typename T>
@@ -158,14 +158,14 @@ Operating modes:
     Annotated<std::string, "signal_trigger", Visible, Doc<"required trigger name (empty -> ignored)">>           signal_trigger;
     Annotated<function_generator::SignalType, "signal_type", Visible, Doc<"see function_generator::SignalType">> signal_type = function_generator::Const;
 
-    Annotated<float, "start_value">                                               start_value    = 0.f;
-    Annotated<float, "final_value">                                               final_value    = 0.f;
-    Annotated<float, "duration", Doc<"in sec">>                                   duration       = 0.f;
-    Annotated<float, "round_off_time", Doc<"specific to ParabolicRamp, in sec">>  round_off_time = 0.f;
-    Annotated<float, "impulse_time0", Doc<"specific to ImpulseResponse, in sec">> impulse_time0  = 0.f;
-    Annotated<float, "impulse_time1", Doc<"specific to ImpulseResponse, in sec">> impulse_time1  = 0.f;
-    Annotated<float, "frequency", Visible, Doc<"in Hz">>                          frequency      = 0.f;
-    Annotated<float, "phase", Visible, Doc<"in rad">>                             phase          = 0.f;
+    Annotated<float, "start_value">                                                                                  start_value    = 0.f;
+    Annotated<float, "final_value">                                                                                  final_value    = 0.f;
+    Annotated<float, "duration", Doc<"in sec">>                                                                      duration       = 0.f;
+    Annotated<float, "round_off_time", Doc<"specific to ParabolicRamp, in sec">>                                     round_off_time = 0.f;
+    Annotated<float, "impulse_time0", Doc<"specific to ImpulseResponse, in sec">>                                    impulse_time0  = 0.f;
+    Annotated<float, "impulse_time1", Doc<"specific to ImpulseResponse, in sec">>                                    impulse_time1  = 0.f;
+    Annotated<float, "tone_frequency", Visible, Doc<"frequency of the generated tone in Hz, not a stream property">> tone_frequency = 0.f;
+    Annotated<float, "phase", Visible, Doc<"in rad">>                                                                phase          = 0.f;
 
     Annotated<std::string, "trigger name">                                                                              trigger_name;
     Annotated<std::uint64_t, "trigger time">                                                                            trigger_time;
@@ -175,7 +175,7 @@ Operating modes:
     Annotated<std::uint64_t, "seed", Visible, Doc<"PRNG seed for noise types (0 = fixed default for reproducibility)">> seed = 0ULL;
 
     GR_MAKE_REFLECTABLE(FunctionGenerator, clk_in, out, sample_rate, chunk_size, signal_trigger, signal_type, start_value, final_value, duration, round_off_time, impulse_time0, impulse_time1, //
-        frequency, phase, trigger_name, trigger_time, trigger_offset, context, trigger_meta_info, seed);
+        tone_frequency, phase, trigger_name, trigger_time, trigger_offset, context, trigger_meta_info, seed);
 
     double _currentTime   = 0.;
     int    _sampleCounter = 0;
@@ -214,7 +214,7 @@ Operating modes:
                     round_off_time = oldSettings.at("round_off_time").value_or(0.f);
                     impulse_time0  = oldSettings.at("impulse_time0").value_or(0.f);
                     impulse_time1  = oldSettings.at("impulse_time1").value_or(0.f);
-                    frequency      = oldSettings.at("frequency").value_or(0.f);
+                    tone_frequency = oldSettings.at("tone_frequency").value_or(0.f);
                     phase          = oldSettings.at("phase").value_or(0.f);
                     seed           = oldSettings.at("seed").value_or(std::uint64_t(0));
                 }
@@ -344,7 +344,7 @@ private:
             _noise.configure(noiseType, static_cast<double>(start_value), 0., seed); // start_value = noise amplitude
         } else if (function_generator::isToneType(signal_type)) {
             // for tone types: final_value = amplitude, start_value = offset (reused from ramp semantics)
-            _tone.configure(function_generator::toToneType(signal_type), static_cast<double>(frequency), static_cast<double>(sample_rate), static_cast<double>(phase), static_cast<double>(final_value), static_cast<double>(start_value));
+            _tone.configure(function_generator::toToneType(signal_type), static_cast<double>(tone_frequency), static_cast<double>(sample_rate), static_cast<double>(phase), static_cast<double>(final_value), static_cast<double>(start_value));
             _tone.reset();
         }
     }
