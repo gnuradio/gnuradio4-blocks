@@ -235,7 +235,7 @@ GR_REGISTER_BLOCK(gr::blocks::basic::ComplexToInterleaved, ([T], [U]), [std::com
 
 template<typename T, typename R>
 requires meta::complex_like<T> && (std::floating_point<R> || std::is_same_v<R, std::int8_t> || std::is_same_v<R, std::int16_t>)
-struct ComplexToInterleaved : Block<ComplexToInterleaved<T, R>, Resampling<1UZ, 2UZ, true>> {
+struct ComplexToInterleaved : Block<ComplexToInterleaved<T, R>, BackwardTagPropagation, Resampling<1UZ, 2UZ, true>> {
     using Description = Doc<R""(@brief convert stream of complex to a stream of interleaved specified type.
 
 The output stream contains twice as many output items as input items.
@@ -258,7 +258,7 @@ GR_REGISTER_BLOCK(gr::blocks::basic::InterleavedToComplex, ([T], [U]), [float], 
 
 template<typename T, typename R>
 requires(std::floating_point<T> || std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::int16_t>) && meta::complex_like<R>
-struct InterleavedToComplex : public gr::Block<InterleavedToComplex<T, R>, gr::Resampling<2UZ, 1UZ, true>> {
+struct InterleavedToComplex : public gr::Block<InterleavedToComplex<T, R>, gr::BackwardTagPropagation, gr::Resampling<2UZ, 1UZ, true>> {
     using Description = Doc<R""(@brief convert stream of interleaved values to a stream of complex numbers.
 
 The input stream contains twice as many input items as output items.

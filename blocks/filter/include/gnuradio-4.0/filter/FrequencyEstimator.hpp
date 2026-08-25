@@ -25,7 +25,7 @@
 namespace gr::blocks::filter {
 
 GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorTimeDomain", gr::blocks::filter::FrequencyEstimatorTimeDomain, [T], [float])
-GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorTimeDomainDecimating", gr::blocks::filter::FrequencyEstimatorTimeDomain, ([T], gr::Resampling<10U>), [float])
+GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorTimeDomainDecimating", gr::blocks::filter::FrequencyEstimatorTimeDomain, ([T], gr::BackwardTagPropagation, gr::Resampling<10U>), [float])
 
 template<typename T, typename... Args>
 requires std::floating_point<T>
@@ -175,10 +175,10 @@ private:
 };
 
 template<typename T>
-using FrequencyEstimatorTimeDomainDecimating = FrequencyEstimatorTimeDomain<T, Resampling<10U>>;
+using FrequencyEstimatorTimeDomainDecimating = FrequencyEstimatorTimeDomain<T, BackwardTagPropagation, Resampling<10U>>;
 
 GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorFrequencyDomain", gr::blocks::filter::FrequencyEstimatorFrequencyDomain, [T], [float])
-GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorFrequencyDomainDecimating", gr::blocks::filter::FrequencyEstimatorFrequencyDomain, ([T], gr::Resampling<10U>), [float])
+GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorFrequencyDomainDecimating", gr::blocks::filter::FrequencyEstimatorFrequencyDomain, ([T], gr::BackwardTagPropagation, gr::Resampling<10U>), [float])
 
 template<typename T, typename... Args>
 requires std::floating_point<T>
@@ -350,7 +350,7 @@ private:
 };
 
 template<typename T>
-using FrequencyEstimatorFrequencyDomainDecimating = FrequencyEstimatorFrequencyDomain<T, Resampling<1U>, Stride<0U>>;
+using FrequencyEstimatorFrequencyDomainDecimating = FrequencyEstimatorFrequencyDomain<T, BackwardTagPropagation, Resampling<1U>, Stride<0U>>;
 
 // ============================================================================
 // IQDemodulator - Digital Vector Detector / Lock-In Amplifier
@@ -381,7 +381,7 @@ template<typename T>
 inline constexpr bool is_derivative_v = is_derivative<T>::value;
 } // namespace detail
 
-GR_REGISTER_BLOCK("gr::blocks::filter::IQDemodulator", gr::blocks::filter::IQDemodulator, ([T], gr::Resampling<1024U, 1U, false>), [float])
+GR_REGISTER_BLOCK("gr::blocks::filter::IQDemodulator", gr::blocks::filter::IQDemodulator, ([T], gr::BackwardTagPropagation, gr::Resampling<1024U, 1U, false>), [float])
 
 template<typename T, typename... Args>
 requires std::floating_point<T>
@@ -646,10 +646,10 @@ Typical application: RF cavity field measurement at 0.1–5 MHz carriers, 62.5 M
 };
 
 template<typename T>
-using IQDemodulatorDecimating = IQDemodulator<T, Resampling<1024U, 1U, false>>;
+using IQDemodulatorDecimating = IQDemodulator<T, BackwardTagPropagation, Resampling<1024U, 1U, false>>;
 
 template<typename T, DerivativeMethod M>
-using IQDemodulatorFixed = IQDemodulator<T, Resampling<1024U, 1U, false>, Derivative<M, true>>;
+using IQDemodulatorFixed = IQDemodulator<T, BackwardTagPropagation, Resampling<1024U, 1U, false>, Derivative<M, true>>;
 
 } // namespace gr::blocks::filter
 

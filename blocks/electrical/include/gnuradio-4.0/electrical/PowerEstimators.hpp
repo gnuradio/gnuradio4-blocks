@@ -22,8 +22,8 @@ GR_REGISTER_BLOCK("gr::blocks::electrical::SinglePhasePowerMetrics", gr::blocks:
 
 template<typename T, std::size_t nPhases>
 requires(std::floating_point<T> or std::is_arithmetic_v<meta::fundamental_base_value_type_t<T>>)
-struct PowerMetrics : Block<PowerMetrics<T, nPhases>, Resampling<100U, 1UZ, false>> {
-    using TParent     = Block<PowerMetrics<T, nPhases>, Resampling<100U, 1UZ, false>>;
+struct PowerMetrics : Block<PowerMetrics<T, nPhases>, BackwardTagPropagation, Resampling<100U, 1UZ, false>> {
+    using TParent     = Block<PowerMetrics<T, nPhases>, BackwardTagPropagation, Resampling<100U, 1UZ, false>>;
     using Description = Doc<R""(@brief PowerMetrics
 
 Computes per-phase active power (P), reactive power (Q), apparent power (S), RMS voltage (U_rms), and RMS current (I_rms)

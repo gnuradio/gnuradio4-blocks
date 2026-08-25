@@ -31,7 +31,7 @@ GR_REGISTER_BLOCK("gr::blocks::fourier::FFT", gr::blocks::fourier::FFT, [T], [fl
 
 template<typename T, typename U = OutputDataSet<T>::type, template<typename, typename> typename FourierAlgorithm = gr::algorithm::FFT>
 requires((gr::meta::complex_like<T> || std::floating_point<T>) && (std::is_same_v<U, DataSet<float>> || std::is_same_v<U, DataSet<double>>))
-struct FFT : Block<FFT<T, U, FourierAlgorithm>, Resampling<1024LU, 1LU>> {
+struct FFT : Block<FFT<T, U, FourierAlgorithm>, BackwardTagPropagation, Resampling<1024LU, 1LU>> {
     using Description = Doc<R""(@brief Performs a (Fast) Fourier Transform (FFT) on the given input data.
 
 The FFT block is capable of performing Fourier Transform computations on real or complex data,

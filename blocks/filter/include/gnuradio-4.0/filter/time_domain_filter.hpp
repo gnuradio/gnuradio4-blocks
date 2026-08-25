@@ -124,7 +124,7 @@ a are the feedback coefficients
 };
 
 GR_REGISTER_BLOCK(gr::blocks::filter::BasicFilter, ([T]), [ float, gr::UncertainValue<float> ])
-GR_REGISTER_BLOCK(gr::blocks::filter::BasicFilterProto, ([T], gr::Resampling<1UZ, 1UZ, false>), [ float, gr::UncertainValue<float> ])
+GR_REGISTER_BLOCK(gr::blocks::filter::BasicFilterProto, ([T], gr::BackwardTagPropagation, gr::Resampling<1UZ, 1UZ, false>), [ float, gr::UncertainValue<float> ])
 
 enum class FilterType { FIR, IIR };
 
@@ -210,13 +210,13 @@ template<typename T>
 using BasicFilter = BasicFilterProto<T>;
 
 template<typename T>
-using BasicDecimatingFilter = BasicFilterProto<T, Resampling<1UZ, 1UZ, false>>;
+using BasicDecimatingFilter = BasicFilterProto<T, BackwardTagPropagation, Resampling<1UZ, 1UZ, false>>;
 
 GR_REGISTER_BLOCK(gr::blocks::filter::Decimator, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float>, gr::UncertainValue<float> ])
 
 template<typename T>
-struct Decimator : Block<Decimator<T>, Resampling<1UZ, 1UZ, false>> {
-    using TParent     = Block<Decimator<T>, Resampling<1UZ, 1UZ, false>>;
+struct Decimator : Block<Decimator<T>, BackwardTagPropagation, Resampling<1UZ, 1UZ, false>> {
+    using TParent     = Block<Decimator<T>, BackwardTagPropagation, Resampling<1UZ, 1UZ, false>>;
     using Description = Doc<R""(@brief Basic Decimator Block
 
 This block implements a decimator for downsampling (dropping) input data by a
