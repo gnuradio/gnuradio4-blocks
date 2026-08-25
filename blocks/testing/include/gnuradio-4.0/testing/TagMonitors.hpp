@@ -298,15 +298,14 @@ struct TagMonitor : public Block<TagMonitor<T, UseProcessVariant>> {
     PortIn<T>  in;
     PortOut<T> out;
 
-    // settings
-    gr::Size_t  n_samples_expected{0};
-    float       sample_rate = 1000.0f;
-    std::string signal_name;
-    bool        log_tags        = true;
-    bool        log_samples     = true;
-    bool        verbose_console = false;
+    // settings — a monitor claims none of the stream keys it reports on: an owned key is substituted into every
+    // forwarded tag, so a `sample_rate` or `signal_name` member here would rewrite the stream it is watching
+    gr::Size_t n_samples_expected{0};
+    bool       log_tags        = true;
+    bool       log_samples     = true;
+    bool       verbose_console = false;
 
-    GR_MAKE_REFLECTABLE(TagMonitor, in, out, n_samples_expected, sample_rate, signal_name, log_tags, log_samples, verbose_console);
+    GR_MAKE_REFLECTABLE(TagMonitor, in, out, n_samples_expected, log_tags, log_samples, verbose_console);
 
     Tensor<T>        _samples;
     std::vector<Tag> _tags;
