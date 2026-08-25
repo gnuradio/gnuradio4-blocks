@@ -184,7 +184,7 @@ StreamToDataSet output:
         _accState.update(startTrigger, endTrigger, isSingleTrigger, n_pre, n_post);
 
         if (!_accState.isActive) { // If accumulation is not active, consume all input samples and publish 0 samples.
-            updateHistory(inSamples, inSamples.size(), true);
+            updateHistory(inSamples, inTags, inSamples.size(), true);
             std::ignore = inSamples.consume(inSamples.size());
             outSamples.publish(0UZ);
         } else { // accumulation is active
@@ -249,10 +249,10 @@ StreamToDataSet output:
             }
 
             if (_accState.isActive) {
-                updateHistory(inSamples, nSamplesToPublish - nPreSamplesToCopy, !inTagsPublished);
+                updateHistory(inSamples, inTags, nSamplesToPublish - nPreSamplesToCopy, !inTagsPublished);
                 std::ignore = inSamples.consume(nSamplesToPublish - nPreSamplesToCopy);
             } else {
-                updateHistory(inSamples, inSamples.size(), !inTagsPublished);
+                updateHistory(inSamples, inTags, inSamples.size(), !inTagsPublished);
                 std::ignore = inSamples.consume(inSamples.size());
             }
             outSamples.publish(nSamplesToPublish);
@@ -301,7 +301,7 @@ StreamToDataSet output:
         }
 
         if (_tempDataSets.empty()) { // If accumulation is not active (no active DataSets) -> update history, consume all input samples and publish 0 samples.
-            updateHistory(inSamples, inSamples.size(), true);
+            updateHistory(inSamples, inTags, inSamples.size(), true);
             std::ignore = inSamples.consume(inSamples.size());
             outSamples.publish(0UZ);
             return work::Status::OK;
@@ -366,7 +366,7 @@ StreamToDataSet output:
             }
         }
 
-        updateHistory(inSamples, inSamples.size(), true);
+        updateHistory(inSamples, inTags, inSamples.size(), true);
         std::ignore = inSamples.consume(inSamples.size());
 
         // publish all completed DataSet<T>
@@ -467,10 +467,9 @@ private:
         return result;
     }
 
-    void updateHistory(InputSpanLike auto& inSamples, std::size_t maxSamplesToCopy, bool copyInputTags) {
+    void updateHistory(InputSpanLike auto& inSamples, const std::vector<Tag>& inTags, std::size_t maxSamplesToCopy, bool copyInputTags) {
         const auto samplesToCopy = std::min(maxSamplesToCopy, inSamples.size());
         if (samplesToCopy > 0UZ) {
-            const auto inTags = inputTags(inSamples);
             if constexpr (streamOut) {
                 if (copyInputTags) {
                     if (n_pre > 0) {
@@ -513,24 +512,10 @@ private:
     }
 
     void mergeAutoForwardTags(const std::vector<Tag>& tags) {
-        const auto&                 autoForwardKeys = this->settings().autoForwardParameters();
-        const auto&                 blockSettings   = CtxSettings<StreamFilterImpl<T, streamOut, TMatcher>>::allWritableMembers();
         std::optional<property_map> cachedSettings;
-
         for (const Tag& tag : tags) {
-            for (const auto& [key, value] : tag.map) {
-                const auto shortKey = convert_string_domain(key);
-                if (!autoForwardKeys.contains(shortKey)) {
-                    continue;
-                }
-                if (!cachedSettings) {
-                    cachedSettings.emplace(this->settings().get());
-                }
-                if (const auto it = cachedSettings->find(key); blockSettings.contains(shortKey) && it != cachedSettings->end()) {
-                    _mergedAutoForwardTag.insert_or_assign(key, it->second);
-                } else {
-                    _mergedAutoForwardTag.insert_or_assign(key, value);
-                }
+            for (auto& [key, value] : this->filterAndSubstituteTag(tag.map, cachedSettings)) {
+                _mergedAutoForwardTag.insert_or_assign(key, std::move(value));
             }
         }
     }
