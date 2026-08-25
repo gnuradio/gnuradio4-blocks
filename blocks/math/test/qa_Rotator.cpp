@@ -5,8 +5,11 @@
 
 #include <gnuradio-4.0/math/Rotator.hpp>
 
+#include <gnuradio-4.0/Graph.hpp>
+#include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/algorithm/ImChart.hpp>
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
+#include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 namespace {
 
@@ -90,6 +93,42 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
             expect(approx(output[i].imag(), wantSin, value_t(1e-5))) << "rotator imag mismatch i=" << i;
         }
     } | kArithmeticTypes;
+
+    "Rotator - a passing frequency tag is retuned by the shift"_test = [] {
+        using namespace gr::blocks::testing;
+        using T = std::complex<float>;
+
+        constexpr double     kCenter   = 100.0e6;
+        constexpr float      kShift    = 12.5e3f;
+        constexpr float      kRate     = 1.0e6f;
+        constexpr gr::Size_t kNSamples = 64U;
+
+        gr::Graph flow;
+        auto&     source = flow.emplaceBlock<TagSource<T>>({{"n_samples_max", kNSamples}, {"sample_rate", kRate}, {"disconnect_on_done", false}});
+        source._tags     = {gr::Tag{0UZ, {{"frequency", kCenter}}}};
+        auto& rotator    = flow.emplaceBlock<Rotator<T>>({{"sample_rate", kRate}, {"frequency_shift", kShift}});
+        auto& sink       = flow.emplaceBlock<TagSink<T, ProcessFunction::USE_PROCESS_ONE>>({{"disconnect_on_done", false}});
+        expect(flow.connect<"out", "in">(source, rotator).has_value());
+        expect(flow.connect<"out", "in">(rotator, sink).has_value());
+
+        gr::scheduler::Simple sched;
+        expect(sched.exchange(std::move(flow)).has_value());
+        expect(sched.runAndWait().has_value());
+
+        std::vector<double> centers;
+        for (const gr::Tag& sinkTag : sink._tags) {
+            const auto it = sinkTag.map.find(gr::tag::FREQUENCY.shortKey());
+            if (it != sinkTag.map.end()) {
+                if (const double* center = it->second.get_if<double>(); center != nullptr) {
+                    centers.push_back(*center);
+                }
+            }
+        }
+        expect(eq(centers.size(), 1UZ)) << "the center frequency must reach the sink exactly once";
+        if (centers.size() == 1UZ) {
+            expect(approx(centers.front(), kCenter - static_cast<double>(kShift), 1e-3)) << "rotating the spectrum up moves the announced center down by the same amount";
+        }
+    };
 
     "Rotator - sample_rate change preserves the commanded Hz shift"_test = [] {
         using T = std::complex<double>;

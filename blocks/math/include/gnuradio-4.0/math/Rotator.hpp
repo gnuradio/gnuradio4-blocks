@@ -10,6 +10,7 @@
 #include <gnuradio-4.0/math/NamespaceCompatibility.hpp>
 #include <gnuradio-4.0/meta/utils.hpp>
 #include <numbers>
+#include <optional>
 
 namespace gr::blocks::math {
 
@@ -24,6 +25,8 @@ struct Rotator : gr::Block<Rotator<T>> {
 
 This block supports either `phase_increment` in radians per sample (x) or relative `frequency_shift` in Hz for a
 given 'sample_rate' in Hz (N.B sample_rate is normalised to '1' by default).
+A `frequency` key on a passing tag is retuned by the same shift, so it keeps describing the center of the stream it
+is attached to.
  )"">;
 
     PortIn<T>  in;
@@ -55,6 +58,41 @@ given 'sample_rate' in Hz (N.B sample_rate is normalised to '1' by default).
 
         if (newSettings.contains("initial_phase")) {
             _accumulated_phase = initial_phase;
+        }
+    }
+
+    // rotating by 'frequency_shift' moves the spectrum, so the center frequency a passing tag announces moves by the
+    // same amount in the opposite direction: what sits at the output's zero frequency arrived at -'frequency_shift'.
+    template<typename TInputSpans, typename TOutputSpans>
+    void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t /*processedIn*/) {
+        std::optional<property_map> cachedSettings;
+        gr::for_each_reader_span(
+            [&](auto& inSpan) {
+                if (!inSpan.isSync || !inSpan.isConnected) {
+                    return;
+                }
+                for (const auto& [relIndex, tagMapRef] : inSpan.tags(1UZ)) {
+                    property_map forwarded = this->filterAndSubstituteTag(tagMapRef.get(), cachedSettings);
+                    if (forwarded.empty()) {
+                        continue;
+                    }
+                    retuneCenterFrequency(forwarded);
+                    const std::size_t offset = static_cast<std::size_t>(std::max(std::ptrdiff_t(0), relIndex));
+                    gr::for_each_writer_span([&forwarded, offset](auto& outSpan) { outSpan.publishTag(forwarded, offset); }, outputSpans);
+                }
+            },
+            inputSpans);
+    }
+
+    void retuneCenterFrequency(property_map& tagMap) const noexcept {
+        auto it = tagMap.find(gr::tag::FREQUENCY.shortKey());
+        if (it == tagMap.end()) {
+            return;
+        }
+        if (const double* asDouble = it->second.template get_if<double>(); asDouble != nullptr) {
+            it->second = *asDouble - static_cast<double>(frequency_shift.value);
+        } else if (const float* asFloat = it->second.template get_if<float>(); asFloat != nullptr) {
+            it->second = *asFloat - frequency_shift.value;
         }
     }
 
