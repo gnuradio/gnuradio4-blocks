@@ -81,10 +81,10 @@ const boost::ut::suite TagTests = [] {
         std::vector<std::string> signals{"Const", "Sin", "Cos", "Square", "Saw", "Triangle"};
 
         for (const auto& sig : signals) {
-            SignalGenerator<double> signalGen({{"signal_type", sig}, {gr::tag::SAMPLE_RATE.shortKey(), 2048.f}, {"frequency", 256.}, {"amplitude", 1.}, {"offset", offset}, {"phase", std::numbers::pi / 4}});
+            SignalGenerator<double> signalGen({{"signal_type", sig}, {gr::tag::SAMPLE_RATE.shortKey(), 2048.f}, {"tone_frequency", 256.}, {"amplitude", 1.}, {"offset", offset}, {"phase", std::numbers::pi / 4}});
             signalGen.init(signalGen.progress);
 
-            // expected values corresponds to sample_rate = 1024., frequency = 128., amplitude = 1., offset = 0., phase = pi/4.
+            // expected values corresponds to sample_rate = 1024., tone_frequency = 128., amplitude = 1., offset = 0., phase = pi/4.
             std::map<std::string, std ::vector<double>> expResults = {{"Const", {1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.}}, {"Sin", {0.707106, 1., 0.707106, 0., -0.707106, -1., -0.707106, 0., 0.707106, 1., 0.707106, 0., -0.707106, -1., -0.707106, 0.}}, {"Cos", {0.707106, 0., -0.707106, -1., -0.7071067, 0., 0.707106, 1., 0.707106, 0., -0.707106, -1., -0.707106, 0., 0.707106, 1.}}, {"Square", {1., 1., 1., -1., -1., -1., -1., 1., 1., 1., 1., -1., -1., -1., -1., 1.}}, {"Saw", {0.25, 0.5, 0.75, -1., -0.75, -0.5, -0.25, 0., 0.25, 0.5, 0.75, -1., -0.75, -0.5, -0.25, 0.}}, {"Triangle", {0.5, 1., 0.5, 0., -0.5, -1., -0.5, 0., 0.5, 1., 0.5, 0., -0.5, -1., -0.5, 0.}}};
 
             for (std::size_t i = 0; i < N; i++) {
@@ -98,8 +98,8 @@ const boost::ut::suite TagTests = [] {
     "SignalGenerator FastSin/FastCos match Sin/Cos"_test = [] {
         constexpr std::size_t N = 200;
         for (const auto& [fast, precise] : std::vector<std::pair<std::string, std::string>>{{"FastSin", "Sin"}, {"FastCos", "Cos"}}) {
-            SignalGenerator<double> genFast({{"signal_type", fast}, {gr::tag::SAMPLE_RATE.shortKey(), 1000.f}, {"frequency", 50.f}, {"amplitude", 1.f}, {"offset", 0.f}, {"phase", 0.f}});
-            SignalGenerator<double> genPrecise({{"signal_type", precise}, {gr::tag::SAMPLE_RATE.shortKey(), 1000.f}, {"frequency", 50.f}, {"amplitude", 1.f}, {"offset", 0.f}, {"phase", 0.f}});
+            SignalGenerator<double> genFast({{"signal_type", fast}, {gr::tag::SAMPLE_RATE.shortKey(), 1000.f}, {"tone_frequency", 50.f}, {"amplitude", 1.f}, {"offset", 0.f}, {"phase", 0.f}});
+            SignalGenerator<double> genPrecise({{"signal_type", precise}, {gr::tag::SAMPLE_RATE.shortKey(), 1000.f}, {"tone_frequency", 50.f}, {"amplitude", 1.f}, {"offset", 0.f}, {"phase", 0.f}});
             genFast.init(genFast.progress);
             genPrecise.init(genPrecise.progress);
             for (std::size_t i = 0; i < N; ++i) {
@@ -128,7 +128,7 @@ const boost::ut::suite TagTests = [] {
     };
 
     "SignalGenerator integer output clamps correctly"_test = [] {
-        SignalGenerator<std::int16_t> gen({{"signal_type", "Sin"}, {gr::tag::SAMPLE_RATE.shortKey(), 1000.f}, {"frequency", 50.f}, {"amplitude", 40000.f}, {"offset", 0.f}});
+        SignalGenerator<std::int16_t> gen({{"signal_type", "Sin"}, {gr::tag::SAMPLE_RATE.shortKey(), 1000.f}, {"tone_frequency", 50.f}, {"amplitude", 40000.f}, {"offset", 0.f}});
         gen.init(gen.progress);
         bool hitMax = false, hitMin = false;
         for (std::size_t i = 0; i < 100; ++i) {
@@ -147,7 +147,7 @@ const boost::ut::suite TagTests = [] {
     };
 
     "SignalGenerator complex output produces analytic signal"_test = [] {
-        SignalGenerator<std::complex<double>> gen({{"signal_type", "Sin"}, {gr::tag::SAMPLE_RATE.shortKey(), 1000.f}, {"frequency", 50.f}, {"amplitude", 1.f}, {"offset", 0.f}, {"phase", 0.f}});
+        SignalGenerator<std::complex<double>> gen({{"signal_type", "Sin"}, {gr::tag::SAMPLE_RATE.shortKey(), 1000.f}, {"tone_frequency", 50.f}, {"amplitude", 1.f}, {"offset", 0.f}, {"phase", 0.f}});
         gen.init(gen.progress);
         for (std::size_t i = 0; i < 50; ++i) {
             const auto   sample = gen.generateSample();
@@ -160,7 +160,7 @@ const boost::ut::suite TagTests = [] {
         const std::size_t        N = 512; // test points
         std::vector<std::string> signals{"Const", "Sin", "Cos", "Square", "Saw", "Triangle"};
         for (const auto& sig : signals) {
-            SignalGenerator<double> signalGen({{"signal_type", sig}, {gr::tag::SAMPLE_RATE.shortKey(), 8192.f}, {"frequency", 32.}, {"amplitude", 2.}, {"offset", 0.}, {"phase", std::numbers::pi / 4.}});
+            SignalGenerator<double> signalGen({{"signal_type", sig}, {gr::tag::SAMPLE_RATE.shortKey(), 8192.f}, {"tone_frequency", 32.}, {"amplitude", 2.}, {"offset", 0.}, {"phase", std::numbers::pi / 4.}});
             signalGen.init(signalGen.progress);
 
             std::vector<double> xValues(N), yValues(N);
@@ -221,7 +221,9 @@ const boost::ut::suite TagTests = [] {
         for (const auto& sig : signals) {
             expect(funcGen.settings().activateContext(SettingsCtx{now, static_cast<int>(sig)}) != std::nullopt);
             const auto applyResult = funcGen.settings().applyStagedParameters();
-            expect(expect(eq(applyResult.forwardParameters.size(), 7UZ))) << std::format("incorrect number of to be forwarded settings. forward keys: {}\n", gr::join(mismatchedKey(applyResult.forwardParameters), ", "));
+            // the forwarded set is the block's own settings whose keys are reserved tag keys: sample_rate and the
+            // five trigger members
+            expect(expect(eq(applyResult.forwardParameters.size(), 6UZ))) << std::format("incorrect number of to be forwarded settings. forward keys: {}\n", gr::join(mismatchedKey(applyResult.forwardParameters), ", "));
 
             std::vector<double> xValues(N), yValues(N);
             std::iota(xValues.begin(), xValues.end(), 0);
@@ -420,7 +422,7 @@ const boost::ut::suite TagTests = [] {
             funcGen.init(funcGen.progress);
             const auto now = settings::convertTimePointToUint64Ns(std::chrono::system_clock::now());
 
-            property_map params{createPropertyMapEntry(signal_type, toneType), createPropertyMapEntry(ParameterType::frequency, freq), createPropertyMapEntry(final_value, amplitude), createPropertyMapEntry(start_value, offset), createPropertyMapEntry(ParameterType::phase, phase), createPropertyMapEntry(duration, 0.f)};
+            property_map params{createPropertyMapEntry(signal_type, toneType), createPropertyMapEntry(ParameterType::tone_frequency, freq), createPropertyMapEntry(final_value, amplitude), createPropertyMapEntry(start_value, offset), createPropertyMapEntry(ParameterType::phase, phase), createPropertyMapEntry(duration, 0.f)};
             expect(funcGen.settings().set(params, SettingsCtx{now, 1}).empty());
             expect(funcGen.settings().activateContext(SettingsCtx{now, 1}) != std::nullopt);
             std::ignore = funcGen.settings().applyStagedParameters();
@@ -444,9 +446,9 @@ const boost::ut::suite TagTests = [] {
         funcGen.init(funcGen.progress);
         const auto now = settings::convertTimePointToUint64Ns(std::chrono::system_clock::now());
 
-        property_map params{createPropertyMapEntry(signal_type, Sin), createPropertyMapEntry(ParameterType::frequency, 100.f), createPropertyMapEntry(final_value, 5.f), // amplitude
-            createPropertyMapEntry(start_value, 2.f),                                                                                                                    // offset
-            createPropertyMapEntry(ParameterType::phase, 0.f), createPropertyMapEntry(duration, 0.01f)};                                                                 // 10 ms = 10 samples
+        property_map params{createPropertyMapEntry(signal_type, Sin), createPropertyMapEntry(ParameterType::tone_frequency, 100.f), createPropertyMapEntry(final_value, 5.f), // amplitude
+            createPropertyMapEntry(start_value, 2.f),                                                                                                                         // offset
+            createPropertyMapEntry(ParameterType::phase, 0.f), createPropertyMapEntry(duration, 0.01f)};                                                                      // 10 ms = 10 samples
         expect(funcGen.settings().set(params, SettingsCtx{now, 1}).empty());
         expect(funcGen.settings().activateContext(SettingsCtx{now, 1}) != std::nullopt);
         std::ignore = funcGen.settings().applyStagedParameters();
@@ -491,7 +493,7 @@ const boost::ut::suite TagTests = [] {
         funcGen.init(funcGen.progress);
         const auto now = settings::convertTimePointToUint64Ns(std::chrono::system_clock::now());
 
-        property_map params{createPropertyMapEntry(signal_type, Sin), createPropertyMapEntry(ParameterType::frequency, 50.f), createPropertyMapEntry(final_value, 1.f), createPropertyMapEntry(start_value, 0.f), createPropertyMapEntry(ParameterType::phase, 0.f), createPropertyMapEntry(duration, 0.f)};
+        property_map params{createPropertyMapEntry(signal_type, Sin), createPropertyMapEntry(ParameterType::tone_frequency, 50.f), createPropertyMapEntry(final_value, 1.f), createPropertyMapEntry(start_value, 0.f), createPropertyMapEntry(ParameterType::phase, 0.f), createPropertyMapEntry(duration, 0.f)};
         expect(funcGen.settings().set(params, SettingsCtx{now, 1}).empty());
         expect(funcGen.settings().activateContext(SettingsCtx{now, 1}) != std::nullopt);
         std::ignore = funcGen.settings().applyStagedParameters();
@@ -509,7 +511,7 @@ const boost::ut::suite TagTests = [] {
         funcGen.init(funcGen.progress);
         const auto now = settings::convertTimePointToUint64Ns(std::chrono::system_clock::now());
 
-        property_map params{createPropertyMapEntry(signal_type, Sin), createPropertyMapEntry(ParameterType::frequency, 50.f), createPropertyMapEntry(final_value, 40000.f), createPropertyMapEntry(start_value, 0.f), createPropertyMapEntry(ParameterType::phase, 0.f), createPropertyMapEntry(duration, 0.f)};
+        property_map params{createPropertyMapEntry(signal_type, Sin), createPropertyMapEntry(ParameterType::tone_frequency, 50.f), createPropertyMapEntry(final_value, 40000.f), createPropertyMapEntry(start_value, 0.f), createPropertyMapEntry(ParameterType::phase, 0.f), createPropertyMapEntry(duration, 0.f)};
         expect(funcGen.settings().set(params, SettingsCtx{now, 1}).empty());
         expect(funcGen.settings().activateContext(SettingsCtx{now, 1}) != std::nullopt);
         std::ignore = funcGen.settings().applyStagedParameters();
@@ -572,6 +574,80 @@ const boost::ut::suite TagTests = [] {
         for (std::size_t i = 300; i < sink._samples.size(); ++i) {
             expect(approx(1.f, sink._samples[i], 1e-4f)) << std::format("const-after-sine segment sample {}", i);
         }
+    };
+
+    // a generator driven by an external clock sits mid-stream, so the stream keys crossing it are not its own: the
+    // waveform frequency is 'tone_frequency', and the reserved 'frequency' key passes through in both directions
+    static constexpr double kStreamFrequency = 100.0e6;
+
+    // the scheduler owns the graph once it is exchanged in, so the blocks are read inside the callback
+    const auto runClockedGenerator = []<typename TBlock, typename TCheck>(Graph& testGraph, TBlock& generator, TCheck&& check) {
+        constexpr gr::Size_t nSamples = 128U;
+
+        auto& clockSrc = testGraph.emplaceBlock<ClockSource<std::uint8_t>>({{gr::tag::SAMPLE_RATE.shortKey(), 10000.f}, {"n_samples_max", nSamples}, {"chunk_size", gr::Size_t(16)}, {"name", "ClockSource"}});
+        // the rate the tag carries is deliberately unequal to the generator's: the generator owns 'sample_rate' and
+        // must substitute its own, which is the same forwarding path the frequency key takes
+        clockSrc.tags = {Tag(32UZ, {{gr::tag::FREQUENCY.shortKey(), kStreamFrequency}, {gr::tag::SAMPLE_RATE.shortKey(), 250.f}})};
+
+        auto& sink = testGraph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+        expect(testGraph.connect<"out", "clk_in">(clockSrc, generator).has_value());
+        expect(testGraph.connect<"out", "in">(generator, sink).has_value());
+
+        gr::scheduler::Simple sched;
+        if (auto ret = sched.exchange(std::move(testGraph)); !ret) {
+            throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+        }
+        expect(sched.runAndWait().has_value());
+        check(generator, sink);
+    };
+
+    const auto expectStreamFrequencyIntact = [](const auto& sink) {
+        std::size_t nSeen = 0UZ;
+        for (const auto& tag : sink._tags) {
+            const auto it = tag.map.find(gr::tag::FREQUENCY.shortKey());
+            if (it == tag.map.end()) {
+                continue;
+            }
+            ++nSeen;
+            const double* value = it->second.template get_if<double>();
+            expect(value != nullptr) << std::format("the forwarded frequency key lost its type: {}", tag.map);
+            if (value != nullptr) {
+                expect(eq(*value, kStreamFrequency)) << "the generator rewrote the stream frequency it forwarded";
+            }
+            // control: substitution is live on this route — the generator owns 'sample_rate' and replaces the 250 Hz
+            // the tag carried with the 10 kHz it generates at
+            const auto rateIt = tag.map.find(gr::tag::SAMPLE_RATE.shortKey());
+            expect(rateIt != tag.map.end()) << "the sample_rate key rode the same tag and must still be there";
+            if (rateIt != tag.map.end()) {
+                expect(eq(rateIt->second.value_or(0.f), 10000.f)) << "the generator must substitute the rate it publishes at";
+            }
+        }
+        expect(eq(nSeen, 1UZ)) << "the stream frequency tag did not cross the generator";
+    };
+
+    "SignalGenerator forwards the stream frequency key unchanged"_test = [&] {
+        Graph testGraph;
+        auto& gen = testGraph.emplaceBlock<SignalGenerator<float>>({{gr::tag::SAMPLE_RATE.shortKey(), 10000.f}, {"signal_type", "Sin"}, {"tone_frequency", 250.f}, {"name", "SignalGenerator"}});
+        runClockedGenerator(testGraph, gen, [&](const auto&, const auto& sink) { expectStreamFrequencyIntact(sink); });
+    };
+
+    "SignalGenerator keeps its tone across a stream frequency tag"_test = [&] {
+        Graph testGraph;
+        // the tone is left at its default, so it is still in the settings auto-update set
+        auto& gen = testGraph.emplaceBlock<SignalGenerator<float>>({{gr::tag::SAMPLE_RATE.shortKey(), 10000.f}, {"signal_type", "Sin"}, {"name", "SignalGenerator"}});
+        runClockedGenerator(testGraph, gen, [](const auto& generator, const auto&) { expect(eq(generator.tone_frequency.value, 1.f)) << "a passing frequency tag retuned the generated waveform"; });
+    };
+
+    "FunctionGenerator forwards the stream frequency key unchanged"_test = [&] {
+        Graph testGraph;
+        auto& gen = testGraph.emplaceBlock<FunctionGenerator<float>>({{gr::tag::SAMPLE_RATE.shortKey(), 10000.f}, {"signal_type", "Sin"}, {"tone_frequency", 250.f}, {"name", "FunctionGenerator"}});
+        runClockedGenerator(testGraph, gen, [&](const auto&, const auto& sink) { expectStreamFrequencyIntact(sink); });
+    };
+
+    "FunctionGenerator keeps its tone across a stream frequency tag"_test = [&] {
+        Graph testGraph;
+        auto& gen = testGraph.emplaceBlock<FunctionGenerator<float>>({{gr::tag::SAMPLE_RATE.shortKey(), 10000.f}, {"signal_type", "Sin"}, {"name", "FunctionGenerator"}});
+        runClockedGenerator(testGraph, gen, [](const auto& generator, const auto&) { expect(eq(generator.tone_frequency.value, 0.f)) << "a passing frequency tag retuned the generated waveform"; });
     };
 };
 

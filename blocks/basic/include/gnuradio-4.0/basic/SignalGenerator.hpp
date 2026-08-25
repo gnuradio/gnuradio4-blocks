@@ -31,7 +31,7 @@ Operating modes:
   clk_in connected: generates one sample per clock input sample
   clk_in disconnected: free-running mode synchronised to wall-clock time
 
-Signal types (A = amplitude, f = frequency, P = phase, O = offset):
+Signal types (A = amplitude, f = tone_frequency, P = phase, O = offset):
   Sin/Cos:          A * sin/cos(2π·f·t + P) + O  (std::sin/cos, high precision)
   FastSin/FastCos:  A * sin/cos(2π·f·t + P) + O  (recursive phasor, ~10x faster)
   Constant:         A + O
@@ -44,28 +44,28 @@ Signal types (A = amplitude, f = frequency, P = phase, O = offset):
     PortIn<std::uint8_t, Optional> clk_in;
     PortOut<T>                     out;
 
-    Annotated<float, "sample_rate", Visible, Doc<"sample rate">>                                                        sample_rate = 1000.f;
-    Annotated<gr::Size_t, "chunk_size", Visible, Doc<"samples per update in free-running mode">>                        chunk_size  = 100;
-    Annotated<signal_generator::Type, "signal_type", Visible, Doc<"see signal_generator::Type">>                        signal_type = signal_generator::Type::Sin;
-    Annotated<float, "frequency", Visible>                                                                              frequency   = 1.f;
-    Annotated<float, "amplitude", Visible>                                                                              amplitude   = 1.f;
-    Annotated<float, "offset", Visible>                                                                                 offset      = 0.f;
-    Annotated<float, "phase", Visible, Doc<"in rad">>                                                                   phase       = 0.f;
-    Annotated<std::uint64_t, "seed", Visible, Doc<"PRNG seed for noise types (0 = fixed default for reproducibility)">> seed        = 0ULL;
+    Annotated<float, "sample_rate", Visible, Doc<"sample rate">>                                                               sample_rate    = 1000.f;
+    Annotated<gr::Size_t, "chunk_size", Visible, Doc<"samples per update in free-running mode">>                               chunk_size     = 100;
+    Annotated<signal_generator::Type, "signal_type", Visible, Doc<"see signal_generator::Type">>                               signal_type    = signal_generator::Type::Sin;
+    Annotated<float, "tone_frequency", Visible, Unit<"Hz">, Doc<"frequency of the generated waveform, not a stream property">> tone_frequency = 1.f;
+    Annotated<float, "amplitude", Visible>                                                                                     amplitude      = 1.f;
+    Annotated<float, "offset", Visible>                                                                                        offset         = 0.f;
+    Annotated<float, "phase", Visible, Doc<"in rad">>                                                                          phase          = 0.f;
+    Annotated<std::uint64_t, "seed", Visible, Doc<"PRNG seed for noise types (0 = fixed default for reproducibility)">>        seed           = 0ULL;
 
-    GR_MAKE_REFLECTABLE(SignalGenerator, clk_in, out, sample_rate, chunk_size, signal_type, frequency, amplitude, offset, phase, seed);
+    GR_MAKE_REFLECTABLE(SignalGenerator, clk_in, out, sample_rate, chunk_size, signal_type, tone_frequency, amplitude, offset, phase, seed);
 
     gr::signal::SignalGeneratorCore<T> _core;
 
     void start() {
-        _core.configure(signal_type.value, frequency, sample_rate, phase, amplitude, offset, seed);
+        _core.configure(signal_type.value, tone_frequency, sample_rate, phase, amplitude, offset, seed);
         _core.reset();
         this->blockingSyncStart();
     }
 
     void stop() { this->blockingSyncStop(); }
 
-    void settingsChanged(const property_map& /*old_settings*/, const property_map& /*new_settings*/) { _core.configure(signal_type.value, frequency, sample_rate, phase, amplitude, offset, seed); }
+    void settingsChanged(const property_map& /*old_settings*/, const property_map& /*new_settings*/) { _core.configure(signal_type.value, tone_frequency, sample_rate, phase, amplitude, offset, seed); }
 
     work::Status processBulk(InputSpanLike auto& input, OutputSpanLike auto& output) {
         const auto nSamples = this->syncSamples(input, output);
