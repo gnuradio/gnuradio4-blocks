@@ -50,7 +50,7 @@ applies low-pass filters to calculate average values, and outputs decimated resu
     Annotated<float, "low pass", Unit<"Hz">, Doc<"Upper Low-Pass Frequency">>                                           low_pass{90.f};
     Annotated<gr::Size_t, "decimation factor", Doc<"1: none, i.e. preserving the relationship: N_out = N_in/decimate">> decimate{100U};
 
-    GR_MAKE_REFLECTABLE(PowerMetrics, U, I, P, Q, S, U_rms, I_rms, sample_rate, decimate);
+    GR_MAKE_REFLECTABLE(PowerMetrics, U, I, P, Q, S, U_rms, I_rms, sample_rate, high_pass, low_pass, decimate);
 
     // private state for exponential moving average (EMA)
     using FilterImpl = std::conditional_t<UncertainValueLike<T>, filter::ErrorPropagatingFilter<T>, filter::Filter<meta::fundamental_base_value_type_t<T>>>;
