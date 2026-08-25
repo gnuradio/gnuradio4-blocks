@@ -642,14 +642,15 @@ public:
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inData) noexcept {
         std::vector<Tag> tags;
-        for (const auto& [relIndex, tagMapRef] : inData.tags()) {
-            tags.emplace_back(static_cast<std::size_t>(relIndex), tagMapRef.get());
-        }
-
         {
             std::lock_guard lg(_listener_mutex); // TODO review/profile if a lock-free data structure should be used here
             const auto      historyView = _history ? _history->get_span(0UZ) : std::span<const T>();
             std::erase_if(_listeners, [](const auto& l) { return l->expired; });
+            if (!_listeners.empty()) { // every tag map is deep-copied here, so a sink nobody listens to pays nothing
+                for (const auto& [relIndex, tagMapRef] : inData.tags()) {
+                    tags.emplace_back(relIndex < 0 ? 0UZ : static_cast<std::size_t>(relIndex), tagMapRef.get());
+                }
+            }
             for (auto& listener : _listeners) {
                 listener->process(historyView, inData, tags);
             }
