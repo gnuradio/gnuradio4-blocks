@@ -240,10 +240,15 @@ you can set the `backPressure` property to false.
         }
 
         if (_selectedSrc < ins.size()) {
-            auto&       inSpan         = ins[_selectedSrc];
-            std::size_t nSamplesToCopy = std::min({inSpan.size(), monOut.size(), nSamplesToConsume[_selectedSrc]});
+            auto&             inSpan         = ins[_selectedSrc];
+            const std::size_t nMappedBudget  = nSamplesToConsume[_selectedSrc];
+            const std::size_t nSamplesToCopy = std::min({inSpan.size(), monOut.size(), nMappedBudget});
             copyToOutput(nSamplesToCopy, inSpan, monOut, std::numeric_limits<std::size_t>::max());
-            nSamplesToConsume[_selectedSrc] = nSamplesToCopy;
+            // a source routed to an output had its tags published against that output's budget, so only a
+            // source the mapping leaves out takes its consume count from the monitor copy
+            if (nMappedBudget == std::numeric_limits<std::size_t>::max()) {
+                nSamplesToConsume[_selectedSrc] = nSamplesToCopy;
+            }
         }
 
         for (std::size_t inIndex = 0UZ; inIndex < ins.size(); inIndex++) {

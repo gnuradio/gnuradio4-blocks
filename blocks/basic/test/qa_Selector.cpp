@@ -97,6 +97,50 @@ void execute_selector_test(TestParams params, std::source_location location = st
     }
 }
 
+/// one select value per work call, so the Selector reaches its monitor path on every call rather than only the first
+struct DrippingSelect : gr::Block<DrippingSelect> {
+    gr::PortOut<gr::Size_t> out;
+
+    GR_MAKE_REFLECTABLE(DrippingSelect, out);
+
+    gr::Size_t  index    = 0U;
+    std::size_t nMax     = 0UZ;
+    std::size_t _emitted = 0UZ;
+
+    gr::work::Status processBulk(gr::OutputSpanLike auto& outSpan) {
+        if (_emitted >= nMax) {
+            outSpan.publish(0UZ);
+            return gr::work::Status::DONE;
+        }
+        if (outSpan.size() == 0UZ) {
+            outSpan.publish(0UZ);
+            return gr::work::Status::INSUFFICIENT_OUTPUT_ITEMS;
+        }
+        outSpan[0UZ] = index;
+        _emitted++;
+        outSpan.publish(1UZ);
+        return gr::work::Status::OK;
+    }
+};
+
+/// drains a bounded number of samples per call, so the monitor output backs up and bounds the selected source
+struct ThrottledSink : gr::Block<ThrottledSink> {
+    gr::PortIn<double> in;
+
+    GR_MAKE_REFLECTABLE(ThrottledSink, in);
+
+    std::size_t perCall = 2UZ;
+    std::size_t nSeen   = 0UZ;
+
+    gr::work::Status processBulk(gr::InputSpanLike auto& inSpan) {
+        const std::size_t n = std::min(perCall, inSpan.size());
+        nSeen += n;
+        inSpan.consumeTags(n);
+        std::ignore = inSpan.consume(n);
+        return gr::work::Status::OK;
+    }
+};
+
 const boost::ut::suite SelectorTest = [] {
     using namespace boost::ut;
     using namespace gr::blocks::basic;
@@ -351,6 +395,43 @@ const boost::ut::suite SelectorTest = [] {
             .backPressure                = false,
             .nSamplesSelectorInput       = {0, 0, 0},
             .ignoreOrder                 = false});
+    };
+
+    "Selector<T> a mapped and selected source publishes each tag once under monitor backpressure"_test = [] {
+        using namespace gr::blocks::testing;
+
+        constexpr gr::Size_t   kNSamples      = 2048U;
+        constexpr std::size_t  kMonitorBuffer = 512UZ; // shorter than the stream, so the monitor bounds the source repeatedly
+        const std::vector<Tag> inTags{Tag{1UZ, {{"key1", "value1"}}}, Tag{700UZ, {{"key2", "value2"}}}, Tag{1500UZ, {{"key3", "value3"}}}};
+
+        gr::Graph graph;
+        auto&     source = graph.emplaceBlock<TagSource<double>>({{"n_samples_max", kNSamples}, {"values", values({{1}})[0]}, {"disconnect_on_done", false}});
+        source._tags     = inTags;
+
+        auto& selectSource = graph.emplaceBlock<DrippingSelect>({{"disconnect_on_done", false}});
+        selectSource.nMax  = 256UZ; // more calls than the stream needs, so every one of them reaches the monitor path
+
+        auto& selector      = graph.emplaceBlock<Selector<double>>({{"n_inputs", 1U}, {"n_outputs", 1U}, {"map_in", std::vector<gr::Size_t>{0U}}, {"map_out", std::vector<gr::Size_t>{0U}}, {"back_pressure", false}, {"disconnect_on_done", false}});
+        auto& sink          = graph.emplaceBlock<TagSink<double, ProcessFunction::USE_PROCESS_ONE>>({{"disconnect_on_done", false}});
+        auto& monitorSink   = graph.emplaceBlock<ThrottledSink>({{"disconnect_on_done", false}});
+        monitorSink.perCall = 64UZ;
+
+        expect(graph.connect(source, "out"s, selector, "inputs#0"s).has_value());
+        expect(graph.connect(selectSource, "out"s, selector, "select"s).has_value());
+        expect(graph.connect(selector, "outputs#0"s, sink, "in"s).has_value());
+        expect(graph.connect(selector, "monitor"s, monitorSink, "in"s, {.minBufferSize = kMonitorBuffer}).has_value());
+
+        gr::scheduler::Simple sched;
+        expect(sched.exchange(std::move(graph)).has_value());
+        expect(sched.runAndWait().has_value());
+
+        expect(eq(sink._samples.size(), static_cast<std::size_t>(kNSamples))) << "the mapped output must receive the whole stream";
+        expect(gt(monitorSink.nSeen, kMonitorBuffer)) << "more samples than the monitor ring holds must have crossed it, or the source was never monitor-bound";
+        expect(eq(sink._tags.size(), inTags.size())) << "a tag published against a count larger than the one consumed arrives a second time";
+        for (const Tag& tag : inTags) {
+            const auto nMatching = std::ranges::count_if(sink._tags, [&tag](const Tag& seen) { return seen.map == tag.map; });
+            expect(eq(static_cast<std::size_t>(nMatching), 1UZ)) << std::format("the tag at input index {} must arrive exactly once", tag.index);
+        }
     };
 };
 
