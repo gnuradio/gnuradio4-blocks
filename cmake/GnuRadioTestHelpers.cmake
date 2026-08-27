@@ -22,6 +22,11 @@ function(add_ut_test TEST_NAME)
     set_target_properties(${TEST_NAME} PROPERTIES GR_QA_REDUCED_OPTIMIZATION ON)
     target_compile_options(${TEST_NAME} PRIVATE $<$<NOT:$<CONFIG:Debug>>:${GR_QA_OPTIMIZATION_LEVEL}>)
   endif()
+  if(CMAKE_GENERATOR MATCHES "Ninja")
+    # Test TUs instantiate whole graphs per file and are the build's memory-heavy class; the width-limited pool keeps
+    # their peaks from stacking.
+    set_property(TARGET ${TEST_NAME} PROPERTY JOB_POOL_COMPILE gr4_heavy_compile)
+  endif()
   setup_test(${TEST_NAME})
   set_property(TEST ${TEST_NAME} PROPERTY ENVIRONMENT_MODIFICATION
                                           "GNURADIO4_PLUGIN_DIRECTORIES=set:${CMAKE_CURRENT_BINARY_DIR}/plugins")

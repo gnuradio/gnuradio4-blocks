@@ -30,11 +30,14 @@ set(GR_QA_OPTIMIZATION_LEVEL
     "-O1"
     CACHE STRING "Optimization level for test executables in optimized build types (empty = build-type default)")
 
-# Bound the concurrency of the largest template-heavy test compilations, whose peak memory dominates the build. The pool
-# limits only targets assigned to it; other Ninja work remains parallel.
+# Bound the concurrency of the template-heaviest compilations, whose peak memory dominates the build. The pool limits
+# only targets assigned to it; other Ninja work remains parallel. Width one keeps the heaviest translation units from
+# compiling side by side: each test TU instantiates whole graphs, so any two of them next to ordinary lanes can exceed a
+# bounded memory budget. Every unit-test executable compiles through the pool; the generated block-definition units are
+# lighter and stay in the free lanes.
 set(GR_HEAVY_COMPILE_JOBS
-    "2"
-    CACHE STRING "Concurrent compile jobs for the largest template-heavy test TUs")
+    "1"
+    CACHE STRING "Concurrent compile jobs for the largest template-heavy TUs")
 if(CMAKE_GENERATOR MATCHES "Ninja")
   set_property(GLOBAL APPEND PROPERTY JOB_POOLS gr4_heavy_compile=${GR_HEAVY_COMPILE_JOBS})
 endif()
@@ -183,17 +186,6 @@ endif()
 
 add_subdirectory(bench)
 add_subdirectory(blocks)
-
-if(ENABLE_TESTING AND CMAKE_GENERATOR MATCHES "Ninja")
-  set_property(
-    TARGET qa_ExpressionBlocks
-           qa_ExpressionBulk
-           qa_BasicFileIo
-           qa_NullSources
-           qa_Math
-           qa_MathMultiplyDivide
-    PROPERTY JOB_POOL_COMPILE gr4_heavy_compile)
-endif()
 
 set(GR4_EXPORT_NAME gnuradio4Targets)
 set(GR4_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/gnuradio4Blocks")
