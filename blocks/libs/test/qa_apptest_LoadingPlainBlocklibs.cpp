@@ -2,7 +2,9 @@
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/PluginLoader.hpp>
 
-#include <cassert>
+#include <algorithm>
+#include <cstdlib>
+#include <iterator>
 #include <print>
 #include <string>
 
@@ -34,6 +36,13 @@ int main() {
     };
     std::ranges::sort(desired);
 
-    assert((std::ranges::includes(known, desired)));
+    std::vector<std::string> missing;
+    std::ranges::set_difference(desired, known, std::back_inserter(missing));
+    if (!missing.empty()) {
+        for (const auto& name : missing) {
+            std::println(stderr, "missing block registration: {}", name);
+        }
+        return EXIT_FAILURE;
+    }
     std::println("All ok");
 }
