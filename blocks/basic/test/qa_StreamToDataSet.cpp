@@ -345,6 +345,9 @@ void runTestDataSet(gr::Size_t nSamples, std::string filter, gr::Size_t preSampl
         expect(dsCheck.has_value()) << [&] { return std::format("unexpected: {}", dsCheck.error()); } << fatal << locationStr;
         expect(std::ranges::equal(ds.signal_values, expectedValues[i])) << locationStr;
 
+        const auto metaRate = ds.meta_information[0].find("sample_rate");
+        expect(metaRate != ds.meta_information[0].end() && metaRate->second == gr::pmt::Value(sampleRate)) << "the record does not carry its sample rate in meta_information" << locationStr;
+
         expect(fatal(eq(ds.timing_events.size(), 1UZ))) << locationStr;
         const auto& timingEvt0 = ds.timing_events[0];
         expect(eq(timingEvt0.size(), expectedTags[i].size())) << locationStr;

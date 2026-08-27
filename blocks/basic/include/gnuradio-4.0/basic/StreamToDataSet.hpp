@@ -549,6 +549,10 @@ private:
         dataSet.meta_information[0]["n_pre"]  = n_pre;
         dataSet.meta_information[0]["n_post"] = n_post;
         dataSet.meta_information[0]["n_max"]  = n_max;
+        // the time axis carries the rate only in the sample type T, which integer types
+        // collapse to zero and float stops resolving near 2^24 samples — the metadata key
+        // is the representation-safe route to the record's rate
+        dataSet.meta_information[0]["sample_rate"] = sample_rate;
 
         dataSet.timing_events.resize(1UZ); // one data set
     }
