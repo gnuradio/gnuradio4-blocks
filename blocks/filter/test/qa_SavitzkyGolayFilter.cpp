@@ -144,6 +144,35 @@ const boost::ut::suite<"SavitzkyGolayDataSetFilter block"> sgDataSetBlockTests =
         expect(eq(output.signal_values.size(), N));
     };
 
+    "signals filter independently"_test = [] {
+        constexpr std::size_t N = 64UZ;
+
+        // two constant signals: a zero-phase polynomial fit reproduces a constant exactly, so
+        // any blend at the join is the window sliding across it
+        gr::DataSet<double> input;
+        input.signal_names      = {"low", "high"};
+        input.signal_quantities = {"amplitude", "amplitude"};
+        input.signal_units      = {"", ""};
+        input.extents           = {static_cast<std::int32_t>(N)};
+        input.signal_values.resize(2UZ * N);
+        std::fill_n(input.signal_values.begin(), N, 1.0);
+        std::fill_n(input.signal_values.begin() + static_cast<std::ptrdiff_t>(N), N, 100.0);
+        input.signal_ranges.resize(2UZ);
+
+        SavitzkyGolayDataSetFilter<double> filter;
+        filter.window_size = 9;
+        filter.poly_order  = 2;
+        filter.start();
+
+        const auto output = filter.processOne(input);
+        for (std::size_t i = 0UZ; i < N; ++i) {
+            expect(std::abs(output.signal_values[i] - 1.0) < 1e-6) << "the low signal blended across the join at index " << i;
+            expect(std::abs(output.signal_values[N + i] - 100.0) < 1e-6) << "the high signal blended across the join at index " << i;
+        }
+        expect(eq(output.signal_ranges.size(), 2UZ));
+        expect(std::abs(output.signal_ranges[0].max - 1.0) < 1e-6 && std::abs(output.signal_ranges[1].min - 100.0) < 1e-6) << "the ranges do not track the filtered values per signal";
+    };
+
     "peak position preserved"_test = [] {
         constexpr std::size_t N      = 100UZ;
         constexpr std::size_t centre = 50UZ;
