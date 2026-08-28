@@ -4,6 +4,7 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/DataSet.hpp>
+#include <gnuradio-4.0/algorithm/dataset/DataSetHelper.hpp>
 #include <gnuradio-4.0/algorithm/filter/SavitzkyGolay.hpp>
 
 #include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
@@ -154,13 +155,22 @@ public:
         }
 
         std::vector<T> filtered(input.signal_values.size());
-        algorithm::savitzky_golay::applyZeroPhase<T>(
-            std::span<const T>(input.signal_values),
-            std::span<T>(filtered),
-            std::span<const T>(_coeffs),
-            buildConfig());
-
+        if (input.size() <= 1UZ) {
+            algorithm::savitzky_golay::applyZeroPhase<T>(std::span<const T>(input.signal_values), std::span<T>(filtered), std::span<const T>(_coeffs), buildConfig());
+        } else {
+            // each signal filters on its own: one flat pass would slide the window across the
+            // join between two signals
+            std::size_t offset = 0UZ;
+            for (std::size_t i = 0UZ; i < input.size(); ++i) {
+                const std::span<const T> signal = input.signalValues(i);
+                algorithm::savitzky_golay::applyZeroPhase<T>(signal, std::span<T>(filtered).subspan(offset, signal.size()), std::span<const T>(_coeffs), buildConfig());
+                offset += signal.size();
+            }
+        }
         input.signal_values = std::move(filtered);
+        if (!input.signal_ranges.empty()) {
+            gr::dataset::updateMinMax(input); // the filter moved every value, so a carried range is stale
+        }
         return input;
     }
 };
