@@ -99,10 +99,18 @@ const boost::ut::suite TagTests = [] {
 #endif
         expect(registry.contains("gr::blocks::filter::fir_filter<float32>"sv));
         expect(registry.contains("gr::blocks::fourier::FFT<float32>"sv));
+        // an alias registers under the name of the template it expands to unless the registration states one, so
+        // without the explicit names these read BasicFilterProto<float32> and
+        // BasicFilterProto<float32, gr::BackwardTagPropagation, ...>; the expansion stays the primary key
+        expect(registry.contains("gr::blocks::filter::BasicFilterProto<float32>"sv));
+        expect(registry.contains("gr::blocks::filter::BasicFilter<float32>"sv));
+        expect(registry.contains("gr::blocks::filter::BasicDecimatingFilter<float32>"sv));
     };
 
     "CheckBlockInstantiations"_test = [&] {
         expect(registry.create("gr::blocks::testing::Delay<float32>"sv, {}) != nullptr);
+        expect(registry.create("gr::blocks::filter::BasicFilter<float32>"sv, {}) != nullptr);
+        expect(registry.create("gr::blocks::filter::BasicDecimatingFilter<float32>"sv, {}) != nullptr);
         expect(registry.create("gr::blocks::fileio::WavSource<float32>"sv, {}) != nullptr);
 #if GNURADIO4_HAVE_AUDIO_BLOCKS
         expect(registry.create("gr::blocks::audio::AudioSink<float32>"sv, {}) != nullptr);

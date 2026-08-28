@@ -123,8 +123,11 @@ a are the feedback coefficients
     }
 };
 
-GR_REGISTER_BLOCK(gr::blocks::filter::BasicFilter, ([T]), [ float, gr::UncertainValue<float> ])
-GR_REGISTER_BLOCK(gr::blocks::filter::BasicFilterProto, ([T], gr::BackwardTagPropagation, gr::Resampling<1UZ, 1UZ, false>), [ float, gr::UncertainValue<float> ])
+// both aliases need the explicit registry name: derived from the type, an alias carries the name of the template it
+// expands to together with the whole argument list — for the decimating one the tag policy and the resampling
+// annotation included — and a saved graph naming the alias would not resolve
+GR_REGISTER_BLOCK("gr::blocks::filter::BasicFilter", gr::blocks::filter::BasicFilter, ([T]), [ float, gr::UncertainValue<float> ])
+GR_REGISTER_BLOCK("gr::blocks::filter::BasicDecimatingFilter", gr::blocks::filter::BasicDecimatingFilter, ([T]), [ float, gr::UncertainValue<float> ])
 
 enum class FilterType { FIR, IIR };
 
