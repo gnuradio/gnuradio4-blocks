@@ -182,6 +182,24 @@ if(GR4_ENABLE_SDR)
   find_package(SoapySDR CONFIG QUIET)
 endif()
 
+if(GR4_ENABLE_AUDIO AND NOT EMSCRIPTEN)
+  # the audio family's backend links gnuradio4::gr-libsoundio, which nothing else defines. libsoundio ships no
+  # pkg-config file, so it is found by library and header and wrapped here; under Emscripten the family uses its own
+  # audio worklet backend and needs none of this.
+  find_library(GR4_LIBSOUNDIO_LIBRARY soundio)
+  find_path(GR4_LIBSOUNDIO_INCLUDE_DIR soundio/soundio.h)
+  if(GR4_LIBSOUNDIO_LIBRARY AND GR4_LIBSOUNDIO_INCLUDE_DIR)
+    add_library(gr-libsoundio INTERFACE)
+    add_library(gnuradio4::gr-libsoundio ALIAS gr-libsoundio)
+    target_include_directories(gr-libsoundio INTERFACE "${GR4_LIBSOUNDIO_INCLUDE_DIR}")
+    target_link_libraries(gr-libsoundio INTERFACE "${GR4_LIBSOUNDIO_LIBRARY}")
+    install(TARGETS gr-libsoundio EXPORT gnuradio4Targets)
+  else()
+    message(WARNING "GR4_ENABLE_AUDIO is ON but libsoundio was not found — the audio block family is not built")
+    set(GR4_ENABLE_AUDIO OFF)
+  endif()
+endif()
+
 if(ENABLE_TESTING)
   include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/GnuRadioTestHelpers.cmake)
   add_test(NAME qa_BlockNamespaceConsistency COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR} -P
