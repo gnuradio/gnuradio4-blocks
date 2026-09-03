@@ -1,8 +1,13 @@
 #include <boost/ut.hpp>
 
+#include <cstdlib>
+#include <tuple>
+#include <vector>
+
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/Tag.hpp>
 
 #include <gnuradio-4.0/basic/ClockSource.hpp>
 #include <gnuradio-4.0/basic/FunctionGenerator.hpp>
@@ -25,6 +30,24 @@ const suite<"SchmittTrigger Block"> triggerTests = [] {
     }
 
     using enum gr::trigger::InterpolationMethod;
+
+    "_period is nanoseconds per sample and survives an SDR rate"_test = [] {
+        SchmittTrigger<float, NO_INTERPOLATION> trig({{"sample_rate", 2'400'000.f}});
+        trig.settings().init();
+        std::ignore = trig.settings().applyStagedParameters();
+        // 1e9 ns/s over 2.4 MS/s truncates to 416. A divide scaled to microseconds truncates to 0 at
+        // any rate above 1 MS/s, and a period of zero never advances the block's clock at all.
+        expect(eq(trig._period, 416ULL));
+    };
+
+    "trigger_time seeds trigger_offset at the nanosecond scale, not microseconds"_test = [] {
+        SchmittTrigger<float, NO_INTERPOLATION> trig({{"trigger_time", std::uint64_t{1'000'000'000ULL}}, {"trigger_offset", 0.25f}});
+        trig.settings().init();
+        std::ignore = trig.settings().applyStagedParameters();
+        // 0.25 s past trigger_time is 250 ms, not 250 us.
+        expect(eq(trig._now, 1'250'000'000ULL));
+    };
+
     skip / "SchmittTrigger"_test =
         [&enableVisualTests]<class Method> {
             Graph graph;
