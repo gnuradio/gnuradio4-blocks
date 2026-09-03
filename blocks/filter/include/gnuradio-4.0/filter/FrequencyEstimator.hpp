@@ -350,7 +350,7 @@ private:
 };
 
 template<typename T>
-using FrequencyEstimatorFrequencyDomainDecimating = FrequencyEstimatorFrequencyDomain<T, BackwardTagPropagation, Resampling<1U>, Stride<0U>>;
+using FrequencyEstimatorFrequencyDomainDecimating = FrequencyEstimatorFrequencyDomain<T, BackwardTagPropagation, Resampling<10U>>;
 
 // ============================================================================
 // IQDemodulator - Digital Vector Detector / Lock-In Amplifier
