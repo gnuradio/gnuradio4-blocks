@@ -105,12 +105,16 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::filter::BasicFilterProto<float32>"sv));
         expect(registry.contains("gr::blocks::filter::BasicFilter<float32>"sv));
         expect(registry.contains("gr::blocks::filter::BasicDecimatingFilter<float32>"sv));
+        // a registration that states its own argument pack registers under that pack, so the key carries
+        // every argument rather than the value type alone; the public C++ alias expands to the same one
+        expect(registry.contains("gr::blocks::filter::FrequencyEstimatorFrequencyDomainDecimating<float32, gr::BackwardTagPropagation, gr::Resampling<10U>>"sv));
     };
 
     "CheckBlockInstantiations"_test = [&] {
         expect(registry.create("gr::blocks::testing::Delay<float32>"sv, {}) != nullptr);
         expect(registry.create("gr::blocks::filter::BasicFilter<float32>"sv, {}) != nullptr);
         expect(registry.create("gr::blocks::filter::BasicDecimatingFilter<float32>"sv, {}) != nullptr);
+        expect(registry.create("gr::blocks::filter::FrequencyEstimatorFrequencyDomainDecimating<float32, gr::BackwardTagPropagation, gr::Resampling<10U>>"sv, {}) != nullptr);
         expect(registry.create("gr::blocks::fileio::WavSource<float32>"sv, {}) != nullptr);
 #if GNURADIO4_HAVE_AUDIO_BLOCKS
         expect(registry.create("gr::blocks::audio::AudioSink<float32>"sv, {}) != nullptr);

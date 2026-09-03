@@ -1,5 +1,6 @@
 #include <boost/ut.hpp>
 #include <cmath>
+#include <concepts>
 #include <limits>
 #include <numeric>
 #include <print>
@@ -164,6 +165,12 @@ const boost::ut::suite<"FrequencyEstimatorTests"> FrequencyEstimatorTests = [] {
 
         testFrequencyEstimator(estimator, processFunc, testFrequencies, sample_rate, numSamples, noiseAmp, tolerance);
     };
+
+    // The registry entry is generated from each registration's own argument pack, so a graph that names
+    // one of these blocks gets that instantiation; the public alias has to expand to the same one for the
+    // two to be one block rather than two types sharing a name.
+    static_assert(std::same_as<FrequencyEstimatorTimeDomainDecimating<float>, FrequencyEstimatorTimeDomain<float, gr::BackwardTagPropagation, gr::Resampling<10U>>>);
+    static_assert(std::same_as<FrequencyEstimatorFrequencyDomainDecimating<float>, FrequencyEstimatorFrequencyDomain<float, gr::BackwardTagPropagation, gr::Resampling<10U>>>);
 
     "Frequency Estimator - Frequency Domain Decimating"_test = [] {
         constexpr float       sample_rate = 1000.0f; // 1 kHz sampling
