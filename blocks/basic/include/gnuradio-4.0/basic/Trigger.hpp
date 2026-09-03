@@ -63,15 +63,15 @@ The information is stored (info only) in `trigger_name`, `trigger_time`, `trigge
     GR_MAKE_REFLECTABLE(SchmittTrigger, in, out, offset, threshold, trigger_name_rising_edge, trigger_name_falling_edge, sample_rate, forward_tag, trigger_name, trigger_time, trigger_offset, context);
 
     gr::trigger::SchmittTrigger<T, Method, N_HISTORY> _trigger{0, 1};
-    std::uint64_t                                     _period{1U};
-    std::uint64_t                                     _now{0U};
+    std::uint64_t                                     _period{1U}; // nanoseconds per sample, at the clock `_now` runs on
+    std::uint64_t                                     _now{0U};    // nanoseconds since the Unix epoch
 
     void settingsChanged(const gr::property_map& /*oldSettings*/, const gr::property_map& newSettings) {
         if (newSettings.contains("sample_rate")) {
-            _period = static_cast<std::uint64_t>(1e6f / sample_rate);
+            _period = static_cast<std::uint64_t>(1e9f / sample_rate);
         }
         if (newSettings.contains("trigger_time")) {
-            _now = trigger_time + static_cast<std::uint64_t>(1e6f * trigger_offset);
+            _now = trigger_time + static_cast<std::uint64_t>(1e9f * trigger_offset);
         }
 
         if (newSettings.contains("offset") || newSettings.contains("threshold")) {
@@ -120,13 +120,13 @@ The information is stored (info only) in `trigger_name`, `trigger_time`, `trigge
             forwardTags(edgePos);
 
             const UncertainValue<float> edgeIdxOffset = UncertainValue<float>{static_cast<float>(_trigger.lastEdgeIdx)} + _trigger.lastEdgeOffset;
-            const float                 relOffset     = gr::value(edgeIdxOffset) * static_cast<float>(_period);
+            const float                 relOffset     = gr::value(edgeIdxOffset) * static_cast<float>(_period); // nanoseconds
             outputSpan.publishTag(
                 property_map{
                     {gr::tag::TRIGGER_NAME.shortKey(), triggerName},                                                             //
                     {gr::tag::TRIGGER_TIME.shortKey(), _now - static_cast<uint64_t>(relOffset)},                                 //
                     {"trigger_time_error", static_cast<uint64_t>(gr::uncertainty(edgeIdxOffset) * static_cast<float>(_period))}, //
-                    {gr::tag::TRIGGER_OFFSET.shortKey(), relOffset},                                                             //
+                    {gr::tag::TRIGGER_OFFSET.shortKey(), relOffset / 1e9f},                                                      // seconds, as Tag.hpp declares the key
                     {gr::tag::CONTEXT.shortKey(), context}                                                                       //
                 },
                 edgePos);
