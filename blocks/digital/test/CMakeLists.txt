@@ -1,3 +1,6 @@
+add_ut_test(qa_AccessCodeCorrelator)
+target_link_libraries(qa_AccessCodeCorrelator PRIVATE gr-digital gr-basic gr-testing)
+
 add_ut_test(qa_BitPacking)
 target_link_libraries(qa_BitPacking PRIVATE gr-digital gr-testing)
 
@@ -29,8 +32,14 @@ target_link_libraries(qa_Manchester PRIVATE gr-digital gr-testing)
 add_ut_test(qa_ManchesterCombine)
 target_link_libraries(qa_ManchesterCombine PRIVATE gr-digital gr-testing)
 
+add_ut_test(qa_PacketFramer)
+target_link_libraries(qa_PacketFramer PRIVATE gr-digital gr-testing)
+
 add_ut_test(qa_PamSymbols)
 target_link_libraries(qa_PamSymbols PRIVATE gr-digital gr-testing)
+
+add_ut_test(qa_PreambleCorrelator)
+target_link_libraries(qa_PreambleCorrelator PRIVATE gr-digital gr-testing)
 
 add_ut_test(qa_Scrambler)
 target_link_libraries(qa_Scrambler PRIVATE gr-digital gr-testing)
