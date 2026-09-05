@@ -12,4 +12,5 @@ function(add_sync_benchmark BM_NAME)
 endfunction()
 
 add_sync_benchmark(bm_CostasLoop)
+add_sync_benchmark(bm_FllBandEdge)
 add_sync_benchmark(bm_Pll)
