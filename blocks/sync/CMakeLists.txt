@@ -15,6 +15,7 @@ gr_add_block_library(
   include/gnuradio-4.0/sync/CostasLoop.hpp
   include/gnuradio-4.0/sync/FllBandEdge.hpp
   include/gnuradio-4.0/sync/Pll.hpp
+  include/gnuradio-4.0/sync/PreambleTiming.hpp
   include/gnuradio-4.0/sync/SymbolSync.hpp
   LINK_LIBRARIES
   gr-sync)
