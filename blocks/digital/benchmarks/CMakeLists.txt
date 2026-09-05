@@ -12,4 +12,5 @@ function(add_digital_benchmark BM_NAME)
 endfunction()
 
 add_digital_benchmark(bm_ConstellationBlocks)
+add_digital_benchmark(bm_CpmModulate)
 add_digital_benchmark(bm_DifferentialCoding)
