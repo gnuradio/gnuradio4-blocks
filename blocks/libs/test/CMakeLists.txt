@@ -13,6 +13,7 @@ if(NOT EMSCRIPTEN AND TARGET gnuradio4::GrBasicBlocksShared)
         gnuradio4::GrTestingBlocksShared
         gnuradio4::GrFileIoBlocksShared
         gnuradio4::GrBasicBlocksShared
+        gnuradio4::GrAnalogBlocksShared
         gnuradio4::GrElectricalBlocksShared
         gnuradio4::GrHttpBlocksShared
         gnuradio4::GrFilterBlocksShared
