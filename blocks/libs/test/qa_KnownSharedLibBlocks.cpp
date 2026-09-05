@@ -97,6 +97,8 @@ const boost::ut::suite TagTests = [] {
 #if GNURADIO4_HAVE_AUDIO_BLOCKS
         expect(registry.contains("gr::blocks::audio::AudioSink<float32>"sv));
 #endif
+        expect(registry.contains("gr::blocks::filter::DesignedFilter<float32, float32>"sv));
+        expect(registry.contains("gr::blocks::filter::DesignedFilter<complex<float32>, float32>"sv));
         expect(registry.contains("gr::blocks::basic::Throttle<float32>"sv));
         expect(registry.contains("gr::blocks::filter::fir_filter<float32>"sv));
         expect(registry.contains("gr::blocks::fourier::FFT<float32>"sv));
