@@ -17,6 +17,7 @@ using namespace std::string_view_literals;
 #include <gnuradio-4.0/GrFilterBlocks.hpp>
 #include <gnuradio-4.0/GrFourierBlocks.hpp>
 #include <gnuradio-4.0/GrHttpBlocks.hpp>
+#include <gnuradio-4.0/GrSyncBlocks.hpp>
 #include <gnuradio-4.0/GrTestingBlocks.hpp>
 
 #if __has_include(<gnuradio-4.0/GrAudioBlocks.hpp>)
@@ -40,6 +41,7 @@ const boost::ut::suite TagTests = [] {
     result += gr::blocklib::initGrFilterBlocks(registry);
     result += gr::blocklib::initGrFourierBlocks(registry);
     result += gr::blocklib::initGrHttpBlocks(registry);
+    result += gr::blocklib::initGrSyncBlocks(registry);
     result += gr::blocklib::initGrTestingBlocks(registry);
     if (result) {
         std::print("Warning: Failed to init {} blocks\n", result);
@@ -113,6 +115,9 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::channel::Quantizer<complex<float32>>"sv));
         expect(registry.contains("gr::blocks::filter::DesignedFilter<float32, float32>"sv));
         expect(registry.contains("gr::blocks::filter::DesignedFilter<complex<float32>, float32>"sv));
+        expect(registry.contains("gr::blocks::sync::PllCarrierTracking"sv));
+        expect(registry.contains("gr::blocks::sync::PllFreqDet"sv));
+        expect(registry.contains("gr::blocks::sync::PllRefOut"sv));
         expect(registry.contains("gr::blocks::basic::Throttle<float32>"sv));
         expect(registry.contains("gr::blocks::filter::fir_filter<float32>"sv));
         expect(registry.contains("gr::blocks::fourier::FFT<float32>"sv));
