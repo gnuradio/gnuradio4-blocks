@@ -162,6 +162,7 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::digital::DelimiterFramer"sv));
         expect(registry.contains("gr::blocks::basic::DataSetToStream<float32>"sv));
         expect(registry.contains("gr::blocks::basic::DataSetToPacket<float32>"sv));
+        expect(registry.contains("gr::blocks::basic::PacketToDataSet<float32>"sv));
     };
 
     "CheckBlockInstantiations"_test = [&] {
@@ -175,6 +176,7 @@ const boost::ut::suite TagTests = [] {
         expect(registry.create("gr::blocks::digital::ManchesterDecoder"sv, {}) != nullptr);
         expect(registry.create("gr::blocks::basic::DataSetToStream<float32>"sv, {}) != nullptr);
         expect(registry.create("gr::blocks::basic::DataSetToPacket<float32>"sv, {}) != nullptr);
+        expect(registry.create("gr::blocks::basic::PacketToDataSet<float32>"sv, {}) != nullptr);
         expect(registry.create("gr::blocks::fileio::WavSource<float32>"sv, {}) != nullptr);
 #if GNURADIO4_HAVE_AUDIO_BLOCKS
         expect(registry.create("gr::blocks::audio::AudioSink<float32>"sv, {}) != nullptr);
