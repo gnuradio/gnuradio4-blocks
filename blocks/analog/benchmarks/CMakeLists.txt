@@ -11,4 +11,5 @@ function(add_analog_benchmark BM_NAME)
   target_compile_options(${BM_NAME} PRIVATE -O3)
 endfunction()
 
+add_analog_benchmark(bm_Agc)
 add_analog_benchmark(bm_QuadratureDemod)
