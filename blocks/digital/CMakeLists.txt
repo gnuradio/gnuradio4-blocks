@@ -18,6 +18,7 @@ gr_add_block_library(
   include/gnuradio-4.0/digital/CpmModulate.hpp
   include/gnuradio-4.0/digital/CrcBlocks.hpp
   include/gnuradio-4.0/digital/DelimiterExtractor.hpp
+  include/gnuradio-4.0/digital/DelimiterFramer.hpp
   include/gnuradio-4.0/digital/DifferentialCoding.hpp
   include/gnuradio-4.0/digital/LengthHeaderFramer.hpp
   include/gnuradio-4.0/digital/LinearEqualizer.hpp
