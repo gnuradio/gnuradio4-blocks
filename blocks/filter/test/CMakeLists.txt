@@ -1,6 +1,8 @@
 add_ut_test(qa_filter)
 target_link_libraries(qa_filter PRIVATE gr-filter gr-testing)
 
+add_ut_test(qa_FirFilter)
+target_link_libraries(qa_FirFilter PRIVATE gr-filter gr-testing)
 add_ut_test(qa_FrequencyEstimator)
 # SimdFFT's always_inline helpers need the inliner depth -O2 provides; at -O1 the unresolved indirect call is a hard
 # error.
