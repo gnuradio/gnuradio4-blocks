@@ -14,6 +14,7 @@ using namespace std::string_view_literals;
 #include <gnuradio-4.0/GrChannelBlocks.hpp>
 #include <gnuradio-4.0/GrDigitalBlocks.hpp>
 #include <gnuradio-4.0/GrElectricalBlocks.hpp>
+#include <gnuradio-4.0/GrFecBlocks.hpp>
 #include <gnuradio-4.0/GrFileIoBlocks.hpp>
 #include <gnuradio-4.0/GrFilterBlocks.hpp>
 #include <gnuradio-4.0/GrFourierBlocks.hpp>
@@ -39,6 +40,7 @@ const boost::ut::suite TagTests = [] {
     result += gr::blocklib::initGrAudioBlocks(registry);
 #endif
     result += gr::blocklib::initGrElectricalBlocks(registry);
+    result += gr::blocklib::initGrFecBlocks(registry);
     result += gr::blocklib::initGrFileIoBlocks(registry);
     result += gr::blocklib::initGrFilterBlocks(registry);
     result += gr::blocklib::initGrFourierBlocks(registry);
@@ -160,6 +162,10 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::digital::LengthHeaderFramer"sv));
         expect(registry.contains("gr::blocks::digital::DelimiterExtractor<float32>"sv));
         expect(registry.contains("gr::blocks::digital::DelimiterFramer"sv));
+        expect(registry.contains("gr::blocks::fec::FecEncode"sv));
+        expect(registry.contains("gr::blocks::fec::FecDecode"sv));
+        expect(registry.contains("gr::blocks::fec::RsEncode"sv));
+        expect(registry.contains("gr::blocks::fec::RsDecode"sv));
         expect(registry.contains("gr::blocks::basic::DataSetToStream<float32>"sv));
         expect(registry.contains("gr::blocks::basic::DataSetToPacket<float32>"sv));
         expect(registry.contains("gr::blocks::basic::PacketToDataSet<float32>"sv));
