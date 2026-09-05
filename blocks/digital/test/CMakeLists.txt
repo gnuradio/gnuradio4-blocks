@@ -55,3 +55,12 @@ target_link_libraries(qa_Scrambler PRIVATE gr-digital gr-testing)
 
 add_ut_test(qa_SignalQuality)
 target_link_libraries(qa_SignalQuality PRIVATE gr-digital gr-channel gr-testing)
+
+add_ut_test(qa_ModemDemo)
+target_link_libraries(
+  qa_ModemDemo
+  PRIVATE gr-digital
+          gr-channel
+          gr-filter
+          gr-sync
+          gr-testing)
