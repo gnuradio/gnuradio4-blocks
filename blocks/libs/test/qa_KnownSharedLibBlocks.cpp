@@ -11,6 +11,7 @@ using namespace std::string_view_literals;
 
 #include <gnuradio-4.0/GrAnalogBlocks.hpp>
 #include <gnuradio-4.0/GrBasicBlocks.hpp>
+#include <gnuradio-4.0/GrChannelBlocks.hpp>
 #include <gnuradio-4.0/GrElectricalBlocks.hpp>
 #include <gnuradio-4.0/GrFileIoBlocks.hpp>
 #include <gnuradio-4.0/GrFilterBlocks.hpp>
@@ -30,6 +31,7 @@ const boost::ut::suite TagTests = [] {
     std::size_t result   = 0UZ;
     result += gr::blocklib::initGrAnalogBlocks(registry);
     result += gr::blocklib::initGrBasicBlocks(registry);
+    result += gr::blocklib::initGrChannelBlocks(registry);
 #if GNURADIO4_HAVE_AUDIO_BLOCKS
     result += gr::blocklib::initGrAudioBlocks(registry);
 #endif
@@ -100,6 +102,13 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::audio::AudioSink<float32>"sv));
 #endif
         expect(registry.contains("gr::blocks::analog::QuadratureDemod<float32>"sv));
+        expect(registry.contains("gr::blocks::channel::AwgnChannel<complex<float32>>"sv));
+        expect(registry.contains("gr::blocks::channel::FadingChannel<complex<float32>>"sv));
+        expect(registry.contains("gr::blocks::channel::FrequencyOffset<complex<float32>>"sv));
+        expect(registry.contains("gr::blocks::channel::IqImbalance<complex<float32>>"sv));
+        expect(registry.contains("gr::blocks::channel::PhaseNoise<complex<float32>>"sv));
+        expect(registry.contains("gr::blocks::channel::Nonlinearity<complex<float32>>"sv));
+        expect(registry.contains("gr::blocks::channel::Quantizer<complex<float32>>"sv));
         expect(registry.contains("gr::blocks::filter::DesignedFilter<float32, float32>"sv));
         expect(registry.contains("gr::blocks::filter::DesignedFilter<complex<float32>, float32>"sv));
         expect(registry.contains("gr::blocks::basic::Throttle<float32>"sv));
@@ -129,6 +138,7 @@ const boost::ut::suite TagTests = [] {
         expect(registry.create("gr::blocks::audio::AudioSink<float32>"sv, {}) != nullptr);
 #endif
         expect(registry.create("gr::blocks::basic::DataSink<float32>"sv, {}) != nullptr);
+        expect(registry.create("gr::blocks::channel::AwgnChannel<complex<float32>>"sv, {}) != nullptr);
         expect(registry.create("gr::blocks::basic::ClockSource"sv, {}) != nullptr);
     };
 };

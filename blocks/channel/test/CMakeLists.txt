@@ -1,0 +1,8 @@
+add_ut_test(qa_Awgn)
+target_link_libraries(qa_Awgn PRIVATE gr-channel)
+add_ut_test(qa_CarrierImpairments)
+target_link_libraries(qa_CarrierImpairments PRIVATE gr-channel)
+add_ut_test(qa_ChannelConverter)
+target_link_libraries(qa_ChannelConverter PRIVATE gr-channel)
+add_ut_test(qa_Fading)
+target_link_libraries(qa_Fading PRIVATE gr-channel)
