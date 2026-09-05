@@ -23,6 +23,9 @@ target_link_libraries(qa_LinearEqualizer PRIVATE gr-digital gr-channel gr-testin
 add_ut_test(qa_Manchester)
 target_link_libraries(qa_Manchester PRIVATE gr-digital gr-testing)
 
+add_ut_test(qa_ManchesterCombine)
+target_link_libraries(qa_ManchesterCombine PRIVATE gr-digital gr-testing)
+
 add_ut_test(qa_PamSymbols)
 target_link_libraries(qa_PamSymbols PRIVATE gr-digital gr-testing)
 
