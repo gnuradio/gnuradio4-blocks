@@ -159,6 +159,7 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::digital::PacketFramer<float32>"sv));
         expect(registry.contains("gr::blocks::digital::LengthHeaderFramer"sv));
         expect(registry.contains("gr::blocks::digital::DelimiterExtractor<float32>"sv));
+        expect(registry.contains("gr::blocks::digital::DelimiterFramer"sv));
     };
 
     "CheckBlockInstantiations"_test = [&] {

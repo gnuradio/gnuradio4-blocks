@@ -23,6 +23,9 @@ target_link_libraries(qa_CrcBlocks PRIVATE gr-digital gr-testing)
 add_ut_test(qa_DelimiterExtractor)
 target_link_libraries(qa_DelimiterExtractor PRIVATE gr-digital gr-testing)
 
+add_ut_test(qa_DelimiterFramer)
+target_link_libraries(qa_DelimiterFramer PRIVATE gr-digital gr-testing)
+
 add_ut_test(qa_DifferentialCoding)
 target_link_libraries(qa_DifferentialCoding PRIVATE gr-digital gr-testing)
 
