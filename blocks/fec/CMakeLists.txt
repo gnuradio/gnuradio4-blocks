@@ -7,6 +7,7 @@ install(TARGETS gr-fec EXPORT gnuradio4Targets)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/fec"
         DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gnuradio-4.0")
 set(GrFecBlocks_HDRS
+    include/gnuradio-4.0/fec/ConvBlocks.hpp
     include/gnuradio-4.0/fec/FecBlocks.hpp
     include/gnuradio-4.0/fec/RsBlocks.hpp)
 gr_add_block_library(
