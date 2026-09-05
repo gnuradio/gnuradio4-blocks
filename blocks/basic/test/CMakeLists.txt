@@ -18,6 +18,9 @@ if(GR_ENABLE_BLOCK_REGISTRY AND INTERNAL_ENABLE_BLOCK_PLUGINS)
 endif()
 add_basic_test(qa_StreamToDataSet)
 add_basic_test(qa_DataSetToStream)
+add_basic_test(qa_DataSetToPacket)
+# the round-trip case runs the framing and CRC chain into the block, so it needs those headers too
+target_link_libraries(qa_DataSetToPacket PRIVATE gr-digital)
 add_basic_test(qa_SyncBlock)
 
 message(STATUS "###Python Include Dirs: ${Python3_INCLUDE_DIRS}")
