@@ -18,6 +18,7 @@ gr_add_block_library(
   include/gnuradio-4.0/digital/DifferentialCoding.hpp
   include/gnuradio-4.0/digital/LinearEqualizer.hpp
   include/gnuradio-4.0/digital/PamSymbols.hpp
+  include/gnuradio-4.0/digital/Scrambler.hpp
   include/gnuradio-4.0/digital/SignalQuality.hpp
   LINK_LIBRARIES
   gr-digital)
