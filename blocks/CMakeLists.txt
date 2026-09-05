@@ -14,12 +14,14 @@ add_subdirectory(http)
 add_subdirectory(math)
 add_subdirectory(timing)
 
-# shared library that contains all registered blocks
-add_subdirectory(libs)
-
+# Optional families go before libs: the registry audit there links the shared library a family's target provides, so a
+# family added after it is detected by the audit but not linked.
 if(GR4_ENABLE_AUDIO)
   add_subdirectory(audio)
 endif()
+
+# shared library that contains all registered blocks
+add_subdirectory(libs)
 
 if(GR4_ENABLE_SDR)
   add_subdirectory(sdr)
