@@ -11,6 +11,8 @@ add_subdirectory(channel)
 add_subdirectory(digital)
 add_subdirectory(electrical)
 add_subdirectory(fileio)
+# after basic, whose record boundary the ADS-B tests link against
+add_subdirectory(adsb)
 add_subdirectory(filter)
 add_subdirectory(fourier)
 add_subdirectory(http)

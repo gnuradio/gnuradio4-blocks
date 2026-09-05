@@ -9,6 +9,7 @@ using namespace boost::ut;
 
 using namespace std::string_view_literals;
 
+#include <gnuradio-4.0/GrAdsbBlocks.hpp>
 #include <gnuradio-4.0/GrAnalogBlocks.hpp>
 #include <gnuradio-4.0/GrBasicBlocks.hpp>
 #include <gnuradio-4.0/GrChannelBlocks.hpp>
@@ -31,6 +32,7 @@ using namespace std::string_view_literals;
 const boost::ut::suite TagTests = [] {
     auto&       registry = gr::globalBlockRegistry();
     std::size_t result   = 0UZ;
+    result += gr::blocklib::initGrAdsbBlocks(registry);
     result += gr::blocklib::initGrAnalogBlocks(registry);
     result += gr::blocklib::initGrBasicBlocks(registry);
     result += gr::blocklib::initGrChannelBlocks(registry);
@@ -160,6 +162,7 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::digital::LengthHeaderFramer"sv));
         expect(registry.contains("gr::blocks::digital::DelimiterExtractor<float32>"sv));
         expect(registry.contains("gr::blocks::digital::DelimiterFramer"sv));
+        expect(registry.contains("gr::blocks::adsb::PpmFramer<float32>"sv));
         expect(registry.contains("gr::blocks::basic::DataSetToStream<float32>"sv));
         expect(registry.contains("gr::blocks::basic::DataSetToPacket<float32>"sv));
         expect(registry.contains("gr::blocks::basic::PacketToDataSet<float32>"sv));
