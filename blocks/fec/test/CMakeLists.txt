@@ -3,3 +3,6 @@ target_link_libraries(qa_FecBlocks PRIVATE gr-fec)
 
 add_ut_test(qa_ConvBlocks)
 target_link_libraries(qa_ConvBlocks PRIVATE gr-fec)
+
+add_ut_test(qa_PunctureBlocks)
+target_link_libraries(qa_PunctureBlocks PRIVATE gr-fec)
