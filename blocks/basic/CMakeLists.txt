@@ -22,6 +22,12 @@ if(PYTHON_AVAILABLE)
     GrBasicBlocks_LIBS
     Python3::Python
     Python3::NumPy)
+else()
+  # the header registers a block that only builds with Python; naming it keeps the registration check on for the rest of
+  # the module. Only a core whose block-library macro declares the check takes the keyword.
+  if(DEFINED GR_BLOCKLIB_REQUIRE_REGISTERED_HEADERS)
+    set(GrBasicBlocks_UNREGISTERED_ARGS UNREGISTERED_HEADERS include/gnuradio-4.0/basic/PythonBlock.hpp)
+  endif()
 endif()
 
 add_library(gr-basic INTERFACE ${GrBasicBlocks_HDRS})
@@ -39,6 +45,7 @@ gr_add_block_library(
   MAKE_STATIC_LIBRARY
   HEADERS
   ${GrBasicBlocks_HDRS}
+  ${GrBasicBlocks_UNREGISTERED_ARGS}
   LINK_LIBRARIES
   ${GrBasicBlocks_LIBS})
 
