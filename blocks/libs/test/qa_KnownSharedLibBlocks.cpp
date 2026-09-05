@@ -12,6 +12,7 @@ using namespace std::string_view_literals;
 #include <gnuradio-4.0/GrAnalogBlocks.hpp>
 #include <gnuradio-4.0/GrBasicBlocks.hpp>
 #include <gnuradio-4.0/GrChannelBlocks.hpp>
+#include <gnuradio-4.0/GrDigitalBlocks.hpp>
 #include <gnuradio-4.0/GrElectricalBlocks.hpp>
 #include <gnuradio-4.0/GrFileIoBlocks.hpp>
 #include <gnuradio-4.0/GrFilterBlocks.hpp>
@@ -33,6 +34,7 @@ const boost::ut::suite TagTests = [] {
     result += gr::blocklib::initGrAnalogBlocks(registry);
     result += gr::blocklib::initGrBasicBlocks(registry);
     result += gr::blocklib::initGrChannelBlocks(registry);
+    result += gr::blocklib::initGrDigitalBlocks(registry);
 #if GNURADIO4_HAVE_AUDIO_BLOCKS
     result += gr::blocklib::initGrAudioBlocks(registry);
 #endif
