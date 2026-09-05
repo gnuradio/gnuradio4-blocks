@@ -11,4 +11,5 @@ function(add_sync_benchmark BM_NAME)
   target_compile_options(${BM_NAME} PRIVATE -O3)
 endfunction()
 
+add_sync_benchmark(bm_CostasLoop)
 add_sync_benchmark(bm_Pll)
