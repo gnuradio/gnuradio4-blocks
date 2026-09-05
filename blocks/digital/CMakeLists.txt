@@ -14,6 +14,7 @@ gr_add_block_library(
   HEADERS
   include/gnuradio-4.0/digital/ConstellationBlocks.hpp
   include/gnuradio-4.0/digital/DifferentialCoding.hpp
+  include/gnuradio-4.0/digital/PamSymbols.hpp
   LINK_LIBRARIES
   gr-digital)
 
