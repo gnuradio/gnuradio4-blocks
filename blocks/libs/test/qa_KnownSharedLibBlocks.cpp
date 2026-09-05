@@ -97,6 +97,7 @@ const boost::ut::suite TagTests = [] {
 #if GNURADIO4_HAVE_AUDIO_BLOCKS
         expect(registry.contains("gr::blocks::audio::AudioSink<float32>"sv));
 #endif
+        expect(registry.contains("gr::blocks::basic::Throttle<float32>"sv));
         expect(registry.contains("gr::blocks::filter::fir_filter<float32>"sv));
         expect(registry.contains("gr::blocks::fourier::FFT<float32>"sv));
         // a stated name is the key a flowgraph file writes, and the block type it names binds every argument

@@ -7,6 +7,7 @@ set(GrBasicBlocks_HDRS
     include/gnuradio-4.0/basic/SignalGenerator.hpp
     include/gnuradio-4.0/basic/StreamToDataSet.hpp
     include/gnuradio-4.0/basic/SyncBlock.hpp
+    include/gnuradio-4.0/basic/Throttle.hpp
     include/gnuradio-4.0/basic/Trigger.hpp)
 
 set(GrBasicBlocks_LIBS gnuradio4::gr-basic gnuradio4::gr-testing)
