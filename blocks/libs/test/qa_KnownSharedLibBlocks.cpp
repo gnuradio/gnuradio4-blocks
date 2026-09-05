@@ -149,6 +149,8 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::digital::AdditiveScrambler<gr::DataSet<uint8>>"sv));
         expect(registry.contains("gr::blocks::digital::MultiplicativeScrambler"sv));
         expect(registry.contains("gr::blocks::digital::MultiplicativeDescrambler"sv));
+        expect(registry.contains("gr::blocks::digital::ManchesterEncoder"sv));
+        expect(registry.contains("gr::blocks::digital::ManchesterDecoder"sv));
     };
 
     "CheckBlockInstantiations"_test = [&] {
@@ -159,6 +161,7 @@ const boost::ut::suite TagTests = [] {
         expect(registry.create("gr::blocks::basic::StreamToDataSet<float32>"sv, {}) != nullptr);
         expect(registry.create("gr::blocks::digital::RepackBits"sv, {}) != nullptr);
         expect(registry.create("gr::blocks::digital::AdditiveScrambler<uint8>"sv, {}) != nullptr);
+        expect(registry.create("gr::blocks::digital::ManchesterDecoder"sv, {}) != nullptr);
         expect(registry.create("gr::blocks::fileio::WavSource<float32>"sv, {}) != nullptr);
 #if GNURADIO4_HAVE_AUDIO_BLOCKS
         expect(registry.create("gr::blocks::audio::AudioSink<float32>"sv, {}) != nullptr);
