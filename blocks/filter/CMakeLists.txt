@@ -13,6 +13,7 @@ gr_add_block_library(
   ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
   include/gnuradio-4.0/filter/ArbitraryRateResampler.hpp
+  include/gnuradio-4.0/filter/DesignedFilter.hpp
   include/gnuradio-4.0/filter/FirFilter.hpp
   include/gnuradio-4.0/filter/FrequencyEstimator.hpp
   include/gnuradio-4.0/filter/RationalResampler.hpp

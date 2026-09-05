@@ -18,3 +18,5 @@ target_link_libraries(qa_SvdDenoiser PRIVATE gr-filter gr-testing)
 
 add_ut_test(qa_SavitzkyGolayFilter)
 target_link_libraries(qa_SavitzkyGolayFilter PRIVATE gr-filter gr-testing)
+add_ut_test(qa_DesignedFilter)
+target_link_libraries(qa_DesignedFilter PRIVATE gr-filter gr-testing)
