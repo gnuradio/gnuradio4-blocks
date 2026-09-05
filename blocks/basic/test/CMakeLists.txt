@@ -8,6 +8,8 @@ add_basic_test(qa_Selector)
 add_basic_test(qa_sources)
 add_basic_test(qa_DataSink)
 add_basic_test(qa_TriggerBlocks)
+add_basic_test(qa_Throttle)
+set_property(TEST qa_Throttle PROPERTY RESOURCE_LOCK rt)
 
 if(GR_ENABLE_BLOCK_REGISTRY AND INTERNAL_ENABLE_BLOCK_PLUGINS)
   add_basic_test(qa_BasicAvailableBlocks)
