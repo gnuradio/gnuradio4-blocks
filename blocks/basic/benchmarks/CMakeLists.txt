@@ -12,3 +12,4 @@ function(add_basic_benchmark BM_NAME)
 endfunction()
 
 add_basic_benchmark(bm_SampleDelay)
+add_basic_benchmark(bm_DataSetToStream)
