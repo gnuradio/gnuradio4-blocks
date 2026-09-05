@@ -157,6 +157,7 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::digital::AccessCodeCorrelator<float32>"sv));
         expect(registry.contains("gr::blocks::digital::PreambleCorrelator<float32>"sv));
         expect(registry.contains("gr::blocks::digital::PacketFramer<float32>"sv));
+        expect(registry.contains("gr::blocks::digital::LengthHeaderFramer"sv));
     };
 
     "CheckBlockInstantiations"_test = [&] {
