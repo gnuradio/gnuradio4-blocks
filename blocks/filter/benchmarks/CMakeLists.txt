@@ -11,4 +11,5 @@ function(add_filter_benchmark BM_NAME)
   target_compile_options(${BM_NAME} PRIVATE -O3)
 endfunction()
 
+add_filter_benchmark(bm_ArbitraryRateResampler)
 add_filter_benchmark(bm_FirFilter)

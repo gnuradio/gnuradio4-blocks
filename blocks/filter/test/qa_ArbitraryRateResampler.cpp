@@ -1,0 +1,452 @@
+#include <boost/ut.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <complex>
+#include <concepts>
+#include <cstdint>
+#include <cstdlib>
+#include <format>
+#include <numbers>
+#include <span>
+#include <vector>
+
+#include <gnuradio-4.0/Graph.hpp>
+#include <gnuradio-4.0/Scheduler.hpp>
+
+#include <gnuradio-4.0/algorithm/filter/FilterDesign.hpp>
+#include <gnuradio-4.0/filter/ArbitraryRateResampler.hpp>
+#include <gnuradio-4.0/testing/TagMonitors.hpp>
+
+#include <gnuradio-4.0/testing/TestSpans.hpp>
+
+namespace {
+
+using gr::blocks::filter::ArbitraryRateResampler;
+using CF       = std::complex<float>;
+namespace test = gr::blocks::testing::span;
+
+/// A 64-bit stream offset narrowed to an index; a template, so the cast stands where `std::size_t` is 32 bits and is
+/// not a useless cast where the two are the same 64-bit type.
+template<std::integral To, std::integral From>
+[[nodiscard]] constexpr To narrowIndex(From value) noexcept {
+    return static_cast<To>(value);
+}
+
+constexpr double kNineteenTwentyFourths = 19.0 / 24.0;
+
+template<typename T>
+[[nodiscard]] ArbitraryRateResampler<T> makeResampler(gr::property_map settings) {
+    ArbitraryRateResampler<T> block(std::move(settings));
+    block.settings().init();
+    std::ignore = block.settings().applyStagedParameters();
+    block.start();
+    return block;
+}
+
+/**
+ * @brief The design law's prototype at a stated length rather than a searched one.
+ *
+ * The search is what `designArbitraryResampler` is for and what its own suite pins; here the length is stated at twice
+ * Kaiser's estimate so the targets are met with margin, and the costly search at `minRate = 0.2` stays out of tests
+ * that are about ports, settings and tags rather than about filter design.
+ */
+[[nodiscard]] std::vector<float> prototypeFor(std::size_t bank, double minRate, double rolloff = 0.2) {
+    const double      stopEdge = 0.5 * std::min(1.0, minRate) / static_cast<double>(bank);
+    const double      passEdge = (1.0 - rolloff) * stopEdge;
+    const std::size_t length   = (2UZ * gr::filter::fir::design::kaiserLength(60.0, stopEdge - passEdge)) | 1UZ;
+
+    std::vector<float> taps = gr::filter::fir::design::kaiserLowpass(length, 0.5 * (passEdge + stopEdge), 60.0);
+    for (float& v : taps) {
+        v *= static_cast<float>(bank);
+    }
+    return taps;
+}
+
+struct Noise {
+    std::uint64_t state = 0x2545F4914F6CDD1DULL;
+
+    [[nodiscard]] float next() noexcept {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return static_cast<float>(static_cast<double>(state >> 11) / 9007199254740992.0 * 2.0 - 1.0);
+    }
+};
+
+template<typename T>
+[[nodiscard]] std::vector<T> noise(std::size_t n, std::uint64_t seed) {
+    Noise          source{seed};
+    std::vector<T> out(n);
+    for (T& v : out) {
+        if constexpr (std::same_as<T, CF>) {
+            v = CF{source.next(), source.next()};
+        } else {
+            v = source.next();
+        }
+    }
+    return out;
+}
+
+[[nodiscard]] std::uint64_t stepFor(std::size_t bank, double rate) { return static_cast<std::uint64_t>(std::llround(static_cast<double>(bank) / rate * static_cast<double>(gr::filter::kArbitraryOne))); }
+
+[[nodiscard]] gr::property_map tagKey(std::size_t which) {
+    gr::property_map map;
+    map.insert_or_assign(gr::property_map::key_type{std::format("tag{}", which)}, static_cast<gr::Size_t>(which));
+    return map;
+}
+
+[[nodiscard]] std::size_t countOwnKeys(const gr::Tag& tag) {
+    return static_cast<std::size_t>(std::ranges::count_if(tag.map, [](const auto& entry) { return std::string_view(entry.first).starts_with("tag"); }));
+}
+
+[[nodiscard]] std::string join(const std::vector<std::size_t>& values) {
+    std::string out;
+    for (const std::size_t v : values) {
+        out += std::format("{}{}", out.empty() ? "" : ", ", v);
+    }
+    return out;
+}
+
+} // namespace
+
+const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
+    using namespace boost::ut;
+    using namespace gr::blocks::testing;
+    using gr::filter::mapArbitraryOffset;
+    using gr::filter::mapResampledOffset;
+
+    "the realized ratio is exact and reported"_test = [] {
+        constexpr std::size_t    kBank = 32UZ;
+        const std::vector<float> taps  = prototypeFor(kBank, 0.2);
+
+        struct Row {
+            double      requested;
+            const char* label;
+        };
+        const Row kRows[] = {{0.2, "1/5"}, {kNineteenTwentyFourths, "19/24"}, {48.0 / 44.1, "48/44.1"}, {0.7912345678, "no small form"}, {1.0 / std::numbers::pi, "1/pi"}};
+
+        for (const Row& row : kRows) {
+            ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", row.requested}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", taps}});
+
+            const double want = static_cast<double>(kBank) * static_cast<double>(gr::filter::kArbitraryOne) / static_cast<double>(stepFor(kBank, row.requested));
+            expect(that % (block.realizedRate() == want)) << row.label << ": realizedRate() is L*2^32/step to the last bit";
+            expect(lt(std::abs(block.realizedRate() - row.requested) / row.requested, 1.2e-10)) << row.label << ": within the bound F = 32 sets";
+        }
+
+        // L/r a whole number is the case that is realized exactly, and 32/0.2 = 160 is one
+        ArbitraryRateResampler<float> exact = makeResampler<float>({{"rate", 0.2}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", taps}});
+        expect(that % (exact.realizedRate() == 0.2)) << "0.2 at L = 32 is exactly 0.2";
+    };
+
+    "the counts are exact in both directions"_test = [] {
+        constexpr std::size_t kBank = 16UZ;
+        for (const double rate : {0.05, 0.2, 1.0, 1.7, 20.0}) {
+            ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", rate}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, rate)}});
+            expect(eq(block.outputsFor(0UZ), 0UZ)) << rate;
+            for (std::size_t n = 1UZ; n <= 100000UZ; n = n * 7UZ + 1UZ) {
+                expect(le(block.inputsFor(block.outputsFor(n)), n + 1UZ)) << rate << ": inputsFor(outputsFor(" << n << "))";
+                expect(ge(block.outputsFor(block.inputsFor(n)), n)) << rate << ": outputsFor(inputsFor(" << n << "))";
+            }
+        }
+    };
+
+    "feeding n samples yields outputsFor(n) outputs"_test = [] {
+        constexpr std::size_t kBank = 32UZ;
+        for (const double rate : {0.2, kNineteenTwentyFourths, 1.7}) {
+            ArbitraryRateResampler<CF> block = makeResampler<CF>({{"rate", rate}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, rate)}});
+
+            const std::vector<CF> x    = noise<CF>(8192UZ, 0xBF58476D1CE4E5B9ULL);
+            const std::size_t     want = block.outputsFor(x.size());
+            const auto            got  = test::runAsync<CF>(block, std::span<const CF>(x), 0UZ, want + 8UZ);
+            expect(eq(got.samples.size(), want)) << rate;
+            expect(eq(got.consumed, x.size())) << rate << ": every sample offered is consumed";
+        }
+    };
+
+    "chunk independence is bit-identical"_test = [] {
+        constexpr std::size_t kBank = 32UZ;
+        for (const double rate : {0.2, kNineteenTwentyFourths, 1.7}) {
+            const std::vector<float> taps = prototypeFor(kBank, rate);
+            for (const gr::Size_t order : {1U, 3U}) {
+                const gr::property_map settings{{"rate", rate}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"interpolation_order", order}, {"taps", taps}};
+
+                ArbitraryRateResampler<CF> whole     = makeResampler<CF>(settings);
+                const std::vector<CF>      x         = noise<CF>(4096UZ, 0x2545F4914F6CDD1DULL);
+                const auto                 reference = test::runAsync<CF>(whole, std::span<const CF>(x), 0UZ, 4UZ * x.size() + 8UZ);
+                expect(gt(reference.samples.size(), 0UZ));
+
+                for (const std::size_t chunk : {1UZ, 3UZ, 17UZ, 4096UZ}) {
+                    ArbitraryRateResampler<CF> block = makeResampler<CF>(settings);
+                    const auto                 got   = test::runAsync<CF>(block, std::span<const CF>(x), chunk, chunk * 4UZ + 8UZ);
+                    expect(eq(got.samples.size(), reference.samples.size())) << std::format("r = {}, q = {}, chunk {}: output count", rate, order, chunk);
+                    expect(std::ranges::equal(got.samples, reference.samples)) << std::format("r = {}, q = {}, chunk {}: not bit-identical", rate, order, chunk);
+                }
+            }
+        }
+    };
+
+    "a constant comes out a constant"_test = [] {
+        constexpr std::size_t kBank = 32UZ;
+        for (const double rate : {0.2, kNineteenTwentyFourths, 1.0, 48.0 / 44.1, 1.7}) {
+            ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", rate}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, rate)}});
+
+            const std::vector<float> x   = std::vector<float>(8192UZ, 1.0f);
+            const auto               got = test::runAsync<float>(block, std::span<const float>(x), 0UZ, block.outputsFor(x.size()) + 8UZ);
+            expect(gt(got.samples.size(), 100UZ)) << rate;
+
+            double worst = 0.0;
+            for (std::size_t k = got.samples.size() / 2UZ; k < got.samples.size() - 1UZ; ++k) {
+                worst = std::max(worst, std::abs(static_cast<double>(got.samples[k]) - 1.0));
+            }
+            expect(lt(worst, 0.0116)) << std::format("r = {}: settles {:g} from unity, past the 0.1 dB ripple target", rate, worst);
+        }
+    };
+
+    "the offsets agree with the exact rational map where the step is whole"_test = [] {
+        // `step` is a whole number of interpolated samples exactly when L*m/l is an integer, and there the arbitrary
+        // map has to be mapResampledOffset — 1/5 at any L, 19/24 at L = 19
+        for (const auto& [bank, l, m] : {std::tuple<std::size_t, std::uint64_t, std::uint64_t>{32UZ, 1ULL, 5ULL}, {19UZ, 19ULL, 24ULL}}) {
+            const double        rate = static_cast<double>(l) / static_cast<double>(m);
+            const std::uint64_t step = stepFor(bank, rate);
+            expect(eq(step & gr::filter::kArbitraryMask, 0ULL)) << l << "/" << m << ": the step is whole";
+            for (std::uint64_t i = 0ULL; i < 60ULL; ++i) {
+                expect(eq(mapArbitraryOffset(i, bank, step, 0), mapResampledOffset(i, l, m))) << l << "/" << m << ": offset " << i;
+            }
+        }
+    };
+
+    "tags land where the rate change puts them"_test = [] {
+        constexpr std::size_t kBank = 32UZ;
+        for (const double rate : {0.2, 1.7}) {
+            constexpr std::size_t kTags = 12UZ;
+            gr::Graph             graph;
+
+            auto& source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 2000U}, {"mark_tag", false}});
+            for (std::size_t i = 0UZ; i < kTags; ++i) {
+                source._tags.emplace_back(i, tagKey(i));
+            }
+            auto& resampler = graph.emplaceBlock<ArbitraryRateResampler<float>>({{"rate", rate}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, rate)}});
+            auto& sink      = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+            expect(graph.connect<"out", "in">(source, resampler).has_value());
+            expect(graph.connect<"out", "in">(resampler, sink).has_value());
+
+            gr::scheduler::Simple scheduler;
+            expect(scheduler.exchange(std::move(graph)).has_value());
+            expect(scheduler.runAndWait().has_value());
+
+            const std::uint64_t      step = stepFor(kBank, rate);
+            std::vector<std::size_t> want;
+            for (std::size_t i = 0UZ; i < kTags; ++i) {
+                const std::size_t at = narrowIndex<std::size_t>(mapArbitraryOffset(i, kBank, step, 0));
+                if (want.empty() || want.back() != at) {
+                    want.push_back(at);
+                }
+            }
+
+            std::vector<std::size_t> got;
+            std::size_t              keysSeen = 0UZ;
+            for (const gr::Tag& seenTag : sink._tags) {
+                const std::size_t mine = countOwnKeys(seenTag);
+                if (mine > 0UZ) {
+                    got.push_back(seenTag.index);
+                    keysSeen += mine;
+                }
+            }
+            expect(that % (got == want)) << std::format("r = {}: output offsets [{}] against [{}]", rate, join(got), join(want));
+            expect(eq(keysSeen, kTags)) << "r = " << rate << ": every tag survives, none merged away";
+            if (rate < 1.0) {
+                expect(lt(got.size(), kTags)) << "below unity several inputs share an output offset";
+            } else {
+                expect(eq(got.size(), kTags)) << "above unity consecutive tags land on distinct, increasing offsets";
+            }
+        }
+    };
+
+    "a forwarded sample_rate is multiplied by the rate"_test = [] {
+        constexpr std::size_t kBank   = 32UZ;
+        constexpr float       kRateIn = 480000.f;
+
+        for (const double rate : {0.2, 1.7}) {
+            gr::Graph graph;
+
+            auto& source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 2000U}, {"mark_tag", false}});
+            source._tags.emplace_back(200UZ, gr::property_map{{gr::property_map::key_type{gr::tag::SAMPLE_RATE.shortKey()}, gr::pmt::Value(kRateIn)}});
+
+            auto& resampler = graph.emplaceBlock<ArbitraryRateResampler<float>>({{"rate", rate}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, rate)}});
+            auto& sink      = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+            expect(graph.connect<"out", "in">(source, resampler).has_value());
+            expect(graph.connect<"out", "in">(resampler, sink).has_value());
+
+            gr::scheduler::Simple scheduler;
+            expect(scheduler.exchange(std::move(graph)).has_value());
+            expect(scheduler.runAndWait().has_value());
+
+            std::vector<float> rates;
+            for (const gr::Tag& seenTag : sink._tags) {
+                if (seenTag.index == 0UZ) {
+                    continue; // the source announces its own rate at offset 0
+                }
+                if (const auto found = seenTag.map.find(gr::property_map::key_type{gr::tag::SAMPLE_RATE.shortKey()}); found != seenTag.map.end()) {
+                    rates.push_back(found->second.value_or(0.f));
+                }
+            }
+            expect(that % (rates == std::vector<float>{static_cast<float>(rate * static_cast<double>(kRateIn))})) << std::format("r = {}: downstream reads the rate of the stream it is handed", rate);
+        }
+    };
+
+    "a tag whose output falls past the call is published later"_test = [] {
+        constexpr std::size_t         kBank = 32UZ;
+        ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", 0.2}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, 0.2)}});
+
+        const std::vector<float>   x = noise<float>(400UZ, 0xD6E8FEB86659FD93ULL);
+        const std::vector<gr::Tag> tags{gr::Tag{40UZ, tagKey(0)}, gr::Tag{41UZ, tagKey(1)}, gr::Tag{42UZ, tagKey(2)}};
+
+        // one output slot a call, so every tag past the first output has to be held rather than moved
+        const auto got = test::runAsync<float>(block, std::span<const float>(x), 8UZ, 1UZ, std::span<const gr::Tag>(tags));
+
+        const std::uint64_t step = stepFor(kBank, 0.2);
+        for (std::size_t i = 0UZ; i < 3UZ; ++i) {
+            const std::vector<std::size_t> at{narrowIndex<std::size_t>(mapArbitraryOffset(40ULL + i, kBank, step, 0))};
+            expect(that % (got.offsetsOf(std::format("tag{}", i)) == at)) << "tag " << i << " held, not dropped and not moved";
+        }
+    };
+
+    "two tags at one input offset both come through"_test = [] {
+        constexpr std::size_t         kBank = 32UZ;
+        ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, 0.5)}});
+
+        const std::vector<float>   x = noise<float>(400UZ, 0x94D049BB133111EBULL);
+        const std::vector<gr::Tag> tags{gr::Tag{40UZ, tagKey(0)}, gr::Tag{40UZ, tagKey(1)}, gr::Tag{41UZ, tagKey(2)}};
+
+        // one output slot a call, so the window is offered again and again: a tag has to survive being presented
+        // several times and still map exactly once
+        const auto got = test::runAsync<float>(block, std::span<const float>(x), 8UZ, 1UZ, std::span<const gr::Tag>(tags));
+
+        const std::uint64_t step = stepFor(kBank, 0.5);
+        const std::size_t   at   = narrowIndex<std::size_t>(mapArbitraryOffset(40ULL, kBank, step, 0));
+        expect(that % (got.offsetsOf("tag0") == std::vector<std::size_t>{at}));
+        expect(that % (got.offsetsOf("tag1") == std::vector<std::size_t>{at})) << "a second tag at an index already mapped is a tag of its own, not a repeat";
+        expect(that % (got.offsetsOf("tag2") == std::vector<std::size_t>{narrowIndex<std::size_t>(mapArbitraryOffset(41ULL, kBank, step, 0))}));
+    };
+
+    "a rate change keeps the position and re-origins the map"_test = [] {
+        constexpr std::size_t         kBank = 32UZ;
+        ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"min_rate", 0.4}, {"taps", prototypeFor(kBank, 0.4)}});
+
+        const std::vector<float>   x = noise<float>(1000UZ, 0x94D049BB133111EBULL);
+        const std::vector<gr::Tag> early{gr::Tag{100UZ, tagKey(0)}};
+        const auto                 head = test::runAsync<float>(block, std::span<const float>(x).first(500UZ), 0UZ, 400UZ, std::span<const gr::Tag>(early));
+
+        const std::uint64_t oldStep = stepFor(kBank, 0.5);
+        const std::size_t   placed  = narrowIndex<std::size_t>(mapArbitraryOffset(100ULL, kBank, oldStep, 0));
+        expect(that % (head.offsetsOf("tag0") == std::vector<std::size_t>{placed}));
+
+        const std::int64_t before = block.kernel().phase();
+        const std::size_t  arm    = block.tapsPerArm();
+        std::ignore               = block.settings().setStaged({{"rate", 0.75}});
+        std::ignore               = block.settings().applyStagedParameters();
+
+        expect(that % (block.kernel().phase() == before)) << "the step changed, not where the block is";
+        expect(lt(std::abs(block.realizedRate() - 0.75) / 0.75, 1.2e-10)) << "and realizedRate() reports the new value";
+        expect(eq(block.tapsPerArm(), arm)) << "the prototype is untouched: supplied taps are the caller's";
+
+        const auto tail = test::runAsync<float>(block, std::span<const float>(x).subspan(500UZ), 0UZ, 600UZ, {}, 500UZ);
+        expect(gt(tail.samples.size(), 0UZ)) << "and the stream continues with no gap";
+        expect(eq(tail.consumed, 500UZ));
+        expect(that % (head.offsetsOf("tag0") == std::vector<std::size_t>{placed})) << "tags placed before the change keep their offsets";
+    };
+
+    "the prototype is rebuilt when the rate falls below it"_test = [] {
+        constexpr std::size_t         kBank = 32UZ;
+        ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", 1.0}, {"bank_size", static_cast<gr::Size_t>(kBank)}});
+
+        const std::size_t designed = block.tapsPerArm();
+        expect(gt(designed, 30UZ)) << "the designed prototype is about 37 taps an arm at 60 dB";
+
+        // a constant into the block, so a rebuild that dropped the window would show as a dip rather than a seam
+        const std::vector<float> x    = std::vector<float>(4000UZ, 1.0f);
+        const auto               head = test::runAsync<float>(block, std::span<const float>(x), 0UZ, 5000UZ);
+        expect(gt(head.samples.size(), 1000UZ));
+
+        std::ignore = block.settings().setStaged({{"rate", 0.5}});
+        std::ignore = block.settings().applyStagedParameters();
+
+        expect(gt(block.tapsPerArm(), designed)) << "the prototype was rebuilt for the lower rate, not left cut for the old one";
+
+        const auto tail = test::runAsync<float>(block, std::span<const float>(x), 0UZ, 5000UZ);
+        expect(gt(tail.samples.size(), 100UZ));
+        double worst = 0.0;
+        for (std::size_t k = tail.samples.size() / 2UZ; k < tail.samples.size() - 1UZ; ++k) {
+            worst = std::max(worst, std::abs(static_cast<double>(tail.samples[k]) - 1.0));
+        }
+        expect(lt(worst, 0.0116)) << std::format("the window was carried, not zeroed: settles {:g} from unity", worst);
+
+        // a rate that rises back inside the designed band leaves the prototype alone
+        const std::size_t widened = block.tapsPerArm();
+        std::ignore               = block.settings().setStaged({{"rate", 0.9}});
+        std::ignore               = block.settings().applyStagedParameters();
+        expect(eq(block.tapsPerArm(), widened)) << "the prototype is narrower than the higher rate needs but cannot alias, so it is kept";
+    };
+
+    "a tone above the new output Nyquist is suppressed"_test = [] {
+        constexpr std::size_t         kBank = 32UZ;
+        ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}});
+
+        std::vector<float> x(1UZ << 14);
+        for (std::size_t n = 0UZ; n < x.size(); ++n) { // 0.35 cycles per input sample: inside the input band, above the output Nyquist
+            x[n] = static_cast<float>(std::cos(2.0 * std::numbers::pi * 0.35 * static_cast<double>(n)));
+        }
+        const auto got = test::runAsync<float>(block, std::span<const float>(x), 0UZ, block.outputsFor(x.size()) + 8UZ);
+
+        double peak = 0.0;
+        for (std::size_t k = got.samples.size() / 4UZ; k < got.samples.size(); ++k) {
+            peak = std::max(peak, std::abs(static_cast<double>(got.samples[k])));
+        }
+        expect(lt(20.0 * std::log10(peak), -59.0)) << std::format("the alias comes out at {:.2f} dB, and the unscaled prototype passes it at 0 dB", 20.0 * std::log10(peak));
+    };
+
+    "a rate of one is not a pass-through"_test = [] {
+        constexpr std::size_t         kBank = 32UZ;
+        ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", 1.0}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, 1.0)}});
+
+        std::vector<float> x(4096UZ); // a tone well inside the passband, whose amplitude the arm-0 response has to keep
+        for (std::size_t n = 0UZ; n < x.size(); ++n) {
+            x[n] = static_cast<float>(std::cos(2.0 * std::numbers::pi * 0.05 * static_cast<double>(n)));
+        }
+        const auto got = test::runAsync<float>(block, std::span<const float>(x), 0UZ, 5000UZ);
+        expect(gt(got.samples.size(), 3000UZ));
+
+        bool   same = true;
+        double peak = 0.0;
+        for (std::size_t k = 1000UZ; k < got.samples.size(); ++k) {
+            same = same && got.samples[k] == x[k];
+            peak = std::max(peak, std::abs(static_cast<double>(got.samples[k])));
+        }
+        expect(!same) << "arm 0 is a unit-gain filter and not the identity; nobody may add a fast path that changes the answer";
+        expect(lt(std::abs(peak - 1.0), 0.0116)) << std::format("and it is a unit-gain one: peak {:g}", peak);
+    };
+
+    "degenerate settings"_test = [] {
+        expect(throws([] { std::ignore = makeResampler<float>({{"rate", 0.0}}); }));
+        expect(throws([] { std::ignore = makeResampler<float>({{"rate", -1.0}}); }));
+        expect(throws([] { std::ignore = makeResampler<float>({{"interpolation_order", 2U}}); })) << "0, 1 or 3";
+        expect(throws([] { std::ignore = makeResampler<float>({{"rate", 1e30}, {"bank_size", 32U}, {"taps", std::vector<float>{1.0f}}}); })) << "a rate above L*2^32 rounds the step to nothing";
+
+        // a bank of one is legal and is a plain fractional-delay filter
+        ArbitraryRateResampler<float> single = makeResampler<float>({{"rate", 0.5}, {"bank_size", 1U}, {"taps", std::vector<float>{1.0f, 0.5f, 0.25f}}});
+        expect(eq(single.bankSize(), 1UZ));
+        expect(eq(single.tapsPerArm(), 3UZ));
+
+        // and a prototype shorter than the bank is zero-padded and works
+        ArbitraryRateResampler<float> stubby = makeResampler<float>({{"rate", 1.0}, {"bank_size", 8U}, {"taps", std::vector<float>{8.0f, 4.0f}}});
+        expect(eq(stubby.tapsPerArm(), 1UZ));
+        const std::vector<float> x   = noise<float>(64UZ, 0xA24BAED4963EE407ULL);
+        const auto               got = test::runAsync<float>(stubby, std::span<const float>(x), 0UZ, 128UZ);
+        expect(gt(got.samples.size(), 50UZ));
+    };
+};
+
+int main() { /* tests are automatically registered and run */ }
