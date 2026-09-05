@@ -12,6 +12,7 @@ gr_add_block_library(
   MAKE_SHARED_LIBRARY
   ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
+  include/gnuradio-4.0/digital/AccessCodeCorrelator.hpp
   include/gnuradio-4.0/digital/BitPacking.hpp
   include/gnuradio-4.0/digital/ConstellationBlocks.hpp
   include/gnuradio-4.0/digital/CpmModulate.hpp
@@ -20,7 +21,9 @@ gr_add_block_library(
   include/gnuradio-4.0/digital/LinearEqualizer.hpp
   include/gnuradio-4.0/digital/Manchester.hpp
   include/gnuradio-4.0/digital/ManchesterCombine.hpp
+  include/gnuradio-4.0/digital/PacketFramer.hpp
   include/gnuradio-4.0/digital/PamSymbols.hpp
+  include/gnuradio-4.0/digital/PreambleCorrelator.hpp
   include/gnuradio-4.0/digital/Scrambler.hpp
   include/gnuradio-4.0/digital/SignalQuality.hpp
   LINK_LIBRARIES
