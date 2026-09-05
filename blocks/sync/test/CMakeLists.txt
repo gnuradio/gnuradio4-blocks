@@ -1,2 +1,4 @@
 add_ut_test(qa_Pll)
 target_link_libraries(qa_Pll PRIVATE gr-sync gr-testing)
+add_ut_test(qa_CostasLoop)
+target_link_libraries(qa_CostasLoop PRIVATE gr-sync gr-testing)
