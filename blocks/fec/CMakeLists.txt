@@ -9,6 +9,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/fec"
 set(GrFecBlocks_HDRS
     include/gnuradio-4.0/fec/ConvBlocks.hpp
     include/gnuradio-4.0/fec/FecBlocks.hpp
+    include/gnuradio-4.0/fec/InterleaveBlocks.hpp
     include/gnuradio-4.0/fec/PunctureBlocks.hpp
     include/gnuradio-4.0/fec/RsBlocks.hpp)
 gr_add_block_library(
@@ -22,4 +23,8 @@ gr_add_block_library(
 
 if(TARGET gnuradio4::GrFecBlocksShared AND ENABLE_TESTING)
   add_subdirectory(test)
+endif()
+
+if(ENABLE_EXAMPLES)
+  add_subdirectory(benchmarks)
 endif()

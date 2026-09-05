@@ -171,6 +171,8 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::fec::ViterbiDecodeSoft"sv));
         expect(registry.contains("gr::blocks::fec::Puncture"sv));
         expect(registry.contains("gr::blocks::fec::Depuncture"sv));
+        expect(registry.contains("gr::blocks::fec::Interleave<uint8>"sv));
+        expect(registry.contains("gr::blocks::fec::Deinterleave<uint8>"sv));
         expect(registry.contains("gr::blocks::basic::DataSetToStream<float32>"sv));
         expect(registry.contains("gr::blocks::basic::DataSetToPacket<float32>"sv));
         expect(registry.contains("gr::blocks::basic::PacketToDataSet<float32>"sv));
