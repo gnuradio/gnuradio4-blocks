@@ -152,6 +152,8 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::digital::ManchesterEncoder"sv));
         expect(registry.contains("gr::blocks::digital::ManchesterDecoder"sv));
         expect(registry.contains("gr::blocks::digital::ManchesterCombine"sv));
+        expect(registry.contains("gr::blocks::digital::CrcAppend"sv));
+        expect(registry.contains("gr::blocks::digital::CrcCheck"sv));
     };
 
     "CheckBlockInstantiations"_test = [&] {
