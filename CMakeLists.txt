@@ -29,6 +29,8 @@ option(ENABLE_EXAMPLES "Enable example builds" ON)
 option(ENABLE_TESTING "Enable test builds" ON)
 option(GR4_ENABLE_AUDIO "Build the audio block family" OFF)
 option(GR4_ENABLE_SDR "Build the SDR block family" OFF)
+option(GR4_ENABLE_ZEROMQ "Build the ZeroMQ block family" OFF)
+option(GR4_ENABLE_ZEROMQ_EXAMPLES "Build the ZeroMQ examples" OFF)
 option(GR4_ENABLE_HTTP_TESTS "Build HTTP integration tests" OFF)
 option(GR_USE_FETCHCONTENT_DEPS "Allow CMake to download selected third-party dependencies with FetchContent" OFF)
 option(USE_CCACHE "Use ccache if available" ON)
@@ -192,6 +194,26 @@ if(GR4_ENABLE_SDR)
     # record it so the package config requires the same dependency of a consumer.
     set(GR4_EXPORT_NEEDS_SOAPYSDR ON)
   endif()
+endif()
+
+set(GR4_EXPORT_NEEDS_ZEROMQ OFF)
+set(GR4_ZEROMQ_CPPZMQ_PROVIDER "")
+if(GR4_ENABLE_ZEROMQ)
+  find_package(cppzmq CONFIG QUIET)
+  if(TARGET cppzmq)
+    set(GR4_CPPZMQ_TARGET cppzmq)
+    set(GR4_ZEROMQ_CPPZMQ_PROVIDER "cmake")
+  else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(
+      CPPZMQ
+      REQUIRED
+      IMPORTED_TARGET
+      cppzmq)
+    set(GR4_CPPZMQ_TARGET PkgConfig::CPPZMQ)
+    set(GR4_ZEROMQ_CPPZMQ_PROVIDER "pkgconfig")
+  endif()
+  set(GR4_EXPORT_NEEDS_ZEROMQ ON)
 endif()
 
 if(GR4_ENABLE_AUDIO AND NOT EMSCRIPTEN)

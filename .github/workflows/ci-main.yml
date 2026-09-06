@@ -87,6 +87,7 @@ jobs:
             -DCMAKE_C_COMPILER=${{ matrix.cc }} \
             -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
             -DENABLE_TESTING=ON \
+            -DGR4_ENABLE_ZEROMQ=ON \
             "${extra_cmake_flags[@]}"
 
       - name: Configure CMake Emscripten
@@ -105,6 +106,7 @@ jobs:
             -DENABLE_TESTING=ON \
             -DGR4_ENABLE_AUDIO=OFF \
             -DGR4_ENABLE_SDR=OFF \
+            -DGR4_ENABLE_ZEROMQ=OFF \
             -DGR4_ENABLE_HTTP_TESTS=OFF
 
       - name: Build
@@ -114,6 +116,7 @@ jobs:
       - name: Execute tests
         env:
           DISABLE_SENSITIVE_TESTS: 1
+          GR4_REQUIRE_GR3_INTEROP: 1
         working-directory: ${{ runner.workspace }}/build
         shell: bash
         run: ctest --output-on-failure
