@@ -21,8 +21,8 @@
 
 namespace gr::blocks::basic {
 
-GR_REGISTER_BLOCK("gr::blocks::basic::StreamToDataSet", gr::blocks::basic::StreamFilterImpl, ([T], false), [ uint8_t, int16_t, int32_t, float, std::complex<float> ]);
-GR_REGISTER_BLOCK("gr::blocks::basic::StreamFilter", gr::blocks::basic::StreamFilterImpl, ([T], true), [ uint8_t, int16_t, int32_t, float, std::complex<float> ]);
+GR_REGISTER_BLOCK("gr::blocks::basic::StreamToDataSet", gr::blocks::basic::StreamToDataSet, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ]);
+GR_REGISTER_BLOCK("gr::blocks::basic::StreamFilter", gr::blocks::basic::StreamFilter, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ]);
 
 template<typename T, bool streamOut = false, trigger::Matcher TMatcher = trigger::BasicTriggerNameCtxMatcher::Filter>
 requires(std::is_arithmetic_v<T> || gr::meta::complex_like<T>)

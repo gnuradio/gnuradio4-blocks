@@ -17,8 +17,8 @@
 
 namespace gr::blocks::testing {
 
-GR_REGISTER_BLOCK("gr::blocks::testing::ImChartMonitor", gr::blocks::testing::ImChartMonitor, ([T], true), [float]);
-GR_REGISTER_BLOCK("gr::blocks::testing::ConsoleDebugSink", gr::blocks::testing::ImChartMonitor, ([T], false), [float]);
+GR_REGISTER_BLOCK("gr::blocks::testing::ImChartMonitor", gr::blocks::testing::ImChartMonitor, [T], [float]);
+GR_REGISTER_BLOCK("gr::blocks::testing::ConsoleDebugSink", gr::blocks::testing::ConsoleDebugSink, [T], [float]);
 
 template<typename T, bool drawAsynchronously = true>
 requires(std::is_arithmetic_v<T> || gr::DataSetLike<T>)
@@ -252,6 +252,10 @@ struct ImChartMonitor : Block<ImChartMonitor<T, drawAsynchronously>, std::condit
         }
     }
 };
+
+// the synchronous form: it prints from processBulk instead of offering a drawable surface
+template<typename T>
+using ConsoleDebugSink = ImChartMonitor<T, false>;
 
 } // namespace gr::blocks::testing
 

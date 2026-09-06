@@ -9,12 +9,13 @@
 
 namespace gr::blocks::basic {
 
-GR_REGISTER_BLOCK("gr::blocks::basic::SchmittTriggerNoInterpolation", gr::blocks::basic::SchmittTrigger, ([T], gr::trigger::InterpolationMethod::NO_INTERPOLATION), [ std::int16_t, std::int32_t, float ])
-GR_REGISTER_BLOCK("gr::blocks::basic::SchmittTriggerBasic", gr::blocks::basic::SchmittTrigger, ([T], gr::trigger::InterpolationMethod::BASIC_LINEAR_INTERPOLATION), [ std::int16_t, std::int32_t, float ])
-GR_REGISTER_BLOCK("gr::blocks::basic::SchmittTrigger", gr::blocks::basic::SchmittTrigger, ([T], gr::trigger::InterpolationMethod::LINEAR_INTERPOLATION), [ std::int16_t, std::int32_t, float ])
-GR_REGISTER_BLOCK("gr::blocks::basic::SchmittTriggerPolynomial", gr::blocks::basic::SchmittTrigger, ([T], gr::trigger::InterpolationMethod::POLYNOMIAL_INTERPOLATION), [ std::int16_t, std::int32_t, float ])
+GR_REGISTER_BLOCK("gr::blocks::basic::SchmittTriggerNoInterpolation", gr::blocks::basic::SchmittTriggerNoInterpolation, [T], [ std::int16_t, std::int32_t, float ])
+GR_REGISTER_BLOCK("gr::blocks::basic::SchmittTriggerBasic", gr::blocks::basic::SchmittTriggerBasic, [T], [ std::int16_t, std::int32_t, float ])
+GR_REGISTER_BLOCK("gr::blocks::basic::SchmittTrigger", gr::blocks::basic::SchmittTrigger, [T], [ std::int16_t, std::int32_t, float ])
+GR_REGISTER_BLOCK("gr::blocks::basic::SchmittTriggerPolynomial", gr::blocks::basic::SchmittTriggerPolynomial, [T], [ std::int16_t, std::int32_t, float ])
 
-template<typename T, gr::trigger::InterpolationMethod Method>
+// the default is the method the plain name is registered under; the three others are named below
+template<typename T, gr::trigger::InterpolationMethod Method = gr::trigger::InterpolationMethod::LINEAR_INTERPOLATION>
 requires(std::is_arithmetic_v<T> or (UncertainValueLike<T> && std::is_arithmetic_v<meta::fundamental_base_value_type_t<T>>))
 struct SchmittTrigger : public gr::Block<SchmittTrigger<T, Method>, NoTagPropagation> {
     using Description = Doc<R""(@brief Digital Schmitt trigger implementation with optional intersample interpolation
@@ -163,6 +164,14 @@ The information is stored (info only) in `trigger_name`, `trigger_time`, `trigge
         return gr::work::Status::OK;
     }
 };
+
+// the interpolation method each registered name stands for; SchmittTrigger itself is the linear one
+template<typename T>
+using SchmittTriggerNoInterpolation = SchmittTrigger<T, gr::trigger::InterpolationMethod::NO_INTERPOLATION>;
+template<typename T>
+using SchmittTriggerBasic = SchmittTrigger<T, gr::trigger::InterpolationMethod::BASIC_LINEAR_INTERPOLATION>;
+template<typename T>
+using SchmittTriggerPolynomial = SchmittTrigger<T, gr::trigger::InterpolationMethod::POLYNOMIAL_INTERPOLATION>;
 
 } // namespace gr::blocks::basic
 

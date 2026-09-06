@@ -17,8 +17,8 @@
 
 namespace gr::blocks::electrical {
 
-GR_REGISTER_BLOCK("gr::blocks::electrical::ThreePhasePowerMetrics", gr::blocks::electrical::PowerMetrics, ([T], 3UZ), [ float, gr::UncertainValue<float> ])
-GR_REGISTER_BLOCK("gr::blocks::electrical::SinglePhasePowerMetrics", gr::blocks::electrical::PowerMetrics, ([T], 1UZ), [ float, gr::UncertainValue<float> ])
+GR_REGISTER_BLOCK("gr::blocks::electrical::ThreePhasePowerMetrics", gr::blocks::electrical::ThreePhasePowerMetrics, [T], [ float, gr::UncertainValue<float> ])
+GR_REGISTER_BLOCK("gr::blocks::electrical::SinglePhasePowerMetrics", gr::blocks::electrical::SinglePhasePowerMetrics, [T], [ float, gr::UncertainValue<float> ])
 
 template<typename T, std::size_t nPhases>
 requires(std::floating_point<T> or std::is_arithmetic_v<meta::fundamental_base_value_type_t<T>>)
@@ -148,8 +148,8 @@ template<typename T>
 requires(std::floating_point<T> or std::is_arithmetic_v<meta::fundamental_base_value_type_t<T>>)
 using SinglePhasePowerMetrics = PowerMetrics<T, 1UZ>;
 
-GR_REGISTER_BLOCK("gr::blocks::electrical::SinglePhasePowerFactorCalculator", gr::blocks::electrical::PowerFactor, ([T], 1UZ), [ float, gr::UncertainValue<float> ])
-GR_REGISTER_BLOCK("gr::blocks::electrical::ThreePhasePowerFactorCalculator", gr::blocks::electrical::PowerFactor, ([T], 3UZ), [ float, gr::UncertainValue<float> ])
+GR_REGISTER_BLOCK("gr::blocks::electrical::SinglePhasePowerFactorCalculator", gr::blocks::electrical::SinglePhasePowerFactorCalculator, [T], [ float, gr::UncertainValue<float> ])
+GR_REGISTER_BLOCK("gr::blocks::electrical::ThreePhasePowerFactorCalculator", gr::blocks::electrical::ThreePhasePowerFactorCalculator, [T], [ float, gr::UncertainValue<float> ])
 
 template<typename T, std::size_t nPhases>
 requires(std::floating_point<T> or std::is_arithmetic_v<meta::fundamental_base_value_type_t<T>>)
@@ -197,8 +197,8 @@ using SinglePhasePowerFactorCalculator = PowerFactor<T, 1>;
 template<typename T>
 using ThreePhasePowerFactorCalculator = PowerFactor<T, 3>;
 
-GR_REGISTER_BLOCK("gr::blocks::electrical::TwoPhaseSystemUnbalanceCalculator", gr::blocks::electrical::SystemUnbalance, ([T], 2UZ), [ float, gr::UncertainValue<float> ])
-GR_REGISTER_BLOCK("gr::blocks::electrical::ThreePhaseSystemUnbalanceCalculator", gr::blocks::electrical::SystemUnbalance, ([T], 3UZ), [ float, gr::UncertainValue<float> ])
+GR_REGISTER_BLOCK("gr::blocks::electrical::TwoPhaseSystemUnbalanceCalculator", gr::blocks::electrical::TwoPhaseSystemUnbalanceCalculator, [T], [ float, gr::UncertainValue<float> ])
+GR_REGISTER_BLOCK("gr::blocks::electrical::ThreePhaseSystemUnbalanceCalculator", gr::blocks::electrical::ThreePhaseSystemUnbalanceCalculator, [T], [ float, gr::UncertainValue<float> ])
 
 template<typename T, std::size_t nPhases>
 requires((std::floating_point<T> or std::is_arithmetic_v<meta::fundamental_base_value_type_t<T>>) && (nPhases > 1)) // unbalance calculation requires at least two phases

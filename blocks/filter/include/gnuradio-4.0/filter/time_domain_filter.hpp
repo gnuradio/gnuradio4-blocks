@@ -56,10 +56,10 @@ enum class IIRForm {
     DF_II_TRANSPOSED,
 };
 
-GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_I), [float])
-GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_II), [float])
-GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_I_TRANSPOSED), [float])
-GR_REGISTER_BLOCK(gr::blocks::filter::iir_filter, ([T], gr::blocks::filter::IIRForm::DF_II_TRANSPOSED), [float])
+GR_REGISTER_BLOCK("gr::blocks::filter::IirFilterDirectForm1", gr::blocks::filter::IirFilterDirectForm1, [T], [float])
+GR_REGISTER_BLOCK("gr::blocks::filter::IirFilterDirectForm2", gr::blocks::filter::IirFilterDirectForm2, [T], [float])
+GR_REGISTER_BLOCK("gr::blocks::filter::IirFilterDirectForm1Transposed", gr::blocks::filter::IirFilterDirectForm1Transposed, [T], [float])
+GR_REGISTER_BLOCK("gr::blocks::filter::IirFilterDirectForm2Transposed", gr::blocks::filter::IirFilterDirectForm2Transposed, [T], [float])
 
 template<typename T, IIRForm form = std::is_floating_point_v<T> ? IIRForm::DF_II : IIRForm::DF_I>
 requires std::floating_point<T>
@@ -122,6 +122,17 @@ a are the feedback coefficients
         }
     }
 };
+
+// one name per form: the four differ only in the difference equation processOne evaluates, which the enumerator names
+// and the type carries, so each is registered under a name that says which form it is
+template<typename T>
+using IirFilterDirectForm1 = iir_filter<T, IIRForm::DF_I>;
+template<typename T>
+using IirFilterDirectForm2 = iir_filter<T, IIRForm::DF_II>;
+template<typename T>
+using IirFilterDirectForm1Transposed = iir_filter<T, IIRForm::DF_I_TRANSPOSED>;
+template<typename T>
+using IirFilterDirectForm2Transposed = iir_filter<T, IIRForm::DF_II_TRANSPOSED>;
 
 // both aliases need the explicit registry name: derived from the type, an alias carries the name of the template it
 // expands to together with the whole argument list — for the decimating one the tag policy and the resampling
