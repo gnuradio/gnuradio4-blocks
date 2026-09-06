@@ -123,7 +123,7 @@ inline constexpr bool equal_tag_lists(const std::vector<Tag>& tags1, const std::
     return true;
 }
 
-GR_REGISTER_BLOCK("gr::blocks::testing::TagSource", gr::blocks::testing::TagSource, ([T], gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE), [float])
+GR_REGISTER_BLOCK("gr::blocks::testing::TagSource", gr::blocks::testing::TagSourceProcessOne, [T], [float])
 
 template<typename T, ProcessFunction UseProcessVariant = ProcessFunction::USE_PROCESS_BULK>
 struct TagSource : Block<TagSource<T, UseProcessVariant>> {
@@ -291,7 +291,12 @@ private:
     [[nodiscard]] bool isInfinite() const { return n_samples_max == 0U; }
 };
 
-GR_REGISTER_BLOCK("gr::blocks::testing::TagMonitor", gr::blocks::testing::TagMonitor, ([T], gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE), [float])
+// the registered form of each monitor: the parameter picks which of the block's process
+// functions the scheduler calls, and the registry offers the sample-by-sample one
+template<typename T>
+using TagSourceProcessOne = TagSource<T, ProcessFunction::USE_PROCESS_ONE>;
+
+GR_REGISTER_BLOCK("gr::blocks::testing::TagMonitor", gr::blocks::testing::TagMonitorProcessOne, [T], [float])
 
 template<typename T, ProcessFunction UseProcessVariant>
 struct TagMonitor : public Block<TagMonitor<T, UseProcessVariant>> {
@@ -375,7 +380,10 @@ struct TagMonitor : public Block<TagMonitor<T, UseProcessVariant>> {
     }
 };
 
-GR_REGISTER_BLOCK("gr::blocks::testing::TagSink", gr::blocks::testing::TagSink, ([T], gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE), [float])
+template<typename T>
+using TagMonitorProcessOne = TagMonitor<T, ProcessFunction::USE_PROCESS_ONE>;
+
+GR_REGISTER_BLOCK("gr::blocks::testing::TagSink", gr::blocks::testing::TagSinkProcessOne, [T], [float])
 
 template<typename T, ProcessFunction UseProcessVariant>
 struct TagSink : public Block<TagSink<T, UseProcessVariant>> {
@@ -463,6 +471,9 @@ struct TagSink : public Block<TagSink<T, UseProcessVariant>> {
         return n_samples_expected > 0 && _nSamplesProduced >= n_samples_expected ? work::Status::DONE : work::Status::OK;
     }
 };
+
+template<typename T>
+using TagSinkProcessOne = TagSink<T, ProcessFunction::USE_PROCESS_ONE>;
 
 } // namespace gr::blocks::testing
 

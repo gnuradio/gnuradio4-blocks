@@ -12,9 +12,9 @@
 
 namespace gr::blocks::sdr {
 
-GR_REGISTER_BLOCK("gr::blocks::sdr::SoapySink", gr::blocks::sdr::SoapySink, ([T], 1UZ), [ uint8_t, int16_t, std::complex<float> ])
-GR_REGISTER_BLOCK("gr::blocks::sdr::SoapyDualSink", gr::blocks::sdr::SoapySink, ([T], 2UZ), [ uint8_t, int16_t, std::complex<float> ])
-GR_REGISTER_BLOCK("gr::blocks::sdr::SoapyQuadSink", gr::blocks::sdr::SoapySink, ([T], 4UZ), [ uint8_t, int16_t, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::blocks::sdr::SoapySink", gr::blocks::sdr::SoapySimpleSink, [T], [ uint8_t, int16_t, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::blocks::sdr::SoapyDualSink", gr::blocks::sdr::SoapyDualSink, [T], [ uint8_t, int16_t, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::blocks::sdr::SoapyQuadSink", gr::blocks::sdr::SoapyQuadSink, [T], [ uint8_t, int16_t, std::complex<float> ])
 
 template<typename T, std::size_t nPorts = std::dynamic_extent>
 struct SoapySink : Block<SoapySink<T, nPorts>> {

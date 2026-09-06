@@ -34,10 +34,10 @@ struct SafeOp<T, std::divides<T>> {
 };
 } // namespace detail
 
-GR_REGISTER_BLOCK("gr::blocks::math::AddConst", gr::blocks::math::MathOpImpl, ([T], std::plus<[T]>), [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
-GR_REGISTER_BLOCK("gr::blocks::math::SubtractConst", gr::blocks::math::MathOpImpl, ([T], std::minus<[T]>), [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
-GR_REGISTER_BLOCK("gr::blocks::math::MultiplyConst", gr::blocks::math::MathOpImpl, ([T], std::multiplies<[T]>), [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
-GR_REGISTER_BLOCK("gr::blocks::math::DivideConst", gr::blocks::math::MathOpImpl, ([T], std::divides<[T]>), [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::blocks::math::AddConst", gr::blocks::math::AddConst, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::blocks::math::SubtractConst", gr::blocks::math::SubtractConst, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::blocks::math::MultiplyConst", gr::blocks::math::MultiplyConst, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::blocks::math::DivideConst", gr::blocks::math::DivideConst, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
 
 template<typename T, typename op>
 struct MathOpImpl : Block<MathOpImpl<T, op>> {
@@ -82,10 +82,10 @@ using MultiplyConst = MathOpImpl<T, std::multiplies<T>>;
 template<typename T>
 using DivideConst = MathOpImpl<T, std::divides<T>>;
 
-GR_REGISTER_BLOCK("gr::blocks::math::Add", gr::blocks::math::MathOpMultiPortImpl, ([T], std::plus<[T]>), [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
-GR_REGISTER_BLOCK("gr::blocks::math::Subtract", gr::blocks::math::MathOpMultiPortImpl, ([T], std::minus<[T]>), [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
-GR_REGISTER_BLOCK("gr::blocks::math::Multiply", gr::blocks::math::MathOpMultiPortImpl, ([T], std::multiplies<[T]>), [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
-GR_REGISTER_BLOCK("gr::blocks::math::Divide", gr::blocks::math::MathOpMultiPortImpl, ([T], std::divides<[T]>), [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::blocks::math::Add", gr::blocks::math::Add, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::blocks::math::Subtract", gr::blocks::math::Subtract, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::blocks::math::Multiply", gr::blocks::math::Multiply, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
+GR_REGISTER_BLOCK("gr::blocks::math::Divide", gr::blocks::math::Divide, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
 
 template<typename T, typename op>
 requires gr::arithmetic_or_complex_like<gr::meta::fundamental_base_value_type_t<T>>
