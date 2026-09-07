@@ -72,8 +72,11 @@ extern template class exprtk::expression<double>;
 extern template class exprtk::parser<float>;
 extern template class exprtk::parser<double>;
 
+// see the matching #ifndef in exprtk.cpp
+#ifndef _MSC_VER
 extern template class exprtk::symbol_table<float>;
 extern template class exprtk::symbol_table<double>;
+#endif
 
 extern template class exprtk::function_compositor<float>;
 extern template class exprtk::function_compositor<double>;
