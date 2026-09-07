@@ -572,7 +572,7 @@ template<Frequency frequencyType, ResponseType responseType>
     }
 }
 
-[[nodiscard]] inline constexpr PoleZeroLocations calculateFilterChebyshevType1(std::size_t order, double rippleDb = 0.1) {
+[[nodiscard]] inline PoleZeroLocations calculateFilterChebyshevType1(std::size_t order, double rippleDb = 0.1) {
     // Cauer, W. "The realization of impedances of prescribed frequency dependence." Annalen der Physik 401.2 (1930): 157-229.
     // see also: https://en.wikipedia.org/wiki/Chebyshev_filter
 
@@ -806,14 +806,14 @@ template<typename T>
 
 /// @brief analog angular corner frequency whose bilinear image is the digital corner @p f.
 /// Without a finite sampling rate the design stays analog, and the plain analog corner is returned.
-[[nodiscard]] inline constexpr double prewarpedAngularFrequency(double f, double fs) {
+[[nodiscard]] inline double prewarpedAngularFrequency(double f, double fs) {
     if (!std::isfinite(fs) || fs <= 0.) {
         return 2. * std::numbers::pi * f;
     }
     return 2. * fs * std::tan(std::numbers::pi * f / fs);
 }
 
-[[nodiscard]] inline constexpr PoleZeroLocations lowPassProtoToLowPass(const PoleZeroLocations& lowPassProto, FilterParameters parameters) {
+[[nodiscard]] inline PoleZeroLocations lowPassProtoToLowPass(const PoleZeroLocations& lowPassProto, FilterParameters parameters) {
     PoleZeroLocations lowPass = lowPassProto;
     const double      omegaC  = prewarpedAngularFrequency(parameters.fLow, parameters.fs);
 
@@ -824,7 +824,7 @@ template<typename T>
     return lowPass;
 }
 
-[[nodiscard]] inline constexpr PoleZeroLocations lowPassProtoToHighPass(const PoleZeroLocations& lowPassProto, FilterParameters parameters) {
+[[nodiscard]] inline PoleZeroLocations lowPassProtoToHighPass(const PoleZeroLocations& lowPassProto, FilterParameters parameters) {
     PoleZeroLocations highPass = lowPassProto;
     const double      omegaC   = prewarpedAngularFrequency(parameters.fHigh, parameters.fs);
 
@@ -844,7 +844,7 @@ template<typename T>
     return highPass;
 }
 
-[[nodiscard]] inline constexpr PoleZeroLocations lowPassProtoToBandPass(const PoleZeroLocations& lowPassProto, FilterParameters parameters) {
+[[nodiscard]] inline PoleZeroLocations lowPassProtoToBandPass(const PoleZeroLocations& lowPassProto, FilterParameters parameters) {
     constexpr double epsilon   = 1e-10;
     const double     omegaLow  = prewarpedAngularFrequency(parameters.fLow, parameters.fs);
     const double     omegaHigh = prewarpedAngularFrequency(parameters.fHigh, parameters.fs);
@@ -904,7 +904,7 @@ template<typename T>
     return bandPass;
 }
 
-[[nodiscard]] inline constexpr PoleZeroLocations lowPassProtoToBandStop(const PoleZeroLocations& lowPassProto, FilterParameters parameters) {
+[[nodiscard]] inline PoleZeroLocations lowPassProtoToBandStop(const PoleZeroLocations& lowPassProto, FilterParameters parameters) {
     constexpr double epsilon   = 1e-10;
     const double     omegaLow  = prewarpedAngularFrequency(parameters.fLow, parameters.fs);
     const double     omegaHigh = prewarpedAngularFrequency(parameters.fHigh, parameters.fs);
@@ -1156,7 +1156,7 @@ template<std::floating_point T>
  * @param transitionWidth Δω is the width of the transition band (normalised to radians/sample).
  * @return always returns odd-number of required taps
  */
-[[nodiscard]] inline constexpr std::size_t estimateNumberOfTapsKaiser(double attenuationStopBand, double transitionWidth) {
+[[nodiscard]] inline std::size_t estimateNumberOfTapsKaiser(double attenuationStopBand, double transitionWidth) {
     auto N = static_cast<std::size_t>(std::ceil((attenuationStopBand - 8.0) / (2.285 * transitionWidth)));
     if (N % 2 == 0) {
         N++;

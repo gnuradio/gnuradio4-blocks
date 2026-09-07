@@ -45,7 +45,7 @@ template<std::uint8_t R, std::uint8_t G, std::uint8_t B, bool isForegroundColour
     return std::string_view{ansi_string.data(), ansi_string.size};
 }
 
-[[nodiscard]] inline constexpr std::string makeAnsi(const Colour& c, bool isForegroundColour = true) { return std::format("\x1b[{};2;{};{};{}m", isForegroundColour ? "38" : "48", c.r, c.g, c.b); }
+[[nodiscard]] inline std::string makeAnsi(const Colour& c, bool isForegroundColour = true) { return std::format("\x1b[{};2;{};{};{}m", isForegroundColour ? "38" : "48", c.r, c.g, c.b); }
 
 constexpr std::string_view RESET = "\x1b[0m";
 
