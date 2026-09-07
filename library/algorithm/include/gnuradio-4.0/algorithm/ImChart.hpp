@@ -270,10 +270,10 @@ public:
         }
 
         // clear braille array
-        std::ranges::for_each(_brailleArray, [](auto& line) { std::ranges::fill(line, 0UZ); });
+        std::ranges::for_each(_brailleArray, [](auto& line) { std::ranges::fill(line, uint16_t{0}); });
         auto updateBrailleArray = [this](const uint16_t oldValue) -> uint16_t {
-            uint16_t increment = ((oldValue & 0xFF) + 1UZ) & 0xFF;           // Increment and mask to first byte
-            uint16_t colorBit  = ((1UZ << (_n_datasets % 8)) << 8) & 0xFF00; // Shift to the second byte (mod 8 to handle >8 datasets)
+            uint16_t increment = static_cast<uint16_t>(((oldValue & 0xFF) + 1U) & 0xFF);           // Increment and mask to first byte
+            uint16_t colorBit  = static_cast<uint16_t>(((1U << (_n_datasets % 8)) << 8) & 0xFF00); // Shift to the second byte (mod 8 to handle >8 datasets)
             return increment | colorBit;
         };
 
@@ -371,7 +371,7 @@ public:
 
     void clearScreen() noexcept {
         std::ranges::for_each(_screen, [](auto& line) { std::ranges::fill(line, " "); });
-        std::ranges::for_each(_brailleArray, [](auto& line) { std::ranges::fill(line, 0UZ); });
+        std::ranges::for_each(_brailleArray, [](auto& line) { std::ranges::fill(line, uint16_t{0}); });
         _lastColor               = kFirstColor;
         _externalColorManagement = false;
         _n_datasets              = 0UZ;
