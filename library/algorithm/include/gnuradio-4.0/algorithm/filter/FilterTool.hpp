@@ -700,11 +700,15 @@ std::vector<std::complex<T>> sortComplexWithConjugates(const std::vector<std::co
 template<typename T, std::ranges::input_range Range>
 [[nodiscard]] std::vector<T> expandRootsToPolynomial(Range&& roots, std::size_t desiredOrder) { // NOSONAR (S5425) — forwarding-ref kept for non-const-iterable views
     if (roots.empty()) {
+#ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnull-dereference" // gcc13 false positive
+#endif
         std::vector<T> coefficients(desiredOrder + 1UZ, static_cast<T>(0));
         coefficients[0UZ] = static_cast<T>(1);
+#ifdef __GNUC__
 #pragma GCC diagnostic pop
+#endif
         return coefficients;
     }
 
