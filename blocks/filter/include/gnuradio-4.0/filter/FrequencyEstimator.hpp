@@ -518,7 +518,7 @@ Typical application: RF cavity field measurement at 0.1–5 MHz carriers, 62.5 M
 
         // HP filter: y[n] = α·(y[n-1] + x[n] - x[n-1])
         auto processHP = [alpha_hp = _alpha_hp](T x, T& state, T& x_prev) noexcept -> T {
-            state  = alpha_hp * (state + x - x_prev);
+            state  = flushSubnormal(alpha_hp * (state + x - x_prev));
             x_prev = x;
             return state;
         };
@@ -526,6 +526,7 @@ Typical application: RF cavity field measurement at 0.1–5 MHz carriers, 62.5 M
         // LP filter: y[n] = y[n-1] + α·(x[n] - y[n-1])
         auto processLP = [alpha_lp = _alpha_lp](T x, T& state) noexcept -> T {
             state += alpha_lp * (x - state);
+            state = flushSubnormal(state);
             return state;
         };
 

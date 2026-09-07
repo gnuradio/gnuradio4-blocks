@@ -1,8 +1,11 @@
 #ifndef GNURADIO_TIME_DOMAIN_FILTER_HPP
 #define GNURADIO_TIME_DOMAIN_FILTER_HPP
 #include <algorithm>
+#include <cmath>
+#include <concepts>
 #include <execution>
 #include <functional>
+#include <limits>
 #include <numeric>
 
 #include <gnuradio-4.0/Block.hpp>
@@ -18,6 +21,15 @@
 namespace gr::blocks::filter {
 
 using namespace gr;
+
+/// @brief Zeroes a filter state that has decayed below the smallest normal value.
+///
+/// A recursion driven by exact zeros decays into the subnormals and stays there, and on x86 every operation on a
+/// subnormal costs a microcode assist of order a hundred cycles. The test costs a compare and a conditional move.
+template<std::floating_point T>
+[[nodiscard]] T flushSubnormal(T value) noexcept {
+    return std::abs(value) < std::numeric_limits<T>::min() ? T{} : value;
+}
 
 GR_REGISTER_BLOCK(gr::blocks::filter::fir_filter, [T], [float])
 
@@ -88,6 +100,7 @@ a are the feedback coefficients
         }
     }
 
+    // Every form flushes the value it feeds back, so a silent input leaves the state at zero rather than subnormal.
     [[nodiscard]] T processOne(T input) noexcept {
         if constexpr (form == IIRForm::DF_I) {
             // y[n] = b[0] * x[n]   + b[1] * x[n-1] + ... + b[N] * x[n-N]
@@ -95,26 +108,26 @@ a are the feedback coefficients
             inputHistory.push_front(input);
             const T feedforward = std::transform_reduce(std::execution::unseq, b.cbegin(), b.cend(), inputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{});
             const T feedback    = std::transform_reduce(std::execution::unseq, a.cbegin() + 1, a.cend(), outputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{});
-            const T output      = feedforward - feedback;
+            const T output      = flushSubnormal(feedforward - feedback);
             outputHistory.push_front(output);
             return output;
         } else if constexpr (form == IIRForm::DF_II) {
             // w[n] = x[n] - a[1] * w[n-1] - a[2] * w[n-2] - ... - a[M] * w[n-M]
             // y[n] =        b[0] * w[n]   + b[1] * w[n-1] + ... + b[N] * w[n-N]
-            const T w = input - std::transform_reduce(std::execution::unseq, a.cbegin() + 1, a.cend(), inputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{});
+            const T w = flushSubnormal(input - std::transform_reduce(std::execution::unseq, a.cbegin() + 1, a.cend(), inputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{}));
             inputHistory.push_front(w);
 
             return std::transform_reduce(std::execution::unseq, b.cbegin(), b.cend(), inputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{});
         } else if constexpr (form == IIRForm::DF_I_TRANSPOSED) {
             // w_1[n] = x[n] - a[1] * w_2[n-1] - a[2] * w_2[n-2] - ... - a[M] * w_2[n-M]
             // y[n]   = b[0] * w_2[n] + b[1] * w_2[n-1] + ... + b[N] * w_2[n-N]
-            const T v0 = input - std::transform_reduce(std::execution::unseq, a.cbegin() + 1, a.cend(), outputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{});
+            const T v0 = flushSubnormal(input - std::transform_reduce(std::execution::unseq, a.cbegin() + 1, a.cend(), outputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{}));
             outputHistory.push_front(v0);
 
             return std::transform_reduce(std::execution::unseq, b.cbegin(), b.cend(), outputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{});
         } else if constexpr (form == IIRForm::DF_II_TRANSPOSED) {
             // y[n] = b_0 * f[n] + Σ (b_k * f[n−k] − a_k * y[n−k]) for k = 1 to N
-            const T output = b[0] * input + std::transform_reduce(std::execution::unseq, b.cbegin() + 1, b.cend(), inputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{}) - std::transform_reduce(std::execution::unseq, a.cbegin() + 1, a.cend(), outputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{});
+            const T output = flushSubnormal(b[0] * input + std::transform_reduce(std::execution::unseq, b.cbegin() + 1, b.cend(), inputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{}) - std::transform_reduce(std::execution::unseq, a.cbegin() + 1, a.cend(), outputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{}));
 
             inputHistory.push_front(input);
             outputHistory.push_front(output);

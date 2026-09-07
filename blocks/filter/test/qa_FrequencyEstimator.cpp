@@ -383,6 +383,46 @@ const boost::ut::suite<"IQDemodulator"> iqDemodulatorTests = [] {
         expect(std::isfinite(freq2.back()));
     };
 
+    "IQDemodulator zero input leaves the filter states at zero, not at a subnormal"_test = [] {
+        // Each state decays by its pole once the input is exactly zero: exp(-2*pi*f_hp/fs) = 0.939 for the
+        // high-pass here, exp(-2*pi*f_lp/fs) = 0.533 for the low-pass.
+        constexpr float       fs         = 1e6f;
+        constexpr float       freq       = 100e3f;
+        constexpr std::size_t chunkSize  = 256U;
+        constexpr std::size_t numChunks  = 20U;
+        constexpr std::size_t numSamples = chunkSize * numChunks;
+
+        std::vector<float> ref(numSamples), resp(numSamples);
+        const float        omega = 2.f * std::numbers::pi_v<float> * freq / fs;
+        for (std::size_t i = 0UZ; i < numSamples; ++i) {
+            ref[i]  = std::sin(omega * static_cast<float>(i));
+            resp[i] = std::sin(omega * static_cast<float>(i) + 0.2f);
+        }
+
+        IQDemodulator<float, Resampling<256U, 1U, false>> demod;
+        demod.sample_rate      = fs;
+        demod.f_high_pass      = 10000.f;
+        demod.f_low_pass       = 100000.f;
+        demod.input_chunk_size = chunkSize;
+        demod.start();
+
+        std::vector<float> amp(numChunks), phase(numChunks), freqOut(numChunks);
+        std::ignore = demod.processBulk(ref, resp, amp, phase, freqOut);
+
+        constexpr std::size_t    zeroChunks = 32U; // 8192 samples: the high-pass needs 1390 to pass below the smallest normal
+        const std::vector<float> zeros(chunkSize * zeroChunks, 0.f);
+        std::vector<float>       zeroAmp(zeroChunks), zeroPhase(zeroChunks), zeroFreq(zeroChunks);
+        std::ignore = demod.processBulk(zeros, zeros, zeroAmp, zeroPhase, zeroFreq);
+
+        expect(eq(std::fpclassify(demod._hp_ref_state), FP_ZERO)) << "reference high-pass";
+        expect(eq(std::fpclassify(demod._hp_resp_state), FP_ZERO)) << "response high-pass";
+        expect(eq(std::fpclassify(demod._lp_I), FP_ZERO)) << "in-phase low-pass";
+        expect(eq(std::fpclassify(demod._lp_Q), FP_ZERO)) << "quadrature low-pass";
+        expect(eq(std::fpclassify(demod._lp_Pr), FP_ZERO)) << "reference power low-pass";
+        expect(eq(std::fpclassify(demod._lp_Pd), FP_ZERO)) << "derivative power low-pass";
+        expect(eq(std::fpclassify(demod._lp_Px), FP_ZERO)) << "response power low-pass";
+    };
+
     "IQDemodulator derivative methods"_test = [] {
         constexpr float       fs         = 1e6f;
         constexpr float       freq       = 100e3f;
