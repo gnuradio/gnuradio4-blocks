@@ -1,6 +1,8 @@
 #include <boost/ut.hpp>
 
+#include <cmath>
 #include <format>
+#include <tuple>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Graph.hpp>
@@ -122,6 +124,35 @@ const boost::ut::suite SequenceTests = [] {
                 i, input, form_I, form_II, form_I_T, form_II_T);
 #endif
         }
+    };
+
+    "a run of exact zeros leaves every form's state at zero, not at a subnormal"_test = [] {
+        // The pole pair of this section has radius sqrt(0.6414) = 0.80, so a float state driven by exact zeros
+        // passes below the smallest normal after 391 samples.
+        Tensor<float> coeffs_b(data_from, {0.020083366f, 0.040166732f, 0.020083366f});
+        Tensor<float> coeffs_a(data_from, {1.0f, -1.561018076f, 0.641351538f});
+
+        const auto settled = [&](auto& filter) {
+            filter.b = coeffs_b;
+            filter.a = coeffs_a;
+            for (std::size_t i = 0UZ; i < 64UZ; ++i) {
+                std::ignore = filter.processOne(1.f);
+            }
+            float last = 0.f;
+            for (std::size_t i = 0UZ; i < 4000UZ; ++i) {
+                last = filter.processOne(0.f);
+            }
+            return last;
+        };
+
+        iir_filter<float, IIRForm::DF_I>             form_I;
+        iir_filter<float, IIRForm::DF_II>            form_II;
+        iir_filter<float, IIRForm::DF_I_TRANSPOSED>  form_I_T;
+        iir_filter<float, IIRForm::DF_II_TRANSPOSED> form_II_T;
+        expect(eq(std::fpclassify(settled(form_I)), FP_ZERO)) << "direct form I";
+        expect(eq(std::fpclassify(settled(form_II)), FP_ZERO)) << "direct form II";
+        expect(eq(std::fpclassify(settled(form_I_T)), FP_ZERO)) << "direct form I - transposed";
+        expect(eq(std::fpclassify(settled(form_II_T)), FP_ZERO)) << "direct form II - transposed";
     };
 };
 
