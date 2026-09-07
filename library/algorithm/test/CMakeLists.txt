@@ -1,3 +1,14 @@
+if(MSVC)
+  # Scoped to this directory, which includes the library templates these tests instantiate; the blocks and the
+  # library's other targets keep the full warning set.
+  # C4305/C4244: the type-parametrised boost.ut suites are also instantiated at T=float, and their
+  #              expected-value tables are written as plain double/int literals.
+  # C4189:       MSVC does not count a constexpr local as "referenced" when its only uses are inside
+  #              a nested lambda, which is how these suites are structured throughout.
+  # The project builds with /WX, so each of these would otherwise fail the build.
+  add_compile_options(/wd4189 /wd4244 /wd4305)
+endif()
+
 add_ut_test(qa_MeasurementSlot)
 add_ut_test(qa_Decibel)
 add_ut_test(qa_MeasurementRecord)
