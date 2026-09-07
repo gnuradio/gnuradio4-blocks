@@ -319,6 +319,12 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
             justParsedHeader = _headerParsed;
 
             if (!_headerParsed && _readerFinalSeen) {
+                // A canceled reader ends exactly as a file truncated before its data chunk does, so a
+                // stop must end the stream rather than report a file defect.
+                if (_reader.cancelRequested()) {
+                    outSpan.publish(0U);
+                    return gr::work::Status::DONE;
+                }
                 fail("WavSource::processBulk()", gr::Error("WAV stream ended before data chunk"));
                 outSpan.publish(0U);
                 return gr::work::Status::ERROR;
@@ -388,6 +394,13 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
                 outSpan.publish(0U);
                 return gr::work::Status::ERROR;
             }
+        }
+
+        // A cancel during the data chunk is indistinguishable from a truncated one, and is likewise a
+        // stop rather than a file defect.
+        if (_readerFinalSeen && _reader.cancelRequested()) {
+            outSpan.publish(0U);
+            return gr::work::Status::DONE;
         }
 
         if (_readerFinalSeen) {
