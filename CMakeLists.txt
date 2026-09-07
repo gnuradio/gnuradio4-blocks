@@ -14,6 +14,10 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
+# Block libraries are opened with dlopen, so a dependency outside the system prefix must be on the installed RPATH for
+# the loader to resolve it.
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
+
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 include(FetchContent)
