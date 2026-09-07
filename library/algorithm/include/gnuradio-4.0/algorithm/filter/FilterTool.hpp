@@ -998,7 +998,8 @@ requires((maxSectionSize & 1) == 0) // to handle complex conjugate pole-zero pai
 [[nodiscard]] inline constexpr auto designFilter(const Type filterType, FilterParameters params, const Design filterDesign = Design::BUTTERWORTH) {
     PoleZeroLocations analogPoleZeros = designAnalogFilter(filterType, params, filterDesign);
 
-    T referenceFrequency;
+    T referenceFrequency = static_cast<T>(0); // the switch below covers every enumerator, but an out-of-range
+                                             // Type would otherwise leave this read uninitialised
     switch (filterType) {
     case Type::BANDPASS: referenceFrequency = std::sqrt(static_cast<T>(params.fLow * params.fHigh)); break;
     case Type::BANDSTOP: referenceFrequency = static_cast<T>(0); break;

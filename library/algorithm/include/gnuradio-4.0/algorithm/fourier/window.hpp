@@ -165,7 +165,7 @@ void create(ContainerType& container, Type windowFunction, const T param = std::
     switch (windowFunction) {
     case None:
     case Rectangular: {
-        std::ranges::fill(container, 1);
+        std::ranges::fill(container, static_cast<T>(1));
         return;
     }
     case Hamming: {
