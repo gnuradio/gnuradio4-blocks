@@ -271,7 +271,7 @@ DataSet<T> merge(const DataSet<T>& first, const TDataSets&... others) {
     mergedDataSet.axis_values = first.axis_values;
 
     // Prepare to accumulate all other fields
-    mergedDataSet.extents.emplace_back(first.signal_values.size()); // 1-dim data .> size of 1-dim data
+    mergedDataSet.extents.emplace_back(static_cast<std::int32_t>(first.signal_values.size())); // 1-dim data .> size of 1-dim data
     mergedDataSet.signal_names.reserve(sizeof...(others) + 1UZ);
     mergedDataSet.signal_units.reserve(sizeof...(others) + 1UZ);
     mergedDataSet.signal_values.reserve(first.signal_values.size() * (sizeof...(others) + 1UZ));
