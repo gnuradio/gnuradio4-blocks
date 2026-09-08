@@ -109,33 +109,33 @@ you can set the `backPressure` property to false.
             inputs.resize(n_inputs);
             outputs.resize(n_outputs);
         }
-        if (newSettings.contains("map_in") || newSettings.contains("map_out")) {
-            assert(map_in.value.size() == map_out.value.size() && "map_in and map_out must have the same length");
-            _internalMappingInOut.clear();
-            _internalMappingOutIn.clear();
+        // The routing depends on the port counts as much as on the maps, and `newSettings` names only what moved, so
+        // it is rebuilt and range-checked from the members rather than when a map key happens to be named.
+        assert(map_in.value.size() == map_out.value.size() && "map_in and map_out must have the same length");
+        _internalMappingInOut.clear();
+        _internalMappingOutIn.clear();
 
-            if (map_in.value.size() != map_out.value.size()) {
-                throw std::invalid_argument("Input and output map need to have the same number of elements");
+        if (map_in.value.size() != map_out.value.size()) {
+            throw std::invalid_argument("Input and output map need to have the same number of elements");
+        }
+
+        std::set<std::pair<gr::Size_t, gr::Size_t>> duplicateSet{};
+        for (auto i : std::views::iota(static_cast<std::size_t>(0), map_in.value.size())) {
+            gr::Size_t inIdx  = map_in.value[i];
+            gr::Size_t outIdx = map_out.value[i];
+
+            _internalMappingInOut[inIdx].push_back(outIdx);
+            _internalMappingOutIn[outIdx].push_back(inIdx);
+
+            if (!duplicateSet.insert({inIdx, outIdx}).second) { // check for duplicates
+                throw std::invalid_argument(std::format("Duplicate pair (in:{}, out:{}) at i={}", inIdx, outIdx, i));
             }
 
-            std::set<std::pair<gr::Size_t, gr::Size_t>> duplicateSet{};
-            for (auto i : std::views::iota(static_cast<std::size_t>(0), map_in.value.size())) {
-                gr::Size_t inIdx  = map_in.value[i];
-                gr::Size_t outIdx = map_out.value[i];
-
-                _internalMappingInOut[inIdx].push_back(outIdx);
-                _internalMappingOutIn[outIdx].push_back(inIdx);
-
-                if (!duplicateSet.insert({inIdx, outIdx}).second) { // check for duplicates
-                    throw std::invalid_argument(std::format("Duplicate pair (in:{}, out:{}) at i={}", inIdx, outIdx, i));
-                }
-
-                if (inIdx >= n_inputs) { // range checks
-                    throw std::invalid_argument(std::format("map_in[{}] = {} is >= n_inputs ({})", i, inIdx, n_inputs));
-                }
-                if (outIdx >= n_outputs) {
-                    throw std::invalid_argument(std::format("map_out[{}] = {} is >= n_outputs ({})", i, outIdx, n_outputs));
-                }
+            if (inIdx >= n_inputs) { // range checks
+                throw std::invalid_argument(std::format("map_in[{}] = {} is >= n_inputs ({})", i, inIdx, n_inputs));
+            }
+            if (outIdx >= n_outputs) {
+                throw std::invalid_argument(std::format("map_out[{}] = {} is >= n_outputs ({})", i, outIdx, n_outputs));
             }
         }
     }
