@@ -63,21 +63,23 @@ The information is stored (info only) in `trigger_name`, `trigger_time`, `trigge
 
     GR_MAKE_REFLECTABLE(SchmittTrigger, in, out, offset, threshold, trigger_name_rising_edge, trigger_name_falling_edge, sample_rate, forward_tag, trigger_name, trigger_time, trigger_offset, context);
 
-    gr::trigger::SchmittTrigger<T, Method, N_HISTORY> _trigger{0, 1};
-    std::uint64_t                                     _period{1U}; // nanoseconds per sample, at the clock `_now` runs on
-    std::uint64_t                                     _now{0U};    // nanoseconds since the Unix epoch
+    // The derived state states the same thing the settings do, so a block that is never called back still runs on
+    // the period and the decision levels its members name.
+    gr::trigger::SchmittTrigger<T, Method, N_HISTORY> _trigger{threshold.value, offset.value};
+    std::uint64_t                                     _period{static_cast<std::uint64_t>(1e9f / sample_rate)}; // nanoseconds per sample, at the clock `_now` runs on
+    std::uint64_t                                     _now{0U};                                                // nanoseconds since the Unix epoch
 
     void settingsChanged(const gr::property_map& /*oldSettings*/, const gr::property_map& newSettings) {
-        if (newSettings.contains("sample_rate")) {
-            _period = static_cast<std::uint64_t>(1e9f / sample_rate);
-        }
-        if (newSettings.contains("trigger_time")) {
+        // `newSettings` names only the settings that moved, so it gates the state-discarding resets and never the
+        // derivation: a value given at its default is not named, and a batch that moves nothing does not call back.
+        _period = static_cast<std::uint64_t>(1e9f / sample_rate);
+        _trigger.setOffset(offset);
+        _trigger.setThreshold(threshold);
+
+        if (newSettings.contains("trigger_time") || newSettings.contains("trigger_offset")) {
             _now = trigger_time + static_cast<std::uint64_t>(1e9f * trigger_offset);
         }
-
         if (newSettings.contains("offset") || newSettings.contains("threshold")) {
-            _trigger.setOffset(offset);
-            _trigger.setThreshold(threshold);
             _trigger.reset();
         }
     }
