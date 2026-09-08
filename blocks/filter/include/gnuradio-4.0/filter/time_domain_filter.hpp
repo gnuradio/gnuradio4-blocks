@@ -187,6 +187,9 @@ with selectable filter type (low-pass, high-pass, band-pass, band-stop), and sup
 
     GR_MAKE_REFLECTABLE(BasicFilterProto, in, out, filter_type, filter_response, filter_order, f_low, f_high, sample_rate, decimate, iir_design_method, fir_design_method);
 
+    // `settingsChanged` is not reached by a batch that moves no value, so the filter is also designed at start.
+    void start() { designFilter(); }
+
     // re-designing resets the filter history, so only the keys the design depends on may trigger it
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         static constexpr std::array kDesignKeys{"filter_type", "filter_response", "filter_order", "f_low", "f_high", "sample_rate", "decimate", "iir_design_method", "fir_design_method"};
@@ -194,8 +197,6 @@ with selectable filter type (low-pass, high-pass, band-pass, band-stop), and sup
             designFilter();
         }
     }
-
-    void start() { designFilter(); }
 
     void designFilter() {
         using namespace gr::filter;
