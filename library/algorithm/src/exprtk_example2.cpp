@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <format>
 #include <print>
 #include <ranges>
@@ -8,8 +9,8 @@
 #include <gnuradio-4.0/meta/formatter.hpp>
 
 struct VectorInfo {
-    std::size_t size;
-    ssize_t     index;
+    std::size_t    size;
+    std::ptrdiff_t index;
 };
 
 VectorInfo computeVectorInfo(void* base_ptr, void* end_ptr, std::size_t elementSize, void* access_ptr) {
@@ -25,7 +26,7 @@ VectorInfo computeVectorInfo(void* base_ptr, void* end_ptr, std::size_t elementS
         throw std::out_of_range(std::format("invalid vector boundaries [{}, {}]", base_ptr, end_ptr));
     }
 
-    return {static_cast<std::size_t>(end - base) / elementSize, (access - base) / static_cast<ssize_t>(elementSize)};
+    return {static_cast<std::size_t>(end - base) / elementSize, (access - base) / static_cast<std::ptrdiff_t>(elementSize)};
 }
 
 struct vector_access_rtc : public exprtk::vector_access_runtime_check {
