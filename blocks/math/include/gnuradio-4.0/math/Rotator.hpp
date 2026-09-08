@@ -56,12 +56,15 @@ is attached to.
             throw gr::exception(std::format("cannot set both 'frequency_shift' and 'phase_increment' in new setting (XOR): {}", newSettings));
         }
 
+        // The two settings name one rotation: the key that moved is the master and the other follows from the
+        // members, so a batch that names neither of them still leaves the increment stating what the members say.
         if (haveIncrement) {
             frequency_shift = static_cast<float>(phase_increment / (value_type(2) * std::numbers::pi_v<value_type>)) * sample_rate;
-        } else if (haveShift || newSettings.contains("sample_rate")) {
+        } else {
             phase_increment = value_type(2) * static_cast<value_type>(std::numbers::pi_v<float> * frequency_shift / sample_rate);
         }
 
+        // a settings change is not a phase discontinuity: the running phase moves only when `initial_phase` does
         if (newSettings.contains("initial_phase")) {
             _accumulated_phase = static_cast<double>(initial_phase);
         }
