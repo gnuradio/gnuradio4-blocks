@@ -195,29 +195,26 @@ Operating modes:
 
     void settingsChanged(const property_map& oldSettings, const property_map& newSettings) {
         if (newSettings.contains(convert_string_domain(function_generator::toString(function_generator::signal_type)))) {
-            if (signal_trigger.value.empty()) {
+            // The trigger that selects a definition repeats its name, and `newSettings` does not name a value the block
+            // already holds; `trigger_name` carries the name that arrived and is what the required one is compared to.
+            if (signal_trigger.value.empty() || trigger_name.value == signal_trigger.value) {
                 _currentTime = 0.;
-            } else if (newSettings.contains(gr::tag::TRIGGER_NAME.shortKey())) {
-                std::string newTrigger = newSettings.at(gr::tag::TRIGGER_NAME.shortKey()).value_or(std::string());
-                if (newTrigger == signal_trigger.value) {
-                    _currentTime = 0.;
-                } else {
-                    // trigger does not match required signal_trigger -- revert to previous
-                    if (auto oldType = oldSettings.at("signal_type").value_or(std::string_view{}); oldType.data() != nullptr) {
-                        if (auto parsed = magic_enum::enum_cast<function_generator::SignalType>(oldType); parsed.has_value()) {
-                            signal_type = parsed.value();
-                        }
+            } else {
+                // trigger does not match required signal_trigger -- revert to previous
+                if (auto oldType = oldSettings.at("signal_type").value_or(std::string_view{}); oldType.data() != nullptr) {
+                    if (auto parsed = magic_enum::enum_cast<function_generator::SignalType>(oldType); parsed.has_value()) {
+                        signal_type = parsed.value();
                     }
-                    start_value    = oldSettings.at("start_value").value_or(0.f);
-                    final_value    = oldSettings.at("final_value").value_or(0.f);
-                    duration       = oldSettings.at("duration").value_or(0.f);
-                    round_off_time = oldSettings.at("round_off_time").value_or(0.f);
-                    impulse_time0  = oldSettings.at("impulse_time0").value_or(0.f);
-                    impulse_time1  = oldSettings.at("impulse_time1").value_or(0.f);
-                    tone_frequency = oldSettings.at("tone_frequency").value_or(0.f);
-                    phase          = oldSettings.at("phase").value_or(0.f);
-                    seed           = oldSettings.at("seed").value_or(std::uint64_t(0));
                 }
+                start_value    = oldSettings.at("start_value").value_or(0.f);
+                final_value    = oldSettings.at("final_value").value_or(0.f);
+                duration       = oldSettings.at("duration").value_or(0.f);
+                round_off_time = oldSettings.at("round_off_time").value_or(0.f);
+                impulse_time0  = oldSettings.at("impulse_time0").value_or(0.f);
+                impulse_time1  = oldSettings.at("impulse_time1").value_or(0.f);
+                tone_frequency = oldSettings.at("tone_frequency").value_or(0.f);
+                phase          = oldSettings.at("phase").value_or(0.f);
+                seed           = oldSettings.at("seed").value_or(std::uint64_t(0));
             }
         }
         _timeTick = 1. / static_cast<double>(sample_rate);
