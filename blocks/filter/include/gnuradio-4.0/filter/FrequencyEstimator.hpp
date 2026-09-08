@@ -85,6 +85,9 @@ This block estimates the frequency of a signal using the time-domain algorithm d
         initialiseFilter();
     }
 
+    // `settingsChanged` is not reached by a batch that moves no value, so the filter is also designed at start.
+    void start() { initialiseFilter(); }
+
     [[nodiscard]] constexpr T processOne(T input) noexcept
     requires(TParent::ResamplingControl::kIsConst)
     {
@@ -244,6 +247,9 @@ This block estimates the frequency of a signal using the frequency-domain algori
         _prevFrequency = static_cast<T>(f_expected);
         initialiseFFT();
     }
+
+    // `settingsChanged` is not reached by a batch that moves no value, so the transform is also planned at start.
+    void start() { initialiseFFT(); }
 
     [[nodiscard]] T processOne(T input) noexcept
     requires(TParent::ResamplingControl::kIsConst)
