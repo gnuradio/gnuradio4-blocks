@@ -94,6 +94,7 @@ applies low-pass filters to calculate average values, and outputs decimated resu
         std::ranges::transform(indices, _lpActivePower.begin(), lp_filter_init);
     }
 
+    // `settingsChanged` is not reached by a batch that moves no value, so the filters are also designed at start.
     void start() { initFilters(); }
 
     // re-designing resets the filter state, so only the keys the design depends on may trigger it
