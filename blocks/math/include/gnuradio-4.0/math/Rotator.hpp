@@ -14,6 +14,7 @@
 #include <gnuradio-4.0/meta/utils.hpp>
 #include <numbers>
 #include <optional>
+#include <tuple>
 
 namespace gr::blocks::math {
 
@@ -158,6 +159,15 @@ is attached to.
         _accumulated_phase = phase;
 
         return work::Status::OK;
+    }
+
+    // the entry point for callers that rotate one sample at a time. A block offers the framework
+    // exactly one process function, so this cannot be called 'processOne' beside 'processBulk'; it
+    // runs the same recurrence, and one call advances the phase as one element of a bulk call does.
+    [[nodiscard]] constexpr T rotateOne(const T& inSample) noexcept {
+        T outSample{};
+        std::ignore = processBulk(std::span<const T>(&inSample, 1UZ), std::span<T>(&outSample, 1UZ));
+        return outSample;
     }
 };
 
