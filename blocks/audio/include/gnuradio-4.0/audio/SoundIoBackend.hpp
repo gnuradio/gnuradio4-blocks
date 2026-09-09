@@ -52,6 +52,21 @@ template<>
 
 inline gr::Error makeSoundIoError(std::string_view operation, int error, std::source_location location = std::source_location::current()) { return gr::Error(std::format("{}: {}", operation, soundio_strerror(error)), location); }
 
+// connects the way the device selector asks: PulseAudio first for a default device, because
+// soundio_connect() would pick JACK first and address raw ports instead of the desktop's routing,
+// and libsoundio's own order for an explicit selector, which names a device inside one backend
+[[nodiscard]] inline int connectSoundIo(SoundIo* sio, const AudioDeviceConfig& config) {
+    if (config.useDummyBackendForTests) {
+        return soundio_connect_backend(sio, SoundIoBackendDummy);
+    }
+    if (prefersPulseAudioFirst(config)) {
+        if (const int error = soundio_connect_backend(sio, SoundIoBackendPulseAudio); error == SoundIoErrorNone) {
+            return SoundIoErrorNone;
+        }
+    }
+    return soundio_connect(sio);
+}
+
 // true when the channel areas form one interleaved block that can be copied in one go
 template<AudioSample T>
 [[nodiscard]] inline bool areasAreInterleaved(const SoundIoChannelArea* areas, std::size_t channelCount) {
@@ -126,18 +141,7 @@ struct SoundIoSinkBackend {
             return std::unexpected(gr::Error("soundio_create(): out of memory"));
         }
 
-        // prefer PulseAudio: the desktop default-device path with server-managed routing;
-        // soundio_connect() would pick JACK first and address raw device ports
-        int connectError;
-        if (config.useDummyBackendForTests) {
-            connectError = soundio_connect_backend(_soundio, SoundIoBackendDummy);
-        } else {
-            connectError = soundio_connect_backend(_soundio, SoundIoBackendPulseAudio);
-            if (connectError != SoundIoErrorNone) {
-                connectError = soundio_connect(_soundio); // fall back to soundio's own preference
-            }
-        }
-        if (connectError != SoundIoErrorNone) {
+        if (const int connectError = connectSoundIo(_soundio, config); connectError != SoundIoErrorNone) {
             shutdown();
             return std::unexpected(makeSoundIoError("soundio_connect()", connectError));
         }
@@ -387,18 +391,7 @@ struct SoundIoSourceBackend {
             return std::unexpected(gr::Error("soundio_create(): out of memory"));
         }
 
-        // prefer PulseAudio: the desktop default-device path with server-managed routing;
-        // soundio_connect() would pick JACK first and address raw device ports
-        int connectError;
-        if (config.useDummyBackendForTests) {
-            connectError = soundio_connect_backend(_soundio, SoundIoBackendDummy);
-        } else {
-            connectError = soundio_connect_backend(_soundio, SoundIoBackendPulseAudio);
-            if (connectError != SoundIoErrorNone) {
-                connectError = soundio_connect(_soundio); // fall back to soundio's own preference
-            }
-        }
-        if (connectError != SoundIoErrorNone) {
+        if (const int connectError = connectSoundIo(_soundio, config); connectError != SoundIoErrorNone) {
             shutdown();
             return std::unexpected(makeSoundIoError("soundio_connect()", connectError));
         }
