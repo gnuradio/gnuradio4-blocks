@@ -104,7 +104,7 @@ struct AudioStateBase {
     std::atomic<std::size_t> overflowCount{0U};
     std::atomic<std::size_t> underrunCount{0U};
     std::atomic<std::size_t> droppedSamples{0U}; // offered by the device (or the producer) but not stored
-    std::atomic<std::size_t> silenceSamples{0U}; // holes the driver reported with no data behind them
+    std::atomic<std::size_t> silenceSamples{0U}; // silence stored in place of holes the driver reported with no data behind them
     SampleBuffer             buffer{1U};
     SampleWriter             writer{buffer.new_writer()};
     SampleReader             reader{buffer.new_reader()};
