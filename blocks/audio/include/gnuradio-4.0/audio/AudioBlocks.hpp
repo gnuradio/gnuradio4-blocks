@@ -14,11 +14,13 @@
 #include <gnuradio-4.0/thread/thread_pool.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <expected>
 #include <format>
 #include <mutex>
 #include <print>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -436,10 +438,31 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
     using StagingWriter = decltype(std::declval<StagingBuffer&>().new_writer());
     using StagingReader = decltype(std::declval<StagingBuffer&>().new_reader());
 
+    // what the I/O thread needs from the settings, handed over with the reconfigure request: the I/O
+    // thread reads no setting, so nothing it uses can change under it while the scheduler thread writes
+    struct IoConfig {
+        detail::AudioDeviceConfig  device{};
+        std::size_t                stagingCapacity{1U};
+        float                      ioBufferSeconds{5.f};
+        float                      ppmEstimatorCutoff{0.1f};
+        algorithm::DriftCorrection driftCorrection{algorithm::DriftCorrection::Linear};
+        bool                       debugConsole{false};
+    };
+
+    // what the device negotiated, handed back for the scheduler thread to publish as settings
+    struct NegotiatedFormat {
+        float                    sampleRate{0.f};
+        gr::Size_t               numChannels{0U};
+        std::vector<std::string> availableDevices{};
+        bool                     pending{false};
+    };
+
     BackendImpl                    _backendImpl{};
     bool                           _failed{false};
     detail::AudioDeviceConfig      _activeConfig{};
     std::mutex                     _deviceMutex;
+    std::shared_mutex              _ringMutex;   // unique: the I/O thread replaces the staging generation; shared: the producer holds one generation across a reservation
+    std::mutex                     _configMutex; // the configuration handed to the I/O thread and the format handed back
     algorithm::SampleRateEstimator _rateEstimator;
     algorithm::DriftCompensator<T> _driftCompensator;
     double                         _smoothedFillLevel{0.5};
@@ -452,7 +475,12 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
     bool                           _ioStopRequested{false};
     bool                           _ioAbortRequested{false};
     bool                           _reconfigureRequested{false};
-    detail::AudioDeviceConfig      _pendingConfig{};
+    bool                           _streamActive{false};
+    IoConfig                       _pendingIoConfig{};
+    NegotiatedFormat               _negotiated{};
+    IoConfig                       _ioConfig{};
+    std::atomic<std::size_t>       _uncollectedDropped{0U};
+    std::size_t                    _ioDroppedSamples{0U};
     std::size_t                    _totalStagedSamples{0U};
     std::size_t                    _totalIoWrittenSamples{0U};
     std::uint64_t                  _lastDropLogNs{0U};
@@ -470,10 +498,11 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
     void start() {
         std::lock_guard deviceLock(_deviceMutex);
         gr::atomic_ref(_reconfigureRequested).store_release(false);
-        if (auto result = initialiseBackendUnlocked(); !result) {
+        if (auto result = initialiseBackendUnlocked(makeIoConfig()); !result) {
             failUnlocked("AudioSink::start()", result.error());
             return;
         }
+        applyNegotiatedFormat();
         // start I/O thread that drains the staging buffer into the backend
         gr::atomic_ref(_ioAbortRequested).store_release(false);
         gr::atomic_ref(_ioStopRequested).store_release(false);
@@ -494,18 +523,26 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
             gr::atomic_ref(_ioThreadDone).wait(false);
         }
         shutdownDevice();
+        applyNegotiatedFormat();
+        collectDroppedSamples();
     }
 
-    // reconfiguring rebuilds the rings and the stream the I/O thread holds spans into, and opens a
-    // device (hundreds of ms) under Settings::_mutex, so only the request is recorded here
+    // reconfiguring rebuilds the rings and the stream the I/O thread holds spans into and opens a
+    // device (hundreds of ms), so only the request is recorded here; the whole configuration the I/O
+    // thread will need is taken here, on the thread that owns the settings
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& /*newSettings*/) {
+        IoConfig         requested = makeIoConfig();
+        std::shared_lock ringLock(_ringMutex);
         if (_activeConfig.sampleRate == 0U) {
             return;
         }
-        if (currentSampleRate() == _activeConfig.sampleRate && currentChannelCount() == _activeConfig.numChannels && device.value == _activeConfig.device) {
+        if (requested.device.sampleRate == _activeConfig.sampleRate && requested.device.numChannels == _activeConfig.numChannels && requested.device.device == _activeConfig.device) {
             return;
         }
-        _pendingConfig = {.sampleRate = currentSampleRate(), .numChannels = currentChannelCount(), .bufferFrames = backendBufferFrames(), .device = device.value, .useDummyBackendForTests = _useDummyBackendForTests};
+        {
+            std::lock_guard configLock(_configMutex);
+            _pendingIoConfig = std::move(requested);
+        }
         gr::atomic_ref(_reconfigureRequested).store_release(true);
     }
 
@@ -514,18 +551,24 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
             return gr::work::Status::INSUFFICIENT_INPUT_ITEMS;
         }
 
-        if (_failed) {
-            std::ignore = inSpan.consume(0U);
-            return gr::work::Status::ERROR;
-        }
+        applyNegotiatedFormat();
+        collectDroppedSamples();
 
-        const bool streamActive = _backendImpl.isStreamActive();
+        const bool streamActive = gr::atomic_ref(_streamActive).load_acquire();
         if (static_cast<bool>(permission.value) != streamActive) {
             permission = streamActive;
             this->settings().updateActiveParameters();
         }
 
-        const std::size_t channelCount  = std::max<std::size_t>(1U, static_cast<std::size_t>(num_channels.value));
+        // the I/O thread replaces the whole staging generation; the shared lock holds the replacement
+        // off across the reservation, so no span outlives the ring it was taken from
+        std::shared_lock ringLock(_ringMutex);
+        if (_failed) {
+            std::ignore = inSpan.consume(0U);
+            return gr::work::Status::ERROR;
+        }
+
+        const std::size_t channelCount  = std::max<std::size_t>(1U, static_cast<std::size_t>(_activeConfig.numChannels));
         const std::size_t nFrameSamples = inSpan.size() - (inSpan.size() % channelCount);
         if (nFrameSamples == 0U) {
             std::ignore = inSpan.consume(0U);
@@ -562,11 +605,38 @@ private:
 
     [[nodiscard]] std::size_t backendBufferFrames() const { return std::max<std::size_t>(8192UZ, ioBufferSamples()); }
 
+    // only the scheduler thread reads the settings; every value the I/O thread needs is taken here
+    [[nodiscard]] IoConfig makeIoConfig() const {
+        return IoConfig{.device = {.sampleRate = currentSampleRate(), .numChannels = currentChannelCount(), .bufferFrames = backendBufferFrames(), .device = device.value, .useDummyBackendForTests = _useDummyBackendForTests}, //
+            .stagingCapacity    = std::max<std::size_t>(1U, ioBufferSamples()),
+            .ioBufferSeconds    = io_buffer_size.value,
+            .ppmEstimatorCutoff = ppm_estimator_cutoff.value,
+            .driftCorrection    = drift_correction.value,
+            .debugConsole       = debug_console.value};
+    }
+
+    // the negotiated format reaches the settings from the scheduler thread, never from the I/O thread
+    void applyNegotiatedFormat() {
+        NegotiatedFormat negotiated;
+        {
+            std::lock_guard configLock(_configMutex);
+            if (!_negotiated.pending) {
+                return;
+            }
+            negotiated          = std::move(_negotiated);
+            _negotiated.pending = false;
+        }
+        sample_rate       = negotiated.sampleRate;
+        num_channels      = negotiated.numChannels;
+        available_devices = std::move(negotiated.availableDevices);
+        this->settings().updateActiveParameters();
+    }
+
     void ioWriteLoop() {
         gr::thread_pool::thread::setThreadName(std::format("audio-sink:{}", this->name.value));
 
-        std::size_t channelCount = std::max<std::size_t>(1U, static_cast<std::size_t>(num_channels.value));
-        double      nominalRate  = static_cast<double>(sample_rate.value);
+        std::size_t channelCount = std::max<std::size_t>(1U, static_cast<std::size_t>(_activeConfig.numChannels));
+        double      nominalRate  = static_cast<double>(_activeConfig.sampleRate);
 
         // pre-fill: wait for staging buffer to accumulate ~50ms before feeding the backend
         const std::size_t prefillSamples  = static_cast<std::size_t>(nominalRate * 0.05) * channelCount;
@@ -581,19 +651,21 @@ private:
         while (!gr::atomic_ref(_ioStopRequested).load_acquire()) {
             if (gr::atomic_ref(_reconfigureRequested).load_acquire()) {
                 applyPendingReconfigure();
-                channelCount = std::max<std::size_t>(1U, static_cast<std::size_t>(num_channels.value));
-                nominalRate  = static_cast<double>(sample_rate.value);
+                channelCount = std::max<std::size_t>(1U, static_cast<std::size_t>(_activeConfig.numChannels));
+                nominalRate  = static_cast<double>(_activeConfig.sampleRate);
             }
 
             if (auto pollResult = _backendImpl.poll(); !pollResult) {
-                if (debug_console.value) {
+                if (_ioConfig.debugConsole) {
                     std::println(stderr, "[AudioSink] poll error: {}", pollResult.error().message);
                 }
                 break;
             }
 
             // wait for backend to be ready (WASM AudioWorklet may take time to initialise)
-            if (!_backendImpl.isStreamActive()) {
+            const bool streamActive = _backendImpl.isStreamActive();
+            gr::atomic_ref(_streamActive).store_release(streamActive);
+            if (!streamActive) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 continue;
             }
@@ -649,7 +721,7 @@ private:
 
             // check underrun — throttle log to once per second
             const auto underruns = _backendImpl._state.underrunCount.load(std::memory_order_relaxed);
-            if (underruns > _lastReportedUnderruns && debug_console.value) {
+            if (underruns > _lastReportedUnderruns && _ioConfig.debugConsole) {
                 const auto  now     = std::chrono::steady_clock::now();
                 static auto lastLog = now;
                 if (now - lastLog >= std::chrono::seconds(1)) {
@@ -661,7 +733,7 @@ private:
         }
 
         // drain staging → backend, then wait for playout (audio callback consuming the backend buffer)
-        const auto drainDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int>(io_buffer_size.value * 1000.f + 2000.f));
+        const auto drainDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int>(_ioConfig.ioBufferSeconds * 1000.f + 2000.f));
 
         // phase 1: transfer all remaining staging samples into the backend ring buffer
         while (_stagingReader.available() > 0U && !gr::atomic_ref(_ioAbortRequested).load_acquire() && std::chrono::steady_clock::now() < drainDeadline) {
@@ -701,6 +773,8 @@ private:
             }
             std::ignore = readSpan.consume(readSpan.size());
         }
+        // whatever the drain could not place is lost with the ring, so it is counted as dropped
+        reportDroppedSamples(_stagingReader.available());
 
         // phase 2: wait for the audio callback to consume the backend buffer (playout)
         while (_backendImpl._state.reader.available() > channelCount && _backendImpl.isStreamActive() && !gr::atomic_ref(_ioAbortRequested).load_acquire() && std::chrono::steady_clock::now() < drainDeadline) {
@@ -710,20 +784,32 @@ private:
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
 
-        if (debug_console.value) {
+        if (_ioConfig.debugConsole) {
+            std::unique_lock  ringLock(_ringMutex);
             const std::size_t underruns = _backendImpl._state.underrunCount.load(std::memory_order_relaxed);
             const std::size_t overflows = _backendImpl._state.overflowCount.load(std::memory_order_relaxed);
-            std::println(stderr, "[AudioSink] I/O thread done: staged={} ioWritten={} dropped={} backendAvail={} underruns={} overflows={}", _totalStagedSamples, _totalIoWrittenSamples, dropped_samples.value, _backendImpl._state.reader.available(), underruns, overflows);
+            std::println(stderr, "[AudioSink] I/O thread done: staged={} ioWritten={} dropped={} backendAvail={} underruns={} overflows={}", _totalStagedSamples, _totalIoWrittenSamples, _ioDroppedSamples, _backendImpl._state.reader.available(), underruns, overflows);
         }
         gr::atomic_ref(_ioThreadDone).store_release(true);
         gr::atomic_ref(_ioThreadDone).notify_all();
     }
 
+    // the I/O thread only counts; the setting and its active parameters belong to the scheduler thread
     void reportDroppedSamples(std::size_t nDropped) {
         if (nDropped == 0UZ) {
             return;
         }
+        _ioDroppedSamples += nDropped;
+        _uncollectedDropped.fetch_add(nDropped, std::memory_order_relaxed);
+    }
+
+    void collectDroppedSamples() {
+        const std::size_t nDropped = _uncollectedDropped.exchange(0U, std::memory_order_relaxed);
+        if (nDropped == 0UZ) {
+            return;
+        }
         dropped_samples = dropped_samples.value + static_cast<gr::Size_t>(nDropped);
+        this->settings().updateActiveParameters();
 
         constexpr std::uint64_t kLogIntervalNs = 1'000'000'000ULL;
         const std::uint64_t     tNowNs         = detail::wallClockNs();
@@ -736,59 +822,66 @@ private:
     void failUnlocked(std::string_view endpoint, gr::Error error) {
         this->emitErrorMessage(endpoint, error);
         _backendImpl.shutdown();
+        gr::atomic_ref(_streamActive).store_release(false);
+        std::unique_lock ringLock(_ringMutex);
         _failed = true;
     }
 
-    // runs on the I/O thread between spans, so no span into the rings or the stream being replaced
-    // is live, and the device open does not happen under Settings::_mutex
+    // runs on the I/O thread between spans, so no span the I/O thread holds into the rings or the
+    // stream being replaced is live; the producer is held off by the ring lock the replacement takes
     void applyPendingReconfigure() {
         std::lock_guard deviceLock(_deviceMutex);
         gr::atomic_ref(_reconfigureRequested).store_release(false);
-        const auto pending = _pendingConfig;
-        if (pending.sampleRate == _activeConfig.sampleRate && pending.numChannels == _activeConfig.numChannels && pending.device == _activeConfig.device) {
+        IoConfig pending;
+        {
+            std::lock_guard configLock(_configMutex);
+            pending = _pendingIoConfig;
+        }
+        if (pending.device.sampleRate == _activeConfig.sampleRate && pending.device.numChannels == _activeConfig.numChannels && pending.device.device == _activeConfig.device) {
             return;
         }
-        if (auto result = initialiseBackendUnlocked(); !result) {
+        if (auto result = initialiseBackendUnlocked(pending); !result) {
             failUnlocked("AudioSink::applyPendingReconfigure()", result.error());
         }
     }
 
-    [[nodiscard]] std::expected<void, gr::Error> initialiseBackendUnlocked() {
-        const detail::AudioDeviceConfig config{.sampleRate = currentSampleRate(), .numChannels = currentChannelCount(), .bufferFrames = backendBufferFrames(), .device = device.value, .useDummyBackendForTests = _useDummyBackendForTests};
-        auto                            result = _backendImpl.start(config);
+    [[nodiscard]] std::expected<void, gr::Error> initialiseBackendUnlocked(const IoConfig& requested) {
+        auto result = _backendImpl.start(requested.device);
         if (!result) {
             return std::unexpected(result.error());
         }
 
         const auto& actual = *result;
-        if (actual.sampleRate != config.sampleRate && config.sampleRate != 0U) {
-            this->emitErrorMessage("AudioSink::start()", gr::Error(std::format("requested sample rate {} Hz, device negotiated {} Hz", config.sampleRate, actual.sampleRate)));
-            sample_rate = static_cast<float>(actual.sampleRate);
-        }
-        if (actual.numChannels != config.numChannels && config.numChannels != 0U) {
-            num_channels = static_cast<gr::Size_t>(actual.numChannels);
+        if (actual.sampleRate != requested.device.sampleRate && requested.device.sampleRate != 0U) {
+            this->emitErrorMessage("AudioSink::start()", gr::Error(std::format("requested sample rate {} Hz, device negotiated {} Hz", requested.device.sampleRate, actual.sampleRate)));
         }
 
-        available_devices      = _backendImpl._availableDevices;
-        _activeConfig          = {.sampleRate = actual.sampleRate, .numChannels = actual.numChannels, .bufferFrames = backendBufferFrames(), .device = device.value};
-        _failed                = false;
+        _ioConfig              = requested;
         _lastReportedUnderruns = 0U;
         _smoothedFillLevel     = 0.5;
-        _bufferCapacity        = detail::AudioStateBase<T>::bufferCapacitySamples(actual.numChannels, backendBufferFrames());
-        _driftCompensator.mode = drift_correction.value;
+        _bufferCapacity        = detail::AudioStateBase<T>::bufferCapacitySamples(actual.numChannels, requested.device.bufferFrames);
+        _driftCompensator.mode = requested.driftCorrection;
         _driftCompensator.reset();
-        _totalStagedSamples    = 0U;
-        _totalIoWrittenSamples = 0U;
 
-        // staging buffer sized from io_buffer_size setting
-        const std::size_t stagingCapacity = ioBufferSamples();
-        _stagingBuffer                    = StagingBuffer(std::max<std::size_t>(1U, stagingCapacity));
-        _stagingWriter                    = _stagingBuffer.new_writer();
-        _stagingReader                    = _stagingBuffer.new_reader();
-
-        const double expectedChunkRate  = static_cast<double>(actual.sampleRate) / static_cast<double>(backendBufferFrames());
-        _rateEstimator.filter_cutoff_hz = ppm_estimator_cutoff.value;
+        const double expectedChunkRate  = static_cast<double>(actual.sampleRate) / static_cast<double>(std::max<std::size_t>(1U, requested.device.bufferFrames));
+        _rateEstimator.filter_cutoff_hz = requested.ppmEstimatorCutoff;
         _rateEstimator.reset(static_cast<double>(actual.sampleRate), expectedChunkRate);
+
+        // the producer holds spans into the staging ring, so the generation is replaced under the lock
+        // that excludes it, and what the old ring still held is counted as lost
+        {
+            std::unique_lock ringLock(_ringMutex);
+            reportDroppedSamples(_stagingReader.available());
+            _stagingBuffer = StagingBuffer(requested.stagingCapacity);
+            _stagingWriter = _stagingBuffer.new_writer();
+            _stagingReader = _stagingBuffer.new_reader();
+            _activeConfig  = {.sampleRate = actual.sampleRate, .numChannels = actual.numChannels, .bufferFrames = requested.device.bufferFrames, .device = requested.device.device};
+            _failed        = false;
+
+            std::lock_guard configLock(_configMutex);
+            _negotiated = {.sampleRate = static_cast<float>(actual.sampleRate), .numChannels = static_cast<gr::Size_t>(actual.numChannels), .availableDevices = _backendImpl._availableDevices, .pending = true};
+        }
+        gr::atomic_ref(_streamActive).store_release(_backendImpl.isStreamActive());
 
         return {};
     }
@@ -796,6 +889,7 @@ private:
     void shutdownDevice() {
         std::lock_guard deviceLock(_deviceMutex);
         _backendImpl.shutdown();
+        gr::atomic_ref(_streamActive).store_release(false);
     }
 
     IoThreadGuard _ioGuard{*this};
