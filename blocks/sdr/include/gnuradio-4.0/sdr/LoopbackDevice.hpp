@@ -62,6 +62,8 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *  - optional rate-limited readStream (simulate_timing, default on for rxOnly)
  *  - pluggable channel model via setChannelModel() or Soapy writeSetting()
  *  - built-in models: passthrough, attenuation, AWGN, delay, composable chain
+ *  - max_write_samples=N caps every writeStream to N samples, so a caller sees
+ *    the short writes a real device produces (0, the default, accepts the lot)
  *
  * Channel models reuse GR4 algorithms (gr::rng::GaussianNoise, etc.) called
  * directly without a scheduler. The std::function interface is extensible to
@@ -227,10 +229,11 @@ class LoopbackDevice : public SoapySDR::Device {
         explicit ChannelState(std::size_t bufferSize) : rxBuffer(bufferSize), rxWriter(rxBuffer.new_writer()), rxReader(rxBuffer.new_reader()) {}
     };
 
-    std::size_t                                          _instanceId  = 0UZ;
-    std::size_t                                          _numChannels = 1UZ;
-    std::size_t                                          _bufferSize  = kDefaultBufferSize;
-    DeviceMode                                           _deviceMode  = DeviceMode::Loopback;
+    std::size_t                                          _instanceId      = 0UZ;
+    std::size_t                                          _numChannels     = 1UZ;
+    std::size_t                                          _bufferSize      = kDefaultBufferSize;
+    std::size_t                                          _maxWriteSamples = 0UZ; // 0: accept the whole request
+    DeviceMode                                           _deviceMode      = DeviceMode::Loopback;
     std::atomic<bool>                                    _simulateTiming{false};
     std::vector<CF32>                                    _rxToneScratch;  // reusable per-readStream call
     std::vector<CF32>                                    _rxModelScratch; // reusable per-readStream call
@@ -264,6 +267,12 @@ public:
             auto [ptr, ec] = std::from_chars(it->second.data(), it->second.data() + it->second.size(), _bufferSize);
             if (ec != std::errc{} || _bufferSize == 0UZ) {
                 _bufferSize = kDefaultBufferSize;
+            }
+        }
+        if (auto it = args.find("max_write_samples"); it != args.end()) {
+            auto [ptr, ec] = std::from_chars(it->second.data(), it->second.data() + it->second.size(), _maxWriteSamples);
+            if (ec != std::errc{}) {
+                _maxWriteSamples = 0UZ;
             }
         }
         if (auto it = args.find("device_mode"); it != args.end()) {
@@ -443,11 +452,12 @@ public:
         if (!_txStreamActive.load(std::memory_order_relaxed)) {
             return SOAPY_SDR_STREAM_ERROR;
         }
+        const std::size_t nRequested = (_maxWriteSamples == 0UZ) ? numElems : std::min(numElems, _maxWriteSamples);
         if (_deviceMode == DeviceMode::TxOnly) {
-            return static_cast<int>(numElems); // null sink — accept and discard
+            return static_cast<int>(nRequested); // null sink — accept and discard
         }
 
-        std::size_t nWritten = numElems;
+        std::size_t nWritten = nRequested;
         for (std::size_t chIdx = 0UZ; chIdx < _txChannels.size(); ++chIdx) {
             auto ch = _txChannels[chIdx];
             if (ch >= _numChannels) {
@@ -456,11 +466,11 @@ public:
 
             auto& state = *_channels[ch];
 
-            auto writerSpan = state.rxWriter.tryReserve<gr::SpanReleasePolicy::ProcessNone>(numElems);
+            auto writerSpan = state.rxWriter.tryReserve<gr::SpanReleasePolicy::ProcessNone>(nRequested);
             if (writerSpan.empty()) {
                 return SOAPY_SDR_TIMEOUT; // backpressure — RX buffer full
             }
-            auto nWrite = std::min(writerSpan.size(), numElems);
+            auto nWrite = std::min(writerSpan.size(), nRequested);
             nWritten    = std::min(nWritten, nWrite);
 
             std::span<const CF32> txSpan;

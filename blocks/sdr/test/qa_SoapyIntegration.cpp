@@ -723,3 +723,79 @@ const boost::ut::suite<"SoapySink BurstTaper"> taperTests = [] {
         device->deactivateStream(rxStream);
     };
 };
+
+const boost::ut::suite<"SoapySink shutdown"> shutdownTests = [] {
+    using namespace gr::blocks::sdr;
+    using Sched = gr::scheduler::Simple<>;
+
+    "a device that accepts nothing cannot hold up stop()"_test = [] {
+        constexpr float kRate      = 1e6f;
+        constexpr auto  kRunTime   = std::chrono::seconds{1};
+        constexpr auto  kStopBound = std::chrono::seconds{10};
+        gr::Graph       flow;
+
+        // the loopback routes TX into an RX ring that no source drains, so once the ring is full every
+        // write reports a timeout and accepts nothing: the shutdown drain and the safety ramp-down both
+        // face a device that never makes progress
+        auto& clockSrc = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({
+            {"sample_rate", kRate},
+            {"n_samples_max", gr::Size_t{0}},
+            {"chunk_size", gr::Size_t{1024}},
+        });
+        auto& txSink   = flow.emplaceBlock<SoapySink<CF32, 1UZ>>({
+            {"device", "loopback"},
+            {"device_parameter", std::string("buffer_size=4096")},
+            {"sample_rate", kRate},
+            {"max_chunk_size", std::uint32_t{1024}},
+            {"burst_taper_enabled", true},
+            {"burst_ramp_time", 0.01f},
+            {"burst_taper_type", std::string("Linear")},
+        });
+        expect(flow.connect<"out", "in">(clockSrc, txSink).has_value());
+
+        Sched sched;
+        expect(sched.exchange(std::move(flow)).has_value());
+        const auto start = std::chrono::steady_clock::now();
+        expect(runWithWatchdog(sched, kRunTime).has_value());
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+
+        expect(lt(elapsedMs, std::chrono::milliseconds(kRunTime + kStopBound).count())) << std::format("stop() took {} ms after a {} s run", elapsedMs, kRunTime.count());
+        expect(txSink._rampAbandoned.load()) << "the safety ramp-down should give up on a device that accepts nothing";
+        expect(gt(txSink._stalledWrites.load(), 0UZ)) << "giving up implies stalled writes were counted";
+    };
+
+    "a device that accepts one sample per call still ramps down"_test = [] {
+        constexpr float         kRate        = 100e3f;
+        constexpr float         kRampTime    = 0.001f;
+        constexpr std::uint32_t kTimeOutUs   = 100'000U; // a long timeout buys a short stall budget
+        constexpr auto          kRampSamples = static_cast<std::size_t>(kRampTime * kRate);
+        gr::Graph               flow;
+
+        auto& clockSrc = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({
+            {"sample_rate", kRate},
+            {"n_samples_max", gr::Size_t{2000}},
+            {"chunk_size", gr::Size_t{64}},
+        });
+        auto& txSink   = flow.emplaceBlock<SoapySink<CF32, 1UZ>>({
+            {"device", "loopback"},
+            {"device_parameter", std::string("device_mode=tx_only,max_write_samples=1")},
+            {"sample_rate", kRate},
+            {"max_chunk_size", std::uint32_t{64}},
+            {"max_time_out_us", kTimeOutUs},
+            {"burst_taper_enabled", true},
+            {"burst_ramp_time", kRampTime},
+            {"burst_taper_type", std::string("Linear")},
+        });
+        expect(flow.connect<"out", "in">(clockSrc, txSink).has_value());
+
+        // every ramp sample needs its own write, so a budget spent on progressing writes would run out first
+        expect(gt(kRampSamples, txSink.stalledWriteBudget())) << std::format("{} ramp samples against a budget of {}", kRampSamples, txSink.stalledWriteBudget());
+
+        Sched sched;
+        expect(sched.exchange(std::move(flow)).has_value());
+        expect(runWithWatchdog(sched, std::chrono::seconds{10}).has_value());
+
+        expect(!txSink._rampAbandoned.load()) << "the ramp-down should survive more writes than the stall budget";
+        expect(eq(txSink._stalledWrites.load(), 0UZ)) << "a device that always takes a sample never stalls";
+    };
+};
