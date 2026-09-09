@@ -319,6 +319,64 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         }
     };
 
+    "capture is quiesced before the final loss collection"_test = [] {
+        constexpr std::string_view caseName = "AudioSource shutdown collection";
+
+        // the quiesce stops the capture callback and keeps the counts, so what follows it is final
+        gr::blocks::audio::detail::SoundIoSourceBackend<float> backend;
+        expect(backend.start({.sampleRate = 48000U, .numChannels = 1U, .bufferFrames = 8192UZ, .device = "", .useDummyBackendForTests = true}).has_value()) << caseName;
+        backend._state.silenceSamples.fetch_add(17U);
+        backend.quiesceCapture();
+        expect(!backend.isStreamActive()) << "no capture callback may run after the quiesce";
+        expect(eq(backend._state.silenceSamples.load(), 17UZ)) << "the quiesce must leave the counts to be collected";
+        backend.shutdown();
+        expect(eq(backend._state.silenceSamples.load(), 0UZ)) << "only the shutdown that follows the collection resets them";
+
+        // and the block's stop collects what the backend was holding when it stopped
+        gr::blocks::audio::AudioSource<float> source({{"sample_rate", 48000.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}});
+        source._useDummyBackendForTests = true;
+        source.settings().init();
+        std::ignore = source.settings().applyStagedParameters();
+        source.start();
+        source._backendImpl._state.silenceSamples.fetch_add(17U);
+        source.stop();
+        expect(eq(source.dropped_samples.value, gr::Size_t(17))) << std::format("{}: holes pending at stop must reach the public count, got {}", caseName, source.dropped_samples.value);
+    };
+
+    "an evicted silence placeholder is counted once"_test = [] {
+        constexpr std::string_view caseName = "AudioSource hole eviction";
+
+        gr::blocks::audio::detail::AudioSourceState<float> state;
+        state.recreateBuffer(1024UZ);
+
+        // fill the ring the way the capture callback fills a driver hole it has already counted;
+        // the reservation is scoped, because the ring publishes a claim when its span goes away
+        {
+            auto holes = state.writer.tryReserve(1024UZ);
+            expect(eq(holes.size(), 1024UZ)) << caseName;
+            std::fill(holes.begin(), holes.end(), 0.f);
+            holes.publish(1024UZ);
+        }
+        state.silenceSamples.fetch_add(1024U);
+        state.silenceInRing.fetch_add(1024U);
+        expect(eq(state.reader.available(), 1024UZ)) << caseName;
+
+        // evicting a placeholder adds nothing: the hole was counted when it was stored
+        expect(eq(state.discardOldest(64UZ), 0UZ)) << std::format("{}: an evicted placeholder must not be counted twice", caseName);
+        expect(eq(state.silenceInRing.load(), 960UZ)) << caseName;
+
+        // real capture lost to the same backpressure is still counted
+        {
+            auto captured = state.writer.tryReserve(64UZ);
+            expect(eq(captured.size(), 64UZ)) << caseName;
+            std::fill(captured.begin(), captured.end(), 1.f);
+            captured.publish(64UZ);
+        }
+        expect(eq(state.discardOldest(960UZ), 0UZ)) << caseName;
+        expect(eq(state.discardOldest(64UZ), 64UZ)) << std::format("{}: evicted capture must still be counted", caseName);
+        expect(eq(state.silenceInRing.load(), 0UZ)) << caseName;
+    };
+
     "AudioSink accounts for samples the device ring refused"_test = [] {
         constexpr std::string_view      caseName = "AudioSink sample accounting";
         const std::vector<std::int16_t> reference(8000, std::int16_t(1000)); // 3.6x the 0.1 s staging ring

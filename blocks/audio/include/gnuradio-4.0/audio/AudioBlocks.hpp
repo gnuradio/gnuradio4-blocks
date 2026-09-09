@@ -108,7 +108,10 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
 
     void stop() {
         gr::atomic_ref(_ioThreadDone).wait(false);
-        collectBackendLosses(); // shutdown() drops the backend's counts with its ring
+        // a capture callback still in flight would add to the counts after they were taken, and
+        // shutdown() drops them with the ring, so capture is quiesced before the final collection
+        _backendImpl.quiesceCapture();
+        collectBackendLosses();
         _backendImpl.shutdown();
     }
 
@@ -136,7 +139,8 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
             this->applyChangedSettings();
 
             if (_failed) {
-                // retry: shut down, wait, re-initialise
+                // retry: quiesce capture, take its final counts, then shut down and re-initialise
+                _backendImpl.quiesceCapture();
                 collectBackendLosses();
                 _backendImpl.shutdown();
                 std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -206,12 +210,12 @@ private:
             const std::size_t backendCapacity = _backendImpl._state.buffer.size();
             const std::size_t backlog         = _backendImpl._state.reader.available();
             if (backlog >= backendCapacity) {
-                const std::size_t excess      = detail::wholeFrameSamples(backlog - backendCapacity + channelCount, channelCount);
-                auto              discardSpan = _backendImpl._state.reader.get(std::min(excess, backlog));
-                const std::size_t nDiscarded  = discardSpan.size();
-                std::ignore                   = discardSpan.consume(nDiscarded);
-                _backlogDiscardedSamples += nDiscarded;
-                reportDiscardedSamples(nDiscarded);
+                const std::size_t excess = detail::wholeFrameSamples(backlog - backendCapacity + channelCount, channelCount);
+                // a silence placeholder was counted when the driver's hole was stored, so only the
+                // capture that eviction loses for the first time is counted here
+                const std::size_t nUncounted = _backendImpl._state.discardOldest(std::min(excess, backlog));
+                _backlogDiscardedSamples += nUncounted;
+                reportDiscardedSamples(nUncounted);
             }
             return;
         }

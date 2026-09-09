@@ -839,6 +839,10 @@ struct EmscriptenAudioWorkletSourceBackend {
     [[nodiscard]] bool   isStreamActive() const { return _runtime.audioContext != 0; }
     [[nodiscard]] double softwareLatency() const { return 0.0; }
 
+    // the worklet's capture callback stores nothing once stopRequested is set, so the flag alone
+    // quiesces the counters here; the caller's final collection follows it
+    void quiesceCapture() { _state.stopRequested.store(true, std::memory_order_release); }
+
     [[nodiscard]] std::size_t readToOutput(std::span<T> output, std::size_t channelCount) { return _state.readToOutput(output, channelCount); }
 
 private:
