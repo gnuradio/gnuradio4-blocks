@@ -205,7 +205,7 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         expect(approx(second.front().imag(), continued.imag(), 1e-9)) << "phase must not reset on a settings change that omits initial_phase";
     };
 
-    "Rotator - initial_phase in the staged keys resets the accumulator"_test = [] {
+    "Rotator - a changed initial_phase restarts the accumulator"_test = [] {
         using T = std::complex<double>;
         Rotator<T> rot({{"frequency_shift", 1.f}, {"sample_rate", 64.f}});
         rot.settings().init();
@@ -215,15 +215,24 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         std::vector<T>       discard(32UZ);
         std::ignore = rot.processBulk(std::span<const T>(input), std::span<T>(discard));
 
-        std::ignore = rot.settings().setStaged({{"initial_phase", 0.0}});
-        std::ignore = rot.settings().applyStagedParameters();
-
-        std::vector<T> restarted(32UZ);
-        std::ignore = rot.processBulk(std::span<const T>(input), std::span<T>(restarted));
-
         const double increment = static_cast<double>(rot.phase_increment);
-        expect(approx(restarted.front().real(), std::cos(increment), 1e-9));
-        expect(approx(restarted.front().imag(), std::sin(increment), 1e-9));
+
+        // `initial_phase` is a value, not an event: it restarts the accumulator where it is applied at a phase the
+        // block does not already hold, and the first sample of the next call is one increment past it
+        const auto restartAt = [&](double phase) {
+            std::ignore = rot.settings().setStaged({{"initial_phase", phase}});
+            std::ignore = rot.settings().applyStagedParameters();
+
+            std::vector<T> restarted(32UZ);
+            std::ignore = rot.processBulk(std::span<const T>(input), std::span<T>(restarted));
+
+            const T expected = std::polar(1.0, phase + increment);
+            expect(approx(restarted.front().real(), expected.real(), 1e-9)) << std::format("initial_phase {} must restart the accumulator", phase);
+            expect(approx(restarted.front().imag(), expected.imag(), 1e-9)) << std::format("initial_phase {} must restart the accumulator", phase);
+        };
+
+        restartAt(0.75); // differs from the zero the block holds
+        restartAt(0.0);  // differs from 0.75, so it restarts again, at the value the block started from
     };
 
     // 65536 samples is 16 re-seed intervals; the increments span slow, fast and near-pi rotations
