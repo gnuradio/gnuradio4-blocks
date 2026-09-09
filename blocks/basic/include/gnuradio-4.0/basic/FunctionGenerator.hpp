@@ -194,7 +194,10 @@ Operating modes:
     void stop() { this->blockingSyncStop(); }
 
     void settingsChanged(const property_map& oldSettings, const property_map& newSettings) {
-        if (newSettings.contains(convert_string_domain(function_generator::toString(function_generator::signal_type)))) {
+        // A segment restarts on the activation that selected it, not on the definition differing from the one in
+        // force: two consecutive segments may carry the same values, and `newSettings` names the context of an
+        // activation whether or not a value moved with it.
+        if (newSettings.contains(gr::tag::CONTEXT.shortKey()) || newSettings.contains(convert_string_domain(function_generator::toString(function_generator::signal_type)))) {
             // The trigger that selects a definition repeats its name, and `newSettings` does not name a value the block
             // already holds; `trigger_name` carries the name that arrived and is what the required one is compared to.
             if (signal_trigger.value.empty() || trigger_name.value == signal_trigger.value) {
