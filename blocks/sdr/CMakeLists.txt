@@ -1,18 +1,16 @@
 add_library(gr-sdr INTERFACE)
+add_library(gnuradio4::gr-sdr ALIAS gr-sdr)
 target_include_directories(gr-sdr INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
                                             $<INSTALL_INTERFACE:include/>)
-target_link_libraries(gr-sdr INTERFACE gnuradio-core gr-common gnuradio-algorithm)
-
-# NamespaceCompatibility.hpp is unconditional: every installed sdr header includes it, so omitting it leaves an
-# installed tree that cannot be compiled against.
-install(FILES include/gnuradio-4.0/sdr/RTL2832Device.hpp include/gnuradio-4.0/sdr/RTL2832Source.hpp
-              include/gnuradio-4.0/sdr/NamespaceCompatibility.hpp
-        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gnuradio-4.0/sdr")
+target_link_libraries(gr-sdr INTERFACE gnuradio4::gnuradio-core gnuradio4::gr-common gnuradio4::gnuradio-algorithm)
+install(TARGETS gr-sdr EXPORT gnuradio4Targets)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/sdr"
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gnuradio-4.0")
 
 if(TARGET SoapySDR)
+  # the name reaches the installed targets file through the export, so the package config has to find SoapySDR again
+  # before a consumer can link gnuradio4::gr-sdr.
   target_link_libraries(gr-sdr INTERFACE SoapySDR)
-  install(FILES include/gnuradio-4.0/sdr/SoapyRaiiWrapper.hpp include/gnuradio-4.0/sdr/SoapySource.hpp
-                include/gnuradio-4.0/sdr/SoapySink.hpp DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gnuradio-4.0/sdr")
 
   # loopback device: static library for tests + optional shared module for system-wide use
   add_library(gr-sdr-loopback-static STATIC src/SoapyLoopbackModule.cpp)
