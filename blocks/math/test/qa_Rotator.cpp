@@ -287,6 +287,59 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         expect(approx(after.front().imag(), continued.imag(), 1e-9)) << "a frequency change must advance the phase, not restart it";
     };
 
+    "Rotator - one sample at a time rotates as one element of a bulk call"_test = [] {
+        using T                      = std::complex<double>;
+        constexpr std::size_t  kN    = 4100UZ; // spans a re-seed boundary and ends mid-lane
+        const gr::property_map kInit = {{"frequency_shift", 2.f}, {"sample_rate", 64.f}};
+
+        std::vector<T> input(kN);
+        for (std::size_t i = 0UZ; i < kN; ++i) {
+            const double angle = 0.00037 * static_cast<double>(i);
+            input[i]           = T(std::cos(angle), std::sin(angle));
+        }
+
+        Rotator<T> bulk(kInit);
+        bulk.settings().init();
+        std::ignore = bulk.settings().applyStagedParameters();
+        std::vector<T> bulkOut(kN);
+        std::ignore = bulk.processBulk(std::span<const T>(input), std::span<T>(bulkOut));
+
+        Rotator<T> stepwise(kInit);
+        stepwise.settings().init();
+        std::ignore  = stepwise.settings().applyStagedParameters();
+        double worst = 0.;
+        T      last{};
+        for (std::size_t i = 0UZ; i < kN; ++i) {
+            last  = stepwise.rotateOne(input[i]);
+            worst = std::max(worst, std::abs(last - bulkOut[i]));
+        }
+        expect(lt(worst, 1e-9)) << std::format("the single-sample entry point must match the bulk one, worst deviation {}", worst);
+
+        // the phase carries across a retune, and the two entry points share it
+        const T    unit{1.0, 0.0};
+        Rotator<T> retuned(kInit);
+        retuned.settings().init();
+        std::ignore = retuned.settings().applyStagedParameters();
+        T before{};
+        for (std::size_t i = 0UZ; i < kN; ++i) {
+            before = retuned.rotateOne(unit);
+        }
+
+        std::ignore       = retuned.settings().setStaged({{"frequency_shift", -7.f}});
+        std::ignore       = retuned.settings().applyStagedParameters();
+        const T continued = before * std::polar(1.0, static_cast<double>(retuned.phase_increment));
+        const T after     = retuned.rotateOne(unit);
+        expect(approx(after.real(), continued.real(), 1e-9)) << "a retune must advance the phase, not restart it";
+        expect(approx(after.imag(), continued.imag(), 1e-9)) << "a retune must advance the phase, not restart it";
+
+        const std::vector<T> ones(4UZ, unit);
+        std::vector<T>       tail(4UZ);
+        std::ignore     = retuned.processBulk(std::span<const T>(ones), std::span<T>(tail));
+        const T resumed = after * std::polar(1.0, static_cast<double>(retuned.phase_increment));
+        expect(approx(tail.front().real(), resumed.real(), 1e-9)) << "a bulk call must resume the phase a single-sample call left";
+        expect(approx(tail.front().imag(), resumed.imag(), 1e-9)) << "a bulk call must resume the phase a single-sample call left";
+    };
+
     constexpr static float fs    = 100.0; // sampling rate
     constexpr static float tMax  = 2.0;   // seconds
     constexpr static auto  nSamp = static_cast<std::size_t>(fs * tMax);
