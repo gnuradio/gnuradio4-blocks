@@ -70,6 +70,8 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
     soapy::Device::Stream<T, SOAPY_SDR_TX>      _txStream{};
     soapy::Kwargs                               _devKwargs{};
     std::atomic<gr::Size_t>                     _underflowCount{0U};
+    std::atomic<std::size_t>                    _stalledWrites{0UZ}; // zero-progress writes seen by the shutdown drain and ramp
+    std::atomic<bool>                           _rampAbandoned{false};
     bool                                        _ioThreadDone = true;
     std::atomic<bool>                           _ioThreadStarted{false};
     algorithm::BurstTaper<float>                _taper;
@@ -87,6 +89,8 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
 
     void start() {
         _underflowCount.store(0U, std::memory_order_relaxed);
+        _stalledWrites.store(0UZ, std::memory_order_relaxed);
+        _rampAbandoned.store(false, std::memory_order_relaxed);
         _ioThreadStarted.store(false, std::memory_order_relaxed);
         configureTaper();
         reinitDevice();
@@ -449,8 +453,20 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
         }
     }
 
+    // A device that reports a timeout accepts nothing and leaves the loop state untouched, so counting those
+    // iterations bounds the shutdown: each one costs the driver at most max_time_out_us, and the budget is one
+    // second of them. Only zero-progress iterations count and any progress clears the count, so a device that
+    // takes a few samples per call still drains and still ramps down, however many calls that needs.
+    [[nodiscard]] std::size_t stalledWriteBudget() const {
+        constexpr std::size_t kStalledShutdownUs = 1'000'000UZ;
+        const std::size_t     timeoutUs          = std::max<std::size_t>(1UZ, static_cast<std::size_t>(max_time_out_us));
+        return std::max<std::size_t>(1UZ, kStalledShutdownUs / timeoutUs);
+    }
+
     void drainRemainingSamples(std::vector<T>& scratch) {
         if constexpr (nPorts == 1U) {
+            const std::size_t budget  = stalledWriteBudget();
+            std::size_t       stalled = 0UZ;
             while (true) {
                 auto avail = _stagingReaders[0].available();
                 if (avail == 0UZ) {
@@ -462,6 +478,15 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
                 auto [written, ok] = taperAndWrite(rSpan.begin(), nActual, scratch);
                 std::ignore        = rSpan.consume(written);
                 if (!ok) {
+                    break;
+                }
+                if (written > 0UZ) {
+                    stalled = 0UZ;
+                    continue;
+                }
+                _stalledWrites.fetch_add(1UZ, std::memory_order_relaxed);
+                if (++stalled >= budget) {
+                    std::println(stderr, "[SoapySink] shutdown drain abandoned after {} stalled writes ({} samples left staged)", stalled, avail);
                     break;
                 }
             }
@@ -499,7 +524,9 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
             writeSpans.reserve(nCh);
         }
 
-        std::size_t written = 0UZ;
+        const std::size_t budget  = stalledWriteBudget();
+        std::size_t       stalled = 0UZ;
+        std::size_t       written = 0UZ;
         while (!_taper.isOff() && written < maxSamples) {
             const std::size_t n            = std::min(scratch.size(), maxSamples - written);
             const auto        savedPhase   = _taper._phase;
@@ -535,6 +562,16 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
                 }
             }
             written += nWritten;
+            if (nWritten > 0UZ) {
+                stalled = 0UZ;
+                continue;
+            }
+            _stalledWrites.fetch_add(1UZ, std::memory_order_relaxed);
+            if (++stalled >= budget) {
+                _rampAbandoned.store(true, std::memory_order_relaxed);
+                std::println(stderr, "[SoapySink] safety ramp-down abandoned after {} stalled writes ({} of {} samples sent)", stalled, written, maxSamples);
+                break;
+            }
         }
     }
 
