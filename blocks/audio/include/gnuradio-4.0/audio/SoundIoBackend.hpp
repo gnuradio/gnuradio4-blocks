@@ -426,13 +426,20 @@ struct SoundIoSourceBackend {
         };
     }
 
-    void shutdown() {
+    // destroying the instream joins libsoundio's capture thread, so no callback can add to the
+    // counters after this returns; the ring and its counts stand for the caller's final collection
+    void quiesceCapture() {
         _state.stopRequested.store(true, std::memory_order_release);
 
         if (_instream != nullptr) {
             soundio_instream_destroy(_instream);
             _instream = nullptr;
         }
+    }
+
+    void shutdown() {
+        quiesceCapture();
+
         if (_device != nullptr) {
             soundio_device_unref(_device);
             _device = nullptr;
@@ -515,6 +522,7 @@ private:
         writeSpan.publish(published);
         // silence that was stored is delivered as data; what was not stored is a drop, not silence
         _state.silenceSamples.fetch_add(published, std::memory_order_relaxed);
+        _state.silenceInRing.fetch_add(published, std::memory_order_relaxed);
         countDroppedSamples(offered, published);
     }
 

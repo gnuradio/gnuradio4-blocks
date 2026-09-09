@@ -105,6 +105,7 @@ struct AudioStateBase {
     std::atomic<std::size_t> underrunCount{0U};
     std::atomic<std::size_t> droppedSamples{0U}; // offered by the device (or the producer) but not stored
     std::atomic<std::size_t> silenceSamples{0U}; // silence stored in place of holes the driver reported with no data behind them
+    std::atomic<std::size_t> silenceInRing{0U};  // of that silence, what is still in the ring, neither delivered nor evicted
     SampleBuffer             buffer{1U};
     SampleWriter             writer{buffer.new_writer()};
     SampleReader             reader{buffer.new_reader()};
@@ -119,6 +120,7 @@ struct AudioStateBase {
         underrunCount.store(0U, std::memory_order_relaxed);
         droppedSamples.store(0U, std::memory_order_relaxed);
         silenceSamples.store(0U, std::memory_order_relaxed);
+        silenceInRing.store(0U, std::memory_order_relaxed);
     }
 };
 
@@ -264,6 +266,26 @@ struct AudioSourceState : AudioStateBase<T> {
         return published;
     }
 
+    // a stored hole was counted as loss when the driver reported it, and the ring is FIFO, so what
+    // leaves takes the oldest placeholders with it and is never counted a second time
+    [[nodiscard]] std::size_t takeStoredSilence(std::size_t nLeaving) {
+        std::size_t stored = this->silenceInRing.load(std::memory_order_relaxed);
+        std::size_t taken  = std::min(nLeaving, stored);
+        while (taken > 0U && !this->silenceInRing.compare_exchange_weak(stored, stored - taken, std::memory_order_relaxed)) {
+            taken = std::min(nLeaving, stored);
+        }
+        return taken;
+    }
+
+    // evicts the oldest samples when downstream cannot take them, and returns what that lost which
+    // was not counted before: the placeholders among them already were
+    [[nodiscard]] std::size_t discardOldest(std::size_t nSamples) {
+        auto              span       = reader.get(std::min(nSamples, reader.available()));
+        const std::size_t nDiscarded = span.size();
+        std::ignore                  = span.consume(nDiscarded);
+        return nDiscarded - takeStoredSilence(nDiscarded);
+    }
+
     [[nodiscard]] std::size_t readToOutput(std::span<T> output, std::size_t channelCount) {
         const std::size_t alignedOutputSize = wholeFrameSamples(output.size(), channelCount);
         const std::size_t alignedAvailable  = wholeFrameSamples(reader.available(), channelCount);
@@ -278,8 +300,10 @@ struct AudioSourceState : AudioStateBase<T> {
         }
 
         std::copy_n(readSpan.begin(), static_cast<std::ptrdiff_t>(readSpan.size()), output.begin());
-        std::ignore = readSpan.consume(readSpan.size());
-        return readSpan.size();
+        const std::size_t nRead = readSpan.size();
+        std::ignore             = readSpan.consume(nRead);
+        std::ignore             = takeStoredSilence(nRead); // delivered placeholders leave the ring too
+        return nRead;
     }
 };
 
