@@ -178,8 +178,14 @@ if(NOT TARGET httplib::httplib)
   endif()
 endif()
 
+set(GR4_EXPORT_NEEDS_SOAPYSDR OFF)
 if(GR4_ENABLE_SDR)
   find_package(SoapySDR CONFIG QUIET)
+  if(TARGET SoapySDR)
+    # the sdr family links SoapySDR's imported target and the export writes that name into the installed targets file;
+    # record it so the package config requires the same dependency of a consumer.
+    set(GR4_EXPORT_NEEDS_SOAPYSDR ON)
+  endif()
 endif()
 
 if(GR4_ENABLE_AUDIO AND NOT EMSCRIPTEN)
