@@ -506,6 +506,37 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         expect(!sink.available_devices.value.empty()) << caseName;
     };
 
+    "a named audio backend is the one the block connects through"_test = [] {
+        constexpr std::string_view caseName = "AudioSource named backend";
+
+        gr::Graph graph;
+        auto&     source = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"backend", std::string("dummy")}});
+        auto&     sink   = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
+        expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
+
+        gr::scheduler::Simple<> sched;
+        expect(sched.exchange(std::move(graph)).has_value()) << caseName;
+        expect(runSchedulerFor(sched, 200ms).has_value()) << caseName;
+        expect(sched.state() != gr::lifecycle::State::ERROR) << caseName;
+
+        // the setting alone selects the backend, and the block reports the one it got
+        expect(!source._useDummyBackendForTests) << caseName;
+        expect(eq(source.active_backend.value, std::string("dummy"))) << caseName;
+        expect(gt(sink._nSamplesProduced, 0UZ)) << caseName;
+    };
+
+    "an audio backend that is not available fails the start"_test = [] {
+        gr::blocks::audio::detail::SoundIoSourceBackend<float> backend;
+
+        const auto result = backend.start({.sampleRate = 48000U, .numChannels = 1U, .bufferFrames = 8192UZ, .device = "", .backend = "nosuchbackend"});
+        expect(!result.has_value()) << "an unavailable backend must be an error, not a connection to another one";
+        if (!result.has_value()) {
+            expect(result.error().message.contains("nosuchbackend")) << result.error().message;
+            expect(result.error().message.contains("dummy")) << "the message must name what is available: " << result.error().message;
+        }
+        backend.shutdown();
+    };
+
 #endif
 };
 

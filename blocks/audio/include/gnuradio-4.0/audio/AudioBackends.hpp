@@ -32,6 +32,7 @@ struct AudioDeviceConfig {
     std::uint32_t numChannels{0U};
     std::size_t   bufferFrames{0U};
     std::string   device;
+    std::string   backend; // empty or 'auto': the device selector chooses; otherwise the named backend
     bool          useDummyBackendForTests{false};
 };
 
@@ -53,6 +54,19 @@ struct AudioDeviceInfo {
     }
     return std::ranges::search(haystack, needle, [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); }).begin() != haystack.end();
 }
+
+[[nodiscard]] inline bool caseInsensitiveEquals(std::string_view lhs, std::string_view rhs) {
+    return std::ranges::equal(lhs, rhs, [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); });
+}
+
+[[nodiscard]] inline std::string asciiToLower(std::string_view text) {
+    std::string lowered(text);
+    std::ranges::transform(lowered, lowered.begin(), [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+    return lowered;
+}
+
+// an unset or 'auto' backend leaves the choice to the device selector
+[[nodiscard]] inline bool isAutoBackend(std::string_view spec) { return spec.empty() || caseInsensitiveEquals(spec, "auto"); }
 
 [[nodiscard]] inline bool isDefaultDevice(std::string_view spec) {
     if (spec.empty()) {

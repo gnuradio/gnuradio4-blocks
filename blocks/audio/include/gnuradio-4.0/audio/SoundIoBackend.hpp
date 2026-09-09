@@ -28,7 +28,9 @@
 #include <cstring>
 #include <expected>
 #include <format>
+#include <optional>
 #include <source_location>
+#include <string>
 #include <string_view>
 
 #include <gnuradio-4.0/audio/NamespaceCompatibility.hpp>
@@ -52,19 +54,63 @@ template<>
 
 inline gr::Error makeSoundIoError(std::string_view operation, int error, std::source_location location = std::source_location::current()) { return gr::Error(std::format("{}: {}", operation, soundio_strerror(error)), location); }
 
-// connects the way the device selector asks: PulseAudio first for a default device, because
-// soundio_connect() would pick JACK first and address raw ports instead of the desktop's routing,
-// and libsoundio's own order for an explicit selector, which names a device inside one backend
-[[nodiscard]] inline int connectSoundIo(SoundIo* sio, const AudioDeviceConfig& config) {
-    if (config.useDummyBackendForTests) {
-        return soundio_connect_backend(sio, SoundIoBackendDummy);
+// the backends this libsoundio was built with, in its own spelling, lower-cased
+[[nodiscard]] inline std::string availableBackendNames() {
+    std::string names;
+    for (int index = 1; index <= static_cast<int>(SoundIoBackendDummy); ++index) {
+        const auto backend = static_cast<SoundIoBackend>(index);
+        if (!soundio_have_backend(backend)) {
+            continue;
+        }
+        if (!names.empty()) {
+            names += ", ";
+        }
+        names += asciiToLower(soundio_backend_name(backend));
     }
-    if (prefersPulseAudioFirst(config)) {
-        if (const int error = soundio_connect_backend(sio, SoundIoBackendPulseAudio); error == SoundIoErrorNone) {
-            return SoundIoErrorNone;
+    return names;
+}
+
+[[nodiscard]] inline std::optional<SoundIoBackend> parseBackendName(std::string_view name) {
+    for (int index = 1; index <= static_cast<int>(SoundIoBackendDummy); ++index) {
+        const auto backend = static_cast<SoundIoBackend>(index);
+        if (caseInsensitiveEquals(name, soundio_backend_name(backend))) {
+            return backend;
         }
     }
-    return soundio_connect(sio);
+    return std::nullopt;
+}
+
+// 'auto' connects the way the device selector asks: PulseAudio first for a default device, because
+// soundio_connect() would pick JACK first and address raw ports instead of the desktop's routing,
+// and libsoundio's own order for an explicit selector, which names a device inside one backend. Any
+// other value names one backend, and a backend this build or host does not offer is an error here
+// rather than a silent connection to a different one.
+[[nodiscard]] inline std::expected<void, gr::Error> connectSoundIo(SoundIo* sio, const AudioDeviceConfig& config) {
+    if (config.useDummyBackendForTests) {
+        if (const int error = soundio_connect_backend(sio, SoundIoBackendDummy); error != SoundIoErrorNone) {
+            return std::unexpected(makeSoundIoError("soundio_connect_backend(dummy)", error));
+        }
+        return {};
+    }
+
+    if (!isAutoBackend(config.backend)) {
+        const auto named = parseBackendName(config.backend);
+        if (!named.has_value() || !soundio_have_backend(*named)) {
+            return std::unexpected(gr::Error(std::format("audio backend '{}' is not available; this build offers: {}", config.backend, availableBackendNames())));
+        }
+        if (const int error = soundio_connect_backend(sio, *named); error != SoundIoErrorNone) {
+            return std::unexpected(makeSoundIoError(std::format("soundio_connect_backend({})", config.backend), error));
+        }
+        return {};
+    }
+
+    if (prefersPulseAudioFirst(config) && soundio_connect_backend(sio, SoundIoBackendPulseAudio) == SoundIoErrorNone) {
+        return {};
+    }
+    if (const int error = soundio_connect(sio); error != SoundIoErrorNone) {
+        return std::unexpected(makeSoundIoError("soundio_connect()", error));
+    }
+    return {};
 }
 
 // true when the channel areas form one interleaved block that can be copied in one go
@@ -141,9 +187,9 @@ struct SoundIoSinkBackend {
             return std::unexpected(gr::Error("soundio_create(): out of memory"));
         }
 
-        if (const int connectError = connectSoundIo(_soundio, config); connectError != SoundIoErrorNone) {
+        if (auto connectResult = connectSoundIo(_soundio, config); !connectResult) {
             shutdown();
-            return std::unexpected(makeSoundIoError("soundio_connect()", connectError));
+            return std::unexpected(connectResult.error());
         }
 
         soundio_flush_events(_soundio);
@@ -247,7 +293,9 @@ struct SoundIoSinkBackend {
 
     void requestStop() { _state.stopRequested.store(true, std::memory_order_release); }
 
-    [[nodiscard]] bool   isStreamActive() const { return _outstream != nullptr; }
+    [[nodiscard]] bool        isStreamActive() const { return _outstream != nullptr; }
+    [[nodiscard]] std::string activeBackendName() const { return _soundio != nullptr ? asciiToLower(soundio_backend_name(_soundio->current_backend)) : std::string(); }
+
     [[nodiscard]] double softwareLatency() const { return _outstream != nullptr ? _outstream->software_latency : 0.0; }
 
     template<typename InputSpan>
@@ -391,9 +439,9 @@ struct SoundIoSourceBackend {
             return std::unexpected(gr::Error("soundio_create(): out of memory"));
         }
 
-        if (const int connectError = connectSoundIo(_soundio, config); connectError != SoundIoErrorNone) {
+        if (auto connectResult = connectSoundIo(_soundio, config); !connectResult) {
             shutdown();
-            return std::unexpected(makeSoundIoError("soundio_connect()", connectError));
+            return std::unexpected(connectResult.error());
         }
 
         soundio_flush_events(_soundio);
@@ -499,7 +547,9 @@ struct SoundIoSourceBackend {
 
     void requestStop() { _state.stopRequested.store(true, std::memory_order_release); }
 
-    [[nodiscard]] bool   isStreamActive() const { return _instream != nullptr; }
+    [[nodiscard]] bool        isStreamActive() const { return _instream != nullptr; }
+    [[nodiscard]] std::string activeBackendName() const { return _soundio != nullptr ? asciiToLower(soundio_backend_name(_soundio->current_backend)) : std::string(); }
+
     [[nodiscard]] double softwareLatency() const { return _instream != nullptr ? _instream->software_latency : 0.0; }
 
     [[nodiscard]] std::size_t readToOutput(std::span<T> output, std::size_t channelCount) { return _state.readToOutput(output, channelCount); }

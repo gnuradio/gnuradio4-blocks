@@ -725,6 +725,9 @@ struct EmscriptenAudioWorkletSinkBackend {
     [[nodiscard]] bool   isStreamActive() const { return _runtime.audioContext != 0; }
     [[nodiscard]] double softwareLatency() const { return 0.0; }
 
+    // the browser owns the routing here, so the backend setting has no effect and this names what runs
+    [[nodiscard]] std::string activeBackendName() const { return isStreamActive() ? std::string("webaudio") : std::string(); }
+
     template<typename InputSpan>
     [[nodiscard]] std::size_t writeFromInput(const InputSpan& inSpan, std::size_t channelCount) {
         return _state.writeFromInput(inSpan, channelCount);
@@ -838,6 +841,9 @@ struct EmscriptenAudioWorkletSourceBackend {
 
     [[nodiscard]] bool   isStreamActive() const { return _runtime.audioContext != 0; }
     [[nodiscard]] double softwareLatency() const { return 0.0; }
+
+    // the browser owns the routing here, so the backend setting has no effect and this names what runs
+    [[nodiscard]] std::string activeBackendName() const { return isStreamActive() ? std::string("webaudio") : std::string(); }
 
     // the worklet's capture callback stores nothing once stopRequested is set, so the flag alone
     // quiesces the counters here; the caller's final collection follows it
