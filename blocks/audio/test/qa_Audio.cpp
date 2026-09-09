@@ -511,8 +511,18 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
 
 const boost::ut::suite<"audio device resolution"> _deviceResolutionTests = [] {
     using namespace boost::ut;
+    using gr::blocks::audio::detail::AudioDeviceConfig;
     using gr::blocks::audio::detail::AudioDeviceInfo;
+    using gr::blocks::audio::detail::prefersPulseAudioFirst;
     using gr::blocks::audio::detail::resolveDeviceIndex;
+
+    "PulseAudio is preferred only for the default device"_test = [] {
+        expect(prefersPulseAudioFirst({.device = ""})) << "an unspecified device asks for the desktop's default routing";
+        expect(prefersPulseAudioFirst({.device = "default"})) << "the default selector asks for the desktop's default routing";
+        expect(!prefersPulseAudioFirst({.device = "@id:jack:system"})) << "an explicit id must keep the platform's backend order";
+        expect(!prefersPulseAudioFirst({.device = "USB Headset"})) << "an explicit name must keep the platform's backend order";
+        expect(!prefersPulseAudioFirst({.device = "", .useDummyBackendForTests = true})) << "the test backend is not a routing choice";
+    };
 
     const std::vector<AudioDeviceInfo> devices{
         {.name = "Built-in Audio Output", .id = "hw:0,0"},

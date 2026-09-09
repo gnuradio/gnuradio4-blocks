@@ -61,6 +61,11 @@ struct AudioDeviceInfo {
     return caseInsensitiveContains("default", spec) && spec.size() <= 7U;
 }
 
+// which connection the device selector asks for: an unspecified device wants the desktop's default
+// routing, which PulseAudio owns, while an explicit selector names a device inside one backend, so
+// that case keeps the platform's own backend order and the named device stays reachable
+[[nodiscard]] inline bool prefersPulseAudioFirst(const AudioDeviceConfig& config) noexcept { return !config.useDummyBackendForTests && isDefaultDevice(config.device); }
+
 [[nodiscard]] inline std::optional<std::size_t> resolveDeviceIndex(std::string_view deviceSpec, std::span<const AudioDeviceInfo> devices) {
     if (isDefaultDevice(deviceSpec)) {
         return std::nullopt; // caller uses system default
