@@ -428,7 +428,7 @@ const boost::ut::suite DataSinkTests = [] {
         }
     } | std::vector<bool>{true, false};
 
-    "continuous mode - a stalled blocking poller does not freeze the graph"_test = [] {
+    "continuous mode - BoundedBackpressure drops rather than freezing the graph"_test = [] {
         using namespace gr::tag;
         constexpr gr::Size_t kSamples = 200000; // 3x the 65536-sample poller ring, so backpressure is unavoidable
 
@@ -450,13 +450,56 @@ const boost::ut::suite DataSinkTests = [] {
 
         std::shared_ptr<StreamingPoller<float>> poller;
         expect(spinUntil(4s, [&poller] {
-            poller = globalDataSinkRegistry().getStreamingPoller<float>(DataSinkQuery::sinkName("stalled_sink"), {.overflowPolicy = OverflowPolicy::Backpressure});
+            poller = globalDataSinkRegistry().getStreamingPoller<float>(DataSinkQuery::sinkName("stalled_sink"), {.overflowPolicy = OverflowPolicy::BoundedBackpressure, .backpressureTimeout = 50ms});
             return poller != nullptr;
         })) << boost::ut::fatal;
 
-        expect(run.wait_for(10s) == std::future_status::ready) << "graph must finish although the blocking poller never consumes" << boost::ut::fatal;
+        expect(run.wait_for(10s) == std::future_status::ready) << "graph must finish although the bounded poller never consumes" << boost::ut::fatal;
         expect(run.get());
         expect(gt(poller->droppedSampleCount.load(), 0UZ)) << "samples the stalled poller could not take must be counted";
+    };
+
+    "continuous mode - Backpressure loses nothing to a consumer slower than the timeout"_test = [] {
+        using namespace gr::tag;
+        constexpr gr::Size_t kSamples = 200000; // 3x the 65536-sample poller ring, so backpressure is unavoidable
+        constexpr auto       kStall   = 500ms;  // several times the bounded policy's default timeout
+
+        gr::Graph testGraph;
+        auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        // only needs to hold the stream until the poller is registered, which spinUntil does at once
+        auto& delay = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", 100u}});
+        auto& sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "patient_sink"}, {SIGNAL_NAME.shortKey(), "PatientName"}});
+        expect(testGraph.connect<"out", "in">(src, delay).has_value());
+        expect(testGraph.connect<"out", "in">(delay, sink).has_value());
+
+        // the consumer stays away for longer than a BoundedBackpressure poller would wait, then drains
+        // everything: Backpressure promises reliable delivery, so nothing may be dropped meanwhile
+        auto consumer = std::async([kStall] {
+            std::shared_ptr<StreamingPoller<float>> poller;
+            expect(spinUntil(4s, [&poller] {
+                poller = globalDataSinkRegistry().getStreamingPoller<float>(DataSinkQuery::sinkName("patient_sink"), {.overflowPolicy = OverflowPolicy::Backpressure});
+                return poller != nullptr;
+            })) << boost::ut::fatal;
+
+            std::this_thread::sleep_for(kStall);
+
+            std::size_t received     = 0UZ;
+            bool        seenFinished = false;
+            while (!seenFinished) {
+                seenFinished = poller->finished;
+                while (poller->process([&received](const auto& data) { received += data.size(); })) {
+                }
+            }
+            return std::make_tuple(poller, received);
+        });
+
+        Scheduler sched;
+        expect(sched.exchange(std::move(testGraph)).has_value());
+        expect(sched.runAndWait().has_value());
+
+        const auto& [poller, received] = consumer.get();
+        expect(eq(received, static_cast<std::size_t>(kSamples))) << "an unbounded Backpressure poller must receive every sample";
+        expect(eq(poller->droppedSampleCount.load(), 0UZ)) << "Backpressure must not drop, however late the consumer is";
     };
 
     "trigger mode - polling/callback overlapping/non-overlapping"_test = [] {

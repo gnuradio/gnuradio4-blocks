@@ -22,14 +22,19 @@
 namespace gr::blocks::basic {
 
 enum class OverflowPolicy : std::uint8_t {
-    Backpressure = 0U, /// creates backpressure on the upstream flow-graph, guaranteeing reliable delivery at the expense of potential stalling.
-    Drop               /// drop arriving samples to avoid blocking upstream flow-graph, potentially losing some data (e.g. UI use-case).
+    Backpressure = 0U, /// creates backpressure on the upstream flow-graph, guaranteeing reliable delivery at the expense of potential stalling: a consumer that stops polling stalls the scheduler thread the graph runs on, for as long as it stays away.
+    Drop         = 1U, /// drop arriving samples to avoid blocking upstream flow-graph, potentially losing some data (e.g. UI use-case).
+    /// the default: wait up to PollerConfig::backpressureTimeout for poller space and then drop and count as Drop does.
+    /// Reliable for a consumer polling on any sane schedule, and one that stops polling cannot freeze the flow-graph.
+    BoundedBackpressure = 2U
 };
 
 struct PollerConfig {
-    OverflowPolicy overflowPolicy     = OverflowPolicy::Backpressure;
-    std::size_t    minRequiredSamples = 1UZ;                                     // Minimum number of samples required before `process` call. Higher values optimize throughput by reducing frequent small `process` calls.
-    std::size_t    maxRequiredSamples = std::numeric_limits<std::size_t>::max(); // Maximum number of samples that can be processed in a single `process` call. Lower values optimize latency by allowing faster processing of small batches.
+    OverflowPolicy overflowPolicy = OverflowPolicy::BoundedBackpressure;
+    /// Only used by OverflowPolicy::BoundedBackpressure: how long a listener waits for poller space before it drops and counts.
+    std::chrono::nanoseconds backpressureTimeout = std::chrono::milliseconds{100};
+    std::size_t              minRequiredSamples  = 1UZ;                                     // Minimum number of samples required before `process` call. Higher values optimize throughput by reducing frequent small `process` calls.
+    std::size_t              maxRequiredSamples  = std::numeric_limits<std::size_t>::max(); // Maximum number of samples that can be processed in a single `process` call. Lower values optimize latency by allowing faster processing of small batches.
 
     std::size_t preSamples  = 100; // Only used in trigger mode. Number of samples to keep before a trigger.
     std::size_t postSamples = 100; // Only used in trigger mode. Number of samples to keep after a trigger.
@@ -73,12 +78,15 @@ inline std::size_t calculateNSamplesToProcess(std::size_t available, std::size_t
     return std::min(available, clampRequested);
 }
 
-// The Backpressure poller policy applies for at most this long. Past it the listener drops and
-// counts, so a consumer that stopped polling cannot freeze the scheduler thread running the graph.
-constexpr std::chrono::milliseconds data_sink_blocking_deadline{100};
+// What a listener does when the poller's ring cannot take the data, carried from the PollerConfig
+// the poller was created with. A callback listener never waits, so Drop is the default.
+struct BackpressureMode {
+    OverflowPolicy           policy = OverflowPolicy::Drop;
+    std::chrono::nanoseconds timeout{};
+};
 
 template<typename TWriter>
-[[nodiscard]] inline bool awaitWriterSpace(TWriter& writer, std::size_t nRequested) {
+[[nodiscard]] inline bool awaitWriterSpace(TWriter& writer, std::size_t nRequested, std::chrono::nanoseconds timeout) {
     constexpr std::size_t kSpins = 64UZ;
     for (std::size_t i = 0UZ; i < kSpins; ++i) {
         if (writer.available() >= nRequested) {
@@ -86,7 +94,7 @@ template<typename TWriter>
         }
         std::this_thread::yield();
     }
-    const auto deadline = std::chrono::steady_clock::now() + data_sink_blocking_deadline;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         if (writer.available() >= nRequested) {
@@ -94,6 +102,21 @@ template<typename TWriter>
         }
     }
     return false;
+}
+
+// How many of nWanted items the listener may hand to the poller now. Backpressure takes them all
+// and leaves the waiting to the caller's blocking reserve; BoundedBackpressure waits here for at
+// most mode.timeout and then reports only what fits, which is the caller's cue to drop and count;
+// Drop reports what fits right away.
+template<typename TWriter>
+[[nodiscard]] inline std::size_t publishableCount(TWriter& writer, std::size_t nWanted, BackpressureMode mode) {
+    if (mode.policy == OverflowPolicy::Backpressure) {
+        return nWanted;
+    }
+    if (mode.policy == OverflowPolicy::BoundedBackpressure && writer.available() < nWanted) {
+        std::ignore = awaitWriterSpace(writer, nWanted, mode.timeout);
+    }
+    return std::min(nWanted, writer.available());
 }
 
 } // namespace detail
@@ -569,21 +592,23 @@ public:
     }
 
     std::shared_ptr<StreamingPoller<T>> getStreamingPoller(PollerConfig config) {
-        const auto      withBackpressure = config.overflowPolicy == OverflowPolicy::Backpressure;
+        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout};
+        const auto      withBackpressure = config.overflowPolicy != OverflowPolicy::Drop;
         auto            handler          = std::make_shared<StreamingPoller<T>>(config.minRequiredSamples, config.maxRequiredSamples);
         std::lock_guard lg(_listener_mutex);
         handler->finished = _listeners_finished;
-        addListener(std::make_unique<ContinuousListener<gr::meta::null_type>>(handler, withBackpressure, *this), withBackpressure);
+        addListener(std::make_unique<ContinuousListener<gr::meta::null_type>>(handler, backpressure, *this), withBackpressure);
         return handler;
     }
 
     template<trigger::Matcher TMatcher>
     std::shared_ptr<DataSetPoller<T>> getTriggerPoller(TMatcher&& matcher, PollerConfig config = {}) {
-        const auto      withBackpressure = config.overflowPolicy == OverflowPolicy::Backpressure;
+        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout};
+        const auto      withBackpressure = config.overflowPolicy != OverflowPolicy::Drop;
         auto            handler          = std::make_shared<DataSetPoller<T>>(config.minRequiredSamples, config.maxRequiredSamples);
         std::lock_guard lg(_listener_mutex);
         handler->finished = _listeners_finished;
-        addListener(std::make_unique<TriggerListener<TMatcher>>(std::forward<TMatcher>(matcher), handler, config.preSamples, config.postSamples, withBackpressure), withBackpressure);
+        addListener(std::make_unique<TriggerListener<TMatcher>>(std::forward<TMatcher>(matcher), handler, config.preSamples, config.postSamples, backpressure), withBackpressure);
         ensureHistorySize(config.preSamples);
         return handler;
     }
@@ -591,18 +616,20 @@ public:
     template<trigger::Matcher TMatcher>
     std::shared_ptr<DataSetPoller<T>> getMultiplexedPoller(TMatcher&& matcher, PollerConfig config = {}) {
         std::lock_guard lg(_listener_mutex);
-        const auto      withBackpressure = config.overflowPolicy == OverflowPolicy::Backpressure;
+        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout};
+        const auto      withBackpressure = config.overflowPolicy != OverflowPolicy::Drop;
         auto            handler          = std::make_shared<DataSetPoller<T>>(config.minRequiredSamples, config.maxRequiredSamples);
-        addListener(std::make_unique<MultiplexedListener<TMatcher>>(std::forward<TMatcher>(matcher), config.maximumWindowSize, handler, withBackpressure), withBackpressure);
+        addListener(std::make_unique<MultiplexedListener<TMatcher>>(std::forward<TMatcher>(matcher), config.maximumWindowSize, handler, backpressure), withBackpressure);
         return handler;
     }
 
     template<trigger::Matcher TMatcher>
     std::shared_ptr<DataSetPoller<T>> getSnapshotPoller(TMatcher&& matcher, PollerConfig config = {}) {
-        const auto      withBackpressure = config.overflowPolicy == OverflowPolicy::Backpressure;
+        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout};
+        const auto      withBackpressure = config.overflowPolicy != OverflowPolicy::Drop;
         auto            handler          = std::make_shared<DataSetPoller<T>>(config.minRequiredSamples, config.maxRequiredSamples);
         std::lock_guard lg(_listener_mutex);
-        addListener(std::make_unique<SnapshotListener<TMatcher>>(std::forward<TMatcher>(matcher), config.delay, handler, withBackpressure), withBackpressure);
+        addListener(std::make_unique<SnapshotListener<TMatcher>>(std::forward<TMatcher>(matcher), config.delay, handler, backpressure), withBackpressure);
         return handler;
     }
 
@@ -704,7 +731,7 @@ private:
     struct DataSetBaseListener : public AbstractListener {
         static constexpr bool hasCallback = !std::is_same_v<TCallback, gr::meta::null_type>;
 
-        bool                            _isBlocking = false;
+        detail::BackpressureMode        _backpressure;
         TMatcher                        _matcher;
         gr::property_map                _matcherState;
         detail::Metadata                _metadata;
@@ -712,9 +739,9 @@ private:
         TCallback                       _callback;
 
         template<trigger::Matcher TMatcherFW>
-        explicit DataSetBaseListener(TMatcherFW&& matcher, std::shared_ptr<DataSetPoller<T>> poller, bool isBlocking)
+        explicit DataSetBaseListener(TMatcherFW&& matcher, std::shared_ptr<DataSetPoller<T>> poller, detail::BackpressureMode backpressure)
         requires(!hasCallback)
-            : _isBlocking(isBlocking), _matcher(std::forward<TMatcherFW>(matcher)), _poller(std::move(poller)) {}
+            : _backpressure(backpressure), _matcher(std::forward<TMatcherFW>(matcher)), _poller(std::move(poller)) {}
 
         template<trigger::Matcher TMatcherFW, typename TCallbackFW>
         explicit DataSetBaseListener(TMatcherFW&& matcher, TCallbackFW&& callback)
@@ -731,8 +758,8 @@ private:
                     return;
                 }
 
-                if (poller->writer.available() > 0UZ || (_isBlocking && detail::awaitWriterSpace(poller->writer, 1UZ))) {
-                    auto writeData = poller->writer.reserve(1UZ);
+                if (detail::publishableCount(poller->writer, 1UZ, _backpressure) > 0UZ) {
+                    auto writeData = poller->writer.reserve(1UZ); // blocks until the poller takes it under Backpressure
                     writeData[0UZ] = std::move(data);
                     writeData.publish(1UZ);
                 } else {
@@ -750,7 +777,7 @@ private:
         static constexpr auto callbackTakesTags = std::is_invocable_v<TCallback, std::span<const T>, std::span<const Tag>> || std::is_invocable_v<TCallback, std::span<const T>, std::span<const Tag>, const DataSink<T>&>;
 
         const DataSink<T>&              _parentSink;
-        bool                            _isBlocking        = false;
+        detail::BackpressureMode        _backpressure;
         std::size_t                     _nPublishedSamples = 0;
         std::optional<detail::Metadata> _pendingMetadata;
 
@@ -766,9 +793,9 @@ private:
         requires(hasCallback)
             : _parentSink(parent), _maxChunkSize(maxChunkSize), _callback{std::forward<TCallbackFW>(callback)} {}
 
-        explicit ContinuousListener(std::shared_ptr<StreamingPoller<T>> poller, bool isBlocking, const DataSink<T>& parent)
+        explicit ContinuousListener(std::shared_ptr<StreamingPoller<T>> poller, detail::BackpressureMode backpressure, const DataSink<T>& parent)
         requires(!hasCallback)
-            : _parentSink(parent), _isBlocking(isBlocking), _poller{std::move(poller)} {}
+            : _parentSink(parent), _backpressure(backpressure), _poller{std::move(poller)} {}
 
         inline void callCallback(std::span<const T> data, std::span<const Tag> tags) {
             if constexpr (std::is_invocable_v<TCallback, std::span<const T>, std::span<const Tag>, const DataSink<T>&>) {
@@ -823,16 +850,10 @@ private:
                     return;
                 }
 
-                if (_isBlocking && poller->writer.available() < data.size()) {
-                    std::ignore = detail::awaitWriterSpace(poller->writer, data.size());
-                }
-                const std::size_t nSamplesToPublish  = std::min(data.size(), poller->writer.available());
+                const std::size_t nSamplesToPublish  = detail::publishableCount(poller->writer, data.size(), _backpressure);
                 const auto        nTagsInRange       = static_cast<std::size_t>(std::ranges::count_if(tags, [nSamplesToPublish](const Tag& tag) { return tag.index < nSamplesToPublish; }));
                 const std::size_t availableInputTags = _pendingMetadata.has_value() ? nTagsInRange + 1UZ : nTagsInRange;
-                if (_isBlocking && poller->tagWriter.available() < availableInputTags) {
-                    std::ignore = detail::awaitWriterSpace(poller->tagWriter, availableInputTags);
-                }
-                const std::size_t nTagsToPublish = std::min(availableInputTags, poller->tagWriter.available());
+                const std::size_t nTagsToPublish     = detail::publishableCount(poller->tagWriter, availableInputTags, _backpressure);
 
                 if (nSamplesToPublish > 0UZ) {
                     if (nTagsToPublish > 0UZ) {
@@ -885,9 +906,9 @@ private:
         std::deque<TriggerCapture> _triggerCaptures; // trigger captures that still didn't receive all their data
 
         template<trigger::Matcher TMatcherFW>
-        explicit TriggerListener(TMatcherFW&& matcher, std::shared_ptr<DataSetPoller<T>> poller, std::size_t pre, std::size_t post, bool isBlocking)
+        explicit TriggerListener(TMatcherFW&& matcher, std::shared_ptr<DataSetPoller<T>> poller, std::size_t pre, std::size_t post, detail::BackpressureMode backpressure)
         requires(!Base::hasCallback)
-            : Base(std::forward<TMatcherFW>(matcher), std::move(poller), isBlocking), _preSamples(pre), _postSamples(post) {}
+            : Base(std::forward<TMatcherFW>(matcher), std::move(poller), backpressure), _preSamples(pre), _postSamples(post) {}
 
         template<trigger::Matcher TMatcherFW, typename TCallbackFW>
         explicit TriggerListener(TMatcherFW&& matcher, std::size_t pre, std::size_t post, TCallbackFW&& callback)
@@ -955,9 +976,9 @@ private:
             : Base(std::forward<TMatcherFW>(matcher), std::forward<TCallbackFW>(callback)), _maxDataSetSize(maxDataSetSize) {}
 
         template<trigger::Matcher TMatcherFW>
-        explicit MultiplexedListener(TMatcherFW&& matcher, std::size_t maxDataSetSize, std::shared_ptr<DataSetPoller<T>> poller, bool isBlocking)
+        explicit MultiplexedListener(TMatcherFW&& matcher, std::size_t maxDataSetSize, std::shared_ptr<DataSetPoller<T>> poller, detail::BackpressureMode backpressure)
         requires(!Base::hasCallback)
-            : Base(std::forward<TMatcherFW>(matcher), std::move(poller), isBlocking), _maxDataSetSize(maxDataSetSize) {}
+            : Base(std::forward<TMatcherFW>(matcher), std::move(poller), backpressure), _maxDataSetSize(maxDataSetSize) {}
 
         void process(std::span<const T>, std::span<const T> inData, std::span<const Tag> tags) override {
             // Overlapping trigger windows are not supported. A new start closes and publishes
@@ -1020,9 +1041,9 @@ private:
         std::deque<Snapshot>     _snapshots;
 
         template<trigger::Matcher TMatcherFW>
-        explicit SnapshotListener(TMatcherFW&& matcher, std::chrono::nanoseconds delay, std::shared_ptr<DataSetPoller<T>> poller, bool isBlocking)
+        explicit SnapshotListener(TMatcherFW&& matcher, std::chrono::nanoseconds delay, std::shared_ptr<DataSetPoller<T>> poller, detail::BackpressureMode backpressure)
         requires(!Base::hasCallback)
-            : Base(std::forward<TMatcherFW>(matcher), std::move(poller), isBlocking), _timeDelay(delay) {}
+            : Base(std::forward<TMatcherFW>(matcher), std::move(poller), backpressure), _timeDelay(delay) {}
 
         template<typename TCallbackFW, trigger::Matcher TMatcherFW>
         explicit SnapshotListener(TMatcherFW&& matcher, std::chrono::nanoseconds delay, TCallbackFW&& callback)
@@ -1116,11 +1137,12 @@ public:
 
     template<DataSetMatcher<T> M>
     std::shared_ptr<DataSetPoller<T>> getPoller(M&& matcher, PollerConfig config = {}) {
-        const auto      withBackpressure = config.overflowPolicy == OverflowPolicy::Backpressure;
+        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout};
+        const auto      withBackpressure = config.overflowPolicy != OverflowPolicy::Drop;
         auto            handler          = std::make_shared<DataSetPoller<T>>(config.minRequiredSamples, config.maxRequiredSamples);
         std::lock_guard lg(_listener_mutex);
         handler->finished = _listeners_finished;
-        addListener(std::make_unique<Listener<gr::meta::null_type, M>>(std::forward<M>(matcher), handler, withBackpressure), withBackpressure);
+        addListener(std::make_unique<Listener<gr::meta::null_type, M>>(std::forward<M>(matcher), handler, backpressure), withBackpressure);
         return handler;
     }
 
@@ -1178,7 +1200,7 @@ private:
 
     template<typename Callback, DataSetMatcher<T> TMatcher>
     struct Listener : public AbstractListener {
-        bool                            block   = false;
+        detail::BackpressureMode        backpressure;
         TMatcher                        matcher = {};
         gr::property_map                trigger_state;
         std::weak_ptr<DataSetPoller<T>> polling_handler = {};
@@ -1186,7 +1208,7 @@ private:
         Callback callback;
 
         template<DataSetMatcher<T> Matcher>
-        explicit Listener(Matcher&& matcher_, std::shared_ptr<DataSetPoller<T>> handler, bool doBlock) : block(doBlock), matcher(std::forward<Matcher>(matcher_)), polling_handler{std::move(handler)} {}
+        explicit Listener(Matcher&& matcher_, std::shared_ptr<DataSetPoller<T>> handler, detail::BackpressureMode mode) : backpressure(mode), matcher(std::forward<Matcher>(matcher_)), polling_handler{std::move(handler)} {}
 
         template<typename CallbackFW, DataSetMatcher<T> Matcher>
         explicit Listener(Matcher&& matcher_, CallbackFW&& cb) : matcher(std::forward<Matcher>(matcher_)), callback{std::forward<CallbackFW>(cb)} {}
@@ -1201,8 +1223,8 @@ private:
                     return;
                 }
 
-                if (poller->writer.available() > 0UZ || (block && detail::awaitWriterSpace(poller->writer, 1UZ))) {
-                    auto writeData = poller->writer.reserve(1UZ);
+                if (detail::publishableCount(poller->writer, 1UZ, backpressure) > 0UZ) {
+                    auto writeData = poller->writer.reserve(1UZ); // blocks until the poller takes it under Backpressure
                     writeData[0UZ] = std::move(data);
                     writeData.publish(1UZ);
                 } else {
