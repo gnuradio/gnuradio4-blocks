@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <future>
 #include <ranges>
 
@@ -817,6 +818,36 @@ const boost::ut::suite DataSinkTests = [] {
         expect(eq(receivedDataSets[1UZ].signalUnit(0UZ), "test unit"s));
         expect(eq(receivedDataSets[1UZ].timingEvents(0UZ).size(), 1UZ));
         expect(eq(receivedDataSets[1UZ].timingEvents(0UZ)[0UZ].first, 100));
+    };
+
+    "DataSet - unregistering sinks of different sample types"_test = [] {
+        gr::Graph testGraph;
+        auto&     floatSource = testGraph.emplaceBlock<testing::TagSource<float, testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "float signal"}, {"mark_tag", false}});
+        auto&     floatFilter = testGraph.emplaceBlock<StreamToDataSet<float>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
+        auto&     floatSink   = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "float_data_set_sink"}, {"signal_name", "float signal"}});
+        auto&     byteSource  = testGraph.emplaceBlock<testing::TagSource<std::uint8_t, testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "byte signal"}, {"mark_tag", false}});
+        auto&     byteFilter  = testGraph.emplaceBlock<StreamToDataSet<std::uint8_t>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
+        auto&     byteSink    = testGraph.emplaceBlock<DataSetSink<std::uint8_t>>({{"name", "byte_data_set_sink"}, {"signal_name", "byte signal"}});
+        expect(testGraph.connect<"out", "in">(floatSource, floatFilter).has_value());
+        expect(testGraph.connect<"out", "in">(floatFilter, floatSink).has_value());
+        expect(testGraph.connect<"out", "in">(byteSource, byteFilter).has_value());
+        expect(testGraph.connect<"out", "in">(byteFilter, byteSink).has_value());
+
+        const Tag trigger{400UZ, {{gr::tag::TRIGGER_NAME.shortKey(), "CMD_DIAG_TRIGGER1"s}, {gr::tag::TRIGGER_TIME.shortKey(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f}, //
+                                     {gr::tag::CONTEXT.shortKey(), ""s}, {gr::tag::TRIGGER_META_INFO.shortKey(), gr::property_map{}}}};
+        floatSource._tags.push_back(trigger);
+        byteSource._tags.push_back(trigger);
+
+        Scheduler sched;
+        if (auto ret = sched.exchange(std::move(testGraph)); !ret) {
+            throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+        }
+        expect(sched.runAndWait().has_value());
+
+        expect(eq(globalDataSinkRegistry().getDataSetPoller<float>(DataSinkQuery::sinkName("float_data_set_sink")), nullptr));
+        expect(eq(globalDataSinkRegistry().getDataSetPoller<float>(DataSinkQuery::signalName("float signal")), nullptr));
+        expect(eq(globalDataSinkRegistry().getDataSetPoller<std::uint8_t>(DataSinkQuery::sinkName("byte_data_set_sink")), nullptr));
+        expect(eq(globalDataSinkRegistry().getDataSetPoller<std::uint8_t>(DataSinkQuery::signalName("byte signal")), nullptr));
     };
 };
 

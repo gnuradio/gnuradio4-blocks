@@ -189,8 +189,9 @@ public:
     void unregisterSink(TSink* sink) {
         std::lock_guard lg{_mutex};
         std::erase_if(_sinks, [sink](const std::any& v) -> bool {
-            auto ptr = std::any_cast<TSink*>(v);
-            return ptr && ptr == sink;
+            // _sinks holds sinks of every registered element type; the pointer cast returns nullptr on a type mismatch instead of throwing
+            auto ptr = std::any_cast<TSink*>(&v);
+            return ptr && *ptr == sink;
         });
         _sink_by_signal_name.erase(sink->signal_name);
         sink->_registered = false;
