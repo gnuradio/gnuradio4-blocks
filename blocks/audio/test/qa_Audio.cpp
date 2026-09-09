@@ -286,6 +286,51 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
             << std::format("{}: staged={} written={} dropped={}", caseName, sink._totalStagedSamples, sink._totalIoWrittenSamples, sink.dropped_samples.value);
     };
 
+    "AudioSink reconfigures while streaming"_test = [] {
+        constexpr std::string_view caseName = "AudioSink reconfigure while streaming";
+
+        struct Reconfiguration {
+            std::size_t index;
+            float       sampleRate;
+            gr::Size_t  numChannels;
+        };
+        // sample_rate and num_channels are auto-updated from the stream, so each tag reopens the
+        // device and replaces the staging ring while the producer is pushing into it
+        constexpr std::array<Reconfiguration, 4U> reconfigurations{{{500UZ, 22050.f, 2U}, {1500UZ, 44100.f, 1U}, {2500UZ, 16000.f, 2U}, {3500UZ, 32000.f, 1U}}};
+
+        gr::Graph graph;
+        auto&     source = graph.emplaceBlock<gr::blocks::testing::TagSource<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", gr::Size_t(8000)}, {"sample_rate", 48000.f}, {"mark_tag", false}});
+        for (const auto& reconfiguration : reconfigurations) {
+            gr::property_map tagMap;
+            gr::tag::put(tagMap, gr::tag::SAMPLE_RATE, reconfiguration.sampleRate);
+            gr::tag::put(tagMap, gr::tag::NUM_CHANNELS, reconfiguration.numChannels);
+            source._tags.push_back({reconfiguration.index, std::move(tagMap)});
+        }
+
+        auto& sink                    = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        sink._useDummyBackendForTests = true;
+        // the sample-exact accounting below holds only with the resampling compensator out of the way
+        sink.drift_correction = gr::algorithm::DriftCorrection::None;
+        expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
+
+        gr::scheduler::Simple<> sched;
+        expect(sched.exchange(std::move(graph)).has_value()) << caseName;
+        expect(sched.runAndWait().has_value()) << caseName;
+        expect(sched.state() != gr::lifecycle::State::ERROR) << caseName;
+
+        // the run ends on the configuration the last tag asked for, negotiated with the device
+        expect(eq(sink.sample_rate.value, reconfigurations.back().sampleRate)) << caseName;
+        expect(eq(sink.num_channels.value, reconfigurations.back().numChannels)) << caseName;
+        expect(eq(sink._activeConfig.sampleRate, static_cast<std::uint32_t>(reconfigurations.back().sampleRate))) << caseName;
+        expect(eq(sink._activeConfig.numChannels, static_cast<std::uint32_t>(reconfigurations.back().numChannels))) << caseName;
+
+        // every sample the sink accepted reached a device or was counted as lost, across all the
+        // staging rings the reconfigurations replaced
+        expect(gt(sink._totalStagedSamples, 0UZ)) << caseName;
+        expect(eq(sink._totalStagedSamples, sink._totalIoWrittenSamples + static_cast<std::size_t>(sink.dropped_samples.value))) //
+            << std::format("{}: staged={} written={} dropped={}", caseName, sink._totalStagedSamples, sink._totalIoWrittenSamples, sink.dropped_samples.value);
+    };
+
     "AudioSource loops back into AudioSink with soundio dummy backend"_test = [] {
         constexpr std::string_view caseName = "AudioSource to AudioSink soundio dummy backend";
 
