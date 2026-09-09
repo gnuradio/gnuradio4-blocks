@@ -840,6 +840,62 @@ const boost::ut::suite DataSinkTests = [] {
         expect(eq(receivedDataSets[1UZ].timingEvents(0UZ)[0UZ].first, 100));
     };
 
+    // `uint8_t` is the item type of every framed-byte record in the tree, so the byte sink is the one a decoded-packet
+    // chain names. Nothing above the item type is specialized, so what this asserts is that the registration exists
+    // and that a record's payload, annotations and timing events reach a poller found by sink name unchanged.
+    "DataSet<uint8_t> - polling by sink name"_test = [] {
+        gr::Graph testGraph;
+        auto&     source          = testGraph.emplaceBlock<testing::TagSource<std::uint8_t, testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "byte signal"}, {"signal_unit", "byte"}, {"mark_tag", false}});
+        auto&     delay           = testGraph.emplaceBlock<testing::Delay<std::uint8_t>>({{"delay_ms", kProcessingDelayMs}});
+        auto&     streamToDataSet = testGraph.emplaceBlock<StreamToDataSet<std::uint8_t>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
+        auto&     sink            = testGraph.emplaceBlock<DataSetSink<std::uint8_t>>({{"name", "byte_sink"}, {"signal_name", "byte signal"}});
+        expect(testGraph.connect<"out", "in">(source, delay).has_value());
+        expect(testGraph.connect<"out", "in">(delay, streamToDataSet).has_value());
+        expect(testGraph.connect<"out", "in">(streamToDataSet, sink).has_value());
+
+        source._tags.push_back(Tag{400UZ, {{gr::tag::TRIGGER_NAME.shortKey(), "CMD_DIAG_TRIGGER1"}, {gr::tag::TRIGGER_TIME.shortKey(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f}, {gr::tag::CONTEXT.shortKey(), std::string()}, {gr::tag::TRIGGER_META_INFO.shortKey(), gr::property_map{}}}});
+        source._tags.push_back(Tag{800UZ, {{gr::tag::TRIGGER_NAME.shortKey(), "CMD_DIAG_TRIGGER1"}, {gr::tag::TRIGGER_TIME.shortKey(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f}, {gr::tag::CONTEXT.shortKey(), std::string()}, {gr::tag::TRIGGER_META_INFO.shortKey(), gr::property_map{}}}});
+
+        auto polling = std::async([] {
+            std::shared_ptr<DataSetPoller<std::uint8_t>> poller;
+            expect(spinUntil(4s,
+                [&poller] {
+                    poller = globalDataSinkRegistry().getDataSetPoller<std::uint8_t>(DataSinkQuery::sinkName("byte_sink"));
+                    return poller != nullptr;
+                }))
+                << "a uint8_t sink has to be findable by name, which is the registration this asserts" << boost::ut::fatal;
+            std::vector<DataSet<std::uint8_t>> receivedDataSets;
+            bool                               seenFinished = false;
+            while (!seenFinished) {
+                seenFinished = poller->finished.load();
+                while (poller->process([&receivedDataSets](const auto& dataSets) { receivedDataSets.insert(receivedDataSets.end(), dataSets.begin(), dataSets.end()); })) {
+                }
+            }
+            return receivedDataSets;
+        });
+
+        Scheduler sched;
+        if (auto ret = sched.exchange(std::move(testGraph)); !ret) {
+            throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+        }
+        expect(sched.runAndWait().has_value());
+
+        const auto receivedDataSets = polling.get();
+        expect(eq(receivedDataSets.size(), 2UZ)) << fatal;
+        for (const auto& dataSet : receivedDataSets) {
+            std::expected<void, gr::Error> dsCheck = dataset::checkConsistency(dataSet, "byte record");
+            expect(dsCheck.has_value()) << [&] { return std::format("unexpected: {}", dsCheck.error()); } << fatal;
+            expect(eq(dataSet.size(), 1UZ));
+            expect(eq(dataSet.signalName(0UZ), "byte signal"s));
+            expect(eq(dataSet.signalUnit(0UZ), "byte"s));
+            expect(eq(dataSet.timingEvents(0UZ).size(), 1UZ));
+            expect(eq(dataSet.timingEvents(0UZ)[0UZ].first, 100));
+        }
+        // the source counts modulo the item type, and so does the expectation: the payload crosses byte for byte
+        expect(eq_collections(receivedDataSets[0UZ].signalValues(0UZ), getIota(300, static_cast<std::uint8_t>(300U))));
+        expect(eq_collections(receivedDataSets[1UZ].signalValues(0UZ), getIota(300, static_cast<std::uint8_t>(700U))));
+    };
+
     "DataSet - callback"_test = [] {
         gr::Graph testGraph;
         auto&     source          = testGraph.emplaceBlock<testing::TagSource<float, testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "test signal"}, {"signal_unit", "test unit"}, {"mark_tag", false}});
