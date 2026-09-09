@@ -20,6 +20,7 @@ const boost::ut::suite AvailableBlockTests = [] {
             //
             "gr::blocks::basic::DataSink<float32>"s,                //
             "gr::blocks::basic::DataSetSink<float32>"s,             //
+            "gr::blocks::basic::DataSetSink<uint8>"s,               //
             "gr::blocks::basic::FunctionGenerator<int16>"s,         //
             "gr::blocks::basic::FunctionGenerator<float32>"s,       //
             "gr::blocks::basic::Selector<int32>"s,                  //

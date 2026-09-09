@@ -1089,7 +1089,9 @@ private:
     };
 };
 
-GR_REGISTER_BLOCK(gr::blocks::basic::DataSetSink, [T], [float])
+// `uint8_t` is the item type of every framed-byte record in the tree, so a decoded-packet chain reaches a poller
+// through the same sink a float record does; the registry, the poller and the drop counter are already generic in T.
+GR_REGISTER_BLOCK(gr::blocks::basic::DataSetSink, [T], [ float, uint8_t ])
 /**
  * @brief data sink for exporting data set streams to non-GR C++ APIs.
  *

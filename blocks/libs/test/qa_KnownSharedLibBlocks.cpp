@@ -106,6 +106,8 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::basic::ScalingConvert<float32, float32>"sv));
         expect(registry.contains("gr::blocks::basic::ScalingConvert<float32, int32>"sv));
         expect(registry.contains("gr::blocks::basic::DataSink<float32>"sv));
+        expect(registry.contains("gr::blocks::basic::DataSetSink<float32>"sv));
+        expect(registry.contains("gr::blocks::basic::DataSetSink<uint8>"sv));
         expect(registry.contains("gr::blocks::basic::SchmittTrigger<float32, (gr::trigger::InterpolationMethod)0>"sv));
 #if defined(_WIN32)
         expect(registry.contains("gr::blocks::electrical::PowerMetrics<float32, 3ull>"sv));
