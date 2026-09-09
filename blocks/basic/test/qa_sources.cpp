@@ -1,5 +1,7 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
+
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
@@ -648,6 +650,79 @@ const boost::ut::suite TagTests = [] {
         Graph testGraph;
         auto& gen = testGraph.emplaceBlock<FunctionGenerator<float>>({{gr::tag::SAMPLE_RATE.shortKey(), 10000.f}, {"signal_type", "Sin"}, {"name", "FunctionGenerator"}});
         runClockedGenerator(testGraph, gen, [](const auto& generator, const auto&) { expect(eq(generator.tone_frequency.value, 0.f)) << "a passing frequency tag retuned the generated waveform"; });
+    };
+
+    "FunctionGenerator + ClockSource repeated ramp segment test"_test = [] {
+        using namespace std::string_literals;
+        using namespace function_generator;
+        constexpr std::uint32_t N           = 400;
+        constexpr float         sample_rate = 1000.f;
+        Graph                   testGraph;
+        auto&                   clockSrc = testGraph.emplaceBlock<ClockSource<std::uint8_t>>({{gr::tag::SAMPLE_RATE.shortKey(), sample_rate}, {"n_samples_max", N}, {"name", "ClockSource"}});
+        const auto              now      = settings::convertTimePointToUint64Ns(std::chrono::system_clock::now());
+
+        clockSrc.tags = {Tag(0, {{tag::CONTEXT.shortKey(), "1"s}}), Tag(200, {{tag::CONTEXT.shortKey(), "2"s}})};
+
+        // the two contexts hold the same ramp, so only their activation tells the second segment from the first
+        auto& funcGen = testGraph.emplaceBlock<FunctionGenerator<float>>({{gr::tag::SAMPLE_RATE.shortKey(), sample_rate}, {"name", "FunctionGenerator"}});
+        expect(funcGen.settings().set(createLinearRampPropertyMap("", 20.f, 30.f, .1f), SettingsCtx{now, "1"}).empty());
+        expect(funcGen.settings().set(createLinearRampPropertyMap("", 20.f, 30.f, .1f), SettingsCtx{now, "2"}).empty());
+
+        auto& sink = testGraph.emplaceBlock<gr::blocks::testing::TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+        expect(testGraph.connect<"out", "clk_in">(clockSrc, funcGen).has_value());
+        expect(testGraph.connect<"out", "in">(funcGen, sink).has_value());
+
+        gr::scheduler::Simple sched;
+        if (auto ret = sched.exchange(std::move(testGraph)); !ret) {
+            throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+        }
+        expect(sched.runAndWait().has_value());
+        expect(fatal(eq(N, static_cast<std::uint32_t>(sink._samples.size())))) << "number of samples does not match";
+
+        // segment 1: a 100-sample ramp from 20 to 30, held at 30 until the next activation
+        expect(approx(25.f, sink._samples[50], .6f)) << std::format("first ramp mid-point: {}", sink._samples[50]);
+        expect(approx(30.f, sink._samples[150], .5f)) << std::format("first ramp holds its final value: {}", sink._samples[150]);
+
+        // segment 2: the same ramp again, so it starts from its start value rather than holding 30
+        const float restart = *std::min_element(sink._samples.begin() + 200, sink._samples.begin() + 205);
+        expect(approx(20.f, restart, .5f)) << std::format("second ramp restarts at its start value: {}", restart);
+        expect(approx(25.f, sink._samples[250], .6f)) << std::format("second ramp mid-point: {}", sink._samples[250]);
+        expect(approx(30.f, sink._samples[350], .5f)) << std::format("second ramp reaches its final value: {}", sink._samples[350]);
+    };
+
+    "FunctionGenerator + ClockSource repeated tone segment test"_test = [] {
+        using namespace std::string_literals;
+        using namespace function_generator;
+        constexpr std::uint32_t N           = 400;
+        constexpr float         sample_rate = 1000.f;
+        Graph                   testGraph;
+        auto&                   clockSrc = testGraph.emplaceBlock<ClockSource<std::uint8_t>>({{gr::tag::SAMPLE_RATE.shortKey(), sample_rate}, {"n_samples_max", N}, {"name", "ClockSource"}});
+        const auto              now      = settings::convertTimePointToUint64Ns(std::chrono::system_clock::now());
+
+        // 50 Hz at 1 kHz is 20 samples per cycle: a phase carried into the second segment sits at a zero crossing
+        // at sample 205, where a phase of the segment's own is at the cosine's peak
+        clockSrc.tags = {Tag(0, {{tag::CONTEXT.shortKey(), "1"s}}), Tag(205, {{tag::CONTEXT.shortKey(), "2"s}})};
+
+        auto& funcGen = testGraph.emplaceBlock<FunctionGenerator<float>>({{gr::tag::SAMPLE_RATE.shortKey(), sample_rate}, {"name", "FunctionGenerator"}});
+        expect(funcGen.settings().set(createCosPropertyMap("", 50.f, 1.f, 0.f, 0.f, 0.f), SettingsCtx{now, "1"}).empty());
+        expect(funcGen.settings().set(createCosPropertyMap("", 50.f, 1.f, 0.f, 0.f, 0.f), SettingsCtx{now, "2"}).empty());
+
+        auto& sink = testGraph.emplaceBlock<gr::blocks::testing::TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+        expect(testGraph.connect<"out", "clk_in">(clockSrc, funcGen).has_value());
+        expect(testGraph.connect<"out", "in">(funcGen, sink).has_value());
+
+        gr::scheduler::Simple sched;
+        if (auto ret = sched.exchange(std::move(testGraph)); !ret) {
+            throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+        }
+        expect(sched.runAndWait().has_value());
+        expect(fatal(eq(N, static_cast<std::uint32_t>(sink._samples.size())))) << "number of samples does not match";
+
+        const float firstPeak = *std::max_element(sink._samples.begin(), sink._samples.begin() + 4);
+        expect(firstPeak > .9f) << std::format("first tone segment starts at the cosine's peak: {}", firstPeak);
+
+        const float secondPeak = *std::max_element(sink._samples.begin() + 205, sink._samples.begin() + 209);
+        expect(secondPeak > .9f) << std::format("second tone segment restarts its phase: {}", secondPeak);
     };
 };
 
