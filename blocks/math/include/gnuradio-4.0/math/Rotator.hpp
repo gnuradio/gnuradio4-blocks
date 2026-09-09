@@ -49,6 +49,8 @@ is attached to.
 
     // 'frequency_shift' is the commanded quantity and survives a 'sample_rate' change;
     // setting 'phase_increment' instead commands the increment and re-derives the shift.
+    // 'initial_phase' applied at a phase the block does not hold restarts the accumulator there; re-applying the
+    // phase it already holds moves no value and does not restart it.
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         const bool haveShift     = newSettings.contains("frequency_shift");
         const bool haveIncrement = newSettings.contains("phase_increment");
