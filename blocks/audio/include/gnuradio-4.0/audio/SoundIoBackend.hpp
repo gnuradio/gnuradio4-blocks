@@ -492,7 +492,6 @@ private:
             return;
         }
         const std::size_t offered = frameCount * channelCount;
-        _state.silenceSamples.fetch_add(offered, std::memory_order_relaxed);
 
         const std::size_t nSamplesToWrite = std::min(offered, wholeFrameSamples(_state.writer.available(), channelCount));
         if (nSamplesToWrite == 0U) {
@@ -514,6 +513,8 @@ private:
 
         std::fill_n(writeSpan.begin(), static_cast<std::ptrdiff_t>(published), T{});
         writeSpan.publish(published);
+        // silence that was stored is delivered as data; what was not stored is a drop, not silence
+        _state.silenceSamples.fetch_add(published, std::memory_order_relaxed);
         countDroppedSamples(offered, published);
     }
 

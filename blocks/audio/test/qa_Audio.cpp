@@ -188,6 +188,24 @@ void runLocalSourceCases(const std::vector<WavSourceTestCase<T>>& cases, TSample
     }
 }
 
+// holds its input span without consuming for the whole run: the port ring fills, and behind it the
+// capture ring the device writes into
+template<typename T>
+class StalledSink : public gr::Block<StalledSink<T>> {
+public:
+    gr::PortIn<T> in;
+
+    GR_MAKE_REFLECTABLE(StalledSink, in);
+
+    std::chrono::milliseconds _stallFor{0};
+
+    [[nodiscard]] gr::work::Status processBulk(gr::InputSpanLike auto& inSpan) {
+        std::this_thread::sleep_for(_stallFor);
+        std::ignore = inSpan.consume(0UZ);
+        return gr::work::Status::INSUFFICIENT_INPUT_ITEMS;
+    }
+};
+
 std::expected<void, gr::Error> runSchedulerFor(gr::scheduler::Simple<>& sched, std::chrono::milliseconds duration) {
     std::optional<std::expected<void, gr::Error>> result;
     auto                                          schedThread = std::thread([&sched, &result] { result = sched.runAndWait(); });
@@ -262,6 +280,43 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         // rather than inferred from a gap in the stream
         expect(gt(sink._nSamplesProduced, 0UZ)) << caseName;
         expect(eq(source.dropped_samples.value, gr::Size_t(0))) << std::format("{}: a keeping-up consumer must not lose samples, dropped {}", caseName, source.dropped_samples.value);
+    };
+
+    "AudioSource accounts for the losses the backend reports"_test = [] {
+        constexpr std::string_view caseName = "AudioSource backend loss accounting";
+
+        gr::Graph graph;
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 48000.f}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}});
+        source._useDummyBackendForTests = true;
+        auto& sink                      = graph.emplaceBlock<StalledSink<float>>();
+        sink._stallFor                  = 700ms; // outlasts the run below, so nothing is ever consumed
+        // a short edge, so the capture ring behind it fills well inside the run
+        expect(graph.connect<"out", "in">(source, sink, gr::EdgeParameters{.minBufferSize = 4096UZ}).has_value()) << caseName;
+
+        gr::scheduler::Simple<> sched;
+        expect(sched.exchange(std::move(graph)).has_value()) << caseName;
+        expect(runSchedulerFor(sched, 500ms).has_value()) << caseName;
+        expect(sched.state() != gr::lifecycle::State::ERROR) << caseName;
+
+        // nothing downstream consumed, so the capture ring filled and the backend lost samples on
+        // the one path that never reaches the output
+        expect(gt(source._backendDroppedSamples, 0UZ)) << std::format("{}: backendDropped={} backlogDiscarded={}", caseName, source._backendDroppedSamples, source._backlogDiscardedSamples);
+
+        // the public count is what the backend lost plus the silence it delivered plus what the
+        // block itself discarded, with nothing left behind by the shutdown paths
+        expect(eq(static_cast<std::size_t>(source.dropped_samples.value), source._backendDroppedSamples + source._backendSilenceSamples + source._backlogDiscardedSamples)) //
+            << std::format("{}: dropped={} backendDropped={} silence={} backlogDiscarded={}", caseName, source.dropped_samples.value, source._backendDroppedSamples, source._backendSilenceSamples, source._backlogDiscardedSamples);
+
+        // and the setting a control plane reads is current with the member
+        const auto reported = source.settings().get("dropped_samples");
+        expect(reported.has_value()) << caseName;
+        if (reported.has_value()) {
+            const auto* reportedValue = reported->get_if<gr::Size_t>();
+            expect(reportedValue != nullptr) << caseName;
+            if (reportedValue != nullptr) {
+                expect(eq(*reportedValue, source.dropped_samples.value)) << caseName;
+            }
+        }
     };
 
     "AudioSink accounts for samples the device ring refused"_test = [] {

@@ -60,7 +60,7 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
 #endif
     gr::Annotated<algorithm::DriftCorrection, "drift_correction", gr::Doc<"Drift compensation mode: None, Linear, Cubic, or AdaptiveResampling">> drift_correction = algorithm::DriftCorrection::Linear;
     gr::Annotated<bool, "permission", gr::Doc<"Read-only: whether microphone/input device permission has been granted">>                          permission       = false;
-    gr::Annotated<gr::Size_t, "dropped_samples", gr::Doc<"Read-only: captured samples discarded because downstream could not keep up">>           dropped_samples  = 0U;
+    gr::Annotated<gr::Size_t, "dropped_samples", gr::Doc<"Read-only: captured samples lost, to a full ring or to a silence-filled driver hole">>  dropped_samples  = 0U;
     bool                                                                                                                                          _useDummyBackendForTests{false};
 
     GR_MAKE_REFLECTABLE(AudioSource, clk_in, out, sample_rate, num_channels, io_buffer_size, device, available_devices, emit_timing_tags, emit_meta_info, tag_interval, trigger_name, ppm_estimator_cutoff, drift_correction, permission, dropped_samples);
@@ -84,6 +84,9 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
     bool                           _clockOffsetValid{false};
     std::string                    _clockTriggerName;
     std::size_t                    _lastReportedOverflows{0U};
+    std::size_t                    _backendDroppedSamples{0U};   // capture the device offered that the ring could not take
+    std::size_t                    _backendSilenceSamples{0U};   // silence the driver put in place of capture it had lost
+    std::size_t                    _backlogDiscardedSamples{0U}; // backlog dropped here because downstream stalled
     std::uint64_t                  _lastDropLogNs{0U};
 
     struct IoThreadGuard {
@@ -105,6 +108,7 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
 
     void stop() {
         gr::atomic_ref(_ioThreadDone).wait(false);
+        collectBackendLosses(); // shutdown() drops the backend's counts with its ring
         _backendImpl.shutdown();
     }
 
@@ -133,6 +137,7 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
 
             if (_failed) {
                 // retry: shut down, wait, re-initialise
+                collectBackendLosses();
                 _backendImpl.shutdown();
                 std::this_thread::sleep_for(std::chrono::seconds(2));
                 if (!gr::lifecycle::isActive(this->state())) {
@@ -150,6 +155,9 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
                 _failed = true;
                 continue;
             }
+            // the capture callback loses samples exactly when this loop cannot place them, so the
+            // count is taken on every pass, not only where samples reach the output
+            collectBackendLosses();
 
             const std::size_t available = _backendImpl._state.reader.available();
             if (available == 0U) {
@@ -166,6 +174,7 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
             drainClockInput(clkReader, clkTagRdr);
             publishSamples(outWriter, nFrameAligned, channelCount);
         }
+        collectBackendLosses();
 
         this->publishEoS();
         gr::atomic_ref(_ioThreadDone).store_release(true);
@@ -201,6 +210,7 @@ private:
                 auto              discardSpan = _backendImpl._state.reader.get(std::min(excess, backlog));
                 const std::size_t nDiscarded  = discardSpan.size();
                 std::ignore                   = discardSpan.consume(nDiscarded);
+                _backlogDiscardedSamples += nDiscarded;
                 reportDiscardedSamples(nDiscarded);
             }
             return;
@@ -244,15 +254,9 @@ private:
             }
         }
 
-        // the capture callback drops when the backend ring is full and marks driver holes as silence;
-        // fold both into dropped_samples so the block's loss count covers the whole path
-        const auto backendDropped = _backendImpl._state.droppedSamples.exchange(0U, std::memory_order_relaxed);
-        reportDiscardedSamples(backendDropped);
-
         const auto overflows = _backendImpl._state.overflowCount.load(std::memory_order_relaxed);
         if (overflows > _lastReportedOverflows) {
-            const auto silence = _backendImpl._state.silenceSamples.load(std::memory_order_relaxed);
-            std::println(stderr, "[AudioSource] device overflow #{} (silence-filled holes: {} samples)", overflows, silence);
+            std::println(stderr, "[AudioSource] device overflow #{} (silence-filled holes: {} samples)", overflows, _backendSilenceSamples);
             _lastReportedOverflows = overflows;
         }
 
@@ -261,17 +265,28 @@ private:
         this->progress->notify_all();
     }
 
+    // the backend counts what its ring refused and what it filled with silence; the two are disjoint
+    // and both are capture the block cannot deliver, so both are collected into the block's count
+    void collectBackendLosses() {
+        const std::size_t dropped = _backendImpl._state.droppedSamples.exchange(0U, std::memory_order_relaxed);
+        const std::size_t silence = _backendImpl._state.silenceSamples.exchange(0U, std::memory_order_relaxed);
+        _backendDroppedSamples += dropped;
+        _backendSilenceSamples += silence;
+        reportDiscardedSamples(dropped + silence);
+    }
+
     void reportDiscardedSamples(std::size_t nDiscarded) {
         if (nDiscarded == 0UZ) {
             return;
         }
         dropped_samples = dropped_samples.value + static_cast<gr::Size_t>(nDiscarded);
+        this->settings().updateActiveParameters();
 
         constexpr std::uint64_t kLogIntervalNs = 1'000'000'000ULL;
         const std::uint64_t     tNowNs         = detail::wallClockNs();
         if (tNowNs - _lastDropLogNs >= kLogIntervalNs) {
             _lastDropLogNs = tNowNs;
-            std::println(stderr, "[AudioSource] discarded {} captured samples (total {}) — downstream is not keeping up", nDiscarded, dropped_samples.value);
+            std::println(stderr, "[AudioSource] lost {} captured samples (total {})", nDiscarded, dropped_samples.value);
         }
     }
 
