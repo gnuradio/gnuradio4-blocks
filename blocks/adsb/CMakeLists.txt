@@ -14,6 +14,7 @@ gr_add_block_library(
   HEADERS
   include/gnuradio-4.0/adsb/PpmFramer.hpp
   include/gnuradio-4.0/adsb/ModeS.hpp
+  include/gnuradio-4.0/adsb/AdsbPrinter.hpp
   LINK_LIBRARIES
   gr-adsb)
 

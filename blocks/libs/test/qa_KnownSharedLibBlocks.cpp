@@ -164,6 +164,7 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::digital::DelimiterFramer"sv));
         expect(registry.contains("gr::blocks::adsb::PpmFramer<float32>"sv));
         expect(registry.contains("gr::blocks::adsb::ModeSDecode"sv));
+        expect(registry.contains("gr::blocks::adsb::AdsbPrinter"sv));
         expect(registry.contains("gr::blocks::basic::DataSetToStream<float32>"sv));
         expect(registry.contains("gr::blocks::basic::DataSetToPacket<float32>"sv));
         expect(registry.contains("gr::blocks::basic::PacketToDataSet<float32>"sv));

@@ -1,12 +1,19 @@
 # adsb
 
-The message layer of the 1090 MHz Mode S downlink: what an admitted frame _says_, once
-`gr::blocks::digital::PpmFramer` has read its octets out of a magnitude stream and checked its
-parity, as a record adapter over `gr::DataSet<std::uint8_t>`.
+The 1090 MHz Mode S and ADS-B chain: `PpmFramer` reads a candidate frame's octets out of a magnitude
+stream and checks its parity, and the message layer says what an admitted frame _says_. Three blocks;
+the two message-layer ones are record adapters over `gr::DataSet<std::uint8_t>`.
+
+The framer is here rather than in `digital` because pulse-position modulation at this preamble, frame
+length and parity is Mode S and nothing else. The pulse-position scanner it runs on is the general
+kernel and stays in the algorithm layer, as `gr::digital::PpmScanner`.
+
+The blocks stay in `gr::blocks::adsb` and ship no compatibility import: the module is new, so there is
+no earlier `gr::adsb` for one to be compatible with.
 
 ```
-… -> basic::Abs -> adsb::PpmFramer(profile: mode_s)    -> adsb::ModeSDecode -> …
-                          octets                             typed fields
+… -> basic::Abs -> adsb::PpmFramer(profile: mode_s)    -> adsb::ModeSDecode -> adsb::AdsbPrinter -> …
+                          octets                             typed fields          one text line
 ```
 
 The framing is ICAO Annex 10 Volume IV, whose extended squitter carries a 56-bit ME field in bits
@@ -111,6 +118,31 @@ stays a consumer's to compute if it knows a reference position this block does n
 Counters a consumer may read at any time: `nFrames`, `nDecoded`, `nPositions`, `nPairsExpired`,
 `nUnchecked`, `nEvicted`.
 
+## `AdsbPrinter`
+
+One decoded record in, the line that describes it out as the payload of a text record:
+
+```
+   29.781  DF17  AB0969  airpos  alt 39000 ft  lat 42.40448  lon -71.34696  [AAL160]
+```
+
+The time is from the frame's own `sample_start` and `sample_rate`. The identification in brackets
+is remembered per address, in a table of `table_size` entries bounded the same way, because an
+aircraft names itself in one message and reports its position in another.
+
+The block **reads only the typed keys `ModeSDecode` wrote**, never the octets, except to show a
+frame the decoder would not read — which prints its protocol and its hex instead, that being all
+it may be believed about. So the line and a network peer's structured view of the same record
+cannot disagree.
+
+The published record's `protocol` is `text/adsb` and its payload carries no trailing newline; the
+input record's keys all cross beneath, so a consumer can still filter on the address or the
+altitude the line was rendered from. `source_id` is deliberately not written: the record-metadata
+vocabulary gives that key to the receiver, as the operator's name for it.
+
+`to_stdout`, off by default, additionally writes each line to standard output, which is what a
+headless runner with no consumer attached wants.
+
 ## Tests
 
 `test/qa_ModeSDecode` builds every frame field by field from the standard, so a case states
@@ -119,4 +151,6 @@ encodes a chosen latitude and longitude with its own implementation of the stand
 asks the block for the position back, which judges the pairing arithmetic against the equations
 rather than against itself. One case carries a decoded record through
 `basic::DataSetToPacket` and `basic::PacketToDataSet` and through the metadata encoder the
-transports share, and checks every field back at its own type.
+transports share, and checks every field back at its own type. `test/qa_AdsbPrinter` asserts the
+lines the pair renders, because the line is the printer's whole contract. `test/qa_PpmFramer` drives the
+framer over synthetic magnitude streams built from the standard's preamble and chip timing.
