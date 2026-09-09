@@ -43,16 +43,18 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
     gr::PortIn<std::uint8_t, gr::Optional> clk_in;
     gr::PortOut<T>                         out;
 
-    gr::Annotated<float, "sample_rate", gr::Visible, gr::Unit<"Hz">, gr::Doc<"Requested capture sample rate. Updated to the active stream rate after start.">>               sample_rate    = 48000.f;
-    gr::Annotated<gr::Size_t, "num_channels", gr::Visible, gr::Doc<"Requested interleaved channel count. Updated to the active stream channel count after start.">>          num_channels   = 1U;
-    gr::Annotated<float, "io_buffer_size", gr::Visible, gr::Unit<"s">, gr::Limits<0.1f, 10.f>, gr::Doc<"I/O buffer size in seconds">>                                        io_buffer_size = 5.0f;
-    gr::Annotated<std::string, "device", gr::Visible, gr::Doc<"Device selector: empty or 'default' for system default, substring match on name, or '@id:...' for exact ID. A default selection prefers PulseAudio, an explicit one keeps the platform's own backend order.">> device;
-    gr::Annotated<std::vector<std::string>, "available_devices", gr::Doc<"Detected audio input devices in 'name [id]' format">>                                              available_devices;
-    gr::Annotated<bool, "emit_timing_tags", gr::Doc<"Emit timing tags with timestamps and rate estimates">>                                                                  emit_timing_tags = true;
-    gr::Annotated<bool, "emit_meta_info", gr::Doc<"Include metadata in timing tags">>                                                                                        emit_meta_info   = true;
-    gr::Annotated<float, "tag_interval", gr::Unit<"s">, gr::Doc<"Minimum interval between timing tags">>                                                                     tag_interval     = 1.0f;
-    gr::Annotated<std::string, "trigger_name", gr::Doc<"Trigger name for free-running (no external clock) mode">>                                                            trigger_name     = std::string("AUDIO_WALLCLOCK");
-    gr::Annotated<float, "ppm_estimator_cutoff", gr::Unit<"Hz">, gr::Doc<"Low-pass cutoff for sample rate estimator">>                                                       ppm_estimator_cutoff =
+    gr::Annotated<float, "sample_rate", gr::Visible, gr::Unit<"Hz">, gr::Doc<"Requested capture sample rate. Updated to the active stream rate after start.">>                                                                                                                                                        sample_rate    = 48000.f;
+    gr::Annotated<gr::Size_t, "num_channels", gr::Visible, gr::Doc<"Requested interleaved channel count. Updated to the active stream channel count after start.">>                                                                                                                                                   num_channels   = 1U;
+    gr::Annotated<float, "io_buffer_size", gr::Visible, gr::Unit<"s">, gr::Limits<0.1f, 10.f>, gr::Doc<"I/O buffer size in seconds">>                                                                                                                                                                                 io_buffer_size = 5.0f;
+    gr::Annotated<std::string, "device", gr::Visible, gr::Doc<"Device selector: empty or 'default' for system default, substring match on name, or '@id:...' for exact ID. A default selection prefers PulseAudio, an explicit one keeps the platform's own backend order.">>                                         device;
+    gr::Annotated<std::string, "backend", gr::Visible, gr::Doc<"Audio backend: 'auto' (default) leaves the choice to the device selector, or name one of the platform's backends, e.g. 'pulseaudio', 'jack', 'alsa', 'dummy'. A backend that is not available is a start error, never a connection to another one.">> backend = std::string("auto");
+    gr::Annotated<std::vector<std::string>, "available_devices", gr::Doc<"Detected audio input devices in 'name [id]' format">>                                                                                                                                                                                       available_devices;
+    gr::Annotated<std::string, "active_backend", gr::Doc<"Read-only: the backend the block connected through">>                                                                                                                                                                                                       active_backend;
+    gr::Annotated<bool, "emit_timing_tags", gr::Doc<"Emit timing tags with timestamps and rate estimates">>                                                                                                                                                                                                           emit_timing_tags = true;
+    gr::Annotated<bool, "emit_meta_info", gr::Doc<"Include metadata in timing tags">>                                                                                                                                                                                                                                 emit_meta_info   = true;
+    gr::Annotated<float, "tag_interval", gr::Unit<"s">, gr::Doc<"Minimum interval between timing tags">>                                                                                                                                                                                                              tag_interval     = 1.0f;
+    gr::Annotated<std::string, "trigger_name", gr::Doc<"Trigger name for free-running (no external clock) mode">>                                                                                                                                                                                                     trigger_name     = std::string("AUDIO_WALLCLOCK");
+    gr::Annotated<float, "ppm_estimator_cutoff", gr::Unit<"Hz">, gr::Doc<"Low-pass cutoff for sample rate estimator">>                                                                                                                                                                                                ppm_estimator_cutoff =
 #if defined(__EMSCRIPTEN__)
         0.01f;
 #else
@@ -63,7 +65,7 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
     gr::Annotated<gr::Size_t, "dropped_samples", gr::Doc<"Read-only: captured samples lost, to a full ring or to a silence-filled driver hole">>  dropped_samples  = 0U;
     bool                                                                                                                                          _useDummyBackendForTests{false};
 
-    GR_MAKE_REFLECTABLE(AudioSource, clk_in, out, sample_rate, num_channels, io_buffer_size, device, available_devices, emit_timing_tags, emit_meta_info, tag_interval, trigger_name, ppm_estimator_cutoff, drift_correction, permission, dropped_samples);
+    GR_MAKE_REFLECTABLE(AudioSource, clk_in, out, sample_rate, num_channels, io_buffer_size, device, backend, available_devices, active_backend, emit_timing_tags, emit_meta_info, tag_interval, trigger_name, ppm_estimator_cutoff, drift_correction, permission, dropped_samples);
 
     using gr::Block<AudioSource<T>>::Block;
 #if defined(__EMSCRIPTEN__)
@@ -381,7 +383,7 @@ private:
     }
 
     [[nodiscard]] std::expected<void, gr::Error> initialiseBackend() {
-        const detail::AudioDeviceConfig config{.sampleRate = currentSampleRate(), .numChannels = currentChannelCount(), .bufferFrames = backendBufferFrames(), .device = device.value, .useDummyBackendForTests = _useDummyBackendForTests};
+        const detail::AudioDeviceConfig config{.sampleRate = currentSampleRate(), .numChannels = currentChannelCount(), .bufferFrames = backendBufferFrames(), .device = device.value, .backend = backend.value, .useDummyBackendForTests = _useDummyBackendForTests};
         auto                            result = _backendImpl.start(config);
         if (!result) {
             return std::unexpected(result.error());
@@ -392,9 +394,10 @@ private:
         }
 
         available_devices = _backendImpl._availableDevices;
+        active_backend    = _backendImpl.activeBackendName();
         sample_rate       = static_cast<float>(result->sampleRate);
         num_channels      = static_cast<gr::Size_t>(result->numChannels);
-        _activeConfig     = {.sampleRate = result->sampleRate, .numChannels = result->numChannels, .bufferFrames = backendBufferFrames(), .device = device.value};
+        _activeConfig     = {.sampleRate = result->sampleRate, .numChannels = result->numChannels, .bufferFrames = backendBufferFrames(), .device = device.value, .backend = backend.value};
         _formatTagPending = true;
         _failed           = false;
         _lastTagTimeNs    = 0U;
@@ -427,12 +430,14 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
 
     gr::PortIn<T> in;
 
-    gr::Annotated<float, "sample_rate", gr::Visible, gr::Unit<"Hz">, gr::Doc<"PCM sample rate. Updated automatically; not intended to be set by the user.">>                 sample_rate    = 48000.f;
-    gr::Annotated<gr::Size_t, "num_channels", gr::Visible, gr::Doc<"PCM interleaved channel count. Updated automatically; not intended to be set by the user.">>             num_channels   = 1U;
-    gr::Annotated<float, "io_buffer_size", gr::Visible, gr::Unit<"s">, gr::Limits<0.1f, 10.f>, gr::Doc<"I/O staging buffer size in seconds">>                                io_buffer_size = 5.0f;
-    gr::Annotated<std::string, "device", gr::Visible, gr::Doc<"Device selector: empty or 'default' for system default, substring match on name, or '@id:...' for exact ID. A default selection prefers PulseAudio, an explicit one keeps the platform's own backend order.">> device;
-    gr::Annotated<std::vector<std::string>, "available_devices", gr::Doc<"Detected audio output devices in 'name [id]' format">>                                             available_devices;
-    gr::Annotated<float, "ppm_estimator_cutoff", gr::Unit<"Hz">, gr::Doc<"Low-pass cutoff for sample rate estimator">>                                                       ppm_estimator_cutoff =
+    gr::Annotated<float, "sample_rate", gr::Visible, gr::Unit<"Hz">, gr::Doc<"PCM sample rate. Updated automatically; not intended to be set by the user.">>                                                                                                                                                          sample_rate    = 48000.f;
+    gr::Annotated<gr::Size_t, "num_channels", gr::Visible, gr::Doc<"PCM interleaved channel count. Updated automatically; not intended to be set by the user.">>                                                                                                                                                      num_channels   = 1U;
+    gr::Annotated<float, "io_buffer_size", gr::Visible, gr::Unit<"s">, gr::Limits<0.1f, 10.f>, gr::Doc<"I/O staging buffer size in seconds">>                                                                                                                                                                         io_buffer_size = 5.0f;
+    gr::Annotated<std::string, "device", gr::Visible, gr::Doc<"Device selector: empty or 'default' for system default, substring match on name, or '@id:...' for exact ID. A default selection prefers PulseAudio, an explicit one keeps the platform's own backend order.">>                                         device;
+    gr::Annotated<std::string, "backend", gr::Visible, gr::Doc<"Audio backend: 'auto' (default) leaves the choice to the device selector, or name one of the platform's backends, e.g. 'pulseaudio', 'jack', 'alsa', 'dummy'. A backend that is not available is a start error, never a connection to another one.">> backend = std::string("auto");
+    gr::Annotated<std::vector<std::string>, "available_devices", gr::Doc<"Detected audio output devices in 'name [id]' format">>                                                                                                                                                                                      available_devices;
+    gr::Annotated<std::string, "active_backend", gr::Doc<"Read-only: the backend the block connected through">>                                                                                                                                                                                                       active_backend;
+    gr::Annotated<float, "ppm_estimator_cutoff", gr::Unit<"Hz">, gr::Doc<"Low-pass cutoff for sample rate estimator">>                                                                                                                                                                                                ppm_estimator_cutoff =
 #if defined(__EMSCRIPTEN__)
         0.01f;
 #else
@@ -444,7 +449,7 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
     gr::Annotated<gr::Size_t, "dropped_samples", gr::Doc<"Read-only: samples dropped because the staging buffer was full">>                       dropped_samples  = 0U;
     bool                                                                                                                                          _useDummyBackendForTests{false};
 
-    GR_MAKE_REFLECTABLE(AudioSink, in, sample_rate, num_channels, io_buffer_size, device, available_devices, ppm_estimator_cutoff, drift_correction, debug_console, permission, dropped_samples);
+    GR_MAKE_REFLECTABLE(AudioSink, in, sample_rate, num_channels, io_buffer_size, device, backend, available_devices, active_backend, ppm_estimator_cutoff, drift_correction, debug_console, permission, dropped_samples);
 
     using gr::Block<AudioSink<T>>::Block;
 #if defined(__EMSCRIPTEN__)
@@ -473,6 +478,7 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
         float                    sampleRate{0.f};
         gr::Size_t               numChannels{0U};
         std::vector<std::string> availableDevices{};
+        std::string              backendName{};
         bool                     pending{false};
     };
 
@@ -556,7 +562,7 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
         if (_activeConfig.sampleRate == 0U) {
             return;
         }
-        if (requested.device.sampleRate == _activeConfig.sampleRate && requested.device.numChannels == _activeConfig.numChannels && requested.device.device == _activeConfig.device) {
+        if (requested.device.sampleRate == _activeConfig.sampleRate && requested.device.numChannels == _activeConfig.numChannels && requested.device.device == _activeConfig.device && requested.device.backend == _activeConfig.backend) {
             return;
         }
         {
@@ -627,7 +633,7 @@ private:
 
     // only the scheduler thread reads the settings; every value the I/O thread needs is taken here
     [[nodiscard]] IoConfig makeIoConfig() const {
-        return IoConfig{.device = {.sampleRate = currentSampleRate(), .numChannels = currentChannelCount(), .bufferFrames = backendBufferFrames(), .device = device.value, .useDummyBackendForTests = _useDummyBackendForTests}, //
+        return IoConfig{.device = {.sampleRate = currentSampleRate(), .numChannels = currentChannelCount(), .bufferFrames = backendBufferFrames(), .device = device.value, .backend = backend.value, .useDummyBackendForTests = _useDummyBackendForTests}, //
             .stagingCapacity    = std::max<std::size_t>(1U, ioBufferSamples()),
             .ioBufferSeconds    = io_buffer_size.value,
             .ppmEstimatorCutoff = ppm_estimator_cutoff.value,
@@ -649,6 +655,7 @@ private:
         sample_rate       = negotiated.sampleRate;
         num_channels      = negotiated.numChannels;
         available_devices = std::move(negotiated.availableDevices);
+        active_backend    = std::move(negotiated.backendName);
         this->settings().updateActiveParameters();
     }
 
@@ -858,7 +865,7 @@ private:
             std::lock_guard configLock(_configMutex);
             pending = _pendingIoConfig;
         }
-        if (pending.device.sampleRate == _activeConfig.sampleRate && pending.device.numChannels == _activeConfig.numChannels && pending.device.device == _activeConfig.device) {
+        if (pending.device.sampleRate == _activeConfig.sampleRate && pending.device.numChannels == _activeConfig.numChannels && pending.device.device == _activeConfig.device && pending.device.backend == _activeConfig.backend) {
             return;
         }
         if (auto result = initialiseBackendUnlocked(pending); !result) {
@@ -896,11 +903,11 @@ private:
             _stagingBuffer = StagingBuffer(requested.stagingCapacity);
             _stagingWriter = _stagingBuffer.new_writer();
             _stagingReader = _stagingBuffer.new_reader();
-            _activeConfig  = {.sampleRate = actual.sampleRate, .numChannels = actual.numChannels, .bufferFrames = requested.device.bufferFrames, .device = requested.device.device};
+            _activeConfig  = {.sampleRate = actual.sampleRate, .numChannels = actual.numChannels, .bufferFrames = requested.device.bufferFrames, .device = requested.device.device, .backend = requested.device.backend};
             _failed        = false;
 
             std::lock_guard configLock(_configMutex);
-            _negotiated = {.sampleRate = static_cast<float>(actual.sampleRate), .numChannels = static_cast<gr::Size_t>(actual.numChannels), .availableDevices = _backendImpl._availableDevices, .pending = true};
+            _negotiated = {.sampleRate = static_cast<float>(actual.sampleRate), .numChannels = static_cast<gr::Size_t>(actual.numChannels), .availableDevices = _backendImpl._availableDevices, .backendName = _backendImpl.activeBackendName(), .pending = true};
         }
         gr::atomic_ref(_streamActive).store_release(_backendImpl.isStreamActive());
 
