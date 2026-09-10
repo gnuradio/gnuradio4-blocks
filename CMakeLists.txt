@@ -15,8 +15,10 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
 # Block libraries are opened with dlopen, so a dependency outside the system prefix must be on the installed RPATH for
-# the loader to resolve it.
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
+# the loader to resolve it. CMake applies the variable to every target created after this point, which makes it a
+# project-wide default rather than a setting of one plugin; a value supplied on the command line or by an enclosing
+# project is kept.
+option(CMAKE_INSTALL_RPATH_USE_LINK_PATH "Add the directories of linked libraries to the installed RPATH" ON)
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
