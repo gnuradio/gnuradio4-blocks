@@ -9,6 +9,7 @@
 #include <cmath>
 #include <complex>
 #include <cstring>
+#include <format>
 #include <functional>
 #include <map>
 #include <memory>
@@ -64,6 +65,25 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *  - built-in models: passthrough, attenuation, AWGN, delay, composable chain
  *  - max_write_samples=N caps every writeStream to N samples, so a caller sees
  *    the short writes a real device produces (0, the default, accepts the lot)
+ *  - configurable frontend: gain elements with ranges, an AGC whose default
+ *    state and refusals are set per instance, antennas, frequency components
+ *    with a tuning step, and the has* facilities a caller queries first
+ *  - every configuration call the device receives is recorded in order; the log
+ *    is read back through readSetting("call_log") and cleared by writing that
+ *    key, which reaches it through the SoapySDR API alone
+ *
+ * Frontend device arguments (all optional, all with the defaults of a plain
+ * one-element RX device):
+ *  - gain_elements=NAME:min:max[|NAME:min:max...]  (default TUNER:0:60)
+ *  - agc_default=on|off                            (default off)
+ *  - has_gain_mode=true|false                      (default true)
+ *  - refuse_under_agc=NAME[|NAME...]               gain elements the device
+ *    refuses to set while its AGC is on, as SDRplay refuses IFGR
+ *  - antennas=NAME[|NAME...]                       (default RX for RX, TX for TX)
+ *  - frequency_components=NAME[|NAME...]           (default RF)
+ *  - frequency_step=HZ                             tuning grid, 0 = exact
+ *  - has_dc_offset_mode, has_dc_offset, has_iq_balance,
+ *    has_frequency_correction = true|false         (default true)
  *
  * Channel models reuse GR4 algorithms (gr::rng::GaussianNoise, etc.) called
  * directly without a scheduler. The std::function interface is extensible to
@@ -209,22 +229,29 @@ class LoopbackDevice : public SoapySDR::Device {
     char _rxStreamSentinel = 0;
     char _txStreamSentinel = 0;
 
+    struct GainElement {
+        std::string name;
+        double      minimum = 0.0;
+        double      maximum = 0.0;
+    };
+
     struct ChannelState {
-        double               frequency     = 100e6;
-        double               sampleRate    = 1e6;
-        double               bandwidth     = 0.0;
-        double               gain          = 0.0;
-        double               ppmCorrection = 0.0;
-        bool                 dcOffsetMode  = false;
-        std::complex<double> dcOffset{0.0, 0.0};
-        std::complex<double> iqBalance{1.0, 0.0};
-        std::string          antenna = "RX";
-        ChannelModel         model   = ChannelModel::passthrough();
-        double               rxPhase = 0.0; // phase accumulator for rxOnly tone generator
-        RxBuffer             rxBuffer;
-        RxWriter             rxWriter;
-        RxReader             rxReader;
-        std::vector<CF32>    txScratch; // pre-allocated for non-CF32 TX format conversion
+        double                        frequency  = 100e6;
+        double                        sampleRate = 1e6;
+        double                        bandwidth  = 0.0;
+        std::map<std::string, double> elementGains;
+        bool                          gainMode      = false;
+        double                        ppmCorrection = 0.0;
+        bool                          dcOffsetMode  = false;
+        std::complex<double>          dcOffset{0.0, 0.0};
+        std::complex<double>          iqBalance{1.0, 0.0};
+        std::string                   antenna = "RX";
+        ChannelModel                  model   = ChannelModel::passthrough();
+        double                        rxPhase = 0.0; // phase accumulator for rxOnly tone generator
+        RxBuffer                      rxBuffer;
+        RxWriter                      rxWriter;
+        RxReader                      rxReader;
+        std::vector<CF32>             txScratch; // pre-allocated for non-CF32 TX format conversion
 
         explicit ChannelState(std::size_t bufferSize) : rxBuffer(bufferSize), rxWriter(rxBuffer.new_writer()), rxReader(rxBuffer.new_reader()) {}
     };
@@ -254,6 +281,20 @@ class LoopbackDevice : public SoapySDR::Device {
     std::map<std::string, unsigned>                      _gpioDirValues;
     std::map<std::pair<std::string, unsigned>, unsigned> _registers;
 
+    std::vector<GainElement>         _gainElements{{"TUNER", 0.0, 60.0}};
+    std::vector<std::string>         _refusedUnderAgc;
+    std::vector<std::string>         _rxAntennas{"RX"};
+    std::vector<std::string>         _frequencyComponents{"RF"};
+    double                           _frequencyStep          = 0.0;
+    bool                             _hasGainMode            = true;
+    bool                             _agcDefault             = false;
+    bool                             _hasDcOffsetMode        = true;
+    bool                             _hasDcOffset            = true;
+    bool                             _hasIqBalance           = true;
+    bool                             _hasFrequencyCorrection = true;
+    mutable std::mutex               _callLogMutex;
+    mutable std::vector<std::string> _callLog;
+
 public:
     explicit LoopbackDevice(const SoapySDR::Kwargs& args) {
         _instanceId = DeviceRegistry::parseInstanceId(args);
@@ -281,9 +322,17 @@ public:
         if (_deviceMode == DeviceMode::RxOnly) {
             _simulateTiming.store(true, std::memory_order_relaxed);
         }
+        parseFrontendArgs(args);
         _channels.reserve(_numChannels);
         for (std::size_t i = 0UZ; i < _numChannels; ++i) {
             _channels.push_back(std::make_unique<ChannelState>(_bufferSize));
+            for (const auto& element : _gainElements) {
+                _channels.back()->elementGains[element.name] = element.minimum;
+            }
+            _channels.back()->gainMode = _agcDefault;
+            if (!_rxAntennas.empty()) {
+                _channels.back()->antenna = _rxAntennas.front();
+            }
         }
     }
 
@@ -317,49 +366,116 @@ public:
     std::string      getHardwareKey() const override { return "loopback"; }
     SoapySDR::Kwargs getHardwareInfo() const override { return {{"driver", "loopback"}, {"instance_id", std::to_string(_instanceId)}, {"version", "1.0"}}; }
 
-    void             setFrontendMapping(const int direction, const std::string& mapping) override { (direction == SOAPY_SDR_RX) ? _rxFrontendMapping = mapping : _txFrontendMapping = mapping; }
+    void setFrontendMapping(const int direction, const std::string& mapping) override {
+        record(std::format("setFrontendMapping({},{})", directionName(direction), mapping));
+        (direction == SOAPY_SDR_RX) ? _rxFrontendMapping = mapping : _txFrontendMapping = mapping;
+    }
     std::string      getFrontendMapping(const int direction) const override { return (direction == SOAPY_SDR_RX) ? _rxFrontendMapping : _txFrontendMapping; }
     size_t           getNumChannels(const int /*direction*/) const override { return _numChannels; }
     SoapySDR::Kwargs getChannelInfo(const int /*direction*/, const size_t /*channel*/) const override { return {}; }
     bool             getFullDuplex(const int /*direction*/, const size_t /*channel*/) const override { return true; }
 
-    std::vector<std::string> listAntennas(const int direction, const size_t /*channel*/) const override { return (direction == SOAPY_SDR_RX) ? std::vector<std::string>{"RX"} : std::vector<std::string>{"TX"}; }
-    void                     setAntenna(const int /*direction*/, const size_t channel, const std::string& name) override {
+    // The base overloads that a derived declaration would otherwise hide.
+    using SoapySDR::Device::getFrequency;
+    using SoapySDR::Device::getGain;
+    using SoapySDR::Device::getGainRange;
+    using SoapySDR::Device::setFrequency;
+    using SoapySDR::Device::setGain;
+
+    // Every configuration call the device received, in order.
+    [[nodiscard]] std::vector<std::string> callLog() const {
+        auto lock = std::lock_guard(_callLogMutex);
+        return _callLog;
+    }
+    void clearCallLog() {
+        auto lock = std::lock_guard(_callLogMutex);
+        _callLog.clear();
+    }
+
+    std::vector<std::string> listAntennas(const int direction, const size_t /*channel*/) const override { return (direction == SOAPY_SDR_RX) ? _rxAntennas : std::vector<std::string>{"TX"}; }
+    void                     setAntenna(const int direction, const size_t channel, const std::string& name) override {
+        record(std::format("setAntenna({},{},{})", directionName(direction), channel, name));
         if (channel < _numChannels) {
             _channels[channel]->antenna = name;
         }
     }
     std::string getAntenna(const int /*direction*/, const size_t channel) const override { return (channel < _numChannels) ? _channels[channel]->antenna : ""; }
 
-    bool                     hasGainMode(const int /*direction*/, const size_t /*channel*/) const override { return true; }
-    void                     setGainMode(const int /*direction*/, const size_t /*channel*/, const bool /*automatic*/) override {}
-    bool                     getGainMode(const int /*direction*/, const size_t /*channel*/) const override { return false; }
-    std::vector<std::string> listGains(const int /*direction*/, const size_t /*channel*/) const override { return {"TUNER"}; }
-    void                     setGain(const int /*direction*/, const size_t channel, const double value) override {
-        if (channel < _numChannels) {
-            _channels[channel]->gain = value;
+    bool hasGainMode(const int /*direction*/, const size_t /*channel*/) const override { return _hasGainMode; }
+    void setGainMode(const int direction, const size_t channel, const bool automatic) override {
+        record(std::format("setGainMode({},{},{})", directionName(direction), channel, automatic));
+        if (_hasGainMode && channel < _numChannels) {
+            _channels[channel]->gainMode = automatic;
         }
     }
-    double          getGain(const int /*direction*/, const size_t channel) const override { return (channel < _numChannels) ? _channels[channel]->gain : 0.0; }
-    void            setGain(const int direction, const size_t channel, const std::string& /*name*/, const double value) override { setGain(direction, channel, value); }
-    double          getGain(const int direction, const size_t channel, const std::string& /*name*/) const override { return getGain(direction, channel); }
-    SoapySDR::Range getGainRange(const int /*direction*/, const size_t /*channel*/) const override { return SoapySDR::Range(0.0, 60.0); }
-    SoapySDR::Range getGainRange(const int direction, const size_t channel, const std::string& /*name*/) const override { return getGainRange(direction, channel); }
+    bool                     getGainMode(const int /*direction*/, const size_t channel) const override { return channel < _numChannels && _channels[channel]->gainMode; }
+    std::vector<std::string> listGains(const int /*direction*/, const size_t /*channel*/) const override {
+        std::vector<std::string> names;
+        names.reserve(_gainElements.size());
+        for (const auto& element : _gainElements) {
+            names.push_back(element.name);
+        }
+        return names;
+    }
 
-    void setFrequency(const int /*direction*/, const size_t channel, const double frequency, const SoapySDR::Kwargs& /*args*/ = {}) override {
-        if (channel < _numChannels) {
-            _channels[channel]->frequency = frequency;
+    // An element named in refuse_under_agc is refused while the channel's AGC is on. The refusal is
+    // recorded and not reported, as SDRplay refuses an IF gain write with a log line and no error.
+    void setGain(const int direction, const size_t channel, const std::string& name, const double value) override {
+        record(std::format("setGain({},{},{},{:g})", directionName(direction), channel, name, value));
+        if (channel >= _numChannels) {
+            return;
         }
+        if (_channels[channel]->gainMode && std::ranges::find(_refusedUnderAgc, name) != _refusedUnderAgc.end()) {
+            record(std::format("refusedUnderAgc({})", name));
+            return;
+        }
+        if (std::ranges::none_of(_gainElements, [&name](const auto& element) { return element.name == name; })) {
+            return;
+        }
+        _channels[channel]->elementGains[name] = value;
     }
+    double getGain(const int /*direction*/, const size_t channel, const std::string& name) const override {
+        if (channel >= _numChannels) {
+            return 0.0;
+        }
+        const auto it = _channels[channel]->elementGains.find(name);
+        return (it != _channels[channel]->elementGains.end()) ? it->second : 0.0;
+    }
+    SoapySDR::Range getGainRange(const int /*direction*/, const size_t /*channel*/, const std::string& name) const override {
+        const auto it = std::ranges::find_if(_gainElements, [&name](const auto& element) { return element.name == name; });
+        return (it != _gainElements.end()) ? SoapySDR::Range(it->minimum, it->maximum) : SoapySDR::Range(0.0, 0.0);
+    }
+
+    // The overall gain, the overall gain range and the componentless setFrequency are not overridden, so the
+    // base class distributes them over the elements and components as it does for a driver that leaves them.
     double                   getFrequency(const int /*direction*/, const size_t channel) const override { return (channel < _numChannels) ? _channels[channel]->frequency : 0.0; }
-    std::vector<std::string> listFrequencies(const int /*direction*/, const size_t /*channel*/) const override { return {"RF"}; }
+    std::vector<std::string> listFrequencies(const int /*direction*/, const size_t /*channel*/) const override { return _frequencyComponents; }
     SoapySDR::RangeList      getFrequencyRange(const int /*direction*/, const size_t /*channel*/) const override { return {SoapySDR::Range(1e6, 6e9)}; }
-    void                     setFrequency(const int direction, const size_t channel, const std::string& /*name*/, const double frequency, const SoapySDR::Kwargs& args = {}) override { setFrequency(direction, channel, frequency, args); }
-    double                   getFrequency(const int direction, const size_t channel, const std::string& /*name*/) const override { return getFrequency(direction, channel); }
-    SoapySDR::RangeList      getFrequencyRange(const int direction, const size_t channel, const std::string& /*name*/) const override { return getFrequencyRange(direction, channel); }
-    SoapySDR::ArgInfoList    getFrequencyArgsInfo(const int /*direction*/, const size_t /*channel*/) const override { return {}; }
+    void                     setFrequency(const int direction, const size_t channel, const std::string& name, const double frequency, const SoapySDR::Kwargs& args = {}) override {
+        record(std::format("setFrequency({},{},{},{:g})", directionName(direction), channel, name, frequency));
+        for (const auto& [key, value] : args) {
+            record(std::format("tuneArg({},{})", key, value));
+        }
+        if (channel >= _numChannels) {
+            return;
+        }
+        if (name == "CORR") {
+            _channels[channel]->ppmCorrection = frequency;
+            return;
+        }
+        _channels[channel]->frequency = (_frequencyStep > 0.0) ? std::floor(frequency / _frequencyStep) * _frequencyStep : frequency;
+    }
+    double getFrequency(const int direction, const size_t channel, const std::string& name) const override {
+        if (name == "CORR") {
+            return getFrequencyCorrection(direction, channel);
+        }
+        return getFrequency(direction, channel);
+    }
+    SoapySDR::RangeList   getFrequencyRange(const int direction, const size_t channel, const std::string& /*name*/) const override { return getFrequencyRange(direction, channel); }
+    SoapySDR::ArgInfoList getFrequencyArgsInfo(const int /*direction*/, const size_t /*channel*/) const override { return {}; }
 
-    void setSampleRate(const int /*direction*/, const size_t channel, const double rate) override {
+    void setSampleRate(const int direction, const size_t channel, const double rate) override {
+        record(std::format("setSampleRate({},{},{:g})", directionName(direction), channel, rate));
         if (channel < _numChannels) {
             _channels[channel]->sampleRate = rate;
         }
@@ -368,7 +484,8 @@ public:
     std::vector<double> listSampleRates(const int /*direction*/, const size_t /*channel*/) const override { return {250e3, 500e3, 1e6, 2e6, 2.048e6, 3.2e6, 10e6, 20e6}; }
     SoapySDR::RangeList getSampleRateRange(const int /*direction*/, const size_t /*channel*/) const override { return {SoapySDR::Range(250e3, 20e6)}; }
 
-    void setBandwidth(const int /*direction*/, const size_t channel, const double bw) override {
+    void setBandwidth(const int direction, const size_t channel, const double bw) override {
+        record(std::format("setBandwidth({},{},{:g})", directionName(direction), channel, bw));
         if (channel < _numChannels) {
             _channels[channel]->bandwidth = bw;
         }
@@ -377,31 +494,35 @@ public:
     std::vector<double> listBandwidths(const int /*direction*/, const size_t /*channel*/) const override { return {200e3, 500e3, 1e6, 5e6, 10e6, 20e6}; }
     SoapySDR::RangeList getBandwidthRange(const int /*direction*/, const size_t /*channel*/) const override { return {SoapySDR::Range(200e3, 20e6)}; }
 
-    bool hasDCOffsetMode(const int /*direction*/, const size_t /*channel*/) const override { return true; }
-    void setDCOffsetMode(const int /*direction*/, const size_t channel, const bool automatic) override {
-        if (channel < _numChannels) {
+    bool hasDCOffsetMode(const int /*direction*/, const size_t /*channel*/) const override { return _hasDcOffsetMode; }
+    void setDCOffsetMode(const int direction, const size_t channel, const bool automatic) override {
+        record(std::format("setDCOffsetMode({},{},{})", directionName(direction), channel, automatic));
+        if (_hasDcOffsetMode && channel < _numChannels) {
             _channels[channel]->dcOffsetMode = automatic;
         }
     }
     bool getDCOffsetMode(const int /*direction*/, const size_t channel) const override { return (channel < _numChannels) && _channels[channel]->dcOffsetMode; }
-    bool hasDCOffset(const int /*direction*/, const size_t /*channel*/) const override { return true; }
-    void setDCOffset(const int /*direction*/, const size_t channel, const std::complex<double>& offset) override {
-        if (channel < _numChannels) {
+    bool hasDCOffset(const int /*direction*/, const size_t /*channel*/) const override { return _hasDcOffset; }
+    void setDCOffset(const int direction, const size_t channel, const std::complex<double>& offset) override {
+        record(std::format("setDCOffset({},{},{:g},{:g})", directionName(direction), channel, offset.real(), offset.imag()));
+        if (_hasDcOffset && channel < _numChannels) {
             _channels[channel]->dcOffset = offset;
         }
     }
     std::complex<double> getDCOffset(const int /*direction*/, const size_t channel) const override { return (channel < _numChannels) ? _channels[channel]->dcOffset : std::complex<double>{0.0, 0.0}; }
-    bool                 hasIQBalance(const int /*direction*/, const size_t /*channel*/) const override { return true; }
-    void                 setIQBalance(const int /*direction*/, const size_t channel, const std::complex<double>& balance) override {
-        if (channel < _numChannels) {
+    bool                 hasIQBalance(const int /*direction*/, const size_t /*channel*/) const override { return _hasIqBalance; }
+    void                 setIQBalance(const int direction, const size_t channel, const std::complex<double>& balance) override {
+        record(std::format("setIQBalance({},{},{:g},{:g})", directionName(direction), channel, balance.real(), balance.imag()));
+        if (_hasIqBalance && channel < _numChannels) {
             _channels[channel]->iqBalance = balance;
         }
     }
     std::complex<double> getIQBalance(const int /*direction*/, const size_t channel) const override { return (channel < _numChannels) ? _channels[channel]->iqBalance : std::complex<double>{1.0, 0.0}; }
     bool                 hasIQBalanceMode(const int /*direction*/, const size_t /*channel*/) const override { return false; }
-    bool                 hasFrequencyCorrection(const int /*direction*/, const size_t /*channel*/) const override { return true; }
-    void                 setFrequencyCorrection(const int /*direction*/, const size_t channel, const double value) override {
-        if (channel < _numChannels) {
+    bool                 hasFrequencyCorrection(const int /*direction*/, const size_t /*channel*/) const override { return _hasFrequencyCorrection; }
+    void                 setFrequencyCorrection(const int direction, const size_t channel, const double value) override {
+        record(std::format("setFrequencyCorrection({},{},{:g})", directionName(direction), channel, value));
+        if (_hasFrequencyCorrection && channel < _numChannels) {
             _channels[channel]->ppmCorrection = value;
         }
     }
@@ -429,6 +550,7 @@ public:
     void closeStream(SoapySDR::Stream* /*stream*/) override {}
 
     int activateStream(SoapySDR::Stream* stream, const int /*flags*/ = 0, const long long /*timeNs*/ = 0, const size_t /*numElems*/ = 0) override {
+        record(std::format("activateStream({})", (stream == reinterpret_cast<SoapySDR::Stream*>(&_rxStreamSentinel)) ? "RX" : "TX"));
         if (stream == reinterpret_cast<SoapySDR::Stream*>(&_rxStreamSentinel)) {
             _rxStreamActive.store(true, std::memory_order_release);
             _lastReadTime = std::chrono::steady_clock::now();
@@ -558,7 +680,10 @@ public:
     void                     setHardwareTime(const long long /*timeNs*/, const std::string& /*what*/ = "") override {}
     void                     setCommandTime(const long long /*timeNs*/, const std::string& /*what*/ = "") override {}
 
-    void                     setMasterClockRate(const double rate) override { _masterClockRate = rate; }
+    void setMasterClockRate(const double rate) override {
+        record(std::format("setMasterClockRate({:g})", rate));
+        _masterClockRate = rate;
+    }
     double                   getMasterClockRate() const override { return _masterClockRate; }
     SoapySDR::RangeList      getMasterClockRates() const override { return {SoapySDR::Range(0.0, 100e6)}; }
     void                     setReferenceClockRate(const double rate) override { _referenceClockRate = rate; }
@@ -566,7 +691,10 @@ public:
     SoapySDR::RangeList      getReferenceClockRates() const override { return {SoapySDR::Range(0.0, 100e6)}; }
     std::vector<std::string> listClockSources() const override { return {"internal", "external"}; }
     std::string              getClockSource() const override { return _clockSource; }
-    void                     setClockSource(const std::string& source) override { _clockSource = source; }
+    void                     setClockSource(const std::string& source) override {
+        record(std::format("setClockSource({})", source));
+        _clockSource = source;
+    }
 
     std::vector<std::string> listSensors() const override { return {"temperature", "lo_locked"}; }
     SoapySDR::ArgInfo        getSensorInfo(const std::string& key) const override {
@@ -662,6 +790,11 @@ public:
     void* getNativeDeviceHandle() const override { return nullptr; }
 
     void writeSetting(const std::string& key, const std::string& value) override {
+        if (key == "call_log") {
+            clearCallLog();
+            return;
+        }
+        record(std::format("writeSetting({},{})", key, value));
         if (key == "simulate_timing") {
             _simulateTiming.store(value == "true" || value == "1", std::memory_order_relaxed);
             return;
@@ -680,6 +813,15 @@ public:
     }
 
     std::string readSetting(const std::string& key) const override {
+        if (key == "call_log") {
+            auto        lock = std::lock_guard(_callLogMutex);
+            std::string joined;
+            for (const auto& call : _callLog) {
+                joined += call;
+                joined += ';';
+            }
+            return joined;
+        }
         if (key == "simulate_timing") {
             return _simulateTiming.load(std::memory_order_relaxed) ? "true" : "false";
         }
@@ -693,7 +835,8 @@ public:
         return "";
     }
 
-    void writeSetting(const int /*direction*/, const size_t channel, const std::string& key, const std::string& value) override {
+    void writeSetting(const int direction, const size_t channel, const std::string& key, const std::string& value) override {
+        record(std::format("writeSetting({},{},{},{})", directionName(direction), channel, key, value));
         if (channel >= _numChannels) {
             return;
         }
@@ -773,10 +916,92 @@ public:
             info.options     = {"passthrough"};
             infos.push_back(info);
         }
+        {
+            SoapySDR::ArgInfo info;
+            info.key         = "call_log";
+            info.value       = "";
+            info.type        = SoapySDR::ArgInfo::STRING;
+            info.description = "configuration calls the device received, ';'-separated; writing the key clears it";
+            infos.push_back(info);
+        }
         return infos;
     }
 
 private:
+    void record(std::string call) const {
+        auto lock = std::lock_guard(_callLogMutex);
+        _callLog.push_back(std::move(call));
+    }
+
+    static const char* directionName(int direction) { return (direction == SOAPY_SDR_RX) ? "RX" : "TX"; }
+
+    static std::vector<std::string> splitOn(const std::string& text, char separator) {
+        std::vector<std::string> parts;
+        std::size_t              pos = 0UZ;
+        while (pos <= text.size()) {
+            const auto next = text.find(separator, pos);
+            const auto end  = (next == std::string::npos) ? text.size() : next;
+            if (end > pos) {
+                parts.push_back(text.substr(pos, end - pos));
+            }
+            if (next == std::string::npos) {
+                break;
+            }
+            pos = next + 1UZ;
+        }
+        return parts;
+    }
+
+    static bool parseBool(const std::string& value) { return value == "true" || value == "1" || value == "on" || value == "yes"; }
+
+    static double parseDouble(const std::string& value, double fallback) {
+        double result        = 0.0;
+        const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), result);
+        return (ec == std::errc{}) ? result : fallback;
+    }
+
+    void parseFrontendArgs(const SoapySDR::Kwargs& args) {
+        if (auto it = args.find("gain_elements"); it != args.end()) {
+            _gainElements.clear();
+            for (const auto& spec : splitOn(it->second, '|')) {
+                const auto fields = splitOn(spec, ':');
+                if (fields.size() == 3UZ) {
+                    _gainElements.push_back(GainElement{fields[0], parseDouble(fields[1], 0.0), parseDouble(fields[2], 0.0)});
+                }
+            }
+        }
+        if (auto it = args.find("refuse_under_agc"); it != args.end()) {
+            _refusedUnderAgc = splitOn(it->second, '|');
+        }
+        if (auto it = args.find("antennas"); it != args.end()) {
+            _rxAntennas = splitOn(it->second, '|');
+        }
+        if (auto it = args.find("frequency_components"); it != args.end()) {
+            _frequencyComponents = splitOn(it->second, '|');
+        }
+        if (auto it = args.find("frequency_step"); it != args.end()) {
+            _frequencyStep = parseDouble(it->second, 0.0);
+        }
+        if (auto it = args.find("agc_default"); it != args.end()) {
+            _agcDefault = parseBool(it->second);
+        }
+        if (auto it = args.find("has_gain_mode"); it != args.end()) {
+            _hasGainMode = parseBool(it->second);
+        }
+        if (auto it = args.find("has_dc_offset_mode"); it != args.end()) {
+            _hasDcOffsetMode = parseBool(it->second);
+        }
+        if (auto it = args.find("has_dc_offset"); it != args.end()) {
+            _hasDcOffset = parseBool(it->second);
+        }
+        if (auto it = args.find("has_iq_balance"); it != args.end()) {
+            _hasIqBalance = parseBool(it->second);
+        }
+        if (auto it = args.find("has_frequency_correction"); it != args.end()) {
+            _hasFrequencyCorrection = parseBool(it->second);
+        }
+    }
+
     static DeviceMode parseDeviceMode(const std::string& value) {
         if (value == "rx_only") {
             return DeviceMode::RxOnly;

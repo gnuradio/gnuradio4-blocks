@@ -1173,4 +1173,63 @@ const boost::ut::suite<"SoapySDR API completeness"> apiTests = [] {
     };
 };
 
+const boost::ut::suite<"LoopbackDevice frontend"> frontendTests = [] {
+    using namespace gr::blocks::sdr::loopback;
+
+    const SoapySDR::Kwargs sdrplayLike{{"driver", "loopback"}, {"gain_elements", "IFGR:20:59|RFGR:0:9"}, {"agc_default", "on"}, {"refuse_under_agc", "IFGR"}};
+
+    "gain elements come from the device arguments, in order"_test = [&] {
+        LoopbackDevice dev(sdrplayLike);
+        auto           names = dev.listGains(SOAPY_SDR_RX, 0);
+        expect(eq(names.size(), 2UZ));
+        expect(eq(names[0], std::string("IFGR")));
+        expect(eq(names[1], std::string("RFGR")));
+        expect(approx(dev.getGainRange(SOAPY_SDR_RX, 0, "IFGR").minimum(), 20.0, 1e-9));
+        expect(approx(dev.getGainRange(SOAPY_SDR_RX, 0, "IFGR").maximum(), 59.0, 1e-9));
+        expect(approx(dev.getGainRange(SOAPY_SDR_RX, 0, "RFGR").maximum(), 9.0, 1e-9));
+        expect(approx(dev.getGainRange(SOAPY_SDR_RX, 0).maximum(), 48.0, 1e-9)) << "the overall range is the sum of the element spans";
+        expect(approx(dev.getGain(SOAPY_SDR_RX, 0, "IFGR"), 20.0, 1e-9)) << "each element starts at its minimum";
+    };
+
+    "an element is refused while the AGC is on and taken once it is off"_test = [&] {
+        LoopbackDevice dev(sdrplayLike);
+        expect(dev.getGainMode(SOAPY_SDR_RX, 0)) << "agc_default=on";
+        dev.setGain(SOAPY_SDR_RX, 0, "IFGR", 25.0);
+        expect(approx(dev.getGain(SOAPY_SDR_RX, 0, "IFGR"), 20.0, 1e-9)) << "the refused write left the element alone";
+        dev.setGainMode(SOAPY_SDR_RX, 0, false);
+        dev.setGain(SOAPY_SDR_RX, 0, "IFGR", 25.0);
+        expect(approx(dev.getGain(SOAPY_SDR_RX, 0, "IFGR"), 25.0, 1e-9));
+    };
+
+    "the call log records what the device received and a write clears it"_test = [&] {
+        LoopbackDevice dev(sdrplayLike);
+        dev.setGainMode(SOAPY_SDR_RX, 0, false);
+        dev.setGain(SOAPY_SDR_RX, 0, "RFGR", 4.0);
+        const auto calls = dev.callLog();
+        expect(eq(calls.size(), 2UZ));
+        expect(eq(calls[0], std::string("setGainMode(RX,0,false)")));
+        expect(eq(calls[1], std::string("setGain(RX,0,RFGR,4)")));
+        expect(dev.readSetting("call_log").starts_with("setGainMode(RX,0,false);"));
+        dev.writeSetting("call_log", "");
+        expect(dev.callLog().empty());
+    };
+
+    "a device without a facility says so"_test = [] {
+        LoopbackDevice dev(SoapySDR::Kwargs{{"driver", "loopback"}, {"has_gain_mode", "false"}, {"has_dc_offset_mode", "false"}, {"has_iq_balance", "false"}, {"has_frequency_correction", "false"}});
+        expect(!dev.hasGainMode(SOAPY_SDR_RX, 0));
+        expect(!dev.hasDCOffsetMode(SOAPY_SDR_RX, 0));
+        expect(!dev.hasIQBalance(SOAPY_SDR_RX, 0));
+        expect(!dev.hasFrequencyCorrection(SOAPY_SDR_RX, 0));
+    };
+
+    "antennas and frequency components come from the device arguments"_test = [] {
+        LoopbackDevice dev(SoapySDR::Kwargs{{"driver", "loopback"}, {"antennas", "A|B|Hi-Z"}, {"frequency_components", "RF|CORR"}, {"frequency_step", "1000"}});
+        expect(eq(dev.listAntennas(SOAPY_SDR_RX, 0).size(), 3UZ));
+        expect(eq(dev.getAntenna(SOAPY_SDR_RX, 0), std::string("A"))) << "the first listed antenna is the one the device starts on";
+        expect(eq(dev.listFrequencies(SOAPY_SDR_RX, 0).size(), 2UZ));
+        dev.setFrequency(SOAPY_SDR_RX, 0, "RF", 100'000'500.0);
+        expect(approx(dev.getFrequency(SOAPY_SDR_RX, 0), 100'000'000.0, 1e-9)) << "the tuning step quantizes the request";
+    };
+};
+
 int main() { /* not needed for UT */ }
