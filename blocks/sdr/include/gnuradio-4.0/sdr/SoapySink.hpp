@@ -64,13 +64,14 @@ driver's gain elements directly and is applied in the order the driver lists the
     Annotated<std::uint32_t, "max_time_out_us", Unit<"us">, Doc<"SoapySDR polling timeout">>                                               max_time_out_us       = 1'000;
     Annotated<gr::Size_t, "max_underflow_count", Doc<"max consecutive underflows before stop (0 = disable)">>                              max_underflow_count   = 10U;
     Annotated<bool, "verbose_underflow", Doc<"log each underflow event">>                                                                  verbose_underflow     = false;
+    Annotated<bool, "log_device_state", Doc<"log what the device holds once, after setup">>                                                log_device_state      = true;
     Annotated<bool, "burst_taper_enabled", Doc<"enable TX burst taper (ramp up/down on start/shutdown)">>                                  burst_taper_enabled   = false;
     Annotated<float, "burst_ramp_time", Unit<"s">, Doc<"taper ramp duration">>                                                             burst_ramp_time       = 0.001f;
     Annotated<std::string, "burst_taper_type", Doc<"None, Linear, RaisedCosine, Tukey, Gaussian, Mushroom, MushroomSine">>                 burst_taper_type      = std::string("RaisedCosine");
     Annotated<float, "burst_shape_param", Doc<"taper shape parameter (type-dependent)">>                                                   burst_shape_param     = 1.0f;
     Annotated<bool, "burst_safety_rampdown", Doc<"force ramp-down on EoS/shutdown if taper not Off">>                                      burst_safety_rampdown = true;
 
-    GR_MAKE_REFLECTABLE(SoapySink, in, device, device_parameter, master_clock_rate, clock_source, sample_rate, num_channels, tx_antennae, frequency, tx_bandwidths, tx_gains, tx_gain_elements, gain_mode, frequency_correction, dc_offset_mode, dc_offset, iq_balance, time_source, reference_clock_rate, stream_args, tune_args, frontend_mapping, device_settings, max_chunk_size, max_time_out_us, max_underflow_count, verbose_underflow, burst_taper_enabled, burst_ramp_time, burst_taper_type, burst_shape_param, burst_safety_rampdown);
+    GR_MAKE_REFLECTABLE(SoapySink, in, device, device_parameter, master_clock_rate, clock_source, sample_rate, num_channels, tx_antennae, frequency, tx_bandwidths, tx_gains, tx_gain_elements, gain_mode, frequency_correction, dc_offset_mode, dc_offset, iq_balance, time_source, reference_clock_rate, stream_args, tune_args, frontend_mapping, device_settings, max_chunk_size, max_time_out_us, max_underflow_count, verbose_underflow, log_device_state, burst_taper_enabled, burst_ramp_time, burst_taper_type, burst_shape_param, burst_safety_rampdown);
 
     soapy::Device                               _device{};
     soapy::Device::Stream<T, SOAPY_SDR_TX>      _txStream{};
@@ -673,6 +674,7 @@ driver's gain elements directly and is applied in the order the driver lists the
         applyDcOffsetMode();
         applyDcOffset();
         applyIqBalance();
+        logDeviceState();
 
         auto        supportedFormats = _device.getStreamFormats(SOAPY_SDR_TX, 0);
         const char* requestedFormat  = soapy::detail::toSoapySDRFormat<T>();
@@ -725,16 +727,24 @@ driver's gain elements directly and is applied in the order the driver lists the
         }
     }
 
+    // A driver accepts an antenna name it does not have without reporting an error, so the name is checked
+    // against the device's own list first.
     void applyAntenna() {
         if (tx_antennae->empty()) {
             return;
         }
         for (gr::Size_t i = 0U; i < num_channels; i++) {
             const auto& ant = tx_antennae->at(std::min(static_cast<std::size_t>(i), tx_antennae->size() - 1UZ));
-            if (!ant.empty()) {
-                if (auto r = _device.setAntenna(SOAPY_SDR_TX, i, ant); !r) {
-                    this->emitErrorMessage("applyAntenna()", r.error());
-                }
+            if (ant.empty()) {
+                continue;
+            }
+            const auto available = _device.listAvailableAntennas(SOAPY_SDR_TX, i);
+            if (!available.empty() && std::ranges::find(available, ant) == available.end()) {
+                this->emitErrorMessage("applyAntenna()", std::format("channel {} has no antenna '{}' (device has: {})", i, ant, gr::join(available, ", ")));
+                continue;
+            }
+            if (auto r = _device.setAntenna(SOAPY_SDR_TX, i, ant); !r) {
+                this->emitErrorMessage("applyAntenna()", r.error());
             }
         }
     }
@@ -903,11 +913,22 @@ driver's gain elements directly and is applied in the order the driver lists the
         }
     }
 
+    // A key the device does not have is ignored by the driver rather than reported, so keys are checked
+    // against the device's own list. That list is read only when the caller supplied settings: on some
+    // drivers getSettingInfo() reopens the device.
     void applyDeviceSettings() {
         if (device_settings->empty()) {
             return;
         }
+        std::vector<std::string> known;
+        for (const auto& info : _device.getSettingInfo()) {
+            known.push_back(info.key);
+        }
         for (const auto& [key, value] : soapy::parseKwargsString(device_settings.value)) {
+            if (std::ranges::find(known, key) == known.end()) {
+                this->emitErrorMessage("applyDeviceSettings()", known.empty() ? std::format("the device has no settings, so '{}' cannot be written", key) : std::format("the device has no setting '{}' (it has: {})", key, gr::join(known, ", ")));
+                continue;
+            }
             if (auto r = _device.writeSetting(key, value); !r) {
                 this->emitErrorMessage("applyDeviceSettings()", r.error());
             }
@@ -925,6 +946,22 @@ driver's gain elements directly and is applied in the order the driver lists the
     // A driver that reports a degenerate range gives nothing to check against.
     [[nodiscard]] static bool withinRange(const soapy::Range& range, double value) { return range.maximum <= range.minimum || (value >= range.minimum && value <= range.maximum); }
 
+    void logDeviceState() {
+        if (!log_device_state) {
+            return;
+        }
+        for (gr::Size_t i = 0U; i < num_channels; i++) {
+            std::string gains;
+            for (const auto& name : _device.listAvailableGainElements(SOAPY_SDR_TX, i)) {
+                gains += std::format("{}{}={:g}", gains.empty() ? "" : " ", name, _device.getGain(SOAPY_SDR_TX, i, name));
+            }
+            std::string written;
+            for (const auto& [key, value] : device_settings->empty() ? soapy::Kwargs{} : soapy::parseKwargsString(device_settings.value)) {
+                written += std::format("{}{}={}", written.empty() ? "" : " ", key, _device.readSetting(key));
+            }
+            std::println(stderr, "[SoapySink] {} ch{}: rate={:g} freq={:g} bw={:g} antenna={} agc={} gain={:g} [{}] corr={:g} settings [{}]", device.value, i, _device.getSampleRate(SOAPY_SDR_TX, i), _device.getCenterFrequency(SOAPY_SDR_TX, i), _device.getBandwidth(SOAPY_SDR_TX, i), _device.getAntenna(SOAPY_SDR_TX, i), _device.isAutomaticGainControl(SOAPY_SDR_TX, i), _device.getGain(SOAPY_SDR_TX, i), gains, _device.getFrequencyCorrection(SOAPY_SDR_TX, i), written);
+        }
+    }
 
     bool handleStreamError(int ret) {
         switch (ret) {

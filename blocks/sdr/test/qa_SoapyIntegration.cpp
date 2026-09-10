@@ -924,6 +924,16 @@ const boost::ut::suite<"SoapySource device configuration"> configurationTests = 
         expect(!sawCall(calls, "setGain(RX,0,RFGR,")) << "40 is outside the element's 0..9";
     };
 
+    "a device setting the device does not have is refused"_test = [&] {
+        auto [device, calls] = runSource("loopback", kSdrplayLike, {{"device_settings", std::string("bogus_key=1")}});
+        expect(!sawCall(calls, "writeSetting(bogus_key")) << "an unknown key is not written";
+    };
+
+    "a device setting the device has is written"_test = [&] {
+        auto [device, calls] = runSource("loopback", kSdrplayLike, {{"device_settings", std::string("channel_model=passthrough")}});
+        expect(sawCall(calls, "writeSetting(channel_model,passthrough)"));
+    };
+
     "tuning names the RF component and leaves the correction alone"_test = [&] {
         const std::string parameters = "device_mode=rx_only,frequency_components=RF|CORR,frequency_step=1000";
         auto [device, calls]         = runSource("loopback", parameters, {{"frequency", std::vector{100'000'500.}}});
@@ -954,6 +964,18 @@ const boost::ut::suite<"SoapySource device configuration"> configurationTests = 
         auto [device, calls] = runSource("loopback", kSdrplayLike, {{"frontend_mapping", std::string("0:0")}});
         expect(!calls.empty());
         expect(calls.front().starts_with("setFrontendMapping")) << "a mapping decides which physical channel an index names";
+    };
+
+    "an antenna the device does not have is refused"_test = [&] {
+        auto [device, calls] = runSource("loopback", "device_mode=rx_only,antennas=A|B", {{"rx_antennae", std::vector<std::string>{"Hi-Z"}}});
+        expect(!sawCall(calls, "setAntenna(")) << "nothing is written when the antenna is unknown";
+        expect(eq(device.getAntenna(SOAPY_SDR_RX, 0), std::string("A"))) << "the device kept the antenna it started with";
+    };
+
+    "an antenna the device has is selected"_test = [&] {
+        auto [device, calls] = runSource("loopback", "device_mode=rx_only,antennas=A|B", {{"rx_antennae", std::vector<std::string>{"B"}}});
+        expect(sawCall(calls, "setAntenna(RX,0,B)"));
+        expect(eq(device.getAntenna(SOAPY_SDR_RX, 0), std::string("B")));
     };
 
     "tune_args reach the tuning call"_test = [&] {

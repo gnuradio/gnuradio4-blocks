@@ -87,6 +87,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     Annotated<gr::Size_t, "max_overflow_count", Doc<"max consecutive overflows before stop (0 = disable)">>          max_overflow_count   = 10U;
     Annotated<gr::Size_t, "max_fragment_count", Doc<"max consecutive fragments before stop (0 = disable)">>          max_fragment_count   = 100U;
     Annotated<bool, "verbose_overflow", Doc<"log each overflow event">>                                              verbose_overflow     = false;
+    Annotated<bool, "log_device_state", Doc<"log what the device holds once, after setup">>                          log_device_state     = true;
     Annotated<std::string, "trigger_name", Doc<"tag trigger_name for free-running wallclock mode">>                  trigger_name         = std::string("SDR_WALLCLOCK");
     Annotated<bool, "emit_timing_tags", Doc<"emit timing tags on every chunk">>                                      emit_timing_tags     = true;
     Annotated<bool, "emit_meta_info", Doc<"include device/clock metadata in timing tags">>                           emit_meta_info       = true;
@@ -96,7 +97,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     Annotated<float, "ppm_estimator_cutoff", Unit<"Hz">, Doc<"LP cutoff for sample-rate estimator (0 = disable)">>   ppm_estimator_cutoff = 0.f;
     Annotated<float, "ppm_tag_threshold", Doc<"emit corrected frequency/rate when ppm drift exceeds this">>          ppm_tag_threshold    = 0.1f;
 
-    GR_MAKE_REFLECTABLE(SoapySource, clk_in, out, device, device_parameter, master_clock_rate, clock_source, sample_rate, num_channels, rx_antennae, frequency, rx_bandwidths, rx_gains, rx_gain_elements, gain_mode, frequency_correction, dc_offset_mode, dc_offset, iq_balance, time_source, reference_clock_rate, stream_args, tune_args, frontend_mapping, device_settings, max_chunk_size, max_time_out_us, max_overflow_count, max_fragment_count, verbose_overflow, trigger_name, emit_timing_tags, emit_meta_info, tag_interval, dc_blocker_enabled, dc_blocker_cutoff, ppm_estimator_cutoff, ppm_tag_threshold);
+    GR_MAKE_REFLECTABLE(SoapySource, clk_in, out, device, device_parameter, master_clock_rate, clock_source, sample_rate, num_channels, rx_antennae, frequency, rx_bandwidths, rx_gains, rx_gain_elements, gain_mode, frequency_correction, dc_offset_mode, dc_offset, iq_balance, time_source, reference_clock_rate, stream_args, tune_args, frontend_mapping, device_settings, max_chunk_size, max_time_out_us, max_overflow_count, max_fragment_count, verbose_overflow, log_device_state, trigger_name, emit_timing_tags, emit_meta_info, tag_interval, dc_blocker_enabled, dc_blocker_cutoff, ppm_estimator_cutoff, ppm_tag_threshold);
 
     soapy::Device                               _device{};
     soapy::Device::Stream<T, SOAPY_SDR_RX>      _rxStream{};
@@ -577,6 +578,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         applyDcOffsetMode();
         applyDcOffset();
         applyIqBalance();
+        logDeviceState();
 
         auto        supportedFormats = _device.getStreamFormats(SOAPY_SDR_RX, 0);
         const char* requestedFormat  = soapy::detail::toSoapySDRFormat<T>();
@@ -636,16 +638,24 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         }
     }
 
+    // A driver accepts an antenna name it does not have without reporting an error, so the name is checked
+    // against the device's own list first.
     void applyAntenna() {
         if (rx_antennae->empty()) {
             return;
         }
         for (gr::Size_t i = 0U; i < num_channels; i++) {
             const auto& ant = rx_antennae->at(std::min(static_cast<std::size_t>(i), rx_antennae->size() - 1UZ));
-            if (!ant.empty()) {
-                if (auto r = _device.setAntenna(SOAPY_SDR_RX, i, ant); !r) {
-                    this->emitErrorMessage("applyAntenna()", r.error());
-                }
+            if (ant.empty()) {
+                continue;
+            }
+            const auto available = _device.listAvailableAntennas(SOAPY_SDR_RX, i);
+            if (!available.empty() && std::ranges::find(available, ant) == available.end()) {
+                this->emitErrorMessage("applyAntenna()", std::format("channel {} has no antenna '{}' (device has: {})", i, ant, gr::join(available, ", ")));
+                continue;
+            }
+            if (auto r = _device.setAntenna(SOAPY_SDR_RX, i, ant); !r) {
+                this->emitErrorMessage("applyAntenna()", r.error());
             }
         }
     }
@@ -821,11 +831,22 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         }
     }
 
+    // A key the device does not have is ignored by the driver rather than reported, so keys are checked
+    // against the device's own list. That list is read only when the caller supplied settings: on some
+    // drivers getSettingInfo() reopens the device.
     void applyDeviceSettings() {
         if (device_settings->empty()) {
             return;
         }
+        std::vector<std::string> known;
+        for (const auto& info : _device.getSettingInfo()) {
+            known.push_back(info.key);
+        }
         for (const auto& [key, value] : soapy::parseKwargsString(device_settings.value)) {
+            if (std::ranges::find(known, key) == known.end()) {
+                this->emitErrorMessage("applyDeviceSettings()", known.empty() ? std::format("the device has no settings, so '{}' cannot be written", key) : std::format("the device has no setting '{}' (it has: {})", key, gr::join(known, ", ")));
+                continue;
+            }
             if (auto r = _device.writeSetting(key, value); !r) {
                 this->emitErrorMessage("applyDeviceSettings()", r.error());
             }
@@ -843,6 +864,22 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     // A driver that reports a degenerate range gives nothing to check against.
     [[nodiscard]] static bool withinRange(const soapy::Range& range, double value) { return range.maximum <= range.minimum || (value >= range.minimum && value <= range.maximum); }
 
+    void logDeviceState() {
+        if (!log_device_state) {
+            return;
+        }
+        for (gr::Size_t i = 0U; i < num_channels; i++) {
+            std::string gains;
+            for (const auto& name : _device.listAvailableGainElements(SOAPY_SDR_RX, i)) {
+                gains += std::format("{}{}={:g}", gains.empty() ? "" : " ", name, _device.getGain(SOAPY_SDR_RX, i, name));
+            }
+            std::string written;
+            for (const auto& [key, value] : device_settings->empty() ? soapy::Kwargs{} : soapy::parseKwargsString(device_settings.value)) {
+                written += std::format("{}{}={}", written.empty() ? "" : " ", key, _device.readSetting(key));
+            }
+            std::println(stderr, "[SoapySource] {} ch{}: rate={:g} freq={:g} bw={:g} antenna={} agc={} gain={:g} [{}] corr={:g} settings [{}]", device.value, i, _device.getSampleRate(SOAPY_SDR_RX, i), _device.getCenterFrequency(SOAPY_SDR_RX, i), _device.getBandwidth(SOAPY_SDR_RX, i), _device.getAntenna(SOAPY_SDR_RX, i), _device.isAutomaticGainControl(SOAPY_SDR_RX, i), _device.getGain(SOAPY_SDR_RX, i), gains, _device.getFrequencyCorrection(SOAPY_SDR_RX, i), written);
+        }
+    }
 
     void rebuildDcFilter() {
         if constexpr (std::is_same_v<T, std::complex<float>>) {
