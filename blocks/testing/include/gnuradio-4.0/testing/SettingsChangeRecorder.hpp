@@ -61,8 +61,8 @@ struct SettingsChangeRecorder : Block<SettingsChangeRecorder<T>> {
     Annotated<float, "sample rate", Limits<int64_t(0), std::numeric_limits<int64_t>::max()>> sample_rate   = 1.0f;
     Tensor<T>                                                                                vector_setting{gr::data_from, {T(3), T(2), T(1)}};
     Annotated<std::vector<std::string>, "string vector">                                     string_vector_setting{};
-    std::array<T, 3UZ>                                                                       array_setting{T(3), T(2), T(1)};
-    std::array<std::string, 3UZ>                                                             string_array_setting{"", "", ""};
+    std::array<T, 3UZ>                                                                       array_setting{{T(3), T(2), T(1)}};
+    std::array<std::string, 3UZ>                                                             string_array_setting{{"", "", ""}};
     TestEnum                                                                                 test_enum_setting           = TestEnum::TEST_STATE1;
     Annotated<TestEnum, "annotated enum">                                                    annotated_test_enum_setting = TestEnum::TEST_STATE1;
 

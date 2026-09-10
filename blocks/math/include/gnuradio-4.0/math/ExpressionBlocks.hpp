@@ -259,7 +259,7 @@ For full syntax, conditionals, loops, and advanced features:
     // will be registered once and then just rebased as needed.
     // N.B. _maxBaseSize limits the maximum chunk size and needs
     // to be defined in-advance due to ExprTk constraints
-    std::array<T, 1UZ>           _arrOutDummy{T(0)}; // only needed for initialising
+    std::array<T, 1UZ>           _arrOutDummy{{T(0)}}; // only needed for initialising
     static constexpr std::size_t _maxBaseSize = 1UZ << 16;
     exprtk::vector_view<T>       _vecIn       = exprtk::make_vector_view<T>(_arrOutDummy.data(), _maxBaseSize);
     exprtk::vector_view<T>       _vecOut      = exprtk::make_vector_view<T>(_arrOutDummy.data(), _maxBaseSize);
