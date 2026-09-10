@@ -108,11 +108,18 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     std::atomic<bool>                           _rateEstimatorDirty{false};
     soapy::detail::DeviceRegistry::Registration _activation;
 
+    // The io loop runs for as long as the block is active, so a teardown that never asked it to stop, which
+    // is what a scheduler that ends in ERROR leaves behind, waits for a thread that has no reason to leave.
     struct IoThreadGuard {
-        bool& done;
-        ~IoThreadGuard() { gr::atomic_ref(done).wait(false); }
+        SoapySource* self;
+        ~IoThreadGuard() {
+            if (lifecycle::isActive(self->state())) {
+                self->requestStop();
+            }
+            gr::atomic_ref(self->_ioThreadDone).wait(false);
+        }
     };
-    IoThreadGuard _ioGuard{_ioThreadDone};
+    IoThreadGuard _ioGuard{this};
 
     void settingsChanged(const property_map& /*oldSettings*/, property_map& newSettings, property_map& forwardSettings) {
         if (!_device.get()) {
