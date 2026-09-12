@@ -167,3 +167,8 @@ endif()
 add_executable(qa_DcBlocker qa_DcBlocker.cpp)
 target_link_libraries(qa_DcBlocker PRIVATE gnuradio-options gr-sdr ut)
 add_test(NAME qa_DcBlocker COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} ${CMAKE_CURRENT_BINARY_DIR}/qa_DcBlocker)
+
+# the full-scale saturation is a plain header, so this one needs neither a device nor SoapySDR and runs on every leg
+add_executable(qa_Saturate qa_Saturate.cpp)
+target_link_libraries(qa_Saturate PRIVATE gnuradio-options gr-sdr ut)
+add_test(NAME qa_Saturate COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} ${CMAKE_CURRENT_BINARY_DIR}/qa_Saturate)

@@ -6,6 +6,7 @@
 #include <gnuradio-4.0/thread/thread_pool.hpp>
 
 #include <gnuradio-4.0/algorithm/BurstTaper.hpp>
+#include <gnuradio-4.0/sdr/Saturate.hpp>
 #include <gnuradio-4.0/sdr/SoapyRaiiWrapper.hpp>
 
 #include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
@@ -346,6 +347,10 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
         if (burst_taper_enabled) {
             applyTaper(scratch.data(), n);
         }
+        // A CF32 stream is full scale at +/-1.0 and what a driver does with a part past that is its own: SoapyHackRF
+        // converts a part to the device's eight bits as (int8_t)(part * 127.0) with no clamp, so an overrange part
+        // wraps to the opposite sign. Saturating here keeps every driver inside the contract.
+        saturateForDevice(scratch.data(), n);
 
         int  flags = 0;
         auto ret   = _txStream.writeStream(flags, 0LL, static_cast<long>(max_time_out_us), std::span<const T>(scratch.data(), n));
@@ -410,6 +415,7 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
                 _taper._rampPosition = savedRampPos;
                 applyTaper(chScratch[ch].data(), nActual);
             }
+            saturateForDevice(chScratch[ch].data(), nActual);
             writeSpans.push_back(std::span<const T>(chScratch[ch].data(), nActual));
         }
 
@@ -457,6 +463,14 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
             } else {
                 samples[i] = static_cast<T>(static_cast<float>(samples[i]) * envelope);
             }
+        }
+    }
+
+    // Only the CF32 stream has a full scale of its own; the integer streams carry the device's own words, which
+    // are full scale at the ends of their range and pass through as they are.
+    static void saturateForDevice(T* samples, std::size_t n) noexcept {
+        if constexpr (std::is_same_v<T, std::complex<float>>) {
+            saturateToFullScale(std::span<std::complex<float>>(samples, n));
         }
     }
 
@@ -544,6 +558,7 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
             if constexpr (nPorts == 1U) {
                 std::fill_n(scratch.data(), n, lastTransmitted(0UZ));
                 applyTaper(scratch.data(), n);
+                saturateForDevice(scratch.data(), n);
                 ret = _txStream.writeStream(flags, 0LL, static_cast<long>(max_time_out_us), std::span<const T>(scratch.data(), n));
             } else {
                 writeSpans.clear();
@@ -552,6 +567,7 @@ the same driver string, enabling full-duplex TX/RX operation.)">;
                     _taper._rampPosition = savedRampPos;
                     std::fill_n(chScratch[ch].data(), n, lastTransmitted(ch));
                     applyTaper(chScratch[ch].data(), n);
+                    saturateForDevice(chScratch[ch].data(), n);
                     writeSpans.push_back(std::span<const T>(chScratch[ch].data(), n));
                 }
                 ret = _txStream.writeStreamFromBufferList(flags, 0LL, static_cast<long>(max_time_out_us), std::span<std::span<const T>>(writeSpans));
