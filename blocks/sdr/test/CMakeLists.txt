@@ -91,6 +91,25 @@ if(TARGET SoapySDR)
   add_test(NAME qa_SdrHeaderOrder COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
                                           ${CMAKE_CURRENT_BINARY_DIR}/qa_SdrHeaderOrder)
 
+  if(TARGET GrSdrBlocksShared)
+    # the block library is copied to a directory of its own so that the loader sees it and nothing else: the family's
+    # binary directory also holds the loopback SoapySDR module, which is not a block library. No device is opened.
+    add_executable(qa_apptest_SdrBlockLibrary qa_apptest_SdrBlockLibrary.cpp)
+    target_link_libraries(qa_apptest_SdrBlockLibrary PRIVATE gnuradio-options gnuradio-core gnuradio-blocklib-core)
+    add_dependencies(qa_apptest_SdrBlockLibrary GrSdrBlocksShared)
+    set(SDR_BLOCKLIB_DIR ${CMAKE_CURRENT_BINARY_DIR}/sdr_blocklib)
+    add_custom_command(
+      TARGET qa_apptest_SdrBlockLibrary
+      POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${SDR_BLOCKLIB_DIR}
+      COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:GrSdrBlocksShared> ${SDR_BLOCKLIB_DIR}/
+      COMMENT "Copying the SDR block library for the registration test")
+    add_test(NAME qa_apptest_SdrBlockLibrary COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
+                                                     ${CMAKE_CURRENT_BINARY_DIR}/qa_apptest_SdrBlockLibrary)
+    set_property(TEST qa_apptest_SdrBlockLibrary PROPERTY ENVIRONMENT_MODIFICATION
+                                                          "GNURADIO4_PLUGIN_DIRECTORIES=set:${SDR_BLOCKLIB_DIR}")
+  endif()
+
   if(SOAPY_CXX_ABI_COMPATIBLE)
     # C++ API test: directly uses SoapySDR::Device, ArgInfo, Kwargs — requires matching stdlib
     add_executable(qa_SoapyLoopback qa_SoapyLoopback.cpp)

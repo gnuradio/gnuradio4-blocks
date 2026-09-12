@@ -21,6 +21,28 @@ if(TARGET SoapySDR)
   add_library(gr-sdr-loopback MODULE src/SoapyLoopbackModule.cpp)
   target_link_libraries(gr-sdr-loopback PRIVATE gr-sdr SoapySDR gnuradio-options)
   set_target_properties(gr-sdr-loopback PROPERTIES PREFIX "") # SoapySDR expects no lib prefix
+
+  # the registration units the headers' markers ask for. Without them a radio has no registry key, so a graph read from
+  # a description cannot name one. The Soapy blocks need SoapySDR to compile, which is what puts the whole library
+  # behind the find; gr-sdr above stays for consumers that instantiate the blocks directly.
+  gr_add_block_library(
+    GrSdrBlocks
+    MAKE_SHARED_LIBRARY
+    ${GR4_BLOCK_STATIC_LIBRARY}
+    HEADERS
+    include/gnuradio-4.0/sdr/RTL2832Source.hpp
+    include/gnuradio-4.0/sdr/SoapySink.hpp
+    include/gnuradio-4.0/sdr/SoapySource.hpp
+    LINK_LIBRARIES
+    gr-sdr
+    gnuradio4::gnuradio-algorithm)
+
+  if(TARGET GrSdrBlocksObject AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # These are the first units to instantiate SoapySink<std::uint8_t>. Inlining libstdc++'s vector growth into
+    # rememberLastTransmitted() there loses the guard that makes the old size zero, and GCC reports the move of the old
+    # elements as a write past the one-byte buffer it just allocated. The write does not happen.
+    target_compile_options(GrSdrBlocksObject PRIVATE -Wno-stringop-overflow)
+  endif()
 endif()
 
 if(ENABLE_TESTING)
