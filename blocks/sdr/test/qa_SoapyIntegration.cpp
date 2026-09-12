@@ -896,6 +896,77 @@ const boost::ut::suite<"SoapySource device configuration"> configurationTests = 
         expect(!device.isAutomaticGainControl(SOAPY_SDR_RX, 0));
     };
 
+    // A block restored from a serialized graph is constructed from a map that names every writable
+    // setting, so each of those values is the caller's, including the ones that equal a default.
+    "a fully serialized load applies the values it carries, defaults included"_test = [&] {
+        property_map full;
+        {
+            gr::Graph   reference;
+            auto&       block    = reference.emplaceBlock<SoapySource<CF32, 1UZ>>();
+            const auto& writable = block.settings().writableMembers();
+            for (const auto& [key, value] : block.settings().get()) {
+                if (writable.contains(std::string(key))) {
+                    full.insert_or_assign(key, value);
+                }
+            }
+        }
+        expect(full.contains("gain_mode") && full.contains("frequency_correction") && full.contains("dc_offset_mode")) << "the map holds every writable setting";
+        full.insert_or_assign(std::pmr::string("device"), std::string("loopback"));
+        full.insert_or_assign(std::pmr::string("device_parameter"), std::string(kSdrplayLike));
+        full.insert_or_assign(std::pmr::string("sample_rate"), 1e6f);
+        full.insert_or_assign(std::pmr::string("frequency"), std::vector{100e3});
+        full.insert_or_assign(std::pmr::string("gain_mode"), false);
+        full.insert_or_assign(std::pmr::string("frequency_correction"), 0.0);
+        full.insert_or_assign(std::pmr::string("dc_offset_mode"), false);
+
+        auto [device, calls] = runSource("loopback", kSdrplayLike, full);
+        expect(sawCall(calls, "setGainMode(RX,0,false)")) << "an AGC state the map holds is written even where it equals the default";
+        expect(!device.isAutomaticGainControl(SOAPY_SDR_RX, 0)) << "the device did not keep the AGC it started with";
+        expect(sawCall(calls, "setFrequencyCorrection(RX,0,0)")) << "a zero correction the map holds is written";
+        expect(sawCall(calls, "setDCOffsetMode(RX,0,false)")) << "a DC offset mode the map holds is written";
+        expect(sawCall(calls, "setSampleRate(RX,0,")) << "the rate and the frequency are written as always";
+        expect(sawCall(calls, "setFrequency(RX,0,RF,"));
+        expect(!sawCall(calls, "setGain(")) << "a setting whose own value says 'not given' is still not given";
+        expect(!sawCall(calls, "setAntenna(")) << "a setting whose own value says 'not given' is still not given";
+    };
+
+    "a setting written while the block runs reaches the device"_test = [&] {
+        auto probe = soapy::Device::make(loopbackKwargs("loopback", "device_mode=rx_only"));
+        expect(probe.has_value());
+        std::ignore = probe->writeSetting("call_log", "");
+        expect(!probe->isAutomaticGainControl(SOAPY_SDR_RX, 0)) << "the device starts with its AGC off";
+
+        gr::Graph flow;
+        auto&     source = flow.emplaceBlock<SoapySource<CF32, 1UZ>>({{"device", "loopback"}, {"device_parameter", std::string("device_mode=rx_only")}, {"sample_rate", 1e6f}, {"frequency", std::vector{100e3}}});
+        auto&     sink   = flow.emplaceBlock<CountingSink<CF32>>();
+        expect(flow.connect<"out", "in">(source, sink).has_value());
+
+        gr::MsgPortIn fromScheduler;
+        Sched         sched;
+        expect(sched.exchange(std::move(flow)).has_value());
+        expect(sched.msgOut.connect(fromScheduler).has_value());
+
+        // the AGC state is written only once the device is open, so what reaches it is the change and not
+        // the map the block was constructed with, which never named the key
+        auto writer = std::jthread([&](std::stop_token stoken) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{3};
+            const auto waitFor  = [&](std::string_view fragment) {
+                while (!stoken.stop_requested() && std::chrono::steady_clock::now() < deadline && !sawCall(callLog(*probe), fragment)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds{5});
+                }
+            };
+            waitFor("setFrequency(RX,0,RF,");
+            std::ignore = source.settings().setStaged({{"gain_mode", true}});
+            waitFor("setGainMode(RX,0,true)");
+            sched.requestStop();
+        });
+
+        expect(runWithWatchdog(sched).has_value());
+        writer.request_stop();
+        expect(sawCall(callLog(*probe), "setGainMode(RX,0,true)")) << "the AGC state the caller wrote while the block ran reached the device";
+        expect(probe->isAutomaticGainControl(SOAPY_SDR_RX, 0)) << "the device took it";
+    };
+
     "a per-element gain reaches the element the caller named, and no other"_test = [&] {
         auto [device, calls] = runSource("loopback", kSdrplayLike, {{"gain_mode", false}, {"rx_gain_elements", property_map{{"IFGR", 20.0}}}});
         const auto agc       = callIndex(calls, "setGainMode(RX,0,false)");

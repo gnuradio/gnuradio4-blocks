@@ -42,7 +42,9 @@ What reaches the device: sample_rate and frequency always, because the block pub
 metadata; every other device setting only when the caller gives it a value, which leaves the device's own
 gain, bandwidth, antenna, correction and AGC state unchanged. A setting the caller gives is applied
 whatever that value is, so gain_mode=false switches AGC off on a device whose AGC starts on and
-frequency_correction=0 resets a device's ppm.
+frequency_correction=0 resets a device's ppm. A block restored from a fully serialized settings map has
+been given every setting that map holds, and a setting changed while the block runs is given by that
+change.
 
 Gain: rx_gains is one overall value per channel, which the driver distributes across its gain elements.
 On a driver whose elements are attenuations that distribution is not monotonic in gain. rx_gain_elements
@@ -139,6 +141,8 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         if (!_device.get()) {
             return;
         }
+        // A key is named here only because a settings change carried it, which makes it the caller's
+        // whatever its value.
         if (newSettings.contains("frequency")) {
             applyFrequency();
             if (!frequency->empty()) {
@@ -571,11 +575,19 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         applyBandwidth();
         applyAntenna();
         applyFrequency();
-        applyFrequencyCorrection();
-        applyGainMode();
+        // A bool or a zero carries no "not given" value of its own, so what the caller wrote decides
+        // whether these three reach the device. A later change carries that decision in itself.
+        if (isSetByCaller("frequency_correction")) {
+            applyFrequencyCorrection();
+        }
+        if (isSetByCaller("gain_mode")) {
+            applyGainMode();
+        }
         applyGain();
         applyGainElements();
-        applyDcOffsetMode();
+        if (isSetByCaller("dc_offset_mode")) {
+            applyDcOffsetMode();
+        }
         applyDcOffset();
         applyIqBalance();
         logDeviceState();
@@ -748,9 +760,6 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     }
 
     void applyGainMode() {
-        if (!isSetByCaller("gain_mode")) {
-            return;
-        }
         for (gr::Size_t i = 0U; i < num_channels; i++) {
             if (!_device.hasAutomaticGainControl(SOAPY_SDR_RX, i)) {
                 continue;
@@ -762,9 +771,6 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     }
 
     void applyFrequencyCorrection() {
-        if (!isSetByCaller("frequency_correction")) {
-            return;
-        }
         for (gr::Size_t i = 0U; i < num_channels; i++) {
             if (!_device.hasFrequencyCorrection(SOAPY_SDR_RX, i)) {
                 continue;
@@ -776,9 +782,6 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     }
 
     void applyDcOffsetMode() {
-        if (!isSetByCaller("dc_offset_mode")) {
-            return;
-        }
         for (gr::Size_t i = 0U; i < num_channels; i++) {
             if (!_device.hasDCOffsetMode(SOAPY_SDR_RX, i)) {
                 continue;
@@ -853,12 +856,17 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         }
     }
 
-    // A parameter the caller has never set stays in the settings' auto-update set, and set() removes a key
-    // from that set whatever value it carries. A setting whose value can be empty carries the same
-    // distinction in the value itself.
+    // The caller's keys are the writable members the settings' auto-update set no longer holds: that set
+    // starts as every writable member and a write removes a key from it whatever value the key carries, so
+    // a map that names every writable member, which is what a fully serialized block is loaded from, leaves
+    // it empty. Its emptiness therefore cannot stand for "nothing was written": settings that hold no
+    // parameters at all have an empty set for the other reason, and the count of stored parameter sets,
+    // which a written map and a constructed block both raise above zero, is what tells the two apart.
     [[nodiscard]] bool isSetByCaller(std::string_view key) {
-        const auto neverSet = this->settings().autoUpdateParameters();
-        return !neverSet.empty() && !neverSet.contains(std::string(key));
+        if (this->settings().getNStoredParameters() == 0U) {
+            return false;
+        }
+        return !this->settings().autoUpdateParameters().contains(std::string(key));
     }
 
     // A driver that reports a degenerate range gives nothing to check against.
