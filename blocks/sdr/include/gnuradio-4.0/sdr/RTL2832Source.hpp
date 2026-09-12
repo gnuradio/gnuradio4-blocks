@@ -86,8 +86,8 @@ Operating modes:
     std::uint64_t                  _lastTagTimeNs          = 0UL;
     bool                           _retuneRequested        = false;
     std::uint8_t                   _postRetuneDiscardCount = 0;
-    filter::Filter<float>          _dcFilterI;
-    filter::Filter<float>          _dcFilterQ;
+    gr::filter::Filter<float>      _dcFilterI;
+    gr::filter::Filter<float>      _dcFilterQ;
     algorithm::SampleRateEstimator _rateEstimator;
     float                          _ppmLastEmitted = 0.0f;
 
@@ -484,9 +484,9 @@ Operating modes:
     void rebuildDcFilter() {
         if constexpr (std::is_same_v<T, std::complex<float>>) {
             if (dc_blocker_enabled && dc_blocker_cutoff > 0.f && sample_rate > 0.f) {
-                auto coeffs = filter::iir::designFilter<float>(filter::Type::HIGHPASS, filter::FilterParameters{.order = 2UZ, .fHigh = static_cast<double>(dc_blocker_cutoff), .fs = static_cast<double>(sample_rate)}, filter::iir::Design::BUTTERWORTH);
-                _dcFilterI  = filter::Filter<float>(coeffs);
-                _dcFilterQ  = filter::Filter<float>(coeffs);
+                auto coeffs = gr::filter::iir::designFilter<float>(gr::filter::Type::HIGHPASS, gr::filter::FilterParameters{.order = 2UZ, .fHigh = static_cast<double>(dc_blocker_cutoff), .fs = static_cast<double>(sample_rate)}, gr::filter::iir::Design::BUTTERWORTH);
+                _dcFilterI  = gr::filter::Filter<float>(coeffs);
+                _dcFilterQ  = gr::filter::Filter<float>(coeffs);
             }
         }
     }
