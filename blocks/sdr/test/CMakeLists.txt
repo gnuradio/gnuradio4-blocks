@@ -77,6 +77,20 @@ if(TARGET SoapySDR)
   # skip LSAN: 168-byte leak inside SoapySDR's dynamically loaded driver modules (not our code)
   set_tests_properties(qa_SoapySource PROPERTIES ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 
+  # includes a filter block header before the sdr headers, so it compiles only while the sdr headers name the gr::filter
+  # kernels in full. No device is opened.
+  add_executable(qa_SdrHeaderOrder qa_SdrHeaderOrder.cpp)
+  target_link_libraries(
+    qa_SdrHeaderOrder
+    PRIVATE gnuradio-options
+            gnuradio-core
+            gnuradio-blocklib-core
+            gr-sdr
+            gnuradio4::gr-filter
+            ut)
+  add_test(NAME qa_SdrHeaderOrder COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
+                                          ${CMAKE_CURRENT_BINARY_DIR}/qa_SdrHeaderOrder)
+
   if(SOAPY_CXX_ABI_COMPATIBLE)
     # C++ API test: directly uses SoapySDR::Device, ArgInfo, Kwargs — requires matching stdlib
     add_executable(qa_SoapyLoopback qa_SoapyLoopback.cpp)
