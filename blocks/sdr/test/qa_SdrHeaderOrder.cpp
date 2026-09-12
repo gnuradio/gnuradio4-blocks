@@ -1,9 +1,9 @@
 #include <boost/ut.hpp>
 
-// The sdr blocks use the filter kernels of gr::filter. Opening gr::blocks::filter first puts the name `filter`
-// in an enclosing scope of gr::blocks::sdr, so an unqualified `filter::` in an sdr header binds to the block
-// family rather than to the kernels. Including a filter block header before the sdr headers is the test: this
-// translation unit only compiles while the sdr headers name the kernels in full.
+// Opening gr::blocks::filter puts the name `filter` in an enclosing scope of gr::blocks::sdr, so an unqualified
+// `filter::` in an sdr header binds to the block family rather than to the kernels of gr::filter. Including a
+// filter block header before the sdr headers is the test: this translation unit only compiles while the sdr
+// headers name every such kernel in full.
 #include <gnuradio-4.0/filter/time_domain_filter.hpp>
 
 #include <gnuradio-4.0/sdr/RTL2832Source.hpp>
@@ -25,8 +25,9 @@ const boost::ut::suite<"SDR header order"> sdrHeaderOrderTests = [] {
         expect(true);
     };
 
-    "the kernel type the sdr blocks hold is gr::filter's"_test = [] {
-        static_assert(std::is_same_v<decltype(gr::blocks::sdr::SoapySimpleSource<std::complex<float>>::_dcFilterI), gr::filter::Filter<float>>);
+    "the DC blocker the sdr sources hold is the module's own"_test = [] {
+        static_assert(std::is_same_v<decltype(gr::blocks::sdr::SoapySimpleSource<std::complex<float>>::_dcFilterI), gr::blocks::sdr::DcBlocker>);
+        static_assert(std::is_same_v<decltype(gr::blocks::sdr::RTL2832Source<std::complex<float>>::_dcFilterQ), gr::blocks::sdr::DcBlocker>);
         expect(true);
     };
 };

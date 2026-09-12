@@ -15,8 +15,8 @@
 #include <gnuradio-4.0/thread/thread_pool.hpp>
 
 #include <gnuradio-4.0/algorithm/SampleRateEstimator.hpp>
-#include <gnuradio-4.0/algorithm/filter/FilterTool.hpp>
 
+#include <gnuradio-4.0/sdr/DcBlocker.hpp>
 #include <gnuradio-4.0/sdr/RTL2832Device.hpp>
 
 #include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
@@ -86,8 +86,8 @@ Operating modes:
     std::uint64_t                  _lastTagTimeNs          = 0UL;
     bool                           _retuneRequested        = false;
     std::uint8_t                   _postRetuneDiscardCount = 0;
-    gr::filter::Filter<float>      _dcFilterI;
-    gr::filter::Filter<float>      _dcFilterQ;
+    DcBlocker                      _dcFilterI;
+    DcBlocker                      _dcFilterQ;
     algorithm::SampleRateEstimator _rateEstimator;
     float                          _ppmLastEmitted = 0.0f;
 
@@ -484,9 +484,8 @@ Operating modes:
     void rebuildDcFilter() {
         if constexpr (std::is_same_v<T, std::complex<float>>) {
             if (dc_blocker_enabled && dc_blocker_cutoff > 0.f && sample_rate > 0.f) {
-                auto coeffs = gr::filter::iir::designFilter<float>(gr::filter::Type::HIGHPASS, gr::filter::FilterParameters{.order = 2UZ, .fHigh = static_cast<double>(dc_blocker_cutoff), .fs = static_cast<double>(sample_rate)}, gr::filter::iir::Design::BUTTERWORTH);
-                _dcFilterI  = gr::filter::Filter<float>(coeffs);
-                _dcFilterQ  = gr::filter::Filter<float>(coeffs);
+                _dcFilterI.setCutoff(dc_blocker_cutoff.value, sample_rate.value);
+                _dcFilterQ.setCutoff(dc_blocker_cutoff.value, sample_rate.value);
             }
         }
     }
