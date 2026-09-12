@@ -1,0 +1,7 @@
+# Build output
+/build/
+/build*/
+/cmake-build-*/
+
+# CMake user-local files
+CMakeUserPresets.json
