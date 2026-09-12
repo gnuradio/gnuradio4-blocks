@@ -499,6 +499,12 @@ public:
         return SoapySDRDevice_getGainElement(_device.get(), direction, channel, gainElement.c_str());
     }
 
+    // An empty element name asks for the overall range, which a driver reports as the sum of its elements.
+    Range getGainRange(int direction, std::size_t channel, const std::string& gainElement = "") const {
+        SoapySDRRange range = gainElement.empty() ? SoapySDRDevice_getGainRange(_device.get(), direction, channel) : SoapySDRDevice_getGainElementRange(_device.get(), direction, channel, gainElement.c_str());
+        return Range(range.minimum, range.maximum, range.step);
+    }
+
     std::vector<double> listAvailableBandwidths(int direction, std::size_t channel) const {
         std::size_t         length     = 0UZ;
         double*             bandwidths = SoapySDRDevice_listBandwidths(_device.get(), direction, channel, &length);
@@ -535,6 +541,21 @@ public:
             return std::unexpected(gr::Error(std::format("setCenterFrequency({}, {}, {}) error({}): {}", direction, channel, frequency, error, SoapySDR_errToStr(error))));
         }
         return {};
+    }
+
+    // Tunes one named component. The componentless call above distributes the frequency over every component
+    // the driver lists, which hands the tuning residual to a correction component where the driver has one.
+    std::expected<void, gr::Error> setFrequencyComponent(int direction, std::size_t channel, const std::string& component, double frequency, const Kwargs& args = Kwargs()) {
+        if (int error = SoapySDRDevice_setFrequencyComponent(_device.get(), direction, channel, component.c_str(), frequency, detail::KwargsWrapper(args)); error) {
+            return std::unexpected(gr::Error(std::format("setFrequencyComponent({}, {}, {}, {}) error({}): {}", direction, channel, component, frequency, error, SoapySDR_errToStr(error))));
+        }
+        return {};
+    }
+
+    std::vector<std::string> listFrequencyComponents(int direction, std::size_t channel) const {
+        std::size_t length     = 0UZ;
+        char**      components = SoapySDRDevice_listFrequencies(_device.get(), direction, channel, &length);
+        return detail::convertToCpp(components, length);
     }
 
     double getCenterFrequency(int direction, std::size_t channel) const { return SoapySDRDevice_getFrequency(_device.get(), direction, channel); }

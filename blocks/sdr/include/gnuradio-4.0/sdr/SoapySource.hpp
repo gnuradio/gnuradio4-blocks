@@ -38,6 +38,20 @@ Operating modes:
   clk_in connected: forwards external timing tags (GPS/PPS) with clock-offset interpolation
   clk_in disconnected: emits best-effort wall-clock timestamps on every chunk
 
+What reaches the device: sample_rate and frequency always, because the block publishes both as stream
+metadata; every other device setting only when the caller gives it a value, which leaves the device's own
+gain, bandwidth, antenna, correction and AGC state unchanged. A setting the caller gives is applied
+whatever that value is, so gain_mode=false switches AGC off on a device whose AGC starts on and
+frequency_correction=0 resets a device's ppm. A block restored from a fully serialized settings map has
+been given every setting that map holds, and a setting changed while the block runs is given by that
+change.
+
+Gain: rx_gains is one overall value per channel, which the driver distributes across its gain elements.
+On a driver whose elements are attenuations that distribution is not monotonic in gain. rx_gain_elements
+names the elements directly (IFGR: 20) and is applied in the order the driver lists them, after the AGC
+state, because a driver may refuse a gain write while its AGC is on. Where both are given, the elements
+are applied last and take precedence.
+
 Tested with RTL-SDR and LimeSDR drivers.)">;
 
     using TSizeChecker = Limits<std::uint32_t{1}, std::numeric_limits<std::uint32_t>::max(), [](std::uint32_t x) { return std::has_single_bit(x); }>;
@@ -47,33 +61,35 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     gr::PortIn<std::uint8_t, Optional> clk_in;
     TPortType                          out;
 
-    Annotated<std::string, "device", Visible, Doc<"SoapySDR driver name">>                                                       device;
-    Annotated<std::string, "device_parameter", Visible, Doc<"additional driver parameters">>                                     device_parameter;
-    Annotated<double, "master_clock_rate", Unit<"Hz">, Doc<"device master clock rate (0 = auto, set before sample_rate)">>       master_clock_rate = 0.0;
-    Annotated<std::string, "clock_source", Doc<"clock reference source (e.g. internal, external, gpsdo)">>                       clock_source;
-    Annotated<float, "sample_rate", Unit<"Hz">, Visible, Doc<"ADC sample rate (SigMF core:sample_rate)">>                        sample_rate  = 1'000'000.f;
-    Annotated<gr::Size_t, "num_channels", Visible, Doc<"number of RX channels (SigMF core:num_channels)">>                       num_channels = 1U;
-    Annotated<std::vector<std::string>, "rx_antennae", Visible, Doc<"per-channel RX antenna selection">>                         rx_antennae;
-    Annotated<std::vector<double>, "frequency", Unit<"Hz">, Visible, Doc<"per-channel center frequency (SigMF core:frequency)">> frequency            = initDefaultValues(107'000'000.);
-    Annotated<std::vector<double>, "rx_bandwidths", Unit<"Hz">, Visible, Doc<"per-channel RX RF bandwidth">>                     rx_bandwidths        = initDefaultValues(500'000.);
-    Annotated<std::vector<double>, "rx_gains", Unit<"dB">, Visible, Doc<"per-channel RX tuner gain">>                            rx_gains             = initDefaultValues(10.);
-    Annotated<bool, "gain_mode", Doc<"enable automatic gain control (AGC)">>                                                     gain_mode            = false;
-    Annotated<double, "frequency_correction", Unit<"ppm">, Doc<"crystal oscillator drift compensation">>                         frequency_correction = 0.0;
-    Annotated<bool, "dc_offset_mode", Doc<"enable hardware automatic DC offset removal">>                                        dc_offset_mode       = false;
-    Annotated<std::vector<double>, "dc_offset", Doc<"manual DC offset correction [I0,Q0,I1,Q1,...] per channel">>                dc_offset;
-    Annotated<std::vector<double>, "iq_balance", Doc<"manual IQ balance correction [I0,Q0,I1,Q1,...] per channel">>              iq_balance;
-    Annotated<std::string, "time_source", Doc<"PPS/GPS time reference (e.g. external, gpsdo)">>                                  time_source;
-    Annotated<double, "reference_clock_rate", Unit<"Hz">, Doc<"reference oscillator rate (0 = auto)">>                           reference_clock_rate = 0.0;
-    Annotated<std::string, "stream_args", Doc<"SoapySDR stream kwargs (comma-separated key=value)">>                             stream_args;
-    Annotated<std::string, "tune_args", Doc<"per-channel tuning kwargs (comma-separated key=value)">>                            tune_args;
-    Annotated<std::string, "frontend_mapping", Doc<"logical-to-physical channel mapping">>                                       frontend_mapping;
-    Annotated<std::string, "device_settings", Doc<"device-level settings (comma-separated key=value)">>                          device_settings;
+    Annotated<std::string, "device", Visible, Doc<"SoapySDR driver name">>                                                                 device;
+    Annotated<std::string, "device_parameter", Visible, Doc<"additional driver parameters">>                                               device_parameter;
+    Annotated<double, "master_clock_rate", Unit<"Hz">, Doc<"device master clock rate (0 = auto, set before sample_rate)">>                 master_clock_rate = 0.0;
+    Annotated<std::string, "clock_source", Doc<"clock reference source (e.g. internal, external, gpsdo)">>                                 clock_source;
+    Annotated<float, "sample_rate", Unit<"Hz">, Visible, Doc<"ADC sample rate (SigMF core:sample_rate)">>                                  sample_rate  = 1'000'000.f;
+    Annotated<gr::Size_t, "num_channels", Visible, Doc<"number of RX channels (SigMF core:num_channels)">>                                 num_channels = 1U;
+    Annotated<std::vector<std::string>, "rx_antennae", Visible, Doc<"per-channel RX antenna selection">>                                   rx_antennae;
+    Annotated<std::vector<double>, "frequency", Unit<"Hz">, Visible, Doc<"per-channel center frequency (SigMF core:frequency)">>           frequency = initDefaultValues(107'000'000.);
+    Annotated<std::vector<double>, "rx_bandwidths", Unit<"Hz">, Visible, Doc<"per-channel RX RF bandwidth (0 = the driver's own choice)">> rx_bandwidths;
+    Annotated<std::vector<double>, "rx_gains", Unit<"dB">, Visible, Doc<"per-channel overall RX gain, distributed by the driver">>         rx_gains;
+    Annotated<property_map, "rx_gain_elements", Visible, Doc<"RX gain in dB per named gain element, e.g. IFGR: 20">>                       rx_gain_elements{};
+    Annotated<bool, "gain_mode", Doc<"enable automatic gain control (AGC)">>                                                               gain_mode            = false;
+    Annotated<double, "frequency_correction", Unit<"ppm">, Doc<"crystal oscillator drift compensation">>                                   frequency_correction = 0.0;
+    Annotated<bool, "dc_offset_mode", Doc<"enable hardware automatic DC offset removal">>                                                  dc_offset_mode       = false;
+    Annotated<std::vector<double>, "dc_offset", Doc<"manual DC offset correction [I0,Q0,I1,Q1,...] per channel">>                          dc_offset;
+    Annotated<std::vector<double>, "iq_balance", Doc<"manual IQ balance correction [I0,Q0,I1,Q1,...] per channel">>                        iq_balance;
+    Annotated<std::string, "time_source", Doc<"PPS/GPS time reference (e.g. external, gpsdo)">>                                            time_source;
+    Annotated<double, "reference_clock_rate", Unit<"Hz">, Doc<"reference oscillator rate (0 = auto)">>                                     reference_clock_rate = 0.0;
+    Annotated<std::string, "stream_args", Doc<"SoapySDR stream kwargs (comma-separated key=value)">>                                       stream_args;
+    Annotated<std::string, "tune_args", Doc<"per-channel tuning kwargs (comma-separated key=value)">>                                      tune_args;
+    Annotated<std::string, "frontend_mapping", Doc<"logical-to-physical channel mapping">>                                                 frontend_mapping;
+    Annotated<std::string, "device_settings", Doc<"device-level settings (comma-separated key=value)">>                                    device_settings;
 
     Annotated<std::uint32_t, "max_chunk_size", Doc<"max samples per read (ideally N x 512)">, Visible, TSizeChecker> max_chunk_size       = 512U << 4U;
     Annotated<std::uint32_t, "max_time_out_us", Unit<"us">, Doc<"SoapySDR polling timeout">>                         max_time_out_us      = 1'000;
     Annotated<gr::Size_t, "max_overflow_count", Doc<"max consecutive overflows before stop (0 = disable)">>          max_overflow_count   = 10U;
     Annotated<gr::Size_t, "max_fragment_count", Doc<"max consecutive fragments before stop (0 = disable)">>          max_fragment_count   = 100U;
     Annotated<bool, "verbose_overflow", Doc<"log each overflow event">>                                              verbose_overflow     = false;
+    Annotated<bool, "log_device_state", Doc<"log what the device holds once, after setup">>                          log_device_state     = true;
     Annotated<std::string, "trigger_name", Doc<"tag trigger_name for free-running wallclock mode">>                  trigger_name         = std::string("SDR_WALLCLOCK");
     Annotated<bool, "emit_timing_tags", Doc<"emit timing tags on every chunk">>                                      emit_timing_tags     = true;
     Annotated<bool, "emit_meta_info", Doc<"include device/clock metadata in timing tags">>                           emit_meta_info       = true;
@@ -83,7 +99,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     Annotated<float, "ppm_estimator_cutoff", Unit<"Hz">, Doc<"LP cutoff for sample-rate estimator (0 = disable)">>   ppm_estimator_cutoff = 0.f;
     Annotated<float, "ppm_tag_threshold", Doc<"emit corrected frequency/rate when ppm drift exceeds this">>          ppm_tag_threshold    = 0.1f;
 
-    GR_MAKE_REFLECTABLE(SoapySource, clk_in, out, device, device_parameter, master_clock_rate, clock_source, sample_rate, num_channels, rx_antennae, frequency, rx_bandwidths, rx_gains, gain_mode, frequency_correction, dc_offset_mode, dc_offset, iq_balance, time_source, reference_clock_rate, stream_args, tune_args, frontend_mapping, device_settings, max_chunk_size, max_time_out_us, max_overflow_count, max_fragment_count, verbose_overflow, trigger_name, emit_timing_tags, emit_meta_info, tag_interval, dc_blocker_enabled, dc_blocker_cutoff, ppm_estimator_cutoff, ppm_tag_threshold);
+    GR_MAKE_REFLECTABLE(SoapySource, clk_in, out, device, device_parameter, master_clock_rate, clock_source, sample_rate, num_channels, rx_antennae, frequency, rx_bandwidths, rx_gains, rx_gain_elements, gain_mode, frequency_correction, dc_offset_mode, dc_offset, iq_balance, time_source, reference_clock_rate, stream_args, tune_args, frontend_mapping, device_settings, max_chunk_size, max_time_out_us, max_overflow_count, max_fragment_count, verbose_overflow, log_device_state, trigger_name, emit_timing_tags, emit_meta_info, tag_interval, dc_blocker_enabled, dc_blocker_cutoff, ppm_estimator_cutoff, ppm_tag_threshold);
 
     soapy::Device                               _device{};
     soapy::Device::Stream<T, SOAPY_SDR_RX>      _rxStream{};
@@ -109,7 +125,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     soapy::detail::DeviceRegistry::Registration _activation;
 
     // The io loop runs for as long as the block is active, so a teardown that never asked it to stop, which
-    // is what a scheduler that ends in ERROR leaves behind, waits for a thread that has no reason to leave.
+    // is what a scheduler that ends in ERROR leaves behind, waits for a thread that never exits.
     struct IoThreadGuard {
         SoapySource* self;
         ~IoThreadGuard() {
@@ -125,6 +141,8 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         if (!_device.get()) {
             return;
         }
+        // A key is named here only because a settings change carried it, which makes it the caller's
+        // whatever its value.
         if (newSettings.contains("frequency")) {
             applyFrequency();
             if (!frequency->empty()) {
@@ -140,14 +158,18 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         if (newSettings.contains("rx_antennae")) {
             applyAntenna();
         }
-        if (newSettings.contains("rx_gains")) {
-            applyGain();
-        }
         if (newSettings.contains("rx_bandwidths")) {
             applyBandwidth();
         }
+        // The AGC state precedes the gains: a driver may refuse a gain write while its AGC is on.
         if (newSettings.contains("gain_mode")) {
             applyGainMode();
+        }
+        if (newSettings.contains("rx_gains")) {
+            applyGain();
+        }
+        if (newSettings.contains("rx_gain_elements")) {
+            applyGainElements();
         }
         if (newSettings.contains("frequency_correction")) {
             applyFrequencyCorrection();
@@ -543,19 +565,32 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
             return;
         }
 
+        // The order is what the drivers require: the frontend mapping decides which physical channel an
+        // index names, a device setting may share a control with a gain element, a driver may derive its
+        // filter from the sample rate, and a driver may refuse a gain write while its AGC is on.
+        applyFrontendMapping();
         applyClockConfig();
+        applyDeviceSettings();
         applySampleRate();
+        applyBandwidth();
         applyAntenna();
         applyFrequency();
-        applyBandwidth();
+        // A bool or a zero carries no "not given" value of its own, so what the caller wrote decides
+        // whether these three reach the device. A later change carries that decision in itself.
+        if (isSetByCaller("frequency_correction")) {
+            applyFrequencyCorrection();
+        }
+        if (isSetByCaller("gain_mode")) {
+            applyGainMode();
+        }
         applyGain();
-        applyGainMode();
-        applyFrequencyCorrection();
-        applyDcOffsetMode();
+        applyGainElements();
+        if (isSetByCaller("dc_offset_mode")) {
+            applyDcOffsetMode();
+        }
         applyDcOffset();
         applyIqBalance();
-        applyFrontendMapping();
-        applyDeviceSettings();
+        logDeviceState();
 
         auto        supportedFormats = _device.getStreamFormats(SOAPY_SDR_RX, 0);
         const char* requestedFormat  = soapy::detail::toSoapySDRFormat<T>();
@@ -615,28 +650,42 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         }
     }
 
+    // A driver accepts an antenna name it does not have without reporting an error, so the name is checked
+    // against the device's own list first.
     void applyAntenna() {
         if (rx_antennae->empty()) {
             return;
         }
         for (gr::Size_t i = 0U; i < num_channels; i++) {
             const auto& ant = rx_antennae->at(std::min(static_cast<std::size_t>(i), rx_antennae->size() - 1UZ));
-            if (!ant.empty()) {
-                if (auto r = _device.setAntenna(SOAPY_SDR_RX, i, ant); !r) {
-                    this->emitErrorMessage("applyAntenna()", r.error());
-                }
+            if (ant.empty()) {
+                continue;
+            }
+            const auto available = _device.listAvailableAntennas(SOAPY_SDR_RX, i);
+            if (!available.empty() && std::ranges::find(available, ant) == available.end()) {
+                this->emitErrorMessage("applyAntenna()", std::format("channel {} has no antenna '{}' (device has: {})", i, ant, gr::join(available, ", ")));
+                continue;
+            }
+            if (auto r = _device.setAntenna(SOAPY_SDR_RX, i, ant); !r) {
+                this->emitErrorMessage("applyAntenna()", r.error());
             }
         }
     }
 
+    // The componentless setFrequency distributes the frequency over every component the driver lists, which
+    // writes the tuning residual into the correction component of a driver that has one. The RF component is
+    // named where the driver lists it.
     void applyFrequency() {
         if (frequency->empty()) {
             return;
         }
+        const soapy::Kwargs tuneArgs = tune_args->empty() ? soapy::Kwargs{} : soapy::parseKwargsString(tune_args.value);
         for (gr::Size_t i = 0U; i < num_channels; i++) {
-            double freq = frequency->at(std::min(static_cast<std::size_t>(i), frequency->size() - 1UZ));
-            if (auto r = _device.setCenterFrequency(SOAPY_SDR_RX, i, freq); !r) {
-                this->emitErrorMessage("applyFrequency()", r.error());
+            double     freq       = frequency->at(std::min(static_cast<std::size_t>(i), frequency->size() - 1UZ));
+            const auto components = _device.listFrequencyComponents(SOAPY_SDR_RX, i);
+            const auto result     = (std::ranges::find(components, std::string("RF")) != components.end()) ? _device.setFrequencyComponent(SOAPY_SDR_RX, i, "RF", freq, tuneArgs) : _device.setCenterFrequency(SOAPY_SDR_RX, i, freq, tuneArgs);
+            if (!result) {
+                this->emitErrorMessage("applyFrequency()", result.error());
             }
         }
         std::vector<double> actual;
@@ -666,16 +715,51 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         }
         for (gr::Size_t i = 0U; i < num_channels; i++) {
             double g = rx_gains->at(std::min(static_cast<std::size_t>(i), rx_gains->size() - 1UZ));
+            if (!withinRange(_device.getGainRange(SOAPY_SDR_RX, i), g)) {
+                this->emitErrorMessage("applyGain()", std::format("channel {}: {} dB is outside the device's overall gain range {}", i, g, _device.getGainRange(SOAPY_SDR_RX, i)));
+                continue;
+            }
             if (auto r = _device.setGain(SOAPY_SDR_RX, i, g); !r) {
                 this->emitErrorMessage("applyGain()", r.error());
             }
         }
     }
 
-    void applyGainMode() {
-        if (!gain_mode) {
+    // Elements are applied in the order the driver lists them, which is the order the driver itself uses when
+    // it distributes an overall gain across them.
+    void applyGainElements() {
+        if (rx_gain_elements->empty()) {
             return;
         }
+        for (gr::Size_t i = 0U; i < num_channels; i++) {
+            const auto available = _device.listAvailableGainElements(SOAPY_SDR_RX, i);
+            for (const auto& name : available) {
+                const auto entry = rx_gain_elements->find(name);
+                if (entry == rx_gain_elements->end()) {
+                    continue;
+                }
+                const auto gain = pmt::convert_safely<double>(entry->second);
+                if (!gain) {
+                    this->emitErrorMessage("applyGainElements()", std::format("gain element '{}' needs a number: {}", name, gain.error()));
+                    continue;
+                }
+                if (!withinRange(_device.getGainRange(SOAPY_SDR_RX, i, name), *gain)) {
+                    this->emitErrorMessage("applyGainElements()", std::format("channel {}: {} dB is outside element '{}' range {}", i, *gain, name, _device.getGainRange(SOAPY_SDR_RX, i, name)));
+                    continue;
+                }
+                if (auto r = _device.setGain(SOAPY_SDR_RX, i, *gain, name); !r) {
+                    this->emitErrorMessage("applyGainElements()", r.error());
+                }
+            }
+            for (const auto& entry : rx_gain_elements.value) {
+                if (std::ranges::find(available, std::string(entry.first)) == available.end()) {
+                    this->emitErrorMessage("applyGainElements()", std::format("channel {} has no gain element '{}' (device has: {})", i, entry.first, gr::join(available, ", ")));
+                }
+            }
+        }
+    }
+
+    void applyGainMode() {
         for (gr::Size_t i = 0U; i < num_channels; i++) {
             if (!_device.hasAutomaticGainControl(SOAPY_SDR_RX, i)) {
                 continue;
@@ -687,9 +771,6 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     }
 
     void applyFrequencyCorrection() {
-        if (frequency_correction == 0.0) {
-            return;
-        }
         for (gr::Size_t i = 0U; i < num_channels; i++) {
             if (!_device.hasFrequencyCorrection(SOAPY_SDR_RX, i)) {
                 continue;
@@ -701,9 +782,6 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     }
 
     void applyDcOffsetMode() {
-        if (!dc_offset_mode) {
-            return;
-        }
         for (gr::Size_t i = 0U; i < num_channels; i++) {
             if (!_device.hasDCOffsetMode(SOAPY_SDR_RX, i)) {
                 continue;
@@ -756,14 +834,58 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         }
     }
 
+    // A key the device does not have is ignored by the driver rather than reported, so keys are checked
+    // against the device's own list. That list is read only when the caller supplied settings: on some
+    // drivers getSettingInfo() reopens the device.
     void applyDeviceSettings() {
         if (device_settings->empty()) {
             return;
         }
+        std::vector<std::string> known;
+        for (const auto& info : _device.getSettingInfo()) {
+            known.push_back(info.key);
+        }
         for (const auto& [key, value] : soapy::parseKwargsString(device_settings.value)) {
+            if (std::ranges::find(known, key) == known.end()) {
+                this->emitErrorMessage("applyDeviceSettings()", known.empty() ? std::format("the device has no settings, so '{}' cannot be written", key) : std::format("the device has no setting '{}' (it has: {})", key, gr::join(known, ", ")));
+                continue;
+            }
             if (auto r = _device.writeSetting(key, value); !r) {
                 this->emitErrorMessage("applyDeviceSettings()", r.error());
             }
+        }
+    }
+
+    // The caller's keys are the writable members the settings' auto-update set no longer holds: that set
+    // starts as every writable member and a write removes a key from it whatever value the key carries, so
+    // a map that names every writable member, which is what a fully serialized block is loaded from, leaves
+    // it empty. Its emptiness therefore cannot stand for "nothing was written": settings that hold no
+    // parameters at all have an empty set for the other reason, and the count of stored parameter sets,
+    // which a written map and a constructed block both raise above zero, is what tells the two apart.
+    [[nodiscard]] bool isSetByCaller(std::string_view key) {
+        if (this->settings().getNStoredParameters() == 0U) {
+            return false;
+        }
+        return !this->settings().autoUpdateParameters().contains(std::string(key));
+    }
+
+    // A driver that reports a degenerate range gives nothing to check against.
+    [[nodiscard]] static bool withinRange(const soapy::Range& range, double value) { return range.maximum <= range.minimum || (value >= range.minimum && value <= range.maximum); }
+
+    void logDeviceState() {
+        if (!log_device_state) {
+            return;
+        }
+        for (gr::Size_t i = 0U; i < num_channels; i++) {
+            std::string gains;
+            for (const auto& name : _device.listAvailableGainElements(SOAPY_SDR_RX, i)) {
+                gains += std::format("{}{}={:g}", gains.empty() ? "" : " ", name, _device.getGain(SOAPY_SDR_RX, i, name));
+            }
+            std::string written;
+            for (const auto& [key, value] : device_settings->empty() ? soapy::Kwargs{} : soapy::parseKwargsString(device_settings.value)) {
+                written += std::format("{}{}={}", written.empty() ? "" : " ", key, _device.readSetting(key));
+            }
+            std::println(stderr, "[SoapySource] {} ch{}: rate={:g} freq={:g} bw={:g} antenna={} agc={} gain={:g} [{}] corr={:g} settings [{}]", device.value, i, _device.getSampleRate(SOAPY_SDR_RX, i), _device.getCenterFrequency(SOAPY_SDR_RX, i), _device.getBandwidth(SOAPY_SDR_RX, i), _device.getAntenna(SOAPY_SDR_RX, i), _device.isAutomaticGainControl(SOAPY_SDR_RX, i), _device.getGain(SOAPY_SDR_RX, i), gains, _device.getFrequencyCorrection(SOAPY_SDR_RX, i), written);
         }
     }
 
