@@ -26,3 +26,7 @@ add_subdirectory(libs)
 if(GR4_ENABLE_SDR)
   add_subdirectory(sdr)
 endif()
+
+if(GR4_ENABLE_ZEROMQ)
+  add_subdirectory(zeromq)
+endif()

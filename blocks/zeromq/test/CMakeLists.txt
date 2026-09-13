@@ -1,0 +1,23 @@
+if(ENABLE_TESTING)
+  add_ut_test(qa_ZmqRemediation)
+  target_link_libraries(qa_ZmqRemediation PRIVATE gnuradio4::gr-zeromq)
+  set_tests_properties(qa_ZmqRemediation PROPERTIES TIMEOUT 60)
+  add_ut_test(qa_ZmqBlocks)
+  add_ut_test(qa_ZmqInterop)
+  set_tests_properties(qa_ZmqBlocks qa_ZmqInterop PROPERTIES TIMEOUT 180)
+  set_tests_properties(qa_ZmqInterop PROPERTIES SKIP_RETURN_CODE 77)
+  target_link_libraries(qa_ZmqBlocks PRIVATE gnuradio4::gr-zeromq gnuradio4::gr-testing)
+  target_link_libraries(qa_ZmqInterop PRIVATE gnuradio4::gr-zeromq)
+  target_compile_definitions(qa_ZmqInterop PRIVATE GR4_ZMQ_INTEROP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(qa_ZmqRemediation PRIVATE -Wno-conversion -Wno-unused-function)
+    target_compile_options(qa_ZmqBlocks PRIVATE -Wno-conversion -Wno-unused-function)
+    target_compile_options(qa_ZmqInterop PRIVATE -Wno-conversion -Wno-unused-function)
+  endif()
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set_property(
+      SOURCE qa_ZmqBlocks.cpp qa_ZmqInterop.cpp qa_ZmqRemediation.cpp
+      APPEND
+      PROPERTY COMPILE_OPTIONS -Wno-unneeded-internal-declaration)
+  endif()
+endif()
