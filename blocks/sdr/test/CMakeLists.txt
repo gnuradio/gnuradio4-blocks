@@ -77,8 +77,8 @@ if(TARGET SoapySDR)
   # skip LSAN: 168-byte leak inside SoapySDR's dynamically loaded driver modules (not our code)
   set_tests_properties(qa_SoapySource PROPERTIES ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 
-  # includes a filter block header before the sdr headers, so it compiles only while the sdr headers name the gr::filter
-  # kernels in full. No device is opened.
+  # includes a filter block header before the sdr headers, so it compiles only while the sdr headers name every kernel
+  # of gr::filter in full. No device is opened.
   add_executable(qa_SdrHeaderOrder qa_SdrHeaderOrder.cpp)
   target_link_libraries(
     qa_SdrHeaderOrder
@@ -162,3 +162,8 @@ if(TARGET SoapySDR)
     message(STATUS "qa_SoapyRaiiWrapper SKIPPED (loopback .so module requires matching SoapySDR ABI)")
   endif()
 endif()
+
+# the DC blocker is a plain header, so this one needs neither a device nor SoapySDR and runs on every leg
+add_executable(qa_DcBlocker qa_DcBlocker.cpp)
+target_link_libraries(qa_DcBlocker PRIVATE gnuradio-options gr-sdr ut)
+add_test(NAME qa_DcBlocker COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} ${CMAKE_CURRENT_BINARY_DIR}/qa_DcBlocker)
