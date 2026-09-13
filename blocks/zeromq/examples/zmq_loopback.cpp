@@ -77,12 +77,14 @@ void run_loopback(const Options& options) {
     auto&     pull = graph.emplaceBlock<gr::blocks::zeromq::ZmqPullSource<T>>({
         {"endpoint", options.in_endpoint},
         {"timeout", 100},
+        {"pmt_wire_format", "GR3"},
         {"bind", options.in_bind},
         {"pass_tags", options.pass_tags},
     });
     auto&     push = graph.emplaceBlock<gr::blocks::zeromq::ZmqPushSink<T>>({
         {"endpoint", options.out_endpoint},
         {"timeout", 100},
+        {"pmt_wire_format", "GR3"},
         {"bind", options.out_bind},
         {"pass_tags", options.pass_tags},
     });

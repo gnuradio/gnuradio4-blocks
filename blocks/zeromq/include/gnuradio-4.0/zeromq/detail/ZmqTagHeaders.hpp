@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ZmqDecodeError.hpp"
+
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -35,7 +37,7 @@ inline void append_native(std::vector<std::uint8_t>& out, T value) {
 template<typename T>
 inline T read_native(const std::uint8_t*& ptr, const std::uint8_t* end) {
     if (ptr > end || static_cast<std::size_t>(end - ptr) < sizeof(T)) {
-        throw std::runtime_error("Truncated GR tag header");
+        throw DecodeError("Truncated GR tag header");
     }
     T value{};
     std::memcpy(&value, ptr, sizeof(T));
@@ -66,7 +68,7 @@ inline std::vector<std::uint8_t> serialize_tag_header(std::uint64_t offset, cons
 
 inline std::size_t parse_tag_header(const std::uint8_t* data, std::size_t size, std::uint64_t& offset_out, std::vector<ZmqTagHeaderRecord>& tags_out, PmtWireFormat format = PmtWireFormat::GR4_YAML_V1) {
     if (size < sizeof(std::uint16_t) + sizeof(std::uint8_t) + sizeof(std::uint64_t) + sizeof(std::uint64_t)) {
-        throw std::runtime_error("incoming zmq msg too small to hold gr tag header!");
+        throw DecodeError("incoming zmq msg too small to hold gr tag header!");
     }
 
     const std::uint8_t* ptr            = data;
@@ -74,17 +76,17 @@ inline std::size_t parse_tag_header(const std::uint8_t* data, std::size_t size, 
     const auto          header_magic   = read_native<std::uint16_t>(ptr, end);
     const auto          header_version = read_native<std::uint8_t>(ptr, end);
     if (header_magic != kTagHeaderMagic) {
-        throw std::runtime_error("gr header magic does not match!");
+        throw DecodeError("gr header magic does not match!");
     }
     if (header_version != kTagHeaderVersion) {
-        throw std::runtime_error("gr header version too high!");
+        throw DecodeError("gr header version too high!");
     }
 
     offset_out                            = read_native<std::uint64_t>(ptr, end);
     const auto            ntags           = read_native<std::uint64_t>(ptr, end);
     constexpr std::size_t min_record_size = sizeof(std::uint64_t) + 3;
     if (ptr > end || ntags > static_cast<std::uint64_t>(end - ptr) / min_record_size) {
-        throw std::runtime_error("Malformed GR tag header tag count");
+        throw DecodeError("Malformed GR tag header tag count");
     }
     tags_out.clear();
     tags_out.reserve(static_cast<std::size_t>(ntags));
@@ -140,6 +142,17 @@ inline std::vector<ZmqTagHeaderRecord> collect_tag_records(InputSpanLikeT& inDat
         tags.push_back(std::move(*rec));
     }
     return tags;
+}
+
+inline std::vector<std::uint8_t> message_tag_header(const std::vector<ZmqTagHeaderRecord>& tags, std::size_t item, PmtWireFormat format) {
+    std::vector<ZmqTagHeaderRecord> selected;
+    for (const auto& tag : tags) {
+        if (tag.offset == item) {
+            selected.push_back(tag);
+            selected.back().offset = 0;
+        }
+    }
+    return serialize_tag_header(0, selected, format);
 }
 
 template<typename OutputSpanLikeT>

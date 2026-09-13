@@ -1732,7 +1732,7 @@ const suite ZmqBlocksTests = [] {
             pub.start();
             {
                 auto operation = pub._transport.acquire_operation_guard();
-                expect(pub._transport.socket().get(zmq::sockopt::socket_type) == (drop_on_hwm ? zmq::socket_type::pub : zmq::socket_type::xpub));
+                expect(pub._transport.socket().get(zmq::sockopt::socket_type) == zmq::socket_type::pub);
             }
             pub.stop();
         }

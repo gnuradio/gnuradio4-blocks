@@ -22,6 +22,7 @@ jobs:
       matrix:
         include:
           - name: "Ubuntu 24.04 | gcc-14 | Release"
+            require_gr3: true
             library_sdk_tag: main-ubuntu-24.04-gcc14-release
             cc: gcc-14
             cxx: g++-14
@@ -70,6 +71,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install GNU Radio 3 interoperability peer
+        if: matrix.require_gr3 == true
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends gnuradio python3-zmq
+          python3 -c 'from gnuradio import blocks, gr, zeromq; import pmt; print(gr.version())'
+
       - name: Configure
         if: matrix.cmake_wrapper == null
         shell: bash
@@ -88,6 +96,8 @@ jobs:
             -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
             -DENABLE_TESTING=ON \
             -DGR4_ENABLE_ZEROMQ=ON \
+            -DENABLE_EXAMPLES=ON \
+            -DGR4_ENABLE_ZEROMQ_EXAMPLES=ON \
             "${extra_cmake_flags[@]}"
 
       - name: Configure CMake Emscripten
@@ -116,10 +126,14 @@ jobs:
       - name: Execute tests
         env:
           DISABLE_SENSITIVE_TESTS: 1
-          GR4_REQUIRE_GR3_INTEROP: 1
         working-directory: ${{ runner.workspace }}/build
         shell: bash
-        run: ctest --output-on-failure
+        run: |
+          unset GR4_REQUIRE_GR3_INTEROP
+          if [[ "${{ matrix.require_gr3 }}" == "true" ]]; then
+            export GR4_REQUIRE_GR3_INTEROP=1
+          fi
+          ctest --output-on-failure
 
       - name: Validate installed Emscripten SDK
         if: matrix.cmake_wrapper == 'emcmake'

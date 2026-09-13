@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
 
 import argparse
+import importlib
 import sys
 import time
 
-from gnuradio import blocks, gr, zeromq
-import pmt
+try:
+    blocks = importlib.import_module("gnuradio.blocks")
+    gr = importlib.import_module("gnuradio.gr")
+    zeromq = importlib.import_module("gnuradio.zeromq")
+    pmt = importlib.import_module("pmt")
+except ModuleNotFoundError as error:
+    if (
+        len(sys.argv) > 1
+        and sys.argv[1] == "probe"
+        and error.name
+        in {"gnuradio", "gnuradio.blocks", "gnuradio.gr", "gnuradio.zeromq", "pmt"}
+    ):
+        print(f"SKIP: unavailable GNU Radio 3 module: {error.name}", file=sys.stderr)
+        sys.exit(77)
+    raise
 
 RAW_VALUES_INBOUND = [1.0, 2.0, 3.0, 4.0]
 RAW_VALUES_OUTBOUND = [5.0, 6.0, 7.0, 8.0]

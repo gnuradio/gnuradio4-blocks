@@ -1,6 +1,7 @@
 #pragma once
 
 #include "detail/ZmqCommon.hpp"
+#include "detail/ZmqReceive.hpp"
 #include "detail/ZmqTagHeaders.hpp"
 #include "trait_helpers.hpp"
 #include <algorithm>
@@ -92,7 +93,7 @@ public:
         };
 
         if constexpr (is_vector_of_arithmetic_or_complex_v<T>) {
-            for (std::size_t i = 0; i < nProcessOut && messages < detail::kMaxMessagesPerWork; ++i) {
+            while (npublished < nProcessOut && messages < detail::kMaxMessagesPerWork) {
                 if (!_pending_items.empty()) {
                     auto& vec = outputSpan[npublished];
                     vec       = _pending_items.front();
@@ -113,22 +114,16 @@ public:
                         _receive_counters.record_refused();
                         continue;
                     }
-                    try {
-                        const auto&                             msg           = parts->parts.front();
-                        std::uint64_t                           header_offset = 0;
-                        std::vector<detail::ZmqTagHeaderRecord> tags;
-                        std::size_t                             consumed_bytes = 0;
-                        if (pass_tags) {
-                            consumed_bytes = detail::parse_tag_header(static_cast<const std::uint8_t*>(msg.data()), msg.size(), header_offset, tags, pmt_wire_format);
-                            for (auto& tag : tags) {
-                                if (tag.offset >= header_offset) {
-                                    tag.offset -= header_offset;
-                                }
-                            }
+                    {
+                        const auto& msg     = parts->parts.front();
+                        auto        decoded = detail::decode_frame<T>(msg, pass_tags, pmt_wire_format, _receive_counters);
+                        if (!decoded) {
+                            continue;
                         }
-                        const auto* payload      = static_cast<const std::uint8_t*>(msg.data()) + consumed_bytes;
-                        const auto  payload_size = msg.size() - consumed_bytes;
-                        detail::ZmqSocketTransport::require_multiple_of(payload_size, sizeof(typename T::value_type), "ZmqPullSource vector payload");
+                        auto&                       tags           = decoded->tags;
+                        [[maybe_unused]] const auto consumed_bytes = decoded->consumed_bytes;
+                        const auto*                 payload        = static_cast<const std::uint8_t*>(msg.data()) + consumed_bytes;
+                        const auto                  payload_size   = msg.size() - consumed_bytes;
 
                         auto&  vec  = outputSpan[npublished];
                         size_t nels = payload_size / sizeof(typename T::value_type);
@@ -144,9 +139,6 @@ public:
                         if (nels == 0) {
                             break;
                         }
-                    } catch (...) {
-                        _receive_counters.record_refused();
-                        continue;
                     }
 
                 } else {
@@ -184,22 +176,16 @@ public:
                         _receive_counters.record_refused();
                         continue;
                     }
-                    try {
-                        const auto&                             msg           = parts->parts.front();
-                        std::uint64_t                           header_offset = 0;
-                        std::vector<detail::ZmqTagHeaderRecord> tags;
-                        std::size_t                             consumed_bytes = 0;
-                        if (pass_tags) {
-                            consumed_bytes = detail::parse_tag_header(static_cast<const std::uint8_t*>(msg.data()), msg.size(), header_offset, tags, pmt_wire_format);
-                            for (auto& tag : tags) {
-                                if (tag.offset >= header_offset) {
-                                    tag.offset -= header_offset;
-                                }
-                            }
+                    {
+                        const auto& msg     = parts->parts.front();
+                        auto        decoded = detail::decode_frame<T>(msg, pass_tags, pmt_wire_format, _receive_counters);
+                        if (!decoded) {
+                            continue;
                         }
-                        const auto* payload      = static_cast<const std::uint8_t*>(msg.data()) + consumed_bytes;
-                        const auto  payload_size = msg.size() - consumed_bytes;
-                        detail::ZmqSocketTransport::require_multiple_of(payload_size, sizeof(T), "ZmqPullSource scalar payload");
+                        auto&                       tags           = decoded->tags;
+                        [[maybe_unused]] const auto consumed_bytes = decoded->consumed_bytes;
+                        const auto*                 payload        = static_cast<const std::uint8_t*>(msg.data()) + consumed_bytes;
+                        const auto                  payload_size   = msg.size() - consumed_bytes;
 
                         auto&  vec  = outputSpan;
                         size_t nels = payload_size / sizeof(T);
@@ -221,9 +207,6 @@ public:
                             _pending_tags = std::move(tags);
                             break;
                         }
-                    } catch (...) {
-                        _receive_counters.record_refused();
-                        continue;
                     }
 
                 } else {
@@ -231,9 +214,9 @@ public:
                 }
             }
         } else if constexpr (std::is_same_v<T, gr::pmt::Value>) {
-            for (std::size_t i = 0; i < nProcessOut && messages < detail::kMaxMessagesPerWork; ++i) {
+            while (npublished < nProcessOut && messages < detail::kMaxMessagesPerWork) {
                 if (_transport.wait_readable(deadline, messages == 0 && npublished == 0, cancelled)) {
-                    try {
+                    {
                         auto parts = detail::receive_all_parts(_transport.socket(), 1);
                         if (!parts) {
                             break;
@@ -243,19 +226,14 @@ public:
                             _receive_counters.record_refused();
                             continue;
                         }
-                        const auto&                             msg           = parts->parts.front();
-                        std::uint64_t                           header_offset = 0;
-                        std::vector<detail::ZmqTagHeaderRecord> tags;
-                        std::size_t                             consumed_bytes = 0;
-                        if (pass_tags) {
-                            consumed_bytes = detail::parse_tag_header(static_cast<const std::uint8_t*>(msg.data()), msg.size(), header_offset, tags, pmt_wire_format);
-                            for (auto& tag : tags) {
-                                if (tag.offset >= header_offset) {
-                                    tag.offset -= header_offset;
-                                }
-                            }
+                        const auto& msg     = parts->parts.front();
+                        auto        decoded = detail::decode_frame<T>(msg, pass_tags, pmt_wire_format, _receive_counters);
+                        if (!decoded) {
+                            continue;
                         }
-                        outputSpan[i] = detail::deserialize_pmt(static_cast<const uint8_t*>(msg.data()) + consumed_bytes, msg.size() - consumed_bytes, pmt_wire_format);
+                        auto&                       tags           = decoded->tags;
+                        [[maybe_unused]] const auto consumed_bytes = decoded->consumed_bytes;
+                        outputSpan[npublished]                     = std::move(decoded->pmt);
                         if (pass_tags) {
                             for (const auto& tag : tags) {
                                 outputSpan.publishTag(detail::tag_map_from_record(tag), npublished);
@@ -263,9 +241,6 @@ public:
                         }
                         npublished++;
                         _receive_counters.record_accepted(1);
-                    } catch (...) {
-                        _receive_counters.record_refused();
-                        continue;
                     }
                 } else {
                     break;

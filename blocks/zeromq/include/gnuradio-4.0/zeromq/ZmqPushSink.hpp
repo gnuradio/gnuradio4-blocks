@@ -75,7 +75,6 @@ public:
 
         std::size_t consumed = 0;
         const auto  tags     = pass_tags ? detail::collect_tag_records(inData) : std::vector<detail::ZmqTagHeaderRecord>{};
-        const auto  header   = pass_tags ? detail::serialize_tag_header(0, tags, pmt_wire_format) : std::vector<std::uint8_t>{};
 
         // for vectors
         // FIXME: replace with cleaner type traits - not sure yet where to put them
@@ -84,6 +83,7 @@ public:
                 if (consumed == detail::kMaxMessagesPerWork) {
                     break;
                 }
+                const auto   header        = pass_tags ? detail::message_tag_header(tags, consumed, pmt_wire_format) : std::vector<std::uint8_t>{};
                 const size_t size_in_bytes = a.size() * sizeof(typename T::value_type);
 
                 zmq::message_t zmsg(header.size() + size_in_bytes);
@@ -99,6 +99,7 @@ public:
                 _send_counters.record_accepted(1);
             }
         } else if constexpr (is_arithmetic_or_complex_v<T>) {
+            const auto     header        = pass_tags ? detail::serialize_tag_header(0, tags, pmt_wire_format) : std::vector<std::uint8_t>{};
             const size_t   size_in_bytes = inData.size() * sizeof(T);
             zmq::message_t zmsg(header.size() + size_in_bytes);
             if (!header.empty()) {
@@ -118,6 +119,7 @@ public:
                 if (consumed == detail::kMaxMessagesPerWork) {
                     break;
                 }
+                const auto           header     = pass_tags ? detail::message_tag_header(tags, consumed, pmt_wire_format) : std::vector<std::uint8_t>{};
                 std::vector<uint8_t> serialized = detail::serialize_pmt(pmtObj, pmt_wire_format);
                 zmq::message_t       zmsg(header.size() + serialized.size());
                 if (!header.empty()) {
