@@ -1,8 +1,9 @@
 # GNU Radio 4 ZeroMQ Blocks
 
-`blocks/zeromq` provides GNU Radio 3 compatible ZeroMQ stream transport for GR4
-typed ports. Message-domain GNU Radio 3 blocks are represented in GR4 by using
-the same socket-pattern templates with `T = gr::pmt::Value`.
+`blocks/zeromq` provides ZeroMQ transport for GR4 typed ports, with selected
+GNU Radio 3 stream and PMT interoperability modes. The socket-pattern templates
+also accept `T = gr::pmt::Value`; the table below maps socket patterns, not a
+promise that every combination of settings interoperates with GR3.
 
 ## Socket Patterns
 
@@ -47,8 +48,13 @@ complex payload types when an application owns both endpoints.
 - `hwm`: send/receive high-water mark. `-1` keeps the underlying default.
 - `linger`: socket linger value in milliseconds.
 - `max_message_size`: positive maximum inbound frame size in bytes for Pull,
-  Sub, and Req sources. The default is 64 MiB. libzmq rejects a larger frame
-  before exposing it to the block.
+  Sub, and Req sources (default 64 MiB), and Rep sinks (default 4096 bytes).
+  The limit is applied before bind/connect. For TCP and IPC, libzmq rejects an
+  oversized frame and disconnects its peer before exposing it to the block.
+  REP's limit leaves room for ZMTP handshake metadata, routing identities and
+  correlated REQ envelopes; its application body must still be exactly four
+  bytes. Four bytes is too small as a general transport limit. Inproc transports
+  share already allocated messages and do not enforce this network decoder limit.
 - `pass_tags`: enables GNU Radio compatible tag-header framing.
 - `pmt_wire_format`: PMT codec selection, `GR4_YAML_V1` (default) or `GR3`.
   `GR4_YAML_V1` preserves native `gr::pmt::Value` types using the YAML format
@@ -62,9 +68,13 @@ Pub/sub blocks also support:
 
 - `key`: topic string. An empty subscriber key receives all topics.
 - `drop_on_hwm`: when `true` (the default), `ZmqPubSink` uses normal PUB
-  high-water-mark dropping. When `false`, it uses a wire-compatible XPUB socket
-  with `ZMQ_XPUB_NODROP`; a full outbound queue then refuses the send and leaves
-  the corresponding input unconsumed so the scheduler can retry it.
+  high-water-mark dropping. When `false`, it keeps PUB and sets
+  `ZMQ_XPUB_NODROP`; a full outbound queue then refuses the send and leaves
+  the corresponding input unconsumed so the scheduler can retry it. Configuration
+  failures propagate; there is no fallback to dropping. This protects established
+  subscriptions only: absent or not-yet-subscribed peers have no delivery guarantee.
+  PUB inherits this option from XPUB in libzmq 4.3.5, without retaining XPUB's
+  subscription notifications.
 
 All source blocks expose `receive_statistics()`, and all sink blocks expose
 `send_statistics()`. The snapshots count accepted messages and stream items,
@@ -150,11 +160,48 @@ Tag `key`, `value`, and `srcid` fields use the selected PMT wire format. On
 GNU Radio 4 ports, these fields are represented as tag maps with `key`, `value`, and
 `srcid` entries.
 
-Multiple tags at the same item offset are preserved.
+Only the envelope `{key: <PMT>, value: <PMT>, srcid: <optional PMT>}` is
+converted. Both `key` and `value` are required; missing `srcid` becomes null.
+Other entries are ignored, and a native map such as `{sample_rate: 48000}` is
+not converted. For GR3, the key must be a symbol/string supported by its tag
+consumer. This is an envelope contract, not arbitrary native-map preservation.
+
+Multiple tags at the same item offset are preserved. Scalar headers carry offsets
+relative to the scalar items in that message. A GR4 vector or PMT is one port
+item: its message carries only that item's tags, rebased to offset zero. It does
+not provide per-element tags inside a vector. Partial sends retain the remaining
+input and its tags for the next call.
+
+## Compatibility boundary
+
+| Payload / peer         | `pmt_wire_format`                                            | `pass_tags` | PUB/SUB `key`           | Item convention                          |
+| ---------------------- | ------------------------------------------------------------ | ----------- | ----------------------- | ---------------------------------------- |
+| Raw scalars, GR4 ↔ GR4 | either; equal on tagged peers                                | off or on   | empty or matching topic | scalar stream items                      |
+| Raw scalars, GR3 ↔ GR4 | `GR3` for tagged traffic; irrelevant without tags            | off or on   | matching GR3 stream key | supported GR3 `vlen=1`                   |
+| Vector, GR4 ↔ GR4      | either; equal on tagged peers                                | off or on   | empty or matching topic | one whole message per vector item        |
+| PMT, GR4 ↔ GR4         | equal on peers; default `GR4_YAML_V1` preserves native types | off or on   | empty or matching topic | one PMT per message                      |
+| PMT, GR3 message peer  | explicitly `GR3`                                             | **off**     | **empty**               | supported legacy PMT representation only |
+
+The GR3 PMT message blocks serialize a PMT directly, without stream tag headers
+or a topic frame. Thus `pass_tags=true` on PMT is a supported GR4-to-GR4 mode,
+but does not interoperate with GR3 message blocks. GR4's PMT PUB/SUB honors `key`
+just like its raw blocks: PUB sends a topic frame before the payload, SUB
+subscribes to a prefix and decodes the last frame. Use an empty key with GR3
+message peers; filtering serialized PMT bytes is not a portable topic contract.
+
+GR4 has no `vlen` setting. Its vector ports represent message boundaries, not
+GR3's fixed-size stream vectors. Untagged bytes may be repacked by applications,
+but fixed `vlen>1` tag offsets and REQ item counts are outside this compatibility
+contract. No automatic vector-length negotiation or conversion is performed.
+The interoperability suite covers scalar `vlen=1`, tagged scalar streams, and
+PMT PUSH/PULL; it is not coverage of every entry in the socket-pattern table.
 
 ## Examples
 
-The examples are installed as small role-based programs. Start the producing
+The examples are installed as small role-based programs. The raw examples use
+untagged samples. `zmq_pmt_payload` explicitly selects `GR3` for both roles;
+`zmq_loopback` explicitly selects `GR3` for PMT fields in its stream tag headers.
+The block default remains `GR4_YAML_V1`. Start the producing
 side first unless noted otherwise.
 
 ```bash
@@ -203,9 +250,10 @@ GR3 raw push into GR4 pull:
 from gnuradio import blocks, gr, zeromq
 
 tb = gr.top_block()
-src = blocks.vector_source_f([1.0, 2.0, 3.0, 4.0], False)
-sink = zeromq.push_sink(gr.sizeof_float, 1, "tcp://127.0.0.1:5555", 100, False, -1, False)
-tb.connect(src, sink)
+src = blocks.vector_source_f([1.0, 2.0, 3.0, 4.0], True)
+head = blocks.head(gr.sizeof_float, 16)
+sink = zeromq.push_sink(gr.sizeof_float, 1, "tcp://127.0.0.1:5555", 100, False, -1, True)
+tb.connect(src, head, sink)
 tb.run()
 ```
 
@@ -237,6 +285,9 @@ Run the GR4 side with:
 zmq_pmt_payload push tcp://127.0.0.1:5558
 ```
 
-The `qa_ZmqInterop` test contains executable examples for all supported
-cross-version directions and is skipped when GNU Radio 3 Python bindings are not
-available.
+`qa_ZmqInterop` runs real GR3 peers, including GR4 REQ → GR3 REP with
+`REQ_CORRELATE` and `REQ_RELAXED` enabled. It returns CTest's explicit skip code
+77 only when optional GR3 modules are missing. Unset `GR4_REQUIRE_GR3_INTEROP`
+for optional execution: even setting it to `0` requires GR3. Unexpected probe
+errors and interoperability failures fail the test. Native CI keeps the suite
+optional except for the Ubuntu 24.04 GCC job, which installs GR3 and requires it.

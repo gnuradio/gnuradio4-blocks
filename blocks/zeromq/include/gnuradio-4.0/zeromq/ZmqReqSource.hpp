@@ -1,6 +1,7 @@
 #pragma once
 
 #include "detail/ZmqCommon.hpp"
+#include "detail/ZmqReceive.hpp"
 #include "detail/ZmqTagHeaders.hpp"
 #include "trait_helpers.hpp"
 
@@ -160,23 +161,17 @@ This block sends REQ requests and converts the returned ZMQ replies to type T.
             }
 
             const auto& msg = parts->parts.front();
-            try {
-                std::uint64_t                           header_offset = 0;
-                std::vector<detail::ZmqTagHeaderRecord> tags;
-                std::size_t                             consumed_bytes = 0;
-                if (pass_tags) {
-                    consumed_bytes = detail::parse_tag_header(static_cast<const std::uint8_t*>(msg.data()), msg.size(), header_offset, tags, pmt_wire_format);
-                    for (auto& tag : tags) {
-                        if (tag.offset >= header_offset) {
-                            tag.offset -= header_offset;
-                        }
-                    }
+            {
+                auto decoded = detail::decode_frame<T>(msg, pass_tags, pmt_wire_format, _receive_counters);
+                if (!decoded) {
+                    continue;
                 }
-                const auto* payload      = static_cast<const std::uint8_t*>(msg.data()) + consumed_bytes;
-                const auto  payload_size = msg.size() - consumed_bytes;
+                auto&                       tags           = decoded->tags;
+                [[maybe_unused]] const auto consumed_bytes = decoded->consumed_bytes;
+                const auto*                 payload        = static_cast<const std::uint8_t*>(msg.data()) + consumed_bytes;
+                const auto                  payload_size   = msg.size() - consumed_bytes;
 
                 if constexpr (is_arithmetic_or_complex_v<T>) {
-                    detail::ZmqSocketTransport::require_multiple_of(payload_size, sizeof(T), "ZmqReqSource scalar payload");
                     const std::size_t nels = payload_size / sizeof(T);
                     const std::size_t n    = std::min(nels, nProcessOut);
                     detail::copy_items_from_bytes(payload, n, outputSpan.data());
@@ -194,8 +189,7 @@ This block sends REQ requests and converts the returned ZMQ replies to type T.
                     }
                     _receive_counters.record_accepted(nels);
                 } else if constexpr (is_vector_of_arithmetic_or_complex_v<T>) {
-                    using Element = typename T::value_type;
-                    detail::ZmqSocketTransport::require_multiple_of(payload_size, sizeof(Element), "ZmqReqSource vector payload");
+                    using Element          = typename T::value_type;
                     auto&             vec  = outputSpan[0];
                     const std::size_t nels = payload_size / sizeof(Element);
                     vec.resize(nels);
@@ -206,16 +200,13 @@ This block sends REQ requests and converts the returned ZMQ replies to type T.
                     npublished = 1;
                     _receive_counters.record_accepted(1);
                 } else {
-                    outputSpan[0] = detail::deserialize_pmt(payload, payload_size, pmt_wire_format);
+                    outputSpan[0] = std::move(decoded->pmt);
                     for (const auto& tag : tags) {
                         outputSpan.publishTag(detail::tag_map_from_record(tag), 0);
                     }
                     npublished = 1;
                     _receive_counters.record_accepted(1);
                 }
-            } catch (...) {
-                _receive_counters.record_refused();
-                continue;
             }
 
             // Any useful reply is returned immediately. Empty scalar replies end this call too.

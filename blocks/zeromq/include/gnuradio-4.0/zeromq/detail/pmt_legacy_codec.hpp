@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ZmqDecodeError.hpp"
+
 #include <gnuradio-4.0/Value.hpp>
 
 #include <algorithm>
@@ -55,7 +57,7 @@ static void write_double(std::vector<uint8_t>& out, double d) {
 
 static void require_remaining(const uint8_t* data, const uint8_t* end, std::size_t needed, const char* what) {
     if (data > end || static_cast<std::size_t>(end - data) < needed) {
-        throw std::runtime_error(what);
+        throw gr::blocks::zeromq::detail::DecodeError(what);
     }
 }
 
@@ -513,7 +515,7 @@ T deserialize_from_big_endian(const uint8_t*& ptr, const uint8_t* end) {
 template<typename VTYPE>
 std::vector<VTYPE> create_vector_from_big_endian(const uint8_t*& ptr, const uint8_t* end, std::size_t num_elements) {
     if (ptr > end || num_elements > static_cast<std::size_t>(end - ptr) / sizeof(VTYPE)) {
-        throw std::runtime_error("Truncated legacy PMT uniform vector");
+        throw gr::blocks::zeromq::detail::DecodeError("Truncated legacy PMT uniform vector");
     }
     std::vector<VTYPE> vec;
     vec.reserve(num_elements);
@@ -538,7 +540,7 @@ static Value deserialize_pair(const uint8_t*& ptr, const uint8_t* end) {
 
 static Value deserialize_dict(const uint8_t*& ptr, const uint8_t* end) {
     if (ptr >= end) {
-        throw std::runtime_error("Truncated legacy PMT buffer (dict)");
+        throw gr::blocks::zeromq::detail::DecodeError("Truncated legacy PMT buffer (dict)");
     }
 
     Value::Map map{std::pmr::get_default_resource()};
@@ -552,14 +554,14 @@ static Value deserialize_dict(const uint8_t*& ptr, const uint8_t* end) {
         return Value(std::move(map));
     }
     if (pair_tag != legacy_tag::LEGACY_PMT_PAIR) {
-        throw std::runtime_error("Malformed legacy PMT dict (missing pair tag)");
+        throw gr::blocks::zeromq::detail::DecodeError("Malformed legacy PMT dict (missing pair tag)");
     }
 
     Value key = deserialize_value(ptr, end);
     Value val = deserialize_value(ptr, end);
 
     if (!key.is_string()) {
-        throw std::runtime_error("Legacy PMT dict key is not a string");
+        throw gr::blocks::zeromq::detail::DecodeError("Legacy PMT dict key is not a string");
     }
     std::string key_str = std::string(key.value_or(std::string_view{}));
     map.emplace(std::pmr::string(key_str, std::pmr::get_default_resource()), std::move(val));
@@ -572,7 +574,7 @@ static Value deserialize_dict(const uint8_t*& ptr, const uint8_t* end) {
             }
         }
     } else if (!tail.is_monostate()) {
-        throw std::runtime_error("Malformed legacy PMT dict tail");
+        throw gr::blocks::zeromq::detail::DecodeError("Malformed legacy PMT dict tail");
     }
 
     return Value(std::move(map));
@@ -580,7 +582,7 @@ static Value deserialize_dict(const uint8_t*& ptr, const uint8_t* end) {
 
 static Value deserialize_value(const uint8_t*& ptr, const uint8_t* end) {
     if (ptr >= end) {
-        throw std::runtime_error("Empty legacy PMT buffer");
+        throw gr::blocks::zeromq::detail::DecodeError("Empty legacy PMT buffer");
     }
 
     auto tag = static_cast<legacy_tag>(*ptr++);
@@ -606,12 +608,12 @@ static Value deserialize_value(const uint8_t*& ptr, const uint8_t* end) {
     }
     case legacy_tag::LEGACY_PMT_UNIFORM_VECTOR: {
         if (ptr >= end) {
-            throw std::runtime_error("Truncated legacy PMT uniform vector");
+            throw gr::blocks::zeromq::detail::DecodeError("Truncated legacy PMT uniform vector");
         }
         legacy_uniform_type dtype = static_cast<legacy_uniform_type>(*ptr++);
         uint32_t            len   = static_cast<uint32_t>(read_u32(ptr, end));
         if (ptr >= end) {
-            throw std::runtime_error("Truncated legacy PMT uniform vector padding");
+            throw gr::blocks::zeromq::detail::DecodeError("Truncated legacy PMT uniform vector padding");
         }
         uint8_t npad = *ptr++;
         require_remaining(ptr, end, npad, "Truncated legacy PMT uniform vector padding");
@@ -666,13 +668,13 @@ static Value deserialize_value(const uint8_t*& ptr, const uint8_t* end) {
             auto vec = create_vector_from_big_endian<std::complex<double>>(ptr, end, len);
             return Value(Tensor<std::complex<double>>(gr::data_from, vec));
         }
-        default: throw std::runtime_error("Unsupported or unknown legacy PMT uniform vector tag");
+        default: throw gr::blocks::zeromq::detail::DecodeError("Unsupported or unknown legacy PMT uniform vector tag");
         }
     }
     case legacy_tag::LEGACY_PMT_TUPLE: {
         uint32_t len = static_cast<uint32_t>(read_u32(ptr, end));
         if (ptr > end || static_cast<std::size_t>(len) > static_cast<std::size_t>(end - ptr)) {
-            throw std::runtime_error("Truncated legacy PMT tuple");
+            throw gr::blocks::zeromq::detail::DecodeError("Truncated legacy PMT tuple");
         }
         std::vector<Value> values;
         values.reserve(len);
@@ -686,19 +688,19 @@ static Value deserialize_value(const uint8_t*& ptr, const uint8_t* end) {
     }
     case legacy_tag::LEGACY_PMT_DICT: return deserialize_dict(ptr, end);
     case legacy_tag::LEGACY_PMT_VECTOR:
-    default: throw std::runtime_error("Unsupported or unknown legacy PMT tag");
+    default: throw gr::blocks::zeromq::detail::DecodeError("Unsupported or unknown legacy PMT tag");
     }
 }
 
 inline gr::pmt::Value deserialize_from_legacy(const uint8_t* data, std::size_t size) {
     if (!data || size == 0) {
-        throw std::runtime_error("Empty legacy PMT buffer");
+        throw gr::blocks::zeromq::detail::DecodeError("Empty legacy PMT buffer");
     }
     const uint8_t* ptr    = data;
     const uint8_t* end    = data + size;
     auto           result = deserialize_value(ptr, end);
     if (ptr != end) {
-        throw std::runtime_error("Trailing bytes in legacy PMT buffer");
+        throw gr::blocks::zeromq::detail::DecodeError("Trailing bytes in legacy PMT buffer");
     }
     return result;
 }

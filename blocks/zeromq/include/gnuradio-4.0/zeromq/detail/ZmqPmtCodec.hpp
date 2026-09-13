@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ZmqDecodeError.hpp"
+
 #include "pmt_legacy_codec.hpp"
 
 #include <gnuradio-4.0/YamlPmt.hpp>
@@ -40,24 +42,24 @@ inline std::vector<std::uint8_t> serialize_gr4_yaml_v1_pmt(const gr::pmt::Value&
 
 inline gr::pmt::Value deserialize_gr4_yaml_v1_pmt(const std::uint8_t*& data, const std::uint8_t* end) {
     if (data == nullptr || end == nullptr || end < data || static_cast<std::size_t>(end - data) < kGr4YamlV1PmtLengthSize) {
-        throw std::runtime_error("truncated GR4 YAML v1 PMT length");
+        throw DecodeError("truncated GR4 YAML v1 PMT length");
     }
 
     const auto length = (static_cast<std::uint32_t>(data[0]) << 24U) | (static_cast<std::uint32_t>(data[1]) << 16U) | (static_cast<std::uint32_t>(data[2]) << 8U) | static_cast<std::uint32_t>(data[3]);
     data += kGr4YamlV1PmtLengthSize;
     if (static_cast<std::size_t>(end - data) < length) {
-        throw std::runtime_error("truncated GR4 YAML v1 PMT payload");
+        throw DecodeError("truncated GR4 YAML v1 PMT payload");
     }
 
     const std::string_view yaml(reinterpret_cast<const char*>(data), length);
     data += length;
     auto decoded = gr::pmt::yaml::deserialize(yaml);
     if (!decoded.has_value()) {
-        throw std::runtime_error("invalid GR4 YAML v1 PMT payload");
+        throw DecodeError("invalid GR4 YAML v1 PMT payload");
     }
     auto value = decoded->find("value");
     if (value == decoded->end() || decoded->size() != 1UZ) {
-        throw std::runtime_error("invalid GR4 YAML v1 PMT envelope");
+        throw DecodeError("invalid GR4 YAML v1 PMT envelope");
     }
     return std::move(value->second);
 }
@@ -74,13 +76,13 @@ inline gr::pmt::Value deserialize_pmt(const std::uint8_t* data, std::size_t size
     switch (format) {
     case PmtWireFormat::GR4_YAML_V1: {
         if (data == nullptr || size < kGr4YamlV1PmtLengthSize) {
-            throw std::runtime_error("truncated GR4 YAML v1 PMT payload");
+            throw DecodeError("truncated GR4 YAML v1 PMT payload");
         }
         const auto* cursor = data;
         const auto* end    = data + size;
         auto        value  = deserialize_gr4_yaml_v1_pmt(cursor, end);
         if (cursor != end) {
-            throw std::runtime_error("trailing bytes after GR4 YAML v1 PMT payload");
+            throw DecodeError("trailing bytes after GR4 YAML v1 PMT payload");
         }
         return value;
     }

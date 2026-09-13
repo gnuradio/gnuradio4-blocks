@@ -43,7 +43,9 @@ def main():
     recv_tb.start()
     time.sleep(0.25)
     send_tb.run()
-    time.sleep(1.0)
+    deadline = time.monotonic() + 5.0
+    while len(sink.data()) < len(data) and time.monotonic() < deadline:
+        time.sleep(0.01)
     recv_tb.stop()
     recv_tb.wait()
 
@@ -64,10 +66,26 @@ def main():
     if received[: len(data)] != data:
         raise SystemExit("sample data did not round trip")
 
-    keys = [pmt.symbol_to_string(tag.key) for tag in returned_tags]
-    for expected in ("packet_len", "same_offset", "mid_burst", "next_packet"):
-        if expected not in keys:
-            raise SystemExit(f"missing returned tag {expected}")
+    expected_tags = [
+        (
+            int(tag.offset),
+            pmt.symbol_to_string(tag.key),
+            pmt.to_long(tag.value),
+            pmt.symbol_to_string(tag.srcid),
+        )
+        for tag in tags
+    ]
+    actual_tags = [
+        (
+            int(tag.offset),
+            pmt.symbol_to_string(tag.key),
+            pmt.to_long(tag.value),
+            pmt.symbol_to_string(tag.srcid),
+        )
+        for tag in returned_tags
+    ]
+    if sorted(actual_tags) != sorted(expected_tags):
+        raise SystemExit(f"tag associations differ: {actual_tags}")
 
 
 if __name__ == "__main__":

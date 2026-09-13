@@ -1,4 +1,7 @@
 #include <boost/ut.hpp>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -317,13 +320,18 @@ std::future<int> spawn_peer(std::string mode, TestEndpoint endpoint) {
     });
 }
 
-bool gr3_available() {
+int gr3_probe() {
     const auto cmd = std::format("python3 {} {} {}", shell_quote(peer_script().string()), shell_quote("probe"), shell_quote("unused"));
     const auto rc  = std::system(cmd.c_str());
-    return rc == 0;
+#ifdef _WIN32
+    return rc;
+#else
+    return WIFEXITED(rc) ? WEXITSTATUS(rc) : -1;
+#endif
 }
 
-const bool has_gr3 = gr3_available();
+const int  gr3_probe_status = gr3_probe();
+const bool has_gr3          = gr3_probe_status == 0;
 
 } // namespace
 
@@ -594,6 +602,10 @@ int main() {
         return EXIT_FAILURE;
     }
     if (!has_gr3) {
+        if (gr3_probe_status != 77) {
+            std::cerr << "GNU Radio 3 probe failed unexpectedly: " << gr3_probe_status << '\n';
+            return EXIT_FAILURE;
+        }
         if (std::getenv("GR4_REQUIRE_GR3_INTEROP") != nullptr) {
             std::cerr << "GNU Radio 3 interoperability support is required but unavailable\n";
             return EXIT_FAILURE;

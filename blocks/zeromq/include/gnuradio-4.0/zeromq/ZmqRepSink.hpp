@@ -62,6 +62,9 @@ This block receives stream items and replies to REQ requests using a REP socket.
     PmtWireFormat pmt_wire_format = PmtWireFormat::GR4_YAML_V1;
     int           linger          = 1000;
     int           hwm             = -1;
+    // Covers ZMTP handshake metadata, identities and correlated REQ envelopes,
+    // while bounding allocation before the four-byte body validation below.
+    std::int64_t max_message_size = 4096;
 
     detail::ZmqSocketTransport _transport{zmq::socket_type::rep};
     detail::ZmqSendCounters    _send_counters;
@@ -71,13 +74,13 @@ This block receives stream items and replies to REQ requests using a REP socket.
     std::optional<zmq::message_t> _pending_reply;
     std::size_t                   _pending_reply_items = 0;
 
-    GR_MAKE_REFLECTABLE(ZmqRepSink, in, endpoint, timeout, bind, pass_tags, pmt_wire_format, linger, hwm);
+    GR_MAKE_REFLECTABLE(ZmqRepSink, in, endpoint, timeout, bind, pass_tags, pmt_wire_format, linger, hwm, max_message_size);
 
     void start() {
         detail::ZmqSocketTransport::require_nonnegative_timeout(timeout);
         clear_run_state();
         _send_counters.reset();
-        _transport.open(endpoint, bind, linger, hwm, true);
+        _transport.open(endpoint, bind, linger, hwm, true, max_message_size);
     }
 
     void stop() {

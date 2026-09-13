@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ZmqDecodeError.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -196,10 +198,10 @@ public:
 
     static void require_multiple_of(std::size_t byte_count, std::size_t item_size, const char* kind) {
         if (item_size == 0) {
-            throw std::runtime_error(std::string(kind) + ": invalid item size");
+            throw std::logic_error(std::string(kind) + ": invalid item size");
         }
         if (byte_count % item_size != 0) {
-            throw std::runtime_error(std::string(kind) + ": incoming message size is not a multiple of the item size");
+            throw DecodeError(std::string(kind) + ": incoming message size is not a multiple of the item size");
         }
     }
 
@@ -210,10 +212,13 @@ public:
     }
 
 private:
+    // Allows deterministic inproc peers in the focused transport tests.
+    friend struct ZmqTransportTestAccess;
+
     void open_unlocked(const std::string& endpoint, bool bind, int linger, int hwm, bool sink, std::optional<std::int64_t> max_message_size, std::optional<bool> pub_drop_on_hwm) {
         close_unlocked();
-        const auto socket_type = pub_drop_on_hwm.has_value() && !*pub_drop_on_hwm ? zmq::socket_type::xpub : _type;
-        _socket.emplace(_context, socket_type);
+        // PUB inherits XPUB_NODROP support without exposing subscription notifications.
+        _socket.emplace(_context, _type);
         _socket->set(zmq::sockopt::linger, linger);
         if (_type == zmq::socket_type::req) {
             // Do not queue a request to a not-yet-connected peer. Otherwise short reply
