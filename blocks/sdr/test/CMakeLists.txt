@@ -162,3 +162,8 @@ if(TARGET SoapySDR)
     message(STATUS "qa_SoapyRaiiWrapper SKIPPED (loopback .so module requires matching SoapySDR ABI)")
   endif()
 endif()
+
+# the full-scale saturation is a plain header, so this one needs neither a device nor SoapySDR and runs on every leg
+add_executable(qa_Saturate qa_Saturate.cpp)
+target_link_libraries(qa_Saturate PRIVATE gnuradio-options gr-sdr ut)
+add_test(NAME qa_Saturate COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} ${CMAKE_CURRENT_BINARY_DIR}/qa_Saturate)
