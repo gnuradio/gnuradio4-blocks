@@ -19,6 +19,13 @@
 // `streamIndex` is the idiom SchmittTrigger reads; `tags(window)` yields the framework's own (relative index, map)
 // pairs, including the negative index an unconsumed tag is presented at, and both are offered here because the blocks
 // driven this way use one or the other.
+//
+// Tags are tracked by a cursor of their own rather than by the sample cursor. A call is handed every tag from that
+// cursor up to the end of its sample window, so a tag an earlier call did not retire comes round again at a negative
+// relative index; the cursor advances only at the end of a call, by the rule a released span applies (`TagCursor`).
+// A call's tags are therefore not the tags of its samples: a retained tag, and a tag the block retired ahead of the
+// samples it consumed, are the two transitions a tag-forwarding test exists to pin, and neither one is visible from
+// the sample window alone.
 namespace gr::blocks::testing::span {
 
 struct TagReaderSpan : std::span<const gr::Tag> {
@@ -37,37 +44,117 @@ struct TagWriterSpan : std::span<gr::Tag> {
 
 using TagView = std::pair<std::ptrdiff_t, std::reference_wrapper<const gr::property_map>>;
 
+/// @brief What a call retires from the tag cursor when the block made no request of its own.
+enum class TagRetirement {
+    FirstTagOnly, ///< the tags at relative index <= 0, which is what every policy but backward propagation retires
+    WholeWindow   ///< every tag below the consumed prefix, which is what backward propagation retires
+};
+
 template<typename T>
 struct InputSpan : std::span<const T> {
     using value_type = T;
 
     TagReaderSpan rawTags{};
-    std::size_t   streamIndex  = 0UZ;
-    std::size_t   consumed     = 0UZ;
-    std::size_t   tagsConsumed = 0UZ;
-    bool          isConnected  = true;
-    bool          isSync       = true;
+    std::size_t   streamIndex = 0UZ;
+    std::size_t   consumed    = 0UZ;
+    /// the local sample index the block asked to retire tags below; meaningful only while `tagsConsumeRequested`
+    std::size_t tagsConsumed         = 0UZ;
+    bool        consumeRequested     = false;
+    bool        tagsConsumeRequested = false;
+    bool        isConnected          = true;
+    bool        isSync               = true;
 
     InputSpan(std::span<const T> items, std::size_t at = 0UZ, std::span<const gr::Tag> incoming = {}, bool sync = true) : std::span<const T>(items), rawTags(incoming), streamIndex(at), isSync(sync) {}
 
     constexpr bool consume(std::size_t nItems) noexcept {
-        consumed = nItems;
+        consumed         = nItems;
+        consumeRequested = true;
         return true;
     }
-    constexpr void consumeTags(std::size_t untilLocalIndex) noexcept { tagsConsumed = untilLocalIndex; }
 
-    [[nodiscard]] std::vector<TagView> tags() const { return tags(this->size()); }
+    /// @brief Ask for the tags below local sample index @p untilLocalIndex; the cursor applies it at the end of the call.
+    constexpr void consumeTags(std::size_t untilLocalIndex) noexcept {
+        tagsConsumed         = untilLocalIndex;
+        tagsConsumeRequested = true;
+    }
+
+    /// @brief The index of @p tag relative to the first sample of this call, negative for a tag behind that sample.
+    [[nodiscard]] constexpr std::ptrdiff_t relativeIndex(const gr::Tag& tag) const noexcept { return tag.index >= streamIndex ? static_cast<std::ptrdiff_t>(tag.index - streamIndex) : -static_cast<std::ptrdiff_t>(streamIndex - tag.index); }
+
+    [[nodiscard]] std::vector<TagView> tags() const {
+        std::vector<TagView> view;
+        view.reserve(rawTags.size());
+        for (const gr::Tag& tag : rawTags) {
+            view.emplace_back(relativeIndex(tag), std::cref(tag.map));
+        }
+        return view;
+    }
 
     [[nodiscard]] std::vector<TagView> tags(std::size_t window) const {
         std::vector<TagView> view;
         for (const gr::Tag& tag : rawTags) {
-            const std::ptrdiff_t relIndex = static_cast<std::ptrdiff_t>(tag.index) - static_cast<std::ptrdiff_t>(streamIndex);
-            if (relIndex < static_cast<std::ptrdiff_t>(window)) {
-                view.emplace_back(relIndex, std::cref(tag.map));
+            if (tag.index < streamIndex + window) {
+                view.emplace_back(relativeIndex(tag), std::cref(tag.map));
             }
         }
         return view;
     }
+};
+
+/**
+ * @brief The tag cursor of a driven port: which tags a call is handed, and which of them the call retires.
+ *
+ * A call is handed every tag from the cursor up to the end of its sample window, so a tag an earlier call did not
+ * retire is handed over again at a negative relative index. The cursor advances at the end of the call, by the rule a
+ * released span applies: the block's own `consumeTags` request when it made one; nothing at all when the block asked
+ * to consume no samples; otherwise the rule the cursor was built with. A tag beyond the end of the call's window is
+ * never retired, however wide the request.
+ *
+ * The tags are in index order, which is the order a tag buffer holds them in.
+ */
+class TagCursor {
+public:
+    explicit TagCursor(std::span<const gr::Tag> tags, TagRetirement rule = TagRetirement::FirstTagOnly) noexcept : _tags(tags), _rule(rule) {}
+
+    /// @brief The tags a call over `[streamIndex, streamIndex + windowSize)` is handed.
+    [[nodiscard]] std::span<const gr::Tag> window(std::size_t streamIndex, std::size_t windowSize) const {
+        const std::span<const gr::Tag> pending = _tags.subspan(_retired);
+        const auto                     end     = std::ranges::lower_bound(pending, streamIndex + windowSize, std::ranges::less{}, &gr::Tag::index);
+        return pending.first(static_cast<std::size_t>(end - pending.begin()));
+    }
+
+    /// @brief Advance the cursor past what @p span retires, which is what a port does when the span is released.
+    template<typename T>
+    void retire(const InputSpan<T>& span) noexcept {
+        const std::size_t visibleEnd = _retired + span.rawTags.size();
+        if (span.tagsConsumeRequested) {
+            retireBelow(span.streamIndex + span.tagsConsumed, visibleEnd);
+            return;
+        }
+        if (span.empty() || (span.consumeRequested && span.consumed == 0UZ)) {
+            return;
+        }
+        if (_rule == TagRetirement::FirstTagOnly) {
+            retireBelow(span.streamIndex + 1UZ, visibleEnd);
+        } else {
+            const std::size_t prefix = span.consumeRequested ? span.consumed : (span.isSync ? span.size() : 0UZ);
+            retireBelow(span.streamIndex + prefix, visibleEnd);
+        }
+    }
+
+    /// @brief How many tags the cursor has retired.
+    [[nodiscard]] std::size_t retired() const noexcept { return _retired; }
+
+private:
+    void retireBelow(std::size_t untilIndex, std::size_t visibleEnd) noexcept {
+        while (_retired < visibleEnd && _tags[_retired].index < untilIndex) {
+            ++_retired;
+        }
+    }
+
+    std::span<const gr::Tag> _tags{};
+    TagRetirement            _rule    = TagRetirement::FirstTagOnly;
+    std::size_t              _retired = 0UZ;
 };
 
 template<typename T>
@@ -130,15 +217,15 @@ template<typename TBlock, typename T>
     Capture<T>        result;
     const std::size_t stride = chunkSize == 0UZ ? std::max(input.size(), 1UZ) : chunkSize;
     std::vector<T>    scratch(stride);
+    TagCursor         cursor(tags);
 
     for (std::size_t base = 0UZ; base < input.size();) {
         const std::size_t count = std::min(stride, input.size() - base);
-        const auto        first = std::ranges::lower_bound(tags, base, std::ranges::less{}, &gr::Tag::index);
-        const auto        last  = std::ranges::lower_bound(tags, base + count, std::ranges::less{}, &gr::Tag::index);
 
-        InputSpan<T>  inSpan(input.subspan(base, count), base, std::span<const gr::Tag>(first, last));
+        InputSpan<T>  inSpan(input.subspan(base, count), base, cursor.window(base, count));
         OutputSpan<T> outSpan(std::span<T>(scratch.data(), count), result.samples.size(), &result.tags);
         std::ignore = block.processBulk(inSpan, outSpan);
+        cursor.retire(inSpan);
 
         result.samples.insert(result.samples.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(outSpan.count));
         result.consumed += inSpan.consumed;
@@ -162,13 +249,12 @@ template<typename TOut, typename TBlock, typename TIn>
     Capture<TOut>     result;
     const std::size_t stride = chunkSize == 0UZ ? std::max(input.size(), 1UZ) : chunkSize;
     std::vector<TOut> scratch(stride * outPerIn);
+    TagCursor         cursor(tags);
 
     for (std::size_t base = 0UZ; base < input.size();) {
         const std::size_t count = std::min(stride, input.size() - base);
-        const auto        first = std::ranges::lower_bound(tags, startOffset + base, std::ranges::less{}, &gr::Tag::index);
-        const auto        last  = std::ranges::lower_bound(tags, startOffset + base + count, std::ranges::less{}, &gr::Tag::index);
 
-        InputSpan<TIn>   inSpan(input.subspan(base, count), startOffset + base, std::span<const gr::Tag>(first, last));
+        InputSpan<TIn>   inSpan(input.subspan(base, count), startOffset + base, cursor.window(startOffset + base, count));
         OutputSpan<TOut> outSpan(std::span<TOut>(scratch.data(), count * outPerIn), outPerIn * (startOffset + base), &result.tags);
 
         std::ignore  = block.processBulk(inSpan, outSpan);
@@ -177,6 +263,7 @@ template<typename TOut, typename TBlock, typename TIn>
         if constexpr (requires { block.forwardTags(inputs, outputs, count); }) {
             block.forwardTags(inputs, outputs, count);
         }
+        cursor.retire(inSpan);
 
         result.samples.insert(result.samples.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(count * outPerIn));
         result.consumed += count;
@@ -198,14 +285,13 @@ template<typename TOut, typename TAux, typename TBlock, typename TIn>
     const std::size_t stride = chunkSize == 0UZ ? std::max(input.size(), 1UZ) : chunkSize;
     std::vector<TOut> scratch(stride);
     std::vector<TAux> auxScratch(stride);
+    TagCursor         cursor(tags);
     aux.clear();
 
     for (std::size_t base = 0UZ; base < input.size();) {
         const std::size_t count = std::min(stride, input.size() - base);
-        const auto        first = std::ranges::lower_bound(tags, startOffset + base, std::ranges::less{}, &gr::Tag::index);
-        const auto        last  = std::ranges::lower_bound(tags, startOffset + base + count, std::ranges::less{}, &gr::Tag::index);
 
-        InputSpan<TIn>   inSpan(input.subspan(base, count), startOffset + base, std::span<const gr::Tag>(first, last));
+        InputSpan<TIn>   inSpan(input.subspan(base, count), startOffset + base, cursor.window(startOffset + base, count));
         OutputSpan<TOut> outSpan(std::span<TOut>(scratch.data(), count), startOffset + base, &result.tags);
         OutputSpan<TAux> auxSpan(auxConnected ? std::span<TAux>(auxScratch.data(), count) : std::span<TAux>{}, startOffset + base, auxTags, auxConnected);
 
@@ -215,6 +301,7 @@ template<typename TOut, typename TAux, typename TBlock, typename TIn>
             block.forwardTags(inputs, outputs, count);
         }
         std::ignore = block.processBulk(inSpan, outSpan, auxSpan);
+        cursor.retire(inSpan);
 
         result.samples.insert(result.samples.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(outSpan.count));
         aux.insert(aux.end(), auxScratch.begin(), auxScratch.begin() + static_cast<std::ptrdiff_t>(auxSpan.count));
@@ -240,18 +327,18 @@ template<typename TOut, typename TBlock, typename TIn>
     const std::size_t arriving = feed == 0UZ ? std::max(input.size(), 1UZ) : feed;
     const std::size_t room     = outRoom == 0UZ ? std::max(input.size(), 1UZ) : outRoom;
     std::vector<TOut> scratch(room);
+    TagCursor         cursor(tags);
 
     std::size_t consumed = 0UZ;
     std::size_t fed      = 0UZ;
     while (consumed < input.size()) {
-        fed              = std::min(input.size(), fed + arriving);
-        const auto first = std::ranges::lower_bound(tags, startOffset + consumed, std::ranges::less{}, &gr::Tag::index);
-        const auto last  = std::ranges::lower_bound(tags, startOffset + fed, std::ranges::less{}, &gr::Tag::index);
+        fed = std::min(input.size(), fed + arriving);
 
-        InputSpan<TIn>   inSpan(input.subspan(consumed, fed - consumed), startOffset + consumed, std::span<const gr::Tag>(first, last));
+        InputSpan<TIn>   inSpan(input.subspan(consumed, fed - consumed), startOffset + consumed, cursor.window(startOffset + consumed, fed - consumed));
         OutputSpan<TOut> outSpan(std::span<TOut>(scratch.data(), room), result.samples.size(), &result.tags);
 
         std::ignore = block.processBulk(inSpan, outSpan);
+        cursor.retire(inSpan);
 
         for (std::size_t k = 0UZ; k < outSpan.count; ++k) {
             result.samples.push_back(std::move(scratch[k]));
@@ -292,6 +379,7 @@ template<typename TOut, typename TBlock, typename TIn>
     Capture<TOut>     result;
     const std::size_t outStart = startOutOffset == kOutFollowsIn ? startOffset / decimation : startOutOffset;
     std::vector<TOut> scratch(stride / decimation);
+    TagCursor         cursor(tags);
 
     for (std::size_t base = 0UZ; base < input.size(); base += stride) {
         // the final chunk is whatever is left, less any remainder too short to make one output
@@ -299,10 +387,8 @@ template<typename TOut, typename TBlock, typename TIn>
         if (take == 0UZ) {
             break;
         }
-        const auto first = std::ranges::lower_bound(tags, startOffset + base, std::ranges::less{}, &gr::Tag::index);
-        const auto last  = std::ranges::lower_bound(tags, startOffset + base + take, std::ranges::less{}, &gr::Tag::index);
 
-        InputSpan<TIn>   inSpan(input.subspan(base, take), startOffset + base, std::span<const gr::Tag>(first, last));
+        InputSpan<TIn>   inSpan(input.subspan(base, take), startOffset + base, cursor.window(startOffset + base, take));
         OutputSpan<TOut> outSpan(std::span<TOut>(scratch.data(), take / decimation), outStart + base / decimation, &result.tags);
 
         auto inputs  = std::tie(inSpan);
@@ -311,6 +397,7 @@ template<typename TOut, typename TBlock, typename TIn>
             block.forwardTags(inputs, outputs, take);
         }
         std::ignore = block.processBulk(std::span<const TIn>(inSpan), std::span<TOut>(outSpan));
+        cursor.retire(inSpan);
 
         result.samples.insert(result.samples.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(take / decimation));
         result.consumed += take;
@@ -333,15 +420,14 @@ template<typename TOut, typename TBlock, typename TIn>
     const std::size_t arriving = feed == 0UZ ? std::max(input.size(), 1UZ) : feed;
     const std::size_t room     = std::max(outRoom, 1UZ);
     std::vector<TOut> scratch(room);
+    TagCursor         cursor(tags);
 
     std::size_t consumed = 0UZ;
     std::size_t fed      = 0UZ;
     while (consumed < input.size()) {
-        fed              = std::min(input.size(), fed + arriving);
-        const auto first = std::ranges::lower_bound(tags, startOffset + consumed, std::ranges::less{}, &gr::Tag::index);
-        const auto last  = std::ranges::lower_bound(tags, startOffset + fed, std::ranges::less{}, &gr::Tag::index);
+        fed = std::min(input.size(), fed + arriving);
 
-        InputSpan<TIn>   inSpan(input.subspan(consumed, fed - consumed), startOffset + consumed, std::span<const gr::Tag>(first, last), false);
+        InputSpan<TIn>   inSpan(input.subspan(consumed, fed - consumed), startOffset + consumed, cursor.window(startOffset + consumed, fed - consumed), false);
         OutputSpan<TOut> outSpan(std::span<TOut>(scratch.data(), room), result.samples.size(), &result.tags, true, false);
 
         auto inputs  = std::tie(inSpan);
@@ -350,6 +436,7 @@ template<typename TOut, typename TBlock, typename TIn>
             block.forwardTags(inputs, outputs, fed - consumed);
         }
         std::ignore = block.processBulk(inSpan, outSpan);
+        cursor.retire(inSpan);
 
         result.samples.insert(result.samples.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(outSpan.count));
         result.consumed += inSpan.consumed;
@@ -371,13 +458,12 @@ template<std::size_t NAux, typename TOut, typename TBlock, typename TIn>
     for (std::vector<float>& buffer : auxScratch) {
         buffer.resize(stride);
     }
+    TagCursor cursor(tags);
 
     for (std::size_t base = 0UZ; base < input.size();) {
         const std::size_t count = std::min(stride, input.size() - base);
-        const auto        first = std::ranges::lower_bound(tags, base, std::ranges::less{}, &gr::Tag::index);
-        const auto        last  = std::ranges::lower_bound(tags, base + count, std::ranges::less{}, &gr::Tag::index);
 
-        InputSpan<TIn>   inSpan(input.subspan(base, count), base, std::span<const gr::Tag>(first, last));
+        InputSpan<TIn>   inSpan(input.subspan(base, count), base, cursor.window(base, count));
         OutputSpan<TOut> outSpan(std::span<TOut>(scratch.data(), count), result.samples.size(), &result.tags);
 
         std::array<OutputSpan<float>, NAux> auxSpans = [&]<std::size_t... I>(std::index_sequence<I...>) { return std::array<OutputSpan<float>, NAux>{OutputSpan<float>(connected[I] ? std::span<float>(auxScratch[I].data(), count) : std::span<float>{}, result.aux[I].size(), &result.auxTags[I], connected[I])...}; }(std::make_index_sequence<NAux>{});
@@ -388,6 +474,7 @@ template<std::size_t NAux, typename TOut, typename TBlock, typename TIn>
             static_assert(NAux == 3UZ, "the tracking-loop blocks carry two or three optional side ports");
             std::ignore = block.processBulk(inSpan, outSpan, auxSpans[0], auxSpans[1], auxSpans[2]);
         }
+        cursor.retire(inSpan);
 
         result.samples.insert(result.samples.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(outSpan.count));
         for (std::size_t which = 0UZ; which < NAux; ++which) {
@@ -422,21 +509,21 @@ template<std::size_t NAux, typename TOut, typename TBlock, typename TIn>
     for (std::vector<float>& buffer : auxScratch) {
         buffer.resize(room);
     }
+    TagCursor cursor(tags);
 
     std::size_t consumed = 0UZ;
     std::size_t fed      = 0UZ;
     while (consumed < input.size()) {
-        fed              = std::min(input.size(), fed + arriving);
-        const auto first = std::ranges::lower_bound(tags, startOffset + consumed, std::ranges::less{}, &gr::Tag::index);
-        const auto last  = std::ranges::lower_bound(tags, startOffset + fed, std::ranges::less{}, &gr::Tag::index);
+        fed = std::min(input.size(), fed + arriving);
 
-        InputSpan<TIn>   inSpan(input.subspan(consumed, fed - consumed), startOffset + consumed, std::span<const gr::Tag>(first, last));
+        InputSpan<TIn>   inSpan(input.subspan(consumed, fed - consumed), startOffset + consumed, cursor.window(startOffset + consumed, fed - consumed));
         OutputSpan<TOut> outSpan(std::span<TOut>(scratch.data(), room), result.samples.size(), &result.tags);
 
         std::array<OutputSpan<float>, NAux> auxSpans = [&]<std::size_t... I>(std::index_sequence<I...>) { return std::array<OutputSpan<float>, NAux>{OutputSpan<float>(connected[I] ? std::span<float>(auxScratch[I].data(), room) : std::span<float>{}, result.aux[I].size(), &result.auxTags[I], connected[I])...}; }(std::make_index_sequence<NAux>{});
 
         static_assert(NAux == 3UZ, "the variable-rate shim is written for the three optional ports a symbol synchronizer carries");
         std::ignore = block.processBulk(inSpan, outSpan, auxSpans[0], auxSpans[1], auxSpans[2]);
+        cursor.retire(inSpan);
 
         result.samples.insert(result.samples.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(outSpan.count));
         for (std::size_t which = 0UZ; which < NAux; ++which) {
