@@ -24,6 +24,8 @@ endif()
 install(TARGETS gr-network EXPORT gnuradio4Targets)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/network"
         DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gnuradio-4.0")
+
+set(GrNetworkBlocks_HDRS include/gnuradio-4.0/network/SocketPacketIO.hpp include/gnuradio-4.0/network/TcpByteIo.hpp)
 if(GR4_NETWORK_HAVE_LIBZMQ)
   list(APPEND GrNetworkBlocks_HDRS include/gnuradio-4.0/network/ZmqPacketIO.hpp)
 endif()
