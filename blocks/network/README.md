@@ -13,6 +13,14 @@ The family is off by default (`GR4_ENABLE_NETWORK`) and is built only where libz
 cppzmq header are found, because an optional external dependency cannot enter an unconditional
 module without becoming unconditional for everything downstream.
 
+`ZmqStreamSource` is the exception to the envelope, and is here for compatibility alone: it reads the
+raw sample stream GNU Radio 3.10's `gr-zeromq` publishes — one message per buffer of items, no header
+and no framing — so a stock 3.10 `zmq_pub_sink` or `zmq_push_sink` feeds a GR 4 graph unchanged and a
+migration can move one end at a time. A downstream program carrying its own copy of such a block should
+instantiate `gr::blocks::network::ZmqStreamSource<T>` by that name and delete the copy; the settings it
+takes are `endpoint`, `bind`, `pattern`, `topic`, `max_message_bytes`, `queue_bytes`, `recv_hwm` and
+`linger_ms`, and `max_message_bytes` has no default.
+
 `src/` holds the two executables of the packet-link acceptance suite, `packet_link_tx` and
 `packet_link_rx`. Each is a flowgraph of stock blocks and nothing else, and `test/qa_PacketLink`
 runs them as separate processes over one endpoint: a format is only proved by a peer that did
