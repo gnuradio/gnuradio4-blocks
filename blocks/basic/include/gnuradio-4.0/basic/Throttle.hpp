@@ -7,6 +7,7 @@
 #include <complex>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <thread>
 
 #include <gnuradio-4.0/Block.hpp>
@@ -78,6 +79,24 @@ The block is 1:1, so every input tag key passes through at its own offset, `samp
     /// @brief Samples paced since the pacing origin; the tests read it to confirm a rate change restarted the schedule.
     [[nodiscard]] std::uint64_t paced() const noexcept { return _total; }
 
+    /// @brief @p value seconds as a clock duration, saturating at the clock's range instead of converting out of it:
+    /// the cast of a floating-point duration to the clock's tick is undefined beyond that range, and a duration the
+    /// clock cannot hold stands for a deadline that is never reached. A value that is not a number saturates high.
+    [[nodiscard]] static Clock::duration seconds(double value) noexcept {
+        using Rep                  = Clock::duration::rep;
+        constexpr double kMaxTicks = static_cast<double>(std::numeric_limits<Rep>::max());
+        constexpr double kMinTicks = static_cast<double>(std::numeric_limits<Rep>::min());
+
+        const double ticks = std::chrono::duration<double, Clock::duration::period>(std::chrono::duration<double>(value)).count();
+        if (!(ticks < kMaxTicks)) {
+            return Clock::duration::max();
+        }
+        if (!(ticks > kMinTicks)) {
+            return Clock::duration::min();
+        }
+        return Clock::duration(static_cast<Rep>(ticks));
+    }
+
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
         const std::size_t cap   = max_items_per_chunk == 0U ? inSpan.size() : std::min(inSpan.size(), static_cast<std::size_t>(max_items_per_chunk.value));
         const std::size_t count = outSpan.isConnected ? std::min(cap, outSpan.size()) : cap;
@@ -95,15 +114,18 @@ The block is 1:1, so every input tag key passes through at its own offset, `samp
     }
 
 private:
-    [[nodiscard]] static Clock::duration seconds(double value) noexcept { return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(value)); }
+    /// @brief The deadline of the @p n-th sample of the schedule, held to the clock's largest time point: a deadline
+    /// beyond it is never reached, so the block waits in slices until it is stopped.
+    [[nodiscard]] Clock::time_point dueTime(std::uint64_t n) const noexcept { return _origin + std::min(seconds(_period * static_cast<double>(n)), Clock::time_point::max() - _origin); }
 
     /// @brief Waits out the deadline of the last of @p count samples and returns @p count. A stop request cuts the
     /// wait short, and then only the leading samples whose own deadline has passed are returned, which may be none.
     [[nodiscard]] std::size_t waitUntilDue(std::size_t count) {
-        const Clock::time_point deadline = _origin + seconds(_period * static_cast<double>(_total + count));
+        const Clock::time_point deadline = dueTime(_total + count);
         Clock::time_point       now      = Clock::now();
         while (deadline > now && !lifecycle::isShuttingDown(this->state())) {
-            std::this_thread::sleep_until(std::min(deadline, now + _slice));
+            const Clock::duration remaining = deadline - now; // durations, since a saturated slice would leave the clock's range as a time point
+            std::this_thread::sleep_until(_slice < remaining ? now + _slice : deadline);
             now = Clock::now();
         }
         return deadline > now ? dueBy(now, count) : count;
