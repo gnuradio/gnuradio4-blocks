@@ -4,6 +4,12 @@ add_ut_test(qa_SocketPacketIO)
 target_link_libraries(qa_SocketPacketIO PRIVATE gr-network gr-testing)
 set_tests_properties(qa_SocketPacketIO PROPERTIES TIMEOUT 180)
 
+add_ut_test(qa_TcpByteIo)
+target_link_libraries(qa_TcpByteIo PRIVATE gr-network gr-testing)
+# a passing run is seconds; the ceiling has to clear the sum of the watchdog deadlines a wholly broken transport would
+# spend instead, which is what the socket suites next door are set for
+set_tests_properties(qa_TcpByteIo PROPERTIES TIMEOUT 180)
+
 if(GR4_NETWORK_HAVE_LIBZMQ)
   add_ut_test(qa_ZmqPacketIO)
   target_link_libraries(qa_ZmqPacketIO PRIVATE gr-network gr-testing)
