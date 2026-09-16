@@ -8,4 +8,5 @@ endfunction()
 
 if(GR4_NETWORK_HAVE_LIBZMQ)
   gr_add_network_benchmark(bm_ZmqPacketIO)
+  gr_add_network_benchmark(bm_StreamPacketIO)
 endif()
