@@ -232,7 +232,7 @@ private:
         Packet<T> packet;
         packet.default_value = ds.default_value; // declared by both carriers and reflected by neither
         packet.timestamp     = ds.timestamp;     // both are std::int64_t, so the crossing is lossless and needs no guard
-        packet.signal_values.assign(payload.begin(), payload.end());
+        packet.signal_values = std::vector<T>(payload.begin(), payload.end());
         packet.meta_information.resize(1UZ); // a packet this block produces has exactly one map, and it is [0]
         property_map& map = packet.meta_information[0UZ];
 
