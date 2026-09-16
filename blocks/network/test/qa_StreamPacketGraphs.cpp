@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -39,26 +40,32 @@ using Level = float; // what the receiving graph's DataSink hands back: the magn
 
 constexpr auto kDeliveryTimeout = 10s;
 
-/// @brief The endpoint written in both example files, and what it is replaced by here.
-constexpr std::string_view kExampleEndpoint = "ipc:///tmp/gr4-stream-link.sock";
+/// @brief The two endpoints written in the example files, and what they are replaced by here.
+constexpr std::string_view kStreamEndpoint  = "ipc:///tmp/gr4-stream-link.sock";
+constexpr std::string_view kMessageEndpoint = "ipc:///tmp/gr4-message-link.sock";
 
-[[nodiscard]] std::string uniqueEndpoint() {
+[[nodiscard]] std::string uniqueEndpoint(std::string_view role) {
     static const std::uint64_t salt = [] {
         std::random_device device;
         return (static_cast<std::uint64_t>(device()) << 32U) | static_cast<std::uint64_t>(device());
     }();
-    return std::format("ipc://{}/gr4-spg-{:016x}.sock", std::filesystem::temp_directory_path().string(), salt);
+    return std::format("ipc://{}/gr4-spg-{}-{:016x}.sock", std::filesystem::temp_directory_path().string(), role, salt);
 }
 
-[[nodiscard]] std::string readGraph(std::string_view fileName, std::string_view endpoint) {
+void substitute(std::string& text, std::string_view from, std::string_view to) {
+    for (std::size_t at = text.find(from); at != std::string::npos; at = text.find(from, at)) {
+        text.replace(at, from.size(), to);
+        at += to.size();
+    }
+}
+
+[[nodiscard]] std::string readGraph(std::string_view fileName, std::string_view stream, std::string_view messages) {
     std::ifstream      file(std::format("{}/{}", EXAMPLE_GRAPHS_PATH, fileName), std::ios::binary);
     std::ostringstream content;
     content << file.rdbuf();
     std::string text = content.str();
-    for (std::size_t at = text.find(kExampleEndpoint); at != std::string::npos; at = text.find(kExampleEndpoint, at)) {
-        text.replace(at, kExampleEndpoint.size(), endpoint);
-        at += endpoint.size();
-    }
+    substitute(text, kStreamEndpoint, stream);
+    substitute(text, kMessageEndpoint, messages);
     return text;
 }
 
@@ -92,13 +99,16 @@ const boost::ut::suite<"stream link example graphs"> streamLinkExampleTests = []
     using namespace boost::ut;
     using namespace gr::blocks::basic;
 
+    // Both halves carry the message pair beside the stream pair, so this also gates the case a unit test cannot
+    // reach: two blocks whose only ports are the framework's message ports, inside a running graph.
     "the two example halves load, run in one process and carry the stream and its rate across"_test = [] {
         constexpr std::size_t kWanted = 65536UZ;
 
+        const std::string stream   = uniqueEndpoint("iq");
+        const std::string messages = uniqueEndpoint("msg");
         // loadGrc throws when a file no longer loads, which is the failure this case exists to catch first
-        const std::string endpoint = uniqueEndpoint();
-        auto              receiver = gr::loadGrc(gr::globalPluginLoader(), readGraph("stream_link_rx.yaml", endpoint));
-        auto              sender   = gr::loadGrc(gr::globalPluginLoader(), readGraph("stream_link_tx.yaml", endpoint));
+        auto receiver = gr::loadGrc(gr::globalPluginLoader(), readGraph("stream_link_rx.yaml", stream, messages));
+        auto sender   = gr::loadGrc(gr::globalPluginLoader(), readGraph("stream_link_tx.yaml", stream, messages));
 
         // the receiver first: its `pull` socket connects, and the sender's `push` waits in its mute state for it
         Runner receiving(std::move(*receiver));
