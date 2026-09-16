@@ -9,6 +9,7 @@
 #include <format>
 #include <numbers>
 #include <span>
+#include <tuple>
 #include <vector>
 
 #include <gnuradio-4.0/Graph.hpp>
@@ -96,6 +97,29 @@ template<typename T>
     return map;
 }
 
+[[nodiscard]] gr::property_map tagWithRate(std::size_t which, float rateIn) {
+    gr::property_map map = tagKey(which);
+    map.insert_or_assign(gr::property_map::key_type{gr::tag::SAMPLE_RATE.shortKey()}, gr::pmt::Value(rateIn));
+    return map;
+}
+
+/// @brief The `sample_rate` values of the published tags carrying @p key, in publication order.
+[[nodiscard]] std::vector<float> ratesOf(const std::vector<gr::Tag>& tags, std::string_view key) {
+    const gr::property_map::key_type wanted{key};
+    const gr::property_map::key_type rateKey{gr::tag::SAMPLE_RATE.shortKey()};
+
+    std::vector<float> rates;
+    for (const gr::Tag& tag : tags) {
+        if (!tag.map.contains(wanted)) {
+            continue;
+        }
+        if (const auto found = tag.map.find(rateKey); found != tag.map.end()) {
+            rates.push_back(found->second.value_or(0.f));
+        }
+    }
+    return rates;
+}
+
 [[nodiscard]] std::size_t countOwnKeys(const gr::Tag& tag) {
     return static_cast<std::size_t>(std::ranges::count_if(tag.map, [](const auto& entry) { return std::string_view(entry.first).starts_with("tag"); }));
 }
@@ -107,6 +131,46 @@ template<typename T>
     }
     return out;
 }
+
+/**
+ * @brief An `Async` port driven one call at a time, so a settings change can be placed between two calls.
+ *
+ * `test::runAsync` drives a run from end to end, and a run cannot be cut in two here: the sample position, the tag
+ * cursor and the output offsets all have to carry across the call a `rate` change falls between, and two runs restart
+ * every one of them. Each call is that helper's — @p arriving further samples are offered, everything not yet consumed
+ * is offered again, @p room output slots are free, and `forwardTags` runs before `processBulk` as the framework runs it.
+ */
+template<typename T>
+struct AsyncRun {
+    std::span<const T> input;
+    test::TagCursor    cursor;
+    test::Capture<T>   result{};
+    std::size_t        fed = 0UZ;
+
+    AsyncRun(std::span<const T> samples, std::span<const gr::Tag> tags) : input(samples), cursor(tags) {}
+
+    [[nodiscard]] bool more() const noexcept { return result.consumed < input.size(); }
+
+    template<typename TBlock>
+    void call(TBlock& block, std::size_t arriving, std::size_t room) {
+        fed                      = std::min(input.size(), fed + arriving);
+        const std::size_t at     = result.consumed;
+        const std::size_t window = fed - at;
+        std::vector<T>    scratch(room);
+
+        test::InputSpan<T>  inSpan(input.subspan(at, window), at, cursor.window(at, window), false);
+        test::OutputSpan<T> outSpan(std::span<T>(scratch.data(), room), result.samples.size(), &result.tags, true, false);
+
+        auto inputs  = std::tie(inSpan);
+        auto outputs = std::tie(outSpan);
+        block.forwardTags(inputs, outputs, window);
+        std::ignore = block.processBulk(inSpan, outSpan);
+        cursor.retire(inSpan);
+
+        result.samples.insert(result.samples.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(outSpan.count));
+        result.consumed += inSpan.consumed;
+    }
+};
 
 } // namespace
 
@@ -357,6 +421,57 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         expect(gt(tail.samples.size(), 0UZ)) << "and the stream continues with no gap";
         expect(eq(tail.consumed, 500UZ));
         expect(that % (head.offsetsOf("tag0") == std::vector<std::size_t>{placed})) << "tags placed before the change keep their offsets";
+    };
+
+    "a tag waiting behind the consumed prefix is mapped by the rate that consumes it"_test = [] {
+        constexpr std::size_t  kBank   = 32UZ;
+        constexpr float        kRateIn = 480000.f;
+        constexpr double       kAfter  = 1.0;
+        const gr::property_map settings{{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, 0.5)}};
+
+        const std::vector<float>   x = noise<float>(100UZ, 0x9E3779B97F4A7C15ULL);
+        const std::vector<gr::Tag> tags{gr::Tag{80UZ, tagWithRate(0, kRateIn)}};
+
+        // The probe: the whole span of 100 is visible from the first call and one output slot is free, so the call
+        // consumes a prefix far short of input 80 and the tag is still waiting when `rate` changes under it.
+        ArbitraryRateResampler<float> probe = makeResampler<float>(settings);
+        AsyncRun<float>               probeRun{std::span<const float>(x), std::span<const gr::Tag>(tags)};
+        probeRun.call(probe, 100UZ, 1UZ);
+
+        const std::size_t prefix = probeRun.result.consumed;
+        expect(gt(prefix, 0UZ)) << "the first call makes progress";
+        expect(lt(prefix, 80UZ)) << "and stops well short of the tag's sample";
+        expect(probeRun.result.offsetsOf("tag0").empty()) << "so the tag cannot have been published yet";
+
+        std::ignore = probe.settings().setStaged({{"rate", kAfter}});
+        std::ignore = probe.settings().applyStagedParameters();
+        for (std::size_t guard = 0UZ; probeRun.more() && guard < 200UZ; ++guard) { // eight outputs a call over what is left
+            probeRun.call(probe, 100UZ, 8UZ);
+        }
+        expect(!probeRun.more()) << "the probe consumes everything it was given";
+
+        // The control: the same block and the same change at the same sample, but four samples arrive per call, so
+        // the tag first becomes visible long after the change and has no earlier regime to be mapped under.
+        ArbitraryRateResampler<float> control = makeResampler<float>(settings);
+        AsyncRun<float>               controlRun{std::span<const float>(x), std::span<const gr::Tag>(tags)};
+        controlRun.call(control, 4UZ, 1UZ);
+        expect(eq(controlRun.result.consumed, prefix)) << "the two runs stand at the same sample when the rate changes";
+
+        std::ignore = control.settings().setStaged({{"rate", kAfter}});
+        std::ignore = control.settings().applyStagedParameters();
+        for (std::size_t guard = 0UZ; controlRun.more() && guard < 200UZ; ++guard) {
+            controlRun.call(control, 4UZ, 8UZ);
+        }
+        expect(!controlRun.more()) << "and so does the control";
+
+        const std::vector<std::size_t> want = controlRun.result.offsetsOf("tag0");
+        const std::vector<std::size_t> got  = probeRun.result.offsetsOf("tag0");
+        expect(eq(want.size(), 1UZ)) << "the control publishes the tag exactly once";
+        expect(that % (got == want)) << std::format("held past the change the tag lands at [{}], first seen after it at [{}]", join(got), join(want));
+
+        const std::vector<float> rate{static_cast<float>(kAfter * static_cast<double>(kRateIn))};
+        expect(that % (ratesOf(controlRun.result.tags, "tag0") == rate));
+        expect(that % (ratesOf(probeRun.result.tags, "tag0") == rate)) << "and carries the rate of the stream the block hands on where it is published";
     };
 
     "the prototype is rebuilt when the rate falls below it"_test = [] {

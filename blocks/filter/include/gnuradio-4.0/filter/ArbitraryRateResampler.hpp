@@ -66,7 +66,6 @@ A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the r
     std::uint64_t                                       _outOrigin   = 0ULL;
     std::uint64_t                                       _stepOrigin  = 0ULL;
     std::int64_t                                        _phaseOrigin = 0LL;
-    std::uint64_t                                       _tagsThrough = 0ULL;
     bool                                                _reorigin    = false;
     std::vector<std::pair<std::uint64_t, property_map>> _pendingTags;
 
@@ -87,10 +86,9 @@ A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the r
     void start() {
         rebuild();
         _pendingTags.clear();
-        _inOrigin    = 0ULL;
-        _outOrigin   = 0ULL;
-        _tagsThrough = 0ULL;
-        _reorigin    = false;
+        _inOrigin  = 0ULL;
+        _outOrigin = 0ULL;
+        _reorigin  = false;
     }
 
     /// @brief `L*2^32/step`, the rational the block actually runs at. Exact as a `double` while `step` is below `2^53`.
@@ -156,44 +154,24 @@ A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the r
     }
 
     /**
-     * @brief Ingest the arriving tags at their output offsets, replacing the framework's own forwarding.
+     * @brief Take the origin of a new rate regime, and keep the framework's own forwarding off this block's tags.
      *
-     * This runs before `processBulk`, which is where a rate regime takes its origin, the change itself being applied
-     * on the settings path where no absolute offset is knowable. An `Async` port is presented every sample it holds
-     * and the block consumes a prefix of them, so a tag past that prefix is presented again next call: `_tagsThrough`
-     * is what makes each one map exactly once. It is the index this call starts at, held for the whole call, so an
-     * index carrying more than one tag maps all of them. Publication waits for `processBulk`, the only place that
-     * knows how many outputs this call produced.
+     * Defining this at all is what replaces the default forwarder, whose output index matches its input index and is
+     * right only at a rate of one. The tags themselves are mapped in `processBulk`; what belongs here is the origin,
+     * because this is the one hook the framework calls after a settings change has been applied and before a sample
+     * of the call is processed, and the one that sees every port's span. A rate change is applied on the settings
+     * path, between calls, where neither absolute offset is knowable.
      */
     template<typename TInputSpans, typename TOutputSpans>
     void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t /*processedIn*/) {
-        if (_reorigin) {
-            gr::for_each_reader_span([this](auto& span) { _inOrigin = static_cast<std::uint64_t>(span.streamIndex); }, inputSpans);
-            gr::for_each_writer_span([this](auto& span) { _outOrigin = static_cast<std::uint64_t>(span.streamIndex); }, outputSpans);
-            _stepOrigin  = _resampler->step();
-            _phaseOrigin = _resampler->phase();
-            _tagsThrough = std::max(_tagsThrough, _inOrigin);
-            _reorigin    = false;
+        if (!_reorigin) {
+            return;
         }
-
-        const std::uint64_t through = _tagsThrough;
-        gr::for_each_reader_span(
-            [this, through](auto& span) {
-                if (!span.isConnected) {
-                    return;
-                }
-                for (const gr::Tag& tag : span.rawTags) {
-                    const std::uint64_t at = static_cast<std::uint64_t>(tag.index);
-                    if (at < through) {
-                        continue;
-                    }
-                    property_map forwarded(tag.map);
-                    scaleSampleRate(forwarded); // the rate in force where the tag crossed, not where it is published
-                    _pendingTags.emplace_back(_outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, _phaseOrigin), std::move(forwarded));
-                    _tagsThrough = std::max<std::uint64_t>(_tagsThrough, at + 1ULL);
-                }
-            },
-            inputSpans);
+        gr::for_each_reader_span([this](auto& span) { _inOrigin = static_cast<std::uint64_t>(span.streamIndex); }, inputSpans);
+        gr::for_each_writer_span([this](auto& span) { _outOrigin = static_cast<std::uint64_t>(span.streamIndex); }, outputSpans);
+        _stepOrigin  = _resampler->step();
+        _phaseOrigin = _resampler->phase();
+        _reorigin    = false;
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
@@ -207,6 +185,7 @@ A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the r
             made = _resampler->outputsFor(nIn);
         }
 
+        mapTags(inSpan, nIn);
         std::ignore = _resampler->process(std::span<const T>(inSpan.data(), nIn), std::span<T>(outSpan.data(), made));
         releaseTags(outSpan, made);
 
@@ -239,6 +218,33 @@ private:
     [[nodiscard]] double designTarget() const noexcept {
         const double floorRate = min_rate > 0.0 ? std::min(1.0, static_cast<double>(min_rate)) : 1.0;
         return std::min(floorRate, std::min(1.0, static_cast<double>(rate)));
+    }
+
+    /**
+     * @brief Place the tags of the samples this call consumes at their output offsets, under the regime in force now.
+     *
+     * A tag's mapping is committed here, where its sample is consumed, and not where the tag first becomes visible.
+     * An `Async` port is presented every sample it holds and the block consumes a prefix of them, so a tag past that
+     * prefix is presented again next call, and `rate` may have changed in between: mapping it on sight would fix its
+     * offset, and scale its `sample_rate`, under a regime that no longer governs its sample. Taking only the tags of
+     * `[first, last)` is also what maps each one exactly once, `consumeTags` having retired everything below `first`,
+     * and an index carrying more than one tag still maps all of them.
+     */
+    void mapTags(InputSpanLike auto& inSpan, std::size_t nIn) {
+        if (nIn == 0UZ || !inSpan.isConnected) {
+            return;
+        }
+        const std::uint64_t first = static_cast<std::uint64_t>(inSpan.streamIndex);
+        const std::uint64_t last  = first + static_cast<std::uint64_t>(nIn);
+        for (const gr::Tag& tag : inSpan.rawTags) {
+            const std::uint64_t at = static_cast<std::uint64_t>(tag.index);
+            if (at < first || at >= last) {
+                continue;
+            }
+            property_map forwarded(tag.map);
+            scaleSampleRate(forwarded); // the rate that consumes the sample, which is the rate the tag describes
+            _pendingTags.emplace_back(_outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, _phaseOrigin), std::move(forwarded));
+        }
     }
 
     /// @brief Publish the tags whose output this call produced, and hold the rest. An unconnected port drops them at
