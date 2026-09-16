@@ -24,6 +24,25 @@ if(_gnuradio4Blocks_needs_ZeroMQ)
 endif()
 unset(_gnuradio4Blocks_needs_ZeroMQ)
 
+# An exported interface may name only targets the consumer can also define. gnuradio4::gr-network names the imported
+# target this project's configure created for libzmq, so a consumer linking it fails at generate time -- "links to
+# target PkgConfig::GR4_LIBZMQ but the target was not found" -- unless the same target exists there. It is rebuilt here
+# under the same name from the same pkg-config module rather than baked into the export as this machine's library path:
+# a consumer's own libzmq, found the consumer's own way, is the one it should link, and its include directory comes
+# with it, which is where cppzmq's zmq.hpp sits.
+#
+# Not REQUIRED: only the network family names libzmq, and a consumer of any other family must not be refused the whole
+# package for a library it never links. Where libzmq is genuinely absent the target stays undefined and that consumer
+# meets the generate-time error again, which the message below explains ahead of it.
+if(@GR4_EXPORT_NEEDS_LIBZMQ@ AND NOT TARGET PkgConfig::GR4_LIBZMQ)
+  find_dependency(PkgConfig)
+  pkg_check_modules(GR4_LIBZMQ QUIET IMPORTED_TARGET libzmq)
+  if(NOT TARGET PkgConfig::GR4_LIBZMQ)
+    message(STATUS "gnuradio4Blocks: libzmq was not found by pkg-config; gnuradio4::gr-network and"
+                   " gnuradio4::GrNetworkBlocksShared cannot be linked from this install")
+  endif()
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/gnuradio4Targets.cmake")
 
 check_required_components(gnuradio4Blocks)

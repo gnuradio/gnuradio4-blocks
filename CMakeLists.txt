@@ -37,6 +37,13 @@ option(GR_USE_FETCHCONTENT_DEPS "Allow CMake to download selected third-party de
 option(USE_CCACHE "Use ccache if available" ON)
 option(WARNINGS_AS_ERRORS "Enable -Werror flags" ON)
 
+# A prefix this tree has already been installed into. What an export writes into an installed config file is read by
+# consumers and by nothing inside the build, so the legs that check it configure a separate project against a real
+# install; empty means the machine has none and those legs are not registered.
+set(GR4_INSTALLED_PREFIX
+    ""
+    CACHE PATH "Prefix this tree is installed into; enables the legs that configure a consumer against the export")
+
 # Test executables check correctness, not performance; a lower optimization level roughly halves their compile time and
 # peak RSS. Benchmarks pin their own level and are unaffected. Empty keeps the build type's default.
 set(GR_QA_OPTIMIZATION_LEVEL
@@ -274,6 +281,13 @@ add_subdirectory(blocks)
 
 set(GR4_EXPORT_NAME gnuradio4Targets)
 set(GR4_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/gnuradio4Blocks")
+
+# What the network family recorded when it wrote libzmq into its exported interface. Substituted into the config file as
+# a literal condition, so it must always be one of the two constants and never the empty string.
+get_property(GR4_EXPORT_NEEDS_LIBZMQ GLOBAL PROPERTY GR4_EXPORT_NEEDS_LIBZMQ)
+if(NOT GR4_EXPORT_NEEDS_LIBZMQ)
+  set(GR4_EXPORT_NEEDS_LIBZMQ FALSE)
+endif()
 
 configure_package_config_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/gnuradio4BlocksConfig.cmake.in"

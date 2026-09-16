@@ -47,4 +47,17 @@ if(GR4_NETWORK_HAVE_LIBZMQ)
   target_compile_definitions(qa_PacketLink PRIVATE GR4_PACKET_LINK_TX="$<TARGET_FILE:packet_link_tx>"
                                                    GR4_PACKET_LINK_RX="$<TARGET_FILE:packet_link_rx>")
   set_tests_properties(qa_PacketLink PROPERTIES TIMEOUT 120)
+
+  # The exported interface is only ever read from an install, so the test needs one; GR4_INSTALLED_PREFIX names a prefix
+  # this tree has already been installed into and the leg is registered only where one is named. --fresh keeps a cache
+  # left by an earlier run from answering for the install as it is now.
+  if(GR4_INSTALLED_PREFIX)
+    add_test(
+      NAME qa_NetworkExportedTarget
+      COMMAND
+        ${CMAKE_COMMAND} --fresh -S ${CMAKE_CURRENT_SOURCE_DIR}/consumer -B ${CMAKE_CURRENT_BINARY_DIR}/consumer -G
+        ${CMAKE_GENERATOR} -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+        -DCMAKE_PREFIX_PATH=${GR4_INSTALLED_PREFIX})
+    set_tests_properties(qa_NetworkExportedTarget PROPERTIES TIMEOUT 120)
+  endif()
 endif()
