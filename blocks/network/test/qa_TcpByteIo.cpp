@@ -103,6 +103,39 @@ void replaceWithNonSocket(int fd) {
     std::ignore = ::close(placeholder);
 }
 
+/// @brief The local port of every socket of this process whose connection attempt is still unanswered, leaving out the
+/// descriptors @p mine names.
+///
+/// A half-open attempt appears in none of a block's own state, so the same scan the fatal-exit tests use serves here:
+/// `TCP_INFO` names the state of each descriptor, and an attempt still waiting is one in `TCP_SYN_SENT` that the test
+/// does not own itself. The local port identifies the attempt, since a second one is a second socket and the kernel
+/// gives that a port of its own.
+[[nodiscard]] std::vector<std::uint16_t> pendingConnectPorts(std::span<const int> mine) {
+    std::vector<std::uint16_t> ports;
+    DIR*                       directory = ::opendir("/proc/self/fd");
+    if (directory == nullptr) {
+        return ports;
+    }
+    for (const ::dirent* entry = ::readdir(directory); entry != nullptr; entry = ::readdir(directory)) {
+        const int fd = std::atoi(entry->d_name);
+        if (fd <= 2 || fd == ::dirfd(directory) || std::ranges::find(mine, fd) != mine.end()) {
+            continue;
+        }
+        ::tcp_info  info{};
+        ::socklen_t infoSize = static_cast<::socklen_t>(sizeof(info));
+        if (::getsockopt(fd, IPPROTO_TCP, TCP_INFO, &info, &infoSize) != 0 || info.tcpi_state != TCP_SYN_SENT) {
+            continue;
+        }
+        ::sockaddr_in address{};
+        ::socklen_t   size = static_cast<::socklen_t>(sizeof(address));
+        if (::getsockname(fd, reinterpret_cast<::sockaddr*>(&address), &size) == 0 && address.sin_family == AF_INET) {
+            ports.push_back(::ntohs(address.sin_port));
+        }
+    }
+    std::ignore = ::closedir(directory);
+    return ports;
+}
+
 /// @brief A raw TCP connection the test drives itself, so a refusal, a disconnect and a reconnect are all proved
 /// against a peer neither block built.
 struct RawStream {
@@ -176,6 +209,45 @@ struct RawStream {
             fd          = -1;
         }
     }
+};
+
+/// @brief A loopback endpoint that begins a connection and never finishes one.
+///
+/// The kernel drops a SYN that arrives at a listening socket whose accept queue is full, and a client that sent one
+/// stays in `TCP_SYN_SENT` retransmitting for minutes. Taking the single queue slot of a socket nobody accepts from
+/// therefore gives a connect that reports `EINPROGRESS` and is answered by nobody, without assuming anything about
+/// what this machine's routes do with an address off the loopback.
+struct UnansweredEndpoint {
+    int           listener = -1;
+    std::uint16_t port     = 0U;
+    RawStream     occupant{};
+
+    UnansweredEndpoint() {
+        listener = ::socket(AF_INET, SOCK_STREAM, 0);
+        boost::ut::expect(listener >= 0) << "the test could not open a listening socket";
+        ::sockaddr_in address{};
+        address.sin_family      = AF_INET;
+        address.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+        address.sin_port        = 0;
+        boost::ut::expect(::bind(listener, reinterpret_cast<const ::sockaddr*>(&address), static_cast<::socklen_t>(sizeof(address))) == 0);
+        boost::ut::expect(::listen(listener, 0) == 0) << "the test could not listen with the shortest accept queue there is";
+        ::socklen_t length = static_cast<::socklen_t>(sizeof(address));
+        boost::ut::expect(::getsockname(listener, reinterpret_cast<::sockaddr*>(&address), &length) == 0);
+        port = ::ntohs(address.sin_port);
+        occupant.connectTo(port); // the one slot, taken and never accepted from
+    }
+
+    UnansweredEndpoint(const UnansweredEndpoint&)            = delete;
+    UnansweredEndpoint& operator=(const UnansweredEndpoint&) = delete;
+
+    ~UnansweredEndpoint() {
+        if (listener >= 0) {
+            std::ignore = ::close(listener);
+        }
+    }
+
+    /// @brief The descriptors this endpoint owns, which a scan of the process's sockets must leave to it.
+    [[nodiscard]] std::vector<int> descriptors() const { return {listener, occupant.fd}; }
 };
 
 // ─── a byte source that never ends, and a sink whose collection the test thread may read ─────────────────────────
@@ -319,12 +391,14 @@ const boost::ut::suite<"TcpByteIo"> tcpByteIoTests = [] {
         expect(stagingThrows<TcpByteSink>({{"endpoint", std::string("127.0.0.1:5555")}})) << "queue_bytes has no default";
         expect(stagingThrows<TcpByteSink>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}, {"overflow", std::string("sideways")}})) << "overflow names one of two values";
         expect(stagingThrows<TcpByteSink>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}, {"reconnect_ms", gr::Size_t{0U}}})) << "a zero reconnect interval spends the thread on nothing else";
+        expect(stagingThrows<TcpByteSink>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}, {"connect_timeout_ms", gr::Size_t{0U}}})) << "a zero connect timeout abandons every attempt before it can be answered";
         expect(!stagingThrows<TcpByteSink>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}}));
 
         expect(stagingThrows<TcpByteSource>({{"queue_bytes", gr::Size_t{4096U}}})) << "endpoint has no default";
         expect(stagingThrows<TcpByteSource>({{"endpoint", std::string("127.0.0.1:5555")}})) << "queue_bytes has no default";
         expect(stagingThrows<TcpByteSource>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}, {"overflow", std::string("sideways")}})) << "overflow names one of two values";
         expect(stagingThrows<TcpByteSource>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}, {"reconnect_ms", gr::Size_t{0U}}})) << "a zero reconnect interval spends the thread on nothing else";
+        expect(stagingThrows<TcpByteSource>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}, {"connect_timeout_ms", gr::Size_t{0U}}})) << "a zero connect timeout abandons every attempt before it can be answered";
         expect(!stagingThrows<TcpByteSource>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}}));
     };
 
@@ -602,6 +676,113 @@ const boost::ut::suite<"TcpByteIo"> tcpByteIoTests = [] {
 
         expect(eq(source.nReaderFailures, std::uint64_t{0ULL})) << "a peer's reset is not a fault of the socket the reader owns";
         expect(source.lastReaderError().empty()) << "the reader named a fault it did not have: " << source.lastReaderError();
+    };
+
+    // What a connecting block owes a peer a long round trip away: the attempt is one socket for as long as
+    // `connect_timeout_ms` allows, and the 100 ms wait that keeps `stop()` prompt is not what ends it.
+    "an unanswered connect keeps its one socket until connect_timeout_ms"_test = [] {
+        const UnansweredEndpoint blocked;
+
+        {
+            TcpByteSource source({{"endpoint", endpointFor(blocked.port)}, {"bind", false}, {"queue_bytes", gr::Size_t{4096U}}, {"reconnect_ms", gr::Size_t{10U}}, {"connect_timeout_ms", gr::Size_t{60000U}}});
+            source.settings().init();
+            std::ignore = source.settings().applyStagedParameters();
+            source.start();
+
+            std::vector<std::uint16_t> first;
+            expect(waitFor([&first, &blocked] {
+                first = pendingConnectPorts(blocked.descriptors());
+                return first.size() == 1UZ;
+            })) << "the source began no connection that stayed unanswered; a kernel that answers a SYN at a full accept queue needs another seam for this";
+
+            std::this_thread::sleep_for(350ms); // more than three of the I/O thread's 100 ms waits
+            const std::vector<std::uint16_t> later = pendingConnectPorts(blocked.descriptors());
+            expect(eq(later.size(), 1UZ)) << "after 350 ms the attempt was not one socket";
+            expect(later.size() == 1UZ && later.front() == first.front()) << "the attempt was abandoned at a poll interval and made again on a new socket";
+
+            const auto asked = std::chrono::steady_clock::now();
+            source.stop();
+            const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - asked);
+            expect(took < 1000ms) << "stop() waited on the half-open attempt rather than the poll interval: " << took.count() << " ms";
+        }
+
+        // and the deadline does end it: a short one closes the socket and the next attempt is a different socket
+        TcpByteSource impatient({{"endpoint", endpointFor(blocked.port)}, {"bind", false}, {"queue_bytes", gr::Size_t{4096U}}, {"reconnect_ms", gr::Size_t{10U}}, {"connect_timeout_ms", gr::Size_t{150U}}});
+        impatient.settings().init();
+        std::ignore = impatient.settings().applyStagedParameters();
+        impatient.start();
+
+        std::vector<std::uint16_t> initial;
+        expect(waitFor([&initial, &blocked] {
+            initial = pendingConnectPorts(blocked.descriptors());
+            return initial.size() == 1UZ;
+        })) << "the source began no connection that stayed unanswered";
+        expect(waitFor([&initial, &blocked] {
+            const std::vector<std::uint16_t> now = pendingConnectPorts(blocked.descriptors());
+            return now.size() == 1UZ && now.front() != initial.front();
+        })) << "connect_timeout_ms never ended the attempt, so a peer that has gone would never be tried again";
+        impatient.stop();
+    };
+
+    // The other half of the same path: an answered connect is taken at once, with no interval spent waiting on it.
+    "a connecting source takes a connection the peer answers"_test = [] {
+        const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
+        expect(listener >= 0) << "the test could not open a listening socket";
+        ::sockaddr_in address{};
+        address.sin_family      = AF_INET;
+        address.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+        address.sin_port        = 0;
+        expect(::bind(listener, reinterpret_cast<const ::sockaddr*>(&address), static_cast<::socklen_t>(sizeof(address))) == 0);
+        expect(::listen(listener, 4) == 0);
+        ::socklen_t length = static_cast<::socklen_t>(sizeof(address));
+        expect(::getsockname(listener, reinterpret_cast<::sockaddr*>(&address), &length) == 0);
+        const std::uint16_t port = ::ntohs(address.sin_port);
+
+        TcpByteSource source({{"endpoint", endpointFor(port)}, {"bind", false}, {"queue_bytes", gr::Size_t{4096U}}, {"reconnect_ms", gr::Size_t{10U}}});
+        source.settings().init();
+        std::ignore = source.settings().applyStagedParameters();
+        source.start();
+
+        expect(waitFor([listener] {
+            ::pollfd item{.fd = listener, .events = POLLIN, .revents = 0};
+            return ::poll(&item, 1UL, 50) > 0;
+        })) << "the source never connected to a listener that answers";
+        const int accepted = ::accept(listener, nullptr, nullptr);
+        expect(accepted >= 0) << "the test could not accept the source's connection";
+
+        const std::vector<std::uint8_t> bytes{0x11U, 0x22U, 0x33U};
+        expect(::send(accepted, bytes.data(), bytes.size(), MSG_NOSIGNAL) == static_cast<::ssize_t>(bytes.size()));
+        expect(waitFor([&source, &bytes] { return source.counters().bytes >= bytes.size(); })) << "the connection was taken but nothing was read from it";
+
+        source.stop();
+        std::ignore = ::close(accepted);
+        std::ignore = ::close(listener);
+    };
+
+    // Backpressure at the source is a read cut to the room the queue has, so a byte off the wire is a byte delivered.
+    "the source's backpressure stops reading rather than dropping what it read"_test = [] {
+        constexpr std::size_t kQueueBytes = 64UZ;
+        constexpr std::size_t kSent       = 4096UZ;
+        const std::uint16_t   port        = reservePort();
+
+        // driven without a graph, so nothing drains the receive queue and the read loop meets a full one
+        TcpByteSource source({{"endpoint", endpointFor(port)}, {"bind", true}, {"overflow", std::string("backpressure")}, {"queue_bytes", gr::Size_t{static_cast<std::uint32_t>(kQueueBytes)}}});
+        source.settings().init();
+        std::ignore = source.settings().applyStagedParameters();
+        source.start();
+
+        RawStream peer;
+        peer.connectTo(port);
+        peer.send(seededStream(kSent));
+        expect(waitFor([&source] { return source.counters().bytes >= kQueueBytes; })) << "the source never filled its queue";
+
+        std::this_thread::sleep_for(300ms); // three more poll intervals, in which a loop that read on would have read
+        const auto counted = source.counters();
+        source.stop();
+
+        expect(eq(counted.bytes, std::uint64_t{kQueueBytes})) << "the source read more than its queue had room for";
+        expect(eq(counted.bytesDropped, std::uint64_t{0ULL})) << "backpressure shed bytes it had already taken off the wire";
+        expect(eq(counted.socketErrors, std::uint64_t{0ULL}));
     };
 };
 

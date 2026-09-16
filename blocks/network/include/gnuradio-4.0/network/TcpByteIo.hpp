@@ -43,10 +43,11 @@
  * that arrives on `in` leaves the socket unchanged, and every byte the socket delivers leaves `out` unchanged. The
  * connection contract matches the tree's other TCP/UDP transports: `endpoint` as `"host:port"` resolved through
  * `getaddrinfo` at `start()`; `bind` with a sink listening and a source connecting by default, either reversible;
- * one peer at a time with a second accepted and immediately closed; `reconnect_ms` default `100`; `TCP_NODELAY` and
- * `SO_REUSEADDR`; one dedicated I/O thread owning the socket end to end with the last-declared teardown guard;
- * `processBulk` touching only a bounded in-process queue; every socket wait bounded at 100 ms so `stop()` is
- * honored promptly; `ERROR` from `processBulk` on a dead reader with a drained queue.
+ * one peer at a time with a second accepted and immediately closed; `reconnect_ms` default `100` and
+ * `connect_timeout_ms` default `5000`; `TCP_NODELAY` and `SO_REUSEADDR`; one dedicated I/O thread owning the socket
+ * end to end with the last-declared teardown guard; `processBulk` touching only a bounded in-process queue; every
+ * socket wait bounded at 100 ms so `stop()` is honored promptly; `ERROR` from `processBulk` on a dead reader with a
+ * drained queue.
  *
  * What this pair deletes from that contract is the whole of the envelope: there is no header, no metadata frame, no
  * `sequence`, no `discard_reason`, no reject port, no `max_message_bytes` and no `item_type` check, because there is
@@ -245,6 +246,17 @@ struct Address {
 /// @brief Whether an `errno` value means "nothing to do just now" rather than a fault worth counting.
 [[nodiscard]] inline bool wouldBlock(int code) noexcept { return code == EAGAIN || code == EINTR; }
 
+/// @brief A connection attempt the kernel has taken on and not yet finished.
+///
+/// The socket outlives the @ref kPollMs slice it is polled in: the slice bounds how long the I/O thread goes without
+/// observing a stop request, and is not how long a handshake is allowed to take. `deadline` is when the attempt stops
+/// being worth waiting for; until then every pass polls this same socket, so one attempt is one SYN and its
+/// retransmissions rather than a new SYN every slice.
+struct PendingConnect {
+    Descriptor                            socket;
+    std::chrono::steady_clock::time_point deadline{};
+};
+
 /// @brief One block's counters read as a set, so an observer outside the I/O thread sees them as of one instant.
 ///
 /// The counters themselves are plain members the I/O thread increments behind the block's mutex; reading them one
@@ -268,7 +280,9 @@ struct TcpByteSink : Block<TcpByteSink, NoTagPropagation> {
 
 A listening sink serves one peer at a time. A second connection is accepted and immediately closed, counted in
 `nPeersRefused`. A connecting sink retries forever at `reconnect_ms`; `start()` succeeds whether or not the peer is
-up yet and only a socket that cannot be created or an endpoint that cannot be resolved is fatal.
+up yet and only a socket that cannot be created or an endpoint that cannot be resolved is fatal. An attempt the peer
+has not yet answered keeps its socket and is polled again on every pass until `connect_timeout_ms` has passed, so a
+peer whose handshake takes longer than one 100 ms wait is reached rather than met with a new connection each time.
 
 While no peer is connected nothing leaves the queue, so it fills and `overflow` decides what happens next:
 `drop_oldest` discards the stalest bytes and counts them in `nBytesDropped`, `backpressure` instead consumes fewer
@@ -295,7 +309,9 @@ The socket is owned end to end by a dedicated I/O thread; `processBulk` only enq
     Annotated<gr::Size_t, "queue_bytes", Unit<"byte">, Doc<"the in-process byte queue's bound; required, there is no default">>       queue_bytes  = 0U;
     Annotated<gr::Size_t, "reconnect_ms", Unit<"ms">, Doc<"interval between connection attempts while connecting">>                   reconnect_ms = 100U;
 
-    GR_MAKE_REFLECTABLE(TcpByteSink, in, endpoint, bind, overflow, queue_bytes, reconnect_ms);
+    Annotated<gr::Size_t, "connect_timeout_ms", Unit<"ms">, Doc<"how long one connection attempt may go unanswered before it is abandoned and another made; default 5000">> connect_timeout_ms = 5000U;
+
+    GR_MAKE_REFLECTABLE(TcpByteSink, in, endpoint, bind, overflow, queue_bytes, reconnect_ms, connect_timeout_ms);
 
     // Counted, stated drops and refusals. Plain members, printed once by stop(); nothing here is on the sample path.
     std::uint64_t nBytes        = 0ULL; ///< bytes written whole to a peer
@@ -314,13 +330,14 @@ The socket is owned end to end by a dedicated I/O thread; `processBulk` only enq
     bool                     _ioThreadDone = true; ///< true until start() launches the I/O thread
 
     std::string   _endpoint{}; ///< the socket settings, frozen for the duration of one run
-    bool          _bind          = true;
-    std::size_t   _queueBytes    = 0UZ;
-    std::uint32_t _reconnectMs   = 100U;
-    bool          _backpressure  = false;
-    bool          _socketOpen    = false;
-    bool          _everConnected = false;
-    std::size_t   _addressCursor = 0UZ; ///< which resolved address the next connection attempt takes; the I/O thread's alone
+    bool          _bind             = true;
+    std::size_t   _queueBytes       = 0UZ;
+    std::uint32_t _reconnectMs      = 100U;
+    std::uint32_t _connectTimeoutMs = 5000U;
+    bool          _backpressure     = false;
+    bool          _socketOpen       = false;
+    bool          _everConnected    = false;
+    std::size_t   _addressCursor    = 0UZ; ///< which resolved address the next connection attempt takes; the I/O thread's alone
 
     /// @brief Joins the I/O thread however the block dies.
     ///
@@ -428,6 +445,9 @@ private:
         if (reconnect_ms.value == 0U) {
             throw gr::exception("reconnect_ms is 0; a connecting sink would retry without pause and spend the thread on nothing else");
         }
+        if (connect_timeout_ms.value == 0U) {
+            throw gr::exception("connect_timeout_ms is 0; an attempt abandoned before the peer can answer never reaches one further away than the round trip it allows");
+        }
     }
 
     /// @brief Refuse a change to a setting the running socket was built from, naming it.
@@ -448,15 +468,19 @@ private:
         if (reconnect_ms.value != _reconnectMs) {
             refuse("reconnect_ms");
         }
+        if (connect_timeout_ms.value != _connectTimeoutMs) {
+            refuse("connect_timeout_ms");
+        }
     }
 
     void freezeSocketSettings() {
-        _endpoint      = endpoint.value;
-        _bind          = bind.value;
-        _backpressure  = overflow.value == "backpressure";
-        _queueBytes    = static_cast<std::size_t>(queue_bytes.value);
-        _reconnectMs   = reconnect_ms.value;
-        _addressCursor = 0UZ;
+        _endpoint         = endpoint.value;
+        _bind             = bind.value;
+        _backpressure     = overflow.value == "backpressure";
+        _queueBytes       = static_cast<std::size_t>(queue_bytes.value);
+        _reconnectMs      = reconnect_ms.value;
+        _connectTimeoutMs = connect_timeout_ms.value;
+        _addressCursor    = 0UZ;
     }
 
     void requestStopAndJoin() {
@@ -553,12 +577,13 @@ private:
     }
 
     void sendUntilStopped(detail::bytesockio::Descriptor& listener, std::span<const detail::bytesockio::Address> addresses) {
-        detail::bytesockio::Descriptor peer;
-        std::vector<std::uint8_t>      chunk;
+        detail::bytesockio::Descriptor     peer;
+        detail::bytesockio::PendingConnect pending; // closed when this scope ends, so a stop takes the half-open attempt with it
+        std::vector<std::uint8_t>          chunk;
 
         while (!stopRequested()) {
             if (!peer.valid()) {
-                acquirePeer(listener, peer, addresses);
+                acquirePeer(listener, peer, pending, addresses);
                 continue;
             }
             refuseExtraPeers(listener);
@@ -629,7 +654,7 @@ private:
         nBytesDropped += residue.size() - sent;
     }
 
-    void acquirePeer(detail::bytesockio::Descriptor& listener, detail::bytesockio::Descriptor& peer, std::span<const detail::bytesockio::Address> addresses) {
+    void acquirePeer(detail::bytesockio::Descriptor& listener, detail::bytesockio::Descriptor& peer, detail::bytesockio::PendingConnect& pending, std::span<const detail::bytesockio::Address> addresses) {
         if (_bind) {
             const short revents = detail::bytesockio::pollFor(listener.get(), POLLIN, detail::bytesockio::kPollMs);
             if ((revents & POLLIN) == 0) {
@@ -643,31 +668,57 @@ private:
             return;
         }
 
-        // one endpoint may resolve to several addresses, so each attempt takes the next of them in turn: pinning every
-        // retry to the first would leave a host reachable only on its second address permanently unreachable
-        const detail::bytesockio::Address& address = addresses[_addressCursor % addresses.size()];
-        ++_addressCursor;
+        if (!pending.socket.valid()) {
+            // one endpoint may resolve to several addresses, so each attempt takes the next of them in turn: pinning
+            // every retry to the first would leave a host reachable only on its second address permanently unreachable
+            const detail::bytesockio::Address& address = addresses[_addressCursor % addresses.size()];
+            ++_addressCursor;
 
-        detail::bytesockio::Descriptor candidate(::socket(address.family, SOCK_STREAM, 0));
-        if (!candidate.valid()) {
-            waitBounded(_reconnectMs);
-            return;
-        }
-        std::ignore = detail::bytesockio::setNonBlocking(candidate.get());
-        if (::connect(candidate.get(), detail::bytesockio::addressOf(address), address.length) != 0) {
+            detail::bytesockio::Descriptor candidate(::socket(address.family, SOCK_STREAM, 0));
+            if (!candidate.valid()) {
+                waitBounded(_reconnectMs);
+                return;
+            }
+            std::ignore = detail::bytesockio::setNonBlocking(candidate.get());
+            if (::connect(candidate.get(), detail::bytesockio::addressOf(address), address.length) == 0) {
+                adoptPeer(peer, candidate.release());
+                return;
+            }
             if (errno != EINPROGRESS) {
                 waitBounded(_reconnectMs);
                 return;
             }
-            const short revents = detail::bytesockio::pollFor(candidate.get(), POLLOUT, detail::bytesockio::kPollMs);
-            int         pending = 0;
-            ::socklen_t length  = static_cast<::socklen_t>(sizeof(pending));
-            if ((revents & POLLOUT) == 0 || ::getsockopt(candidate.get(), SOL_SOCKET, SO_ERROR, &pending, &length) != 0 || pending != 0) {
-                waitBounded(_reconnectMs);
+            pending.socket   = std::move(candidate);
+            pending.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(_connectTimeoutMs);
+        }
+        awaitPending(peer, pending);
+    }
+
+    /// @brief Wait one poll interval on the attempt under way, and take it, drop it or leave it pending.
+    ///
+    /// A wait that expires with the kernel silent is not an answer, and only `connect_timeout_ms` ends the attempt it
+    /// leaves pending. Anything the poll does report is an answer: `POLLOUT` with no pending error is the connection,
+    /// and every other combination is the far end or the route refusing it, which costs the attempt and waits out
+    /// `reconnect_ms` as any other failed attempt does.
+    void awaitPending(detail::bytesockio::Descriptor& peer, detail::bytesockio::PendingConnect& pending) {
+        const short revents = detail::bytesockio::pollFor(pending.socket.get(), POLLOUT, detail::bytesockio::kPollMs);
+        if (revents != 0) {
+            int         failure   = 0;
+            ::socklen_t length    = static_cast<::socklen_t>(sizeof(failure));
+            const bool  connected = (revents & POLLOUT) != 0 && ::getsockopt(pending.socket.get(), SOL_SOCKET, SO_ERROR, &failure, &length) == 0 && failure == 0;
+
+            detail::bytesockio::Descriptor answered = std::move(pending.socket);
+            if (connected) {
+                adoptPeer(peer, answered.release());
                 return;
             }
+            waitBounded(_reconnectMs);
+            return;
         }
-        adoptPeer(peer, candidate.release());
+        if (std::chrono::steady_clock::now() >= pending.deadline) {
+            pending.socket.reset();
+            waitBounded(_reconnectMs);
+        }
     }
 
     void adoptPeer(detail::bytesockio::Descriptor& peer, int fd) {
@@ -760,12 +811,11 @@ struct TcpByteSource : Block<TcpByteSource, NoTagPropagation> {
 @brief Reads a raw TCP byte stream and publishes it on `out`, untouched: no header, no framing, no interpretation.
 
 A listening source serves one peer at a time, exactly as the sink does; a connecting source retries forever at
-`reconnect_ms`. `overflow` governs the in-process receive queue the same way it does at the sink: `drop_oldest`
-discards the stalest bytes already queued, `backpressure` instead stops reading the socket once the queue is full,
-which is the one place a byte transport can propagate a stall onto the wire itself — TCP's own flow control then
-slows the peer. Either way a single read that arrives larger than the room left can still push the queue over
-`queue_bytes` by the size of that one read; the byte-stream contract has no frame to hold a read to, so `overflow`
-is a bound the queue is kept near, not one no single read may ever cross.
+`reconnect_ms` and keeps an unanswered attempt for `connect_timeout_ms`, on the sink's rule. `overflow` governs the in-process receive queue the same way it does at the sink: `drop_oldest`
+discards the stalest bytes already queued, `backpressure` instead reads no more of the socket than the queue has room
+for, which is the one place a byte transport can propagate a stall onto the wire itself: what is left unread slows the
+peer through TCP's own flow control, and no byte taken off the wire is dropped. Under `drop_oldest` a single read may
+arrive larger than the room left, and every byte past the bound displaces the stalest one queued.
 
 A connection that closes is counted in `nDisconnects`; the source resumes on the next connection or reconnect
 without inventing anything for what was lost, because a byte stream carries no boundary that would let it say what
@@ -791,7 +841,9 @@ nothing more, and the reconnect loop carries on. `nReaderFailures` counts the re
     Annotated<gr::Size_t, "queue_bytes", Unit<"byte">, Doc<"the in-process byte queue's bound; required, there is no default">>       queue_bytes  = 0U;
     Annotated<gr::Size_t, "reconnect_ms", Unit<"ms">, Doc<"interval between connection attempts while connecting">>                   reconnect_ms = 100U;
 
-    GR_MAKE_REFLECTABLE(TcpByteSource, out, endpoint, bind, overflow, queue_bytes, reconnect_ms);
+    Annotated<gr::Size_t, "connect_timeout_ms", Unit<"ms">, Doc<"how long one connection attempt may go unanswered before it is abandoned and another made; default 5000">> connect_timeout_ms = 5000U;
+
+    GR_MAKE_REFLECTABLE(TcpByteSource, out, endpoint, bind, overflow, queue_bytes, reconnect_ms, connect_timeout_ms);
 
     std::uint64_t nBytes          = 0ULL; ///< bytes taken off the socket
     std::uint64_t nBytesDropped   = 0ULL; ///< queued bytes discarded on overflow
@@ -812,14 +864,15 @@ nothing more, and the reconnect loop carries on. `nReaderFailures` counts the re
     bool                     _ioThreadDone = true;
 
     std::string   _endpoint{};
-    bool          _bind            = false;
-    std::size_t   _queueBytes      = 0UZ;
-    std::uint32_t _reconnectMs     = 100U;
-    bool          _backpressure    = false;
-    bool          _socketOpen      = false;
-    bool          _everConnected   = false;
-    std::size_t   _addressCursor   = 0UZ; ///< which resolved address the next connection attempt takes; the I/O thread's alone
-    std::size_t   _transientFaults = 0UZ; ///< consecutive faults of a kind that may lift; the I/O thread's alone
+    bool          _bind             = false;
+    std::size_t   _queueBytes       = 0UZ;
+    std::uint32_t _reconnectMs      = 100U;
+    std::uint32_t _connectTimeoutMs = 5000U;
+    bool          _backpressure     = false;
+    bool          _socketOpen       = false;
+    bool          _everConnected    = false;
+    std::size_t   _addressCursor    = 0UZ; ///< which resolved address the next connection attempt takes; the I/O thread's alone
+    std::size_t   _transientFaults  = 0UZ; ///< consecutive faults of a kind that may lift; the I/O thread's alone
 
     std::chrono::steady_clock::time_point _resolvedAt{}; ///< when the endpoint was last resolved; the I/O thread's alone
 
@@ -932,6 +985,9 @@ private:
         if (reconnect_ms.value == 0U) {
             throw gr::exception("reconnect_ms is 0; a connecting source would retry without pause and spend the thread on nothing else");
         }
+        if (connect_timeout_ms.value == 0U) {
+            throw gr::exception("connect_timeout_ms is 0; an attempt abandoned before the peer can answer never reaches one further away than the round trip it allows");
+        }
     }
 
     void refuseFrozenChange() const {
@@ -951,15 +1007,19 @@ private:
         if (reconnect_ms.value != _reconnectMs) {
             refuse("reconnect_ms");
         }
+        if (connect_timeout_ms.value != _connectTimeoutMs) {
+            refuse("connect_timeout_ms");
+        }
     }
 
     void freezeSocketSettings() {
-        _endpoint      = endpoint.value;
-        _bind          = bind.value;
-        _backpressure  = overflow.value == "backpressure";
-        _queueBytes    = static_cast<std::size_t>(queue_bytes.value);
-        _reconnectMs   = reconnect_ms.value;
-        _addressCursor = 0UZ;
+        _endpoint         = endpoint.value;
+        _bind             = bind.value;
+        _backpressure     = overflow.value == "backpressure";
+        _queueBytes       = static_cast<std::size_t>(queue_bytes.value);
+        _reconnectMs      = reconnect_ms.value;
+        _connectTimeoutMs = connect_timeout_ms.value;
+        _addressCursor    = 0UZ;
     }
 
     void requestStopAndJoin() {
@@ -1118,19 +1178,24 @@ private:
         return std::format("cannot listen on '{}': {}", _endpoint, lastError);
     }
 
-    [[nodiscard]] bool queueFull() {
+    /// @brief How many more bytes the queue holds before it is full, read under the lock `processBulk` drains it behind.
+    ///
+    /// Only the reader thread adds to the queue, so the figure can grow between this call and the read it sizes but
+    /// never shrink: a read cut to it can come up short of the room there now, and cannot overrun the bound.
+    [[nodiscard]] std::size_t queueRoom() {
         std::lock_guard lock(_mutex);
-        return _queue.size() >= _queueBytes;
+        return _queueBytes - std::min(_queue.size(), _queueBytes);
     }
 
     /// @brief Serve peers until a stop is asked for, or name the fault of this thread's own socket that ends it.
     [[nodiscard]] std::string receiveUntilStopped(detail::bytesockio::Descriptor& listener, std::vector<detail::bytesockio::Address>& addresses) {
-        detail::bytesockio::Descriptor peer;
-        std::vector<std::uint8_t>      chunk(65536UZ);
+        detail::bytesockio::Descriptor     peer;
+        detail::bytesockio::PendingConnect pending; // closed when this scope ends, so a stop takes the half-open attempt with it
+        std::vector<std::uint8_t>          chunk(65536UZ);
 
         while (!stopRequested()) {
             if (!peer.valid()) {
-                if (std::string fatal = acquirePeer(listener, peer, addresses); !fatal.empty()) {
+                if (std::string fatal = acquirePeer(listener, peer, pending, addresses); !fatal.empty()) {
                     return fatal;
                 }
                 continue;
@@ -1139,16 +1204,23 @@ private:
                 return fatal;
             }
 
-            if (_backpressure && queueFull()) {
-                waitBounded(detail::bytesockio::kPollMs); // the socket is not read again until the graph makes room
-                continue;
+            // under backpressure the read is cut to the room the queue has, so what does not fit stays in the kernel's
+            // receive buffer and the peer is slowed by TCP's own flow control instead of losing bytes here
+            std::size_t wanted = chunk.size();
+            if (_backpressure) {
+                const std::size_t room = queueRoom();
+                if (room == 0UZ) {
+                    waitBounded(detail::bytesockio::kPollMs); // the socket is not read again until the graph makes room
+                    continue;
+                }
+                wanted = std::min(room, chunk.size());
             }
 
             const short revents = detail::bytesockio::pollFor(peer.get(), POLLIN, detail::bytesockio::kPollMs);
             if (revents == 0) {
                 continue; // the bounded wait expired, which is how the loop returns to observe a stop request
             }
-            const ::ssize_t received = ::recv(peer.get(), chunk.data(), chunk.size(), 0);
+            const ::ssize_t received = ::recv(peer.get(), chunk.data(), wanted, 0);
             if (received > 0) {
                 enqueue(std::span<const std::uint8_t>(chunk).first(static_cast<std::size_t>(received)));
                 continue;
@@ -1170,7 +1242,7 @@ private:
     }
 
     /// @brief Take the next peer, or name the fault of this thread's own socket that ends the reader.
-    [[nodiscard]] std::string acquirePeer(detail::bytesockio::Descriptor& listener, detail::bytesockio::Descriptor& peer, std::vector<detail::bytesockio::Address>& addresses) {
+    [[nodiscard]] std::string acquirePeer(detail::bytesockio::Descriptor& listener, detail::bytesockio::Descriptor& peer, detail::bytesockio::PendingConnect& pending, std::vector<detail::bytesockio::Address>& addresses) {
         if (_bind) {
             const short revents = detail::bytesockio::pollFor(listener.get(), POLLIN, detail::bytesockio::kPollMs);
             if ((revents & detail::bytesockio::kPollFault) != 0) {
@@ -1188,45 +1260,66 @@ private:
             return {};
         }
 
-        // one endpoint may resolve to several addresses, so each attempt takes the next of them in turn: pinning every
-        // retry to the first would leave a host reachable only on its second address permanently unreachable. A pass
-        // that has been through them all asks the name again before the next one begins.
-        if (_addressCursor >= addresses.size()) {
-            if (std::string fatal = resolveAgain(addresses); !fatal.empty()) {
-                return fatal;
+        if (!pending.socket.valid()) {
+            // one endpoint may resolve to several addresses, so each attempt takes the next of them in turn: pinning
+            // every retry to the first would leave a host reachable only on its second address permanently
+            // unreachable. A pass that has been through them all asks the name again before the next one begins.
+            if (_addressCursor >= addresses.size()) {
+                if (std::string fatal = resolveAgain(addresses); !fatal.empty()) {
+                    return fatal;
+                }
+                _addressCursor = 0UZ;
             }
-            _addressCursor = 0UZ;
-        }
-        const detail::bytesockio::Address& address = addresses[_addressCursor];
-        ++_addressCursor;
+            const detail::bytesockio::Address& address = addresses[_addressCursor];
+            ++_addressCursor;
 
-        detail::bytesockio::Descriptor candidate(::socket(address.family, SOCK_STREAM, 0));
-        if (!candidate.valid()) {
-            if (std::string fatal = noteFault(errno, "creating a TCP socket"); !fatal.empty()) {
-                return fatal;
+            detail::bytesockio::Descriptor candidate(::socket(address.family, SOCK_STREAM, 0));
+            if (!candidate.valid()) {
+                if (std::string fatal = noteFault(errno, "creating a TCP socket"); !fatal.empty()) {
+                    return fatal;
+                }
+                waitBounded(_reconnectMs);
+                return {};
             }
-            waitBounded(_reconnectMs);
-            return {};
-        }
-        _transientFaults = 0UZ;
-        std::ignore      = detail::bytesockio::setNonBlocking(candidate.get());
-        // whatever the far end answers with — a refusal, a silence, a route that is gone — is the far end's, not this
-        // socket's, so every failure from here on waits out the reconnect interval and tries again
-        if (::connect(candidate.get(), detail::bytesockio::addressOf(address), address.length) != 0) {
+            _transientFaults = 0UZ;
+            std::ignore      = detail::bytesockio::setNonBlocking(candidate.get());
+            // whatever the far end answers with — a refusal, a silence, a route that is gone — is the far end's, not
+            // this socket's, so every failure from here on waits out the reconnect interval and tries again
+            if (::connect(candidate.get(), detail::bytesockio::addressOf(address), address.length) == 0) {
+                adoptPeer(peer, candidate.release());
+                return {};
+            }
             if (errno != EINPROGRESS) {
                 waitBounded(_reconnectMs);
                 return {};
             }
-            const short revents = detail::bytesockio::pollFor(candidate.get(), POLLOUT, detail::bytesockio::kPollMs);
-            int         pending = 0;
-            ::socklen_t length  = static_cast<::socklen_t>(sizeof(pending));
-            if ((revents & POLLOUT) == 0 || ::getsockopt(candidate.get(), SOL_SOCKET, SO_ERROR, &pending, &length) != 0 || pending != 0) {
-                waitBounded(_reconnectMs);
-                return {};
-            }
+            pending.socket   = std::move(candidate);
+            pending.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(_connectTimeoutMs);
         }
-        adoptPeer(peer, candidate.release());
+        awaitPending(peer, pending);
         return {};
+    }
+
+    /// @brief Wait one poll interval on the attempt under way, and take it, drop it or leave it pending.
+    void awaitPending(detail::bytesockio::Descriptor& peer, detail::bytesockio::PendingConnect& pending) {
+        const short revents = detail::bytesockio::pollFor(pending.socket.get(), POLLOUT, detail::bytesockio::kPollMs);
+        if (revents != 0) {
+            int         failure   = 0;
+            ::socklen_t length    = static_cast<::socklen_t>(sizeof(failure));
+            const bool  connected = (revents & POLLOUT) != 0 && ::getsockopt(pending.socket.get(), SOL_SOCKET, SO_ERROR, &failure, &length) == 0 && failure == 0;
+
+            detail::bytesockio::Descriptor answered = std::move(pending.socket);
+            if (connected) {
+                adoptPeer(peer, answered.release());
+                return;
+            }
+            waitBounded(_reconnectMs);
+            return;
+        }
+        if (std::chrono::steady_clock::now() >= pending.deadline) {
+            pending.socket.reset();
+            waitBounded(_reconnectMs);
+        }
     }
 
     void adoptPeer(detail::bytesockio::Descriptor& peer, int fd) {
@@ -1270,11 +1363,11 @@ private:
         }
     }
 
-    /// @brief Queue @p bytes whole, applying `overflow` for whatever does not fit.
+    /// @brief Queue @p bytes whole, displacing the stalest byte for each one that does not fit.
     ///
-    /// `_backpressure` already keeps the read loop from calling in here once the queue is full, but one `recv()` may
-    /// still return more than the room left: TCP hands over whatever arrived in one read and there is no frame to
-    /// hold that read to, so the excess is counted exactly as a `drop_oldest` overflow would count it.
+    /// This is `drop_oldest` alone. Under `backpressure` the read loop asks the socket for no more than the room the
+    /// queue has, so the displacement below is never reached and a byte this block has taken off the wire is a byte it
+    /// delivers.
     void enqueue(std::span<const std::uint8_t> bytes) {
         {
             std::lock_guard lock(_mutex);
