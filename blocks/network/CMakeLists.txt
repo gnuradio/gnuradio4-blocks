@@ -18,6 +18,9 @@ target_include_directories(gr-network INTERFACE $<BUILD_INTERFACE:${CMAKE_CURREN
                                                 $<INSTALL_INTERFACE:include/>)
 if(GR4_NETWORK_HAVE_LIBZMQ)
   target_link_libraries(gr-network INTERFACE PkgConfig::GR4_LIBZMQ)
+  # the exported interface now names a target only this project's configure defines, so the installed config file has to
+  # define it too; said here, where the interface is written, and read at the top level where that file is generated
+  set_property(GLOBAL PROPERTY GR4_EXPORT_NEEDS_LIBZMQ TRUE)
   # cppzmq is a stray header rather than a package, so it carries no include directory of its own
   target_include_directories(gr-network SYSTEM INTERFACE $<BUILD_INTERFACE:${GR4_CPPZMQ_INCLUDE_DIR}>)
 endif()
