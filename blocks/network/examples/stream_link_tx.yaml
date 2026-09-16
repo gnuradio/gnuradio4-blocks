@@ -1,0 +1,49 @@
+# The sending half of a flowgraph cut in two: samples are generated here and leave the process.
+#
+# This file and stream_link_rx.yaml are one graph. Everything upstream of the cut runs in this
+# process, everything downstream in the other, and the edge between them is a ZeroMQ socket
+# carrying gr::network::PacketEnvelope. Nothing about the two halves would change if they ran on
+# two machines; only the endpoint would.
+#
+# What to substitute for real work:
+#
+#   iq_source -> gr::blocks::sdr::SoapySource<complex<float32>> (-DGR4_ENABLE_SDR=ON), or any
+#                other front end. The generator stands in so the file runs with no hardware; it is
+#                paced to wall-clock time, so it delivers 2 MS/s the way a radio does. A radio that
+#                tags its rate makes the sink's sample_rate setting below unnecessary.
+#
+# The pattern is push, not the default pub. push blocks while no peer is connected and discards
+# nothing, which is what an offline chain wants; pub fans out to any number of subscribers, never
+# blocks, and drops for a slow one - the right choice for a live monitor and the wrong one here.
+# The receiver's pattern has to match: push pairs with pull, pub with sub.
+#
+# max_items bounds one packet at 4096 samples, so latency across the link is a number this file
+# states rather than a consequence of how the scheduler happened to chunk the stream.
+#
+# sample_rate on the sink is what the far end learns the rate from. A stream that tags its own rate
+# needs it; SignalGenerator carries its rate in a setting and never tags it, so without this the
+# receiving half would have no way to know how fast the samples it is handed are meant to be. A tag
+# in the stream always wins over the setting.
+#
+# The endpoint is an ipc:// socket, which is a file. Two processes on one machine want ipc://;
+# two machines want tcp://0.0.0.0:5555 here and tcp://<host>:5555 in the receiver.
+blocks:
+  - id: gr::blocks::basic::SignalGenerator<complex<float32>>
+    parameters:
+      name: iq_source
+      sample_rate: !!float32 2000000.0
+      signal_type: Sin
+      tone_frequency: !!float32 100000.0
+      amplitude: !!float32 1.0
+      chunk_size: !!uint32 8192
+  - id: gr::blocks::network::StreamPacketSink<complex<float32>>
+    parameters:
+      name: link_tx
+      endpoint: ipc:///tmp/gr4-stream-link.sock
+      bind: true
+      pattern: push
+      max_items: !!uint32 4096
+      sample_rate: !!float32 2000000.0
+      max_message_bytes: !!uint64 1048576
+connections:
+  - [iq_source, out, link_tx, in]

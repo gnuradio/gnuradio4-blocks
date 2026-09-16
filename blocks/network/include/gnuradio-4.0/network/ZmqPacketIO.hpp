@@ -46,22 +46,6 @@ namespace detail::zmqio {
 /// it silently, which is what the envelope exists to prevent.
 inline constexpr std::string_view kTimestampKey = "packet_timestamp";
 
-/// @brief Vocabulary keys of @p map whose value type disagrees with the declaration.
-///
-/// Counted and never dropped. At a record boundary a wrongly typed key is dropped because an absent key at least
-/// reads as absent, but here the value's author is in another process and cannot be told: dropping it would erase the
-/// only evidence that a peer is misconfigured. The value still reads as absent through the declared accessor, so
-/// nothing downstream is misled; the counter is what makes the peer's bug visible.
-[[nodiscard]] inline std::uint64_t countMistypedKeys(const property_map& map) noexcept {
-    std::uint64_t mistyped = 0ULL;
-    for (const auto& [key, value] : map) {
-        if (!holdsVocabularyType(vocabularyType(shortKey(std::string_view(key))), value)) {
-            ++mistyped;
-        }
-    }
-    return mistyped;
-}
-
 /// @brief One finished envelope waiting for the I/O thread, frames 1 to 3. Frame 0 is the block's constant topic.
 struct Outgoing {
     std::array<std::uint8_t, gr::network::kHeaderBytesV1> header{};

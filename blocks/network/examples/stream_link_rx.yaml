@@ -1,0 +1,39 @@
+# The receiving half of a flowgraph cut in two: the stream resumes here, tags and all.
+#
+# Load this with stream_link_tx.yaml running against the same endpoint and the samples the
+# generator produced there arrive here in order, with every tag standing at the sample it stood on
+# in the other process. A packet the wire or this graph lost is announced as one tag carrying
+# n_dropped_samples, packets_lost and the stream_position the hole began at, so nothing downstream
+# ever sees a stream silently spliced across a loss.
+#
+# The settings mirror the sender's. pull pairs with push and takes everything; sub pairs with pub
+# and joins a fan-out, where a slow subscriber loses packets and reads them as gaps.
+# max_message_bytes has no default and must be stated: libzmq's own bound is no limit, so a source
+# that omitted it would let a peer's claimed length size an allocation before this block saw a byte.
+#
+# What to substitute for real work:
+#
+#   magnitude, level_sink -> whatever consumes the stream: a demodulator chain, a file writer, or
+#              one of studio's gr::studio::* sinks. DataSink is what a headless host reads a stream
+#              through and it registers under its signal_name, but it is registered for float32
+#              alone, so the magnitude block stands between it and the complex link. A graph with a
+#              real consumer connects that consumer straight to link_rx.
+blocks:
+  - id: gr::blocks::network::StreamPacketSource<complex<float32>>
+    parameters:
+      name: link_rx
+      endpoint: ipc:///tmp/gr4-stream-link.sock
+      bind: false
+      pattern: pull
+      max_message_bytes: !!uint64 1048576
+  - id: gr::blocks::basic::Abs<complex<float32>>
+    parameters:
+      name: magnitude
+  - id: gr::blocks::basic::DataSink<float32>
+    parameters:
+      name: level_sink
+      signal_name: link_level
+      sample_rate: !!float32 2000000.0
+connections:
+  - [link_rx, out, magnitude, in]
+  - [magnitude, abs, level_sink, in]
