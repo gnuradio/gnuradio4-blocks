@@ -29,6 +29,15 @@ using namespace std::string_view_literals;
 #define GNURADIO4_HAVE_AUDIO_BLOCKS 0
 #endif
 
+// the network family is optional and its generated header outlives a reconfiguration that switches the family off,
+// so the build system says whether the library is there rather than the build tree being asked
+#ifndef GNURADIO4_HAVE_NETWORK_BLOCKS
+#define GNURADIO4_HAVE_NETWORK_BLOCKS 0
+#endif
+#if GNURADIO4_HAVE_NETWORK_BLOCKS
+#include <gnuradio-4.0/GrNetworkBlocks.hpp>
+#endif
+
 const boost::ut::suite TagTests = [] {
     auto&       registry = gr::globalBlockRegistry();
     std::size_t result   = 0UZ;
@@ -45,6 +54,9 @@ const boost::ut::suite TagTests = [] {
     result += gr::blocklib::initGrFilterBlocks(registry);
     result += gr::blocklib::initGrFourierBlocks(registry);
     result += gr::blocklib::initGrHttpBlocks(registry);
+#if GNURADIO4_HAVE_NETWORK_BLOCKS
+    result += gr::blocklib::initGrNetworkBlocks(registry);
+#endif
     result += gr::blocklib::initGrSyncBlocks(registry);
     result += gr::blocklib::initGrTestingBlocks(registry);
     if (result) {
@@ -176,6 +188,10 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::basic::DataSetToStream<float32>"sv));
         expect(registry.contains("gr::blocks::basic::DataSetToPacket<float32>"sv));
         expect(registry.contains("gr::blocks::basic::PacketToDataSet<float32>"sv));
+#if GNURADIO4_HAVE_NETWORK_BLOCKS
+        expect(registry.contains("gr::blocks::network::ZmqPacketSink<float32>"sv));
+        expect(registry.contains("gr::blocks::network::ZmqPacketSource<float32>"sv));
+#endif
     };
 
     "CheckBlockInstantiations"_test = [&] {
