@@ -522,10 +522,10 @@ const boost::ut::suite<"distributed sync words"> distributedSyncTests = [] {
         std::size_t frame;
         std::size_t lag;
     };
-    constexpr Geometry kAo40Long{"AO-40 long", 65UZ, 80UZ, 5200UZ, 5121UZ};
-    constexpr Geometry kAo40Short{"AO-40 short", 52UZ, 51UZ, 2652UZ, 2602UZ};
+    static constexpr Geometry kAo40Long{"AO-40 long", 65UZ, 80UZ, 5200UZ, 5121UZ};
+    static constexpr Geometry kAo40Short{"AO-40 short", 52UZ, 51UZ, 2652UZ, 2602UZ};
 
-    "the AO-40 geometries are arithmetic, and both words fit the two-limb register"_test = [kAo40Long, kAo40Short] {
+    "the AO-40 geometries are arithmetic, and both words fit the two-limb register"_test = [] {
         for (const Geometry& form : {kAo40Long, kAo40Short}) {
             expect(eq(form.items * form.spacing, form.frame)) << std::format("{}: the frame is n*s items", form.what);
             expect(eq((form.items - 1UZ) * form.spacing + 1UZ, form.lag)) << std::format("{}: the lag is (n-1)*s + 1", form.what);
