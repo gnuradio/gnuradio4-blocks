@@ -3,12 +3,11 @@
 
 #include <algorithm>
 #include <complex>
-#include <condition_variable>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <format>
 #include <mutex>
-#include <optional>
 #include <print>
 #include <span>
 #include <string>
@@ -18,13 +17,13 @@
 
 #include <zmq.hpp>
 
-#include <gnuradio-4.0/AtomicRef.hpp>
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/Port.hpp>
 #include <gnuradio-4.0/annotated.hpp>
-#include <gnuradio-4.0/thread/thread_pool.hpp>
 
+#include <gnuradio-4.0/network/ByteRing.hpp>
+#include <gnuradio-4.0/network/ZmqEnvelopeIo.hpp>
 #include <gnuradio-4.0/network/ZmqTransport.hpp>
 
 /**
@@ -87,11 +86,10 @@ permanently flat input with nothing to tell a dead endpoint from an idle one.
 
     static constexpr std::size_t kSampleBytes = sizeof(T);
 
-    std::uint64_t nMessagesReceived = 0ULL; ///< messages taken off the socket, whatever their shape
     std::uint64_t nSamplesReceived  = 0ULL; ///< samples the accepted messages carried
     std::uint64_t nSamplesPublished = 0ULL; ///< samples published on out
     std::uint64_t nSamplesDropped   = 0ULL; ///< samples the queue shed because the publisher outran the graph
-    std::uint64_t nMessagesRefused  = 0ULL; ///< messages whose payload was not a whole number of samples
+    std::uint64_t nMessagesRefused  = 0ULL; ///< messages this block could not read as a whole number of samples
 
     /// @brief The counters as one set, taken under the lock the I/O thread writes them behind.
     struct Counters {
@@ -102,67 +100,41 @@ permanently flat input with nothing to tell a dead endpoint from an idle one.
         std::uint64_t messagesRefused  = 0ULL;
     };
 
-    std::mutex              _mutex;
-    std::condition_variable _cv;
-    gr::ByteRing            _ring{};
-    bool                    _stopRequested = false;
-    bool                    _opened        = false;
-    bool                    _readerFailed  = false;
-    std::string             _openFailure{};
-    bool                    _ioThreadDone  = true;
-    bool                    _refusalLogged = false; ///< a misconfigured peer publishing at rate would otherwise flood the log
+    std::mutex _mutex; ///< guards the ring and the counters, which the reader thread writes and processBulk reads
+    ByteRing   _ring{};
+    bool       _refusalLogged = false; ///< a misconfigured peer publishing at rate would otherwise flood the log
 
-    std::string            _endpoint{}; ///< the socket settings, frozen for the duration of one run
-    std::string            _topic{};
-    detail::zmqio::Pattern _pattern         = detail::zmqio::Pattern::Sub;
-    bool                   _bind            = false;
-    std::uint64_t          _maxMessageBytes = 0ULL;
-    std::size_t            _queueBytes      = 0UZ; ///< the ring's capacity, a whole number of samples
-    std::int32_t           _recvHwm         = 16;
-    std::int32_t           _lingerMs        = 0;
-    bool                   _socketOpen      = false;
+    std::size_t _queueBytes = 0UZ; ///< the ring's capacity, a whole number of samples
+    bool        _socketOpen = false;
 
-    struct IoThreadGuard { // must be last member — destroyed first, so the reader is gone before the queue it fills
-        ZmqStreamSource* self;
-        explicit IoThreadGuard(ZmqStreamSource* owner) noexcept : self(owner) {}
-        IoThreadGuard(const IoThreadGuard&)            = delete;
-        IoThreadGuard(IoThreadGuard&&)                 = delete;
-        IoThreadGuard& operator=(const IoThreadGuard&) = delete;
-        IoThreadGuard& operator=(IoThreadGuard&&)      = delete;
-        ~IoThreadGuard() { self->requestStopAndJoin(); }
-    };
-    IoThreadGuard _ioGuard{this};
+    std::vector<std::byte> _payload{}; ///< one message's frames joined; the reader thread's alone, kept to spare an allocation
+
+    detail::zmqenvelope::SocketConfig _frozen{}; ///< the socket settings, read once when the socket opens
+
+    /// @brief Owns the socket and the thread that reads it; joins that thread however the block dies.
+    ///
+    /// Last declared member, so it is destroyed first and the reader is gone before the ring, mutex and counters it
+    /// writes into. `stop()` cannot be relied on: the scheduler does not call it when a graph ends in ERROR, and
+    /// `~Block()` cannot stand in because derived members are destroyed before it runs.
+    detail::zmqenvelope::Receiver _receiver{};
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& /*newSettings*/) { rebuild(); }
 
     void start() {
         validate();
-        freezeSocketSettings();
+        _frozen     = frozenSocketConfig();
+        _queueBytes = queueCapacity();
         {
             std::lock_guard lock(_mutex);
-            _stopRequested = false;
-            _opened        = false;
-            _readerFailed  = false;
             _refusalLogged = false;
-            _openFailure.clear();
             _ring.reset(_queueBytes);
         }
-        gr::atomic_ref(_ioThreadDone).store_release(false);
-        thread_pool::Manager::defaultIoPool()->execute([this] { ioReadLoop(); });
-
-        std::unique_lock lock(_mutex);
-        _cv.wait(lock, [this] { return _opened; });
-        if (!_openFailure.empty()) {
-            const std::string failure = _openFailure;
-            lock.unlock();
-            gr::atomic_ref(_ioThreadDone).wait(false);
-            throw gr::exception(failure);
-        }
+        _receiver.start(_frozen, this->name.value, [this](std::span<zmq::message_t> parts, std::size_t partCount, std::uint64_t bytes) { handleMessage(parts, partCount, bytes); });
         _socketOpen = true;
     }
 
     void stop() {
-        requestStopAndJoin();
+        _receiver.stop();
         _socketOpen = false;
         report();
     }
@@ -175,13 +147,14 @@ permanently flat input with nothing to tell a dead endpoint from an idle one.
     }
 
     [[nodiscard]] Counters counters() {
-        std::lock_guard lock(_mutex);
-        return {.messagesReceived = nMessagesReceived, .samplesReceived = nSamplesReceived, .samplesPublished = nSamplesPublished, .samplesDropped = nSamplesDropped, .messagesRefused = nMessagesRefused};
+        const std::uint64_t messages = _receiver.messagesReceived(); // the transport's own count, under its own lock
+        std::lock_guard     lock(_mutex);
+        return {.messagesReceived = messages, .samplesReceived = nSamplesReceived, .samplesPublished = nSamplesPublished, .samplesDropped = nSamplesDropped, .messagesRefused = nMessagesRefused};
     }
 
     [[nodiscard]] work::Status processBulk(OutputSpanLike auto& outSpan) {
         std::size_t made         = 0UZ;
-        bool        readerFailed = false;
+        const bool  readerFailed = _receiver.failed();
         bool        drained      = false;
         {
             std::lock_guard   lock(_mutex);
@@ -191,8 +164,7 @@ permanently flat input with nothing to tell a dead endpoint from an idle one.
             }
             made = samples;
             nSamplesPublished += samples;
-            readerFailed = _readerFailed;
-            drained      = _ring.empty();
+            drained = _ring.empty();
         }
         outSpan.publish(made);
         if (made == 0UZ) {
@@ -219,28 +191,29 @@ private:
 
     void refuseFrozenChange() const {
         const auto refuse = [](std::string_view setting) { throw gr::exception(std::format("setting '{}' is read once when the socket opens and cannot change while the block is running; rebuild the graph instead", setting)); };
-        if (endpoint.value != _endpoint) {
+        const auto wanted = frozenSocketConfig();
+        if (wanted.endpoint != _frozen.endpoint) {
             refuse("endpoint");
         }
-        if (topic.value != _topic) {
+        if (wanted.topic != _frozen.topic) {
             refuse("topic");
         }
-        if (bind.value != _bind) {
+        if (wanted.bind != _frozen.bind) {
             refuse("bind");
         }
-        if (detail::zmqio::receivePatternFromName(pattern.value) != _pattern) {
+        if (wanted.pattern != _frozen.pattern) {
             refuse("pattern");
         }
-        if (max_message_bytes.value != _maxMessageBytes) {
+        if (wanted.maxMessageBytes != _frozen.maxMessageBytes) {
             refuse("max_message_bytes");
         }
         if (queueCapacity() != _queueBytes) {
             refuse("queue_bytes");
         }
-        if (static_cast<std::int32_t>(recv_hwm.value) != _recvHwm) {
+        if (wanted.hwm != _frozen.hwm) {
             refuse("recv_hwm");
         }
-        if (linger_ms.value != _lingerMs) {
+        if (wanted.lingerMs != _frozen.lingerMs) {
             refuse("linger_ms");
         }
     }
@@ -257,25 +230,8 @@ private:
     /// never leave the stream half a sample out of step.
     [[nodiscard]] std::size_t queueCapacity() const noexcept { return narrowIndex<std::size_t>(queue_bytes.value / kSampleBytes * kSampleBytes); }
 
-    void freezeSocketSettings() {
-        _endpoint        = endpoint.value;
-        _topic           = topic.value;
-        _bind            = bind.value;
-        _pattern         = detail::zmqio::receivePatternFromName(pattern.value);
-        _maxMessageBytes = max_message_bytes.value;
-        _queueBytes      = queueCapacity();
-        _recvHwm         = static_cast<std::int32_t>(recv_hwm.value);
-        _lingerMs        = linger_ms.value;
-    }
-
-    void requestStopAndJoin() {
-        {
-            std::lock_guard lock(_mutex);
-            _stopRequested = true;
-        }
-        _cv.notify_all();
-        gr::atomic_ref(_ioThreadDone).wait(false);
-    }
+    /// @brief The socket settings as the transport reads them; `start()` freezes the result for the run.
+    [[nodiscard]] detail::zmqenvelope::SocketConfig frozenSocketConfig() const { return {.endpoint = endpoint.value, .topic = topic.value, .pattern = detail::zmqio::receivePatternFromName(pattern.value), .bind = bind.value, .hwm = static_cast<std::int32_t>(recv_hwm.value), .lingerMs = linger_ms.value, .maxMessageBytes = max_message_bytes.value}; }
 
     void report() {
         std::string report;
@@ -284,7 +240,7 @@ private:
                 std::format_to(std::back_inserter(report), "{}{}: {}", report.empty() ? "" : ", ", label, count);
             }
         };
-        append("messages received", nMessagesReceived);
+        append("messages received", _receiver.messagesReceived());
         append("samples received", nSamplesReceived);
         append("samples published", nSamplesPublished);
         append("samples dropped", nSamplesDropped);
@@ -294,101 +250,45 @@ private:
         }
     }
 
-    void ioReadLoop() {
-        thread_pool::thread::setThreadName(std::format("zmqstrsrc:{}", this->name.value));
-        std::optional<zmq::context_t> context;
-        std::optional<zmq::socket_t>  socket;
-        std::string                   failure;
-        try {
-            context.emplace(1);
-            socket.emplace(*context, _pattern == detail::zmqio::Pattern::Sub ? zmq::socket_type::sub : zmq::socket_type::pull);
-            // the bound goes into libzmq as well as into this block, so an oversize message is refused before the
-            // library allocates for it; the peer that sent one is disconnected, and its loss reads as a gap
-            socket->set(zmq::sockopt::maxmsgsize, static_cast<std::int64_t>(_maxMessageBytes));
-            socket->set(zmq::sockopt::rcvhwm, _recvHwm);
-            socket->set(zmq::sockopt::rcvtimeo, 100); // a bounded wait keeps stop() responsive without busy-spinning
-            socket->set(zmq::sockopt::linger, _lingerMs);
-            if (_pattern == detail::zmqio::Pattern::Sub) {
-                socket->set(zmq::sockopt::subscribe, _topic);
-            }
-            if (_bind) {
-                socket->bind(_endpoint);
-            } else {
-                socket->connect(_endpoint);
-            }
-        } catch (const zmq::error_t& error) {
-            failure = std::format("cannot {} '{}': {}{}", _bind ? "bind" : "connect to", _endpoint, error.what(), detail::zmqio::endpointHint(_endpoint));
-        }
-
-        {
+    /// @brief Join one message's frames into a payload and hand it to the queue. Runs on the reader's thread.
+    ///
+    /// A single-frame message is payload throughout, as an unkeyed publisher sends; where more frames follow, frame 0
+    /// is the publisher's key, which the subscription has already matched. The reader keeps at most five frames, more
+    /// than either shape this format has, so a message with more is refused whole rather than spliced together from
+    /// the frames that were kept.
+    void handleMessage(std::span<zmq::message_t> parts, std::size_t partCount, std::uint64_t /*bytes*/) {
+        if (partCount > parts.size()) {
             std::lock_guard lock(_mutex);
-            _openFailure = failure;
-            _opened      = true;
-        }
-        _cv.notify_all();
-
-        if (failure.empty()) {
-            receiveUntilStopped(*socket);
-        }
-        socket.reset();
-        context.reset();
-        gr::atomic_ref(_ioThreadDone).store_release(true);
-        gr::atomic_ref(_ioThreadDone).notify_all();
-    }
-
-    void receiveUntilStopped(zmq::socket_t& socket) {
-        std::vector<std::byte> payload;
-        while (true) {
-            {
-                std::lock_guard lock(_mutex);
-                if (_stopRequested) {
-                    return;
-                }
+            ++nMessagesRefused;
+            if (!_refusalLogged) {
+                _refusalLogged = true;
+                std::println(stderr, "gr::blocks::network::ZmqStreamSource '{}': '{}' delivered a message of {} frames; this format has one or two, so the peer is not a gr-zeromq publisher and its messages are refused", this->name, _frozen.endpoint, partCount);
             }
-            payload.clear();
-            try {
-                const auto append = [&payload](const zmq::message_t& part) {
-                    const auto* bytes = static_cast<const std::byte*>(part.data());
-                    payload.insert(payload.end(), bytes, bytes + part.size());
-                };
-                zmq::message_t part;
-                if (!socket.recv(part, zmq::recv_flags::none).has_value()) {
-                    continue; // ZMQ_RCVTIMEO expired, which is how the loop returns to observe a stop request
-                }
-                // a single-frame message is payload throughout, as an unkeyed publisher sends; where more frames
-                // follow, frame 0 is the publisher's key, which the subscription has already matched
-                bool more = socket.get(zmq::sockopt::rcvmore) != 0;
-                if (!more) {
-                    append(part);
-                }
-                while (more) {
-                    if (!socket.recv(part, zmq::recv_flags::none).has_value()) {
-                        break; // atomic delivery makes this unreachable; what arrived is taken as the message
-                    }
-                    append(part);
-                    more = socket.get(zmq::sockopt::rcvmore) != 0;
-                }
-            } catch (const zmq::error_t& error) {
-                std::lock_guard lock(_mutex);
-                if (!_stopRequested) {
-                    _readerFailed = true;
-                    std::println(stderr, "gr::blocks::network::ZmqStreamSource '{}': receive failed on '{}': {}", this->name, _endpoint, error.what());
-                }
-                return;
-            }
-            enqueue(payload);
+            return;
         }
+        _payload.clear();
+        const auto append = [this](const zmq::message_t& part) {
+            const auto* bytes = static_cast<const std::byte*>(part.data());
+            _payload.insert(_payload.end(), bytes, bytes + part.size());
+        };
+        if (parts.size() == 1UZ) {
+            append(parts[0UZ]);
+        } else {
+            for (std::size_t i = 1UZ; i < parts.size(); ++i) {
+                append(parts[i]);
+            }
+        }
+        enqueue(_payload);
     }
 
     /// @brief Append one message's payload, shedding the oldest samples where it does not fit.
     void enqueue(std::span<const std::byte> payload) {
         std::lock_guard lock(_mutex);
-        ++nMessagesReceived;
         if (payload.size() % kSampleBytes != 0UZ) {
             ++nMessagesRefused;
             if (!_refusalLogged) {
                 _refusalLogged = true;
-                std::println(stderr, "gr::blocks::network::ZmqStreamSource '{}': '{}' delivered {} bytes, which is not a whole number of {}-byte samples; the peer is not publishing this item type and its messages are refused", this->name, _endpoint, payload.size(), kSampleBytes);
+                std::println(stderr, "gr::blocks::network::ZmqStreamSource '{}': '{}' delivered {} bytes, which is not a whole number of {}-byte samples; the peer is not publishing this item type and its messages are refused", this->name, _frozen.endpoint, payload.size(), kSampleBytes);
             }
             return;
         }

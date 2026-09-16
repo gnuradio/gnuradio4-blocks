@@ -395,7 +395,7 @@ const boost::ut::suite<"ZmqPacketSink"> zmqPacketSinkTests = [] {
         expect(std::ranges::equal((*frames)[3UZ], std::array<std::uint8_t, 5>{0x01U, 0x02U, 0x03U, 0x04U, 0x05U})) << "frame 3 is not the payload";
         // every packet the sink emits states its sequence, and this one stated its own
         expect(eq(sequenceOf((*frames)[2UZ]), std::uint64_t{7ULL}));
-        expect(ge(sink.nSequenceDeclined, sink.nPacketsSent)) << "the sink wrote its own counter over a stated sequence";
+        expect(ge(sink.nSequenceDeclined, sink.counters().packetsSent)) << "the sink wrote its own counter over a stated sequence";
     };
 
     // Every envelope the sink emits carries `sequence`: those that state one keep it, those that do not receive the
@@ -432,7 +432,7 @@ const boost::ut::suite<"ZmqPacketSink"> zmqPacketSinkTests = [] {
             expect(eq(sequences[4UZ], std::uint64_t{4ULL}));
         }
         expect(eq(sink.nSequenceDeclined, std::uint64_t{2ULL}));
-        expect(eq(sink.nPacketsSent, std::uint64_t{5ULL}));
+        expect(eq(sink.counters().packetsSent, std::uint64_t{5ULL}));
     };
 
     // The vocabulary crosses verbatim, and a key at the wrong type is counted rather than dropped: the value's author
@@ -559,13 +559,13 @@ const boost::ut::suite<"ZmqPacketSink"> zmqPacketSinkTests = [] {
         expect(graph.connect<"out", "in">(source, sink).has_value());
 
         GraphRunner runner(std::move(graph));
-        expect(waitFor([&sink] { return sink.nDroppedOnOverflow > 100ULL; })) << "drop_oldest did not shed a full queue";
+        expect(waitFor([&sink] { return sink.counters().droppedOnOverflow > 100ULL; })) << "drop_oldest did not shed a full queue";
         const std::uint64_t emitted = source._emitted.load();
         runner.stop();
 
         expect(gt(emitted, std::uint64_t{100ULL})) << "the upstream block was starved although the sink was told to drop";
         expect(eq(sink.nBackpressureStalls, std::uint64_t{0ULL})) << "drop_oldest must not stall";
-        expect(eq(sink.nPacketsSent, std::uint64_t{0ULL})) << "no peer was connected, so nothing was sent";
+        expect(eq(sink.counters().packetsSent, std::uint64_t{0ULL})) << "no peer was connected, so nothing was sent";
     };
 
     "backpressure stops consuming instead of dropping"_test = [] {
@@ -583,7 +583,7 @@ const boost::ut::suite<"ZmqPacketSink"> zmqPacketSinkTests = [] {
         const std::uint64_t emitted = source._emitted.load();
         runner.stop();
 
-        expect(eq(sink.nDroppedOnOverflow, std::uint64_t{0ULL})) << "backpressure must lose nothing";
+        expect(eq(sink.counters().droppedOnOverflow, std::uint64_t{0ULL})) << "backpressure must lose nothing";
         expect(lt(emitted, std::uint64_t{100000ULL})) << "an upstream block behind a stalled sink is bounded by the buffer, not free-running";
     };
 
@@ -602,7 +602,7 @@ const boost::ut::suite<"ZmqPacketSink"> zmqPacketSinkTests = [] {
 
         GraphRunner runner(std::move(graph));
         expect(waitFor([&source] { return source._emitted.load() >= 8ULL; })) << "the source never got its packets out";
-        expect(eq(sink.nDroppedOnOverflow, std::uint64_t{0ULL}));
+        expect(eq(sink.counters().droppedOnOverflow, std::uint64_t{0ULL}));
 
         RawPeer                    peer(zmq::socket_type::pull, endpoint.uri, false);
         std::vector<std::uint64_t> sequences;
@@ -621,7 +621,7 @@ const boost::ut::suite<"ZmqPacketSink"> zmqPacketSinkTests = [] {
         for (std::size_t i = 0UZ; i < sequences.size(); ++i) {
             expect(eq(sequences[i], static_cast<std::uint64_t>(i)));
         }
-        expect(eq(sink.nDroppedAtStop, std::uint64_t{0ULL}));
+        expect(eq(sink.counters().droppedAtStop, std::uint64_t{0ULL}));
     };
 
     "validation and lifecycle"_test = [] {
@@ -695,8 +695,8 @@ const boost::ut::suite<"ZmqPacketSink"> zmqPacketSinkTests = [] {
             runner.stop();
             // the runner owns the scheduler, which owns the graph and so the block: what the sink counted is read
             // inside this scope, because after it the block is gone
-            droppedAtStop = sink.nDroppedAtStop;
-            packetsSent   = sink.nPacketsSent;
+            droppedAtStop = sink.counters().droppedAtStop;
+            packetsSent   = sink.counters().packetsSent;
         }
         const auto elapsed = std::chrono::steady_clock::now() - started;
         expect(elapsed < 5000ms) << "teardown against a peerless PUSH socket was not bounded";
@@ -1003,7 +1003,7 @@ const boost::ut::suite<"ZmqPacketSource"> zmqPacketSourceTests = [] {
         expect(waitFor([&collector] { return collector.count() >= 8UZ; }));
         runner.stop();
         expect(eq(source.nSourcesUntracked, std::uint64_t{1ULL}));
-        expect(eq(source.nEnvelopesReceived, std::uint64_t{8ULL}));
+        expect(eq(source.envelopesReceived(), std::uint64_t{8ULL}));
     };
 
     // The vocabulary crosses verbatim at this end too, and the carrier's timestamp arrives in the field it belongs

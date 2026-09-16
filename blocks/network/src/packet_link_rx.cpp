@@ -252,9 +252,9 @@ int main(int argc, char** argv) {
     report(text, "packets_expected", nPackets);
     report(text, "packets_received", received._samples.size());
     report(text, "recovered_bytes", recovered.size());
-    report(text, "envelopes_received", wire.nEnvelopesReceived);
+    report(text, "envelopes_received", wire.envelopesReceived());
     report(text, "packets_published", wire.nPacketsPublished);
-    report(text, "bytes_received", wire.nBytesReceived);
+    report(text, "bytes_received", wire.bytesReceived());
     report(text, "bad_frame_count", wire.nBadFrameCount);
     report(text, "short_header", wire.nShortHeader);
     report(text, "bad_magic", wire.nBadMagic);
