@@ -11,6 +11,12 @@
 # max_message_bytes has no default and must be stated: libzmq's own bound is no limit, so a source
 # that omitted it would let a peer's claimed length size an allocation before this block saw a byte.
 #
+# message_rx is the control path's far end: what the sending half's message_tx published is emitted
+# here into this graph's own message plane, where the scheduler forwards it the way it forwards any
+# block's messages - which is how a host application reads and sets the blocks in this process. It
+# is connected to nothing because it has no stream ports. A message lost on the wire is announced
+# as a message of its own on gr::blocks::network::MessagePacketSource::gap, never passed over.
+#
 # What to substitute for real work:
 #
 #   magnitude, level_sink -> whatever consumes the stream: a demodulator chain, a file writer, or
@@ -34,6 +40,13 @@ blocks:
       name: level_sink
       signal_name: link_level
       sample_rate: !!float32 2000000.0
+  - id: gr::blocks::network::MessagePacketSource
+    parameters:
+      name: message_rx
+      endpoint: ipc:///tmp/gr4-message-link.sock
+      bind: false
+      pattern: pull
+      max_message_bytes: !!uint64 1048576
 connections:
   - [link_rx, out, magnitude, in]
   - [magnitude, abs, level_sink, in]

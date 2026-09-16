@@ -38,6 +38,7 @@ if(GR4_NETWORK_HAVE_LIBZMQ)
   list(
     APPEND
     GrNetworkBlocks_HDRS
+    include/gnuradio-4.0/network/MessagePacketIO.hpp
     include/gnuradio-4.0/network/StreamPacketIO.hpp
     include/gnuradio-4.0/network/ZmqPacketIO.hpp
     include/gnuradio-4.0/network/ZmqStreamIO.hpp)
@@ -45,6 +46,7 @@ else()
   list(
     APPEND
     GrNetworkBlocks_UNREGISTERED_HDRS
+    include/gnuradio-4.0/network/MessagePacketIO.hpp
     include/gnuradio-4.0/network/StreamPacketIO.hpp
     include/gnuradio-4.0/network/ZmqPacketIO.hpp
     include/gnuradio-4.0/network/ZmqStreamIO.hpp)

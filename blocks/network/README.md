@@ -13,15 +13,16 @@ The family is off by default (`GR4_ENABLE_NETWORK`) and is built only where libz
 cppzmq header are found, because an optional external dependency cannot enter an unconditional
 module without becoming unconditional for everything downstream.
 
-Two pairs share that envelope, and each carries a different one of the things a flowgraph is made of.
+Three pairs share that envelope, and each carries a different one of the things a flowgraph is made of.
 
-| pair                                      | what one packet is                | payload             |
-| ----------------------------------------- | --------------------------------- | ------------------- |
-| `ZmqPacketSink` / `ZmqPacketSource`       | one `gr::Packet<T>`               | its `signal_values` |
-| `StreamPacketSink` / `StreamPacketSource` | a chunk of a tagged sample stream | the samples         |
+| pair                                        | what one packet is                | payload             |
+| ------------------------------------------- | --------------------------------- | ------------------- |
+| `ZmqPacketSink` / `ZmqPacketSource`         | one `gr::Packet<T>`               | its `signal_values` |
+| `StreamPacketSink` / `StreamPacketSource`   | a chunk of a tagged sample stream | the samples         |
+| `MessagePacketSink` / `MessagePacketSource` | one `gr::Message`                 | none; zero items    |
 
-The header is the same for both and the wire version is 1 throughout: a reader written against the envelope reads
-either, and what differs is only which reserved keys the metadata frame carries.
+The header is the same for all three and the wire version is 1 throughout: a reader written against the envelope
+reads any of them, and what differs is only which reserved keys the metadata frame carries.
 
 ## The stream pair, and how a flowgraph continues in another process
 
@@ -35,18 +36,28 @@ The one property that governs the design is that **a hole in the stream is annou
 loses packets inside libzmq with no error at either end, so every packet states both `sequence` and the absolute
 `stream_position`, and the receiver publishes one tag at the next sample rather than concatenating across the hole.
 
+## The message pair, and the control path
+
+`MessagePacketSink` publishes the messages reaching its `msgIn` — a graph's whole inbound message plane, minus what
+is addressed to the sink itself — and `MessagePacketSource` emits what arrives into its own graph's plane, where the
+scheduler forwards it to a host application. That is what makes the far half of a split graph readable and settable
+at all. A `sequence` gap becomes one message of its own, on the endpoint
+`gr::blocks::network::MessagePacketSource::gap`, carrying `messages_lost` and the `sequence` of the first message
+that went missing: a lost `Set` leaves a block holding a setting nobody asked for, and nothing else would say so.
+
 ## The reserved metadata keys
 
-The record vocabulary is `blocks/basic`'s and is documented there. These are what the stream pair adds to a metadata
+The record vocabulary is `blocks/basic`'s and is documented there. These are what the two new pairs add to a metadata
 frame, each serving one boundary crossing and consumed by the receiving block, so the vocabulary's one-spelling rule
 survives the crossing.
 
-| key               | type         | pair   | meaning                                                                                         |
-| ----------------- | ------------ | ------ | ----------------------------------------------------------------------------------------------- |
-| `sequence`        | `uint64`     | both   | the packet's ordinal at the sender; a gap in it is loss                                         |
-| `sample_rate`     | `float32`    | stream | the rate the stream runs at, stated on every packet                                             |
-| `stream_position` | `uint64`     | stream | absolute index of the chunk's first sample, counted by the sink from its start                  |
-| `packet_tags`     | list of maps | stream | the tags in the chunk, each `{offset: uint64, map: map}`, offsets from the chunk's first sample |
+| key               | type         | pair      | meaning                                                                                                                    |
+| ----------------- | ------------ | --------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `sequence`        | `uint64`     | all three | the packet's ordinal at the sender; a gap in it is loss                                                                    |
+| `sample_rate`     | `float32`    | stream    | the rate the stream runs at, stated on every packet                                                                        |
+| `stream_position` | `uint64`     | stream    | absolute index of the chunk's first sample, counted by the sink from its start                                             |
+| `packet_tags`     | list of maps | stream    | the tags in the chunk, each `{offset: uint64, map: map}`, offsets from the chunk's first sample                            |
+| `message`         | map          | message   | the whole `gr::Message`: `protocol`, `command`, `service_name`, `client_request_id`, `endpoint`, `data` or `error`, `rbac` |
 
 `stream_position` is deliberately not the record vocabulary's `sample_start`: that key states where a _record_ begins
 in a producer's stream, while this one is the sink's own count over the edge it was placed on. On the receiver's gap
@@ -54,9 +65,13 @@ tag it reappears, naming the first sample the hole swallowed, beside `n_dropped_
 reserved key, so a block that already understands dropped samples needs no new vocabulary — and `packets_lost`. The
 missing span is `[stream_position, stream_position + n_dropped_samples)`.
 
+The message pair nests the whole message under one key rather than spreading its fields at the top level, and
+`protocol` is why: the record vocabulary declares it as the name of a framing protocol, and `gr::Message::protocol`
+is a Majordomo version. One key, two meanings, and neither could be read safely.
+
 ## The settings
 
-All four blocks take the same socket settings, and each side of a pair matches the other's: `push` pairs with `pull`,
+All six blocks take the same socket settings, and each side of a pair matches the other's: `push` pairs with `pull`,
 `pub` with `sub`.
 
 | setting                         | sinks                                | sources                            |

@@ -22,6 +22,9 @@ if(GR4_NETWORK_HAVE_LIBZMQ)
   target_link_libraries(qa_StreamPacketIO PRIVATE gr-network gr-testing)
   set_tests_properties(qa_StreamPacketIO PROPERTIES TIMEOUT 120)
 
+  add_ut_test(qa_MessagePacketIO)
+  target_link_libraries(qa_MessagePacketIO PRIVATE gr-network gr-testing)
+  set_tests_properties(qa_MessagePacketIO PROPERTIES TIMEOUT 120)
 
   # the example graphs are loaded by id through the global registry, so the shared library of every family they name has
   # to be loaded for those ids to resolve

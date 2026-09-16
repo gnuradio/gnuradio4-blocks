@@ -194,6 +194,8 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::network::ZmqStreamSource<complex<float32>>"sv));
         expect(registry.contains("gr::blocks::network::StreamPacketSink<complex<float32>>"sv));
         expect(registry.contains("gr::blocks::network::StreamPacketSource<complex<float32>>"sv));
+        expect(registry.contains("gr::blocks::network::MessagePacketSink"sv));
+        expect(registry.contains("gr::blocks::network::MessagePacketSource"sv));
 #endif
     };
 

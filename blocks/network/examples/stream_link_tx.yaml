@@ -25,8 +25,14 @@
 # receiving half would have no way to know how fast the samples it is handed are meant to be. A tag
 # in the stream always wins over the setting.
 #
-# The endpoint is an ipc:// socket, which is a file. Two processes on one machine want ipc://;
-# two machines want tcp://0.0.0.0:5555 here and tcp://<host>:5555 in the receiver.
+# The second block on the second endpoint carries the other half of what a flowgraph is: its
+# message plane. Everything a host application sends into this graph - a settings change, a
+# subscription, a property read - reaches every block's msgIn, and message_tx publishes what is not
+# addressed to itself, so the blocks in the receiving process are reachable at all. It is connected
+# to nothing because it has no stream ports; the plane is not an edge.
+#
+# The endpoints are ipc:// sockets, which are files. Two processes on one machine want ipc://; two
+# machines want tcp://0.0.0.0:5555 here and tcp://<host>:5555 in the receiver.
 blocks:
   - id: gr::blocks::basic::SignalGenerator<complex<float32>>
     parameters:
@@ -44,6 +50,13 @@ blocks:
       pattern: push
       max_items: !!uint32 4096
       sample_rate: !!float32 2000000.0
+      max_message_bytes: !!uint64 1048576
+  - id: gr::blocks::network::MessagePacketSink
+    parameters:
+      name: message_tx
+      endpoint: ipc:///tmp/gr4-message-link.sock
+      bind: true
+      pattern: push
       max_message_bytes: !!uint64 1048576
 connections:
   - [iq_source, out, link_tx, in]
