@@ -28,9 +28,10 @@ struct Throttle : Block<Throttle<T>, UnfilteredTagPropagation> {
 
 For a flowgraph with no clock of its own. It is not a sample-clock authority: it makes a long-run average rate. The
 wait is taken in slices with the lifecycle state re-read between them, so a stop request is not held up by a long
-sleep. The output port is optional; unconnected, the block still paces consumption, so it can hang off a stream
-without paying for the copy. An incoming `sample_rate` tag retunes the block, though a rate the caller has set
-explicitly is out of the auto-update set and no longer follows one.
+sleep; a stop that cuts a wait short releases only the samples that are due by then and leaves the rest unconsumed,
+so the pacing holds through a stop. The output port is optional; unconnected, the block still paces consumption, so
+it can hang off a stream without paying for the copy. An incoming `sample_rate` tag retunes the block, though a rate
+the caller has set explicitly is out of the auto-update set and no longer follows one.
 
 The block is 1:1, so every input tag key passes through at its own offset, `sample_rate` carrying this block's value.
 )"">;
@@ -81,26 +82,43 @@ The block is 1:1, so every input tag key passes through at its own offset, `samp
         const std::size_t cap   = max_items_per_chunk == 0U ? inSpan.size() : std::min(inSpan.size(), static_cast<std::size_t>(max_items_per_chunk.value));
         const std::size_t count = outSpan.isConnected ? std::min(cap, outSpan.size()) : cap;
         if (outSpan.isConnected) {
+            // copied before the wait, so the samples are ready the moment they come due; a wait a stop cuts short
+            // publishes fewer of them and leaves the rest for whoever runs next
             std::copy_n(inSpan.begin(), count, outSpan.begin());
         }
 
-        waitUntilDue(count);
-        _total += count;
-        std::ignore = inSpan.consume(count);
-        outSpan.publish(outSpan.isConnected ? count : 0UZ);
+        const std::size_t due = waitUntilDue(count);
+        _total += due;
+        std::ignore = inSpan.consume(due);
+        outSpan.publish(outSpan.isConnected ? due : 0UZ);
         return work::Status::OK;
     }
 
 private:
     [[nodiscard]] static Clock::duration seconds(double value) noexcept { return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(value)); }
 
-    void waitUntilDue(std::size_t count) {
+    /// @brief Waits out the deadline of the last of @p count samples and returns @p count. A stop request cuts the
+    /// wait short, and then only the leading samples whose own deadline has passed are returned, which may be none.
+    [[nodiscard]] std::size_t waitUntilDue(std::size_t count) {
         const Clock::time_point deadline = _origin + seconds(_period * static_cast<double>(_total + count));
         Clock::time_point       now      = Clock::now();
         while (deadline > now && !lifecycle::isShuttingDown(this->state())) {
             std::this_thread::sleep_until(std::min(deadline, now + _slice));
             now = Clock::now();
         }
+        return deadline > now ? dueBy(now, count) : count;
+    }
+
+    /// @brief How many of the @p count samples offered have reached their own deadline `_origin + _period * (_total + n)`
+    /// by @p now, at most @p count.
+    [[nodiscard]] std::size_t dueBy(Clock::time_point now, std::size_t count) const noexcept {
+        const double elapsed = std::chrono::duration<double>(now - _origin).count();
+        const double passed  = std::floor(elapsed / _period); // samples of the schedule whose deadline is behind `now`
+        if (!(passed > static_cast<double>(_total))) {
+            return 0UZ;
+        }
+        const double due = passed - static_cast<double>(_total);
+        return due < static_cast<double>(count) ? static_cast<std::size_t>(due) : count;
     }
 };
 
