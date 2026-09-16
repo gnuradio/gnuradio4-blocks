@@ -42,8 +42,8 @@
 #include <gnuradio-4.0/meta/utils.hpp>
 #include <gnuradio-4.0/thread/thread_pool.hpp>
 
-#include <gnuradio-4.0/basic/RecordMetadata.hpp>
 #include <gnuradio-4.0/network/PacketEnvelope.hpp>
+#include <gnuradio-4.0/network/RecordVocabulary.hpp>
 
 /**
  * @brief The packet envelope over plain TCP and UDP sockets, with no message library between the block and the wire.
@@ -60,12 +60,6 @@
 namespace gr::blocks::network {
 
 namespace detail::sockio {
-
-// The record-metadata vocabulary and its declared types are the basic module's, reused rather than restated, for the
-// reason the ZeroMQ pair reuses them: two tables for one vocabulary is the drift these blocks exist to avoid.
-using gr::blocks::basic::detail::packet::holdsVocabularyType;
-using gr::blocks::basic::detail::packet::shortKey;
-using gr::blocks::basic::detail::packet::vocabularyType;
 
 /// @brief The key the carrier's `timestamp` field crosses under, removed again by the receiving block.
 ///
@@ -85,21 +79,6 @@ inline constexpr std::size_t kTransientFaultLimit = 8UZ;
 
 /// @brief The shortest interval between two resolutions of one endpoint, so a retry loop is not a resolver flood.
 inline constexpr std::uint32_t kResolveIntervalMs = 1000U;
-
-/// @brief Vocabulary keys of @p map whose value type disagrees with the declaration.
-///
-/// Counted and never dropped. At a record boundary a wrongly typed key is dropped because an absent key at least
-/// reads as absent, but here the value's author is in another process and cannot be told: dropping it would erase the
-/// only evidence that a peer is misconfigured.
-[[nodiscard]] inline std::uint64_t countMistypedKeys(const property_map& map) noexcept {
-    std::uint64_t mistyped = 0ULL;
-    for (const auto& [key, value] : map) {
-        if (!holdsVocabularyType(vocabularyType(shortKey(std::string_view(key))), value)) {
-            ++mistyped;
-        }
-    }
-    return mistyped;
-}
 
 /// @brief A 64-bit length narrowed to an index; a template, so the cast stands where `std::size_t` is 32
 /// bits and is not a useless cast where the two are the same 64-bit type.
@@ -540,7 +519,7 @@ private:
         if (!packet.meta_information.empty()) {
             map = packet.meta_information[0UZ]; // copied key for key, nothing filtered and nothing consumed
         }
-        nMetaKeysMistyped += detail::sockio::countMistypedKeys(map);
+        nMetaKeysMistyped += detail::countMistypedKeys(map);
 
         if (map.find("sequence") == map.end()) {
             map.insert_or_assign(property_map::key_type("sequence"), pmt::Value(_sequence));
@@ -1698,7 +1677,7 @@ private:
             }
             map = *parsed;
         }
-        nMetaKeysMistyped += detail::sockio::countMistypedKeys(map);
+        nMetaKeysMistyped += detail::countMistypedKeys(map);
 
         Incoming arrival;
         arrival.accepted.signal_values.resize(_header.item_count);
@@ -2038,7 +2017,7 @@ private:
         if (!packet.meta_information.empty()) {
             map = packet.meta_information[0UZ]; // copied key for key, nothing filtered and nothing consumed
         }
-        nMetaKeysMistyped += detail::sockio::countMistypedKeys(map);
+        nMetaKeysMistyped += detail::countMistypedKeys(map);
 
         if (map.find("sequence") == map.end()) {
             map.insert_or_assign(property_map::key_type("sequence"), pmt::Value(_sequence));
@@ -2740,7 +2719,7 @@ private:
             }
             map = *parsed;
         }
-        nMetaKeysMistyped += detail::sockio::countMistypedKeys(map);
+        nMetaKeysMistyped += detail::countMistypedKeys(map);
 
         Incoming arrival;
         arrival.accepted.signal_values.resize(header->item_count);

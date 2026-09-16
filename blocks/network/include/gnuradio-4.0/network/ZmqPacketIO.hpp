@@ -31,20 +31,13 @@
 #include <gnuradio-4.0/meta/utils.hpp>
 #include <gnuradio-4.0/thread/thread_pool.hpp>
 
-#include <gnuradio-4.0/basic/RecordMetadata.hpp>
 #include <gnuradio-4.0/network/PacketEnvelope.hpp>
+#include <gnuradio-4.0/network/RecordVocabulary.hpp>
 #include <gnuradio-4.0/network/ZmqTransport.hpp>
 
 namespace gr::blocks::network {
 
 namespace detail::zmqio {
-
-// The record-metadata vocabulary and its declared types are the basic module's, reused rather than restated: two
-// tables for one vocabulary is the drift these blocks exist to avoid, and both ends of this transport have to agree
-// on the same table as the blocks that convert records into the packets it carries.
-using gr::blocks::basic::detail::packet::holdsVocabularyType;
-using gr::blocks::basic::detail::packet::shortKey;
-using gr::blocks::basic::detail::packet::vocabularyType;
 
 /// @brief The key the carrier's `timestamp` field crosses under, removed again by the receiving block.
 ///
@@ -362,7 +355,7 @@ private:
         if (!packet.meta_information.empty()) {
             map = packet.meta_information[0UZ]; // copied key for key, nothing filtered and nothing consumed
         }
-        nMetaKeysMistyped += detail::zmqio::countMistypedKeys(map);
+        nMetaKeysMistyped += detail::countMistypedKeys(map);
 
         if (map.find("sequence") == map.end()) {
             map.insert_or_assign(property_map::key_type("sequence"), pmt::Value(_sequence));
@@ -1011,7 +1004,7 @@ private:
             }
             map = *parsed;
         }
-        nMetaKeysMistyped += detail::zmqio::countMistypedKeys(map);
+        nMetaKeysMistyped += detail::countMistypedKeys(map);
 
         Incoming arrival;
         arrival.accepted.signal_values.resize(header->item_count);
