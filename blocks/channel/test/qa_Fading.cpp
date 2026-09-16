@@ -57,6 +57,24 @@ template<typename Block>
     return std::abs(correlation) / energy;
 }
 
+/// J0 from its power series, sum_k (-1)^k (x/2)^{2k} / (k!)^2, summed until a term falls below 1e-16 of the
+/// running sum. The test carries its own J0 because the C++17 special mathematical functions are optional in
+/// practice: libc++ declares none of them. The arguments used here stay at or below pi, where fewer than
+/// twenty terms reach the precision of a double.
+[[nodiscard]] double besselJ0(double x) {
+    const double quarterSquare = 0.25 * x * x;
+    double       term          = 1.;
+    double       sum           = 1.;
+    for (int k = 1; k <= 64; ++k) {
+        term *= -quarterSquare / static_cast<double>(k * k);
+        sum += term;
+        if (std::abs(term) <= 1e-16 * std::abs(sum)) {
+            break;
+        }
+    }
+    return sum;
+}
+
 } // namespace
 
 const boost::ut::suite<"fading channel"> fadingTests = [] {
@@ -84,7 +102,11 @@ const boost::ut::suite<"fading channel"> fadingTests = [] {
         for (const double lagFraction : {0.1, 0.25, 0.5}) {
             const auto   lag      = static_cast<std::size_t>(std::llround(lagFraction / fd * fs));
             const double measured = autocorrelationAt(std::span<const C>(h), lag);
-            const double bessel   = std::abs(std::cyl_bessel_j(0., 2. * std::numbers::pi_v<double> * fd * static_cast<double>(lag) / fs));
+            const double argument = 2. * std::numbers::pi_v<double> * fd * static_cast<double>(lag) / fs;
+            const double bessel   = std::abs(besselJ0(argument));
+#if __has_include(<cmath>) && defined(__cpp_lib_math_special_functions)
+            expect(lt(std::abs(besselJ0(argument) - std::cyl_bessel_j(0., argument)), 1e-12)) << std::format("the J0 series differs from the standard function at x = {:g}", argument);
+#endif
             std::println("Fading autocorrelation at lag {:.2f}/f_d: measured {:.4f}, J0 {:.4f}", lagFraction, measured, bessel);
             expect(lt(std::abs(measured - bessel), 0.12)) << std::format("lag {:.2f}/f_d: measured {:.4f}, J0 {:.4f}", lagFraction, measured, bessel);
         }
