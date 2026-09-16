@@ -268,6 +268,40 @@ const boost::ut::suite<"Throttle"> throttleTests = [] {
         expect(returned.load(std::memory_order_acquire)) << "the call returns on the stop rather than on the last sample's deadline";
     };
 
+    "a stop releases only the samples that are due by then"_test = [] {
+        constexpr double         kRateHz = 1.0;
+        Throttle<float>          block   = makeThrottle<float>({{"sample_rate", static_cast<float>(kRateHz)}, {"max_sleep_s", 0.05}});
+        const std::vector<float> input(100UZ, 0.f); // a hundred seconds of deadline offered in one chunk
+        std::vector<float>       output(input.size());
+        block.restart();
+        const auto started = Clock::now();
+
+        Pump              result;
+        std::atomic<bool> returned{false};
+        {
+            std::jthread pumping([&] {
+                result = pump<float>(block, std::span<const float>(input), std::span<float>(output), 100UZ);
+                returned.store(true, std::memory_order_release);
+            });
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            block.requestStop();
+
+            const auto guard = Clock::now() + std::chrono::seconds(30);
+            while (!returned.load(std::memory_order_acquire) && Clock::now() < guard) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            expect(returned.load(std::memory_order_acquire)) << "the call returns on the stop";
+        }
+
+        // the bound is what the whole call could have made due, however long the machine took over it: at one sample
+        // per second and a stop fifty milliseconds in, that is none of them
+        const double      held      = std::chrono::duration<double>(Clock::now() - started).count();
+        const std::size_t dueByThen = static_cast<std::size_t>(std::floor(held * kRateHz));
+        expect(le(result.consumed, dueByThen)) << "consumed " << result.consumed << " of 100 in " << held << " s";
+        expect(eq(result.produced, result.consumed)) << "and published exactly what it consumed";
+        expect(lt(result.consumed, input.size())) << "the rest of the chunk stays unconsumed";
+    };
+
     "unusable parameters are rejected at settings time"_test = [] {
         expect(throws([] { std::ignore = makeThrottle<float>({{"sample_rate", 0.f}}); })) << "zero rate";
         expect(throws([] { std::ignore = makeThrottle<float>({{"sample_rate", -1.f}}); })) << "negative rate";
