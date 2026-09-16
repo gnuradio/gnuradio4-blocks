@@ -46,8 +46,8 @@ set(GR_QA_OPTIMIZATION_LEVEL
 # Bound the concurrency of the template-heaviest compilations, whose peak memory dominates the build. The pool limits
 # only targets assigned to it; other Ninja work remains parallel. Width one keeps the heaviest translation units from
 # compiling side by side: each test TU instantiates whole graphs, so any two of them next to ordinary lanes can exceed a
-# bounded memory budget. Every unit-test executable compiles through the pool; the generated block-definition units are
-# lighter and stay in the free lanes.
+# bounded memory budget. Every unit-test executable and the packet-link example applications compile through the pool;
+# the generated block-definition units are lighter and stay in the free lanes.
 set(GR_HEAVY_COMPILE_JOBS
     "1"
     CACHE STRING "Concurrent compile jobs for the largest template-heavy TUs")

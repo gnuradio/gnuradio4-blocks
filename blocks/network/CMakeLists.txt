@@ -38,7 +38,9 @@ gr_add_block_library(
   gr-network)
 
 if(TARGET gnuradio4::GrNetworkBlocksShared AND ENABLE_TESTING)
+  # the acceptance pair is two processes the driver in test/ launches, so it is built with the tests that need it
   if(GR4_NETWORK_HAVE_LIBZMQ)
+    add_subdirectory(src)
   endif()
   add_subdirectory(test)
 endif()

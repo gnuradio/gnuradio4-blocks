@@ -12,3 +12,9 @@ without a second format.
 The family is off by default (`GR4_ENABLE_NETWORK`) and is built only where libzmq and the
 cppzmq header are found, because an optional external dependency cannot enter an unconditional
 module without becoming unconditional for everything downstream.
+
+`src/` holds the two executables of the packet-link acceptance suite, `packet_link_tx` and
+`packet_link_rx`. Each is a flowgraph of stock blocks and nothing else, and `test/qa_PacketLink`
+runs them as separate processes over one endpoint: a format is only proved by a peer that did
+not build it, and two processes exchanging a known byte vector is the smallest thing that shows
+type, length, byte order, version, record metadata and error handling all crossing intact.

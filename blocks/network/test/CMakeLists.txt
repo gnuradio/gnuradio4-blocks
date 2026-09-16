@@ -10,4 +10,10 @@ if(GR4_NETWORK_HAVE_LIBZMQ)
 
   # the acceptance driver launches the two executables in ../src as real, separate processes, so it is told where they
   # were built and is rebuilt whenever they are
+  add_ut_test(qa_PacketLink)
+  target_link_libraries(qa_PacketLink PRIVATE gr-network)
+  add_dependencies(qa_PacketLink packet_link_tx packet_link_rx)
+  target_compile_definitions(qa_PacketLink PRIVATE GR4_PACKET_LINK_TX="$<TARGET_FILE:packet_link_tx>"
+                                                   GR4_PACKET_LINK_RX="$<TARGET_FILE:packet_link_rx>")
+  set_tests_properties(qa_PacketLink PROPERTIES TIMEOUT 120)
 endif()
