@@ -29,6 +29,7 @@ option(ENABLE_EXAMPLES "Enable example builds" ON)
 option(ENABLE_TESTING "Enable test builds" ON)
 option(GR4_ENABLE_AUDIO "Build the audio block family" OFF)
 option(GR4_ENABLE_SDR "Build the SDR block family" OFF)
+option(GR4_ENABLE_NETWORK "Build the network block family" OFF)
 option(GR4_ENABLE_ZEROMQ "Build the ZeroMQ block family" OFF)
 option(GR4_ENABLE_ZEROMQ_EXAMPLES "Build the ZeroMQ examples" OFF)
 option(GR4_ENABLE_HTTP_TESTS "Build HTTP integration tests" OFF)
@@ -214,6 +215,17 @@ if(GR4_ENABLE_ZEROMQ)
     set(GR4_ZEROMQ_CPPZMQ_PROVIDER "pkgconfig")
   endif()
   set(GR4_EXPORT_NEEDS_ZEROMQ ON)
+endif()
+
+if(GR4_ENABLE_NETWORK)
+  # libzmq through pkg-config and the header-only cppzmq binding beside it: typed socket options are what keep
+  # ZMQ_MAXMSGSIZE, an int64_t among options that are mostly int, from being set at the wrong width.
+  pkg_check_modules(
+    GR4_LIBZMQ
+    QUIET
+    IMPORTED_TARGET
+    libzmq)
+  find_path(GR4_CPPZMQ_INCLUDE_DIR zmq.hpp)
 endif()
 
 if(GR4_ENABLE_AUDIO AND NOT EMSCRIPTEN)
