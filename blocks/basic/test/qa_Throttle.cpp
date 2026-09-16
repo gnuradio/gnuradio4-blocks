@@ -302,6 +302,53 @@ const boost::ut::suite<"Throttle"> throttleTests = [] {
         expect(lt(result.consumed, input.size())) << "the rest of the chunk stays unconsumed";
     };
 
+    "a rate whose deadline the clock cannot hold waits rather than releasing at once"_test = [] {
+        // one sample's deadline is 1e10 s at the first rate, beyond the 292 years a signed nanosecond tick can hold,
+        // and 1e9 s at the second, just inside it; neither is ever reached, so both must pace on until they are stopped
+        for (const double rate : {1e-10, 1e-9}) {
+            Throttle<float>          block = makeThrottle<float>({{"sample_rate", static_cast<float>(rate)}, {"max_sleep_s", 0.02}});
+            const std::vector<float> input(1UZ, 0.f);
+            std::vector<float>       output(input.size());
+            block.restart();
+
+            Pump              result;
+            std::atomic<bool> returned{false};
+            {
+                std::jthread pumping([&] {
+                    result = pump<float>(block, std::span<const float>(input), std::span<float>(output), 1UZ);
+                    returned.store(true, std::memory_order_release);
+                });
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                expect(!returned.load(std::memory_order_acquire)) << "the sample is still being waited for at " << rate << " Hz";
+                block.requestStop();
+
+                const auto guard = Clock::now() + std::chrono::seconds(30);
+                while (!returned.load(std::memory_order_acquire) && Clock::now() < guard) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                expect(returned.load(std::memory_order_acquire)) << "and the call returns on the stop at " << rate << " Hz";
+            }
+            expect(eq(result.produced, 0UZ)) << "nothing is published at " << rate << " Hz";
+            expect(eq(result.consumed, 0UZ)) << "and nothing is consumed";
+        }
+    };
+
+    "the conversion to the clock's tick is exact in range and saturates outside it"_test = [] {
+        using D                  = Clock::duration;
+        constexpr double kRangeS = static_cast<double>(D::max().count()) * static_cast<double>(D::period::num) / static_cast<double>(D::period::den);
+
+        expect(Throttle<float>::seconds(0.25) == std::chrono::duration_cast<D>(std::chrono::milliseconds(250))) << "a quarter of a second is exactly that";
+        expect(Throttle<float>::seconds(2.0) == std::chrono::duration_cast<D>(std::chrono::seconds(2)));
+        for (const double value : {1e-6, 1e-3, 1.0, 1e6, 0.5 * kRangeS}) {
+            expect(Throttle<float>::seconds(value) == std::chrono::duration_cast<D>(std::chrono::duration<double>(value))) << value << " s converts to the tick it names";
+        }
+
+        expect(Throttle<float>::seconds(2.0 * kRangeS) == D::max()) << "and a value the clock cannot hold saturates";
+        expect(Throttle<float>::seconds(1e300) == D::max());
+        expect(Throttle<float>::seconds(std::numeric_limits<double>::infinity()) == D::max());
+        expect(Throttle<float>::seconds(-1e300) == D::min());
+    };
+
     "unusable parameters are rejected at settings time"_test = [] {
         expect(throws([] { std::ignore = makeThrottle<float>({{"sample_rate", 0.f}}); })) << "zero rate";
         expect(throws([] { std::ignore = makeThrottle<float>({{"sample_rate", -1.f}}); })) << "negative rate";
