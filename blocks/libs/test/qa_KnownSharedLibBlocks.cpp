@@ -191,6 +191,7 @@ const boost::ut::suite TagTests = [] {
 #if GNURADIO4_HAVE_NETWORK_BLOCKS
         expect(registry.contains("gr::blocks::network::ZmqPacketSink<float32>"sv));
         expect(registry.contains("gr::blocks::network::ZmqPacketSource<float32>"sv));
+        expect(registry.contains("gr::blocks::network::ZmqStreamSource<complex<float32>>"sv));
 #endif
     };
 

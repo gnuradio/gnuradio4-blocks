@@ -26,8 +26,21 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/network"
         DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gnuradio-4.0")
 
 set(GrNetworkBlocks_HDRS include/gnuradio-4.0/network/SocketPacketIO.hpp include/gnuradio-4.0/network/TcpByteIo.hpp)
+set(GrNetworkBlocks_UNREGISTERED_HDRS "")
+# the registering ZMQ headers are still part of the module where libzmq is not: named as unregistered, they are
+# accounted for rather than reported as blocks nothing generates a registration for
 if(GR4_NETWORK_HAVE_LIBZMQ)
-  list(APPEND GrNetworkBlocks_HDRS include/gnuradio-4.0/network/ZmqPacketIO.hpp)
+  list(
+    APPEND
+    GrNetworkBlocks_HDRS
+    include/gnuradio-4.0/network/ZmqPacketIO.hpp
+    include/gnuradio-4.0/network/ZmqStreamIO.hpp)
+else()
+  list(
+    APPEND
+    GrNetworkBlocks_UNREGISTERED_HDRS
+    include/gnuradio-4.0/network/ZmqPacketIO.hpp
+    include/gnuradio-4.0/network/ZmqStreamIO.hpp)
 endif()
 
 gr_add_block_library(
@@ -36,6 +49,8 @@ gr_add_block_library(
   ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
   ${GrNetworkBlocks_HDRS}
+  UNREGISTERED_HEADERS
+  ${GrNetworkBlocks_UNREGISTERED_HDRS}
   LINK_LIBRARIES
   gr-network)
 

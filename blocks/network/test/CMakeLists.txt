@@ -14,6 +14,10 @@ if(GR4_NETWORK_HAVE_LIBZMQ)
   add_ut_test(qa_ZmqPacketIO)
   target_link_libraries(qa_ZmqPacketIO PRIVATE gr-network gr-testing)
 
+  add_ut_test(qa_ZmqStreamIO)
+  target_link_libraries(qa_ZmqStreamIO PRIVATE gr-network gr-testing)
+  set_tests_properties(qa_ZmqStreamIO PROPERTIES TIMEOUT 120)
+
   # the acceptance driver launches the two executables in ../src as real, separate processes, so it is told where they
   # were built and is rebuilt whenever they are
   add_ut_test(qa_PacketLink)

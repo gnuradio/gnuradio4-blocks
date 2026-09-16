@@ -33,6 +33,7 @@
 
 #include <gnuradio-4.0/basic/RecordMetadata.hpp>
 #include <gnuradio-4.0/network/PacketEnvelope.hpp>
+#include <gnuradio-4.0/network/ZmqTransport.hpp>
 
 namespace gr::blocks::network {
 
@@ -44,9 +45,6 @@ namespace detail::zmqio {
 using gr::blocks::basic::detail::packet::holdsVocabularyType;
 using gr::blocks::basic::detail::packet::shortKey;
 using gr::blocks::basic::detail::packet::vocabularyType;
-
-/// @brief The socket pattern a block runs, resolved from its `pattern` setting once at configure time.
-enum class Pattern : std::uint8_t { Pub, Push, Sub, Pull };
 
 /// @brief The key the carrier's `timestamp` field crosses under, removed again by the receiving block.
 ///
@@ -69,31 +67,6 @@ inline constexpr std::string_view kTimestampKey = "packet_timestamp";
         }
     }
     return mistyped;
-}
-
-/// @brief The one endpoint diagnostic worth stating rather than leaving to be rediscovered.
-///
-/// libzmq answers an endpoint with no transport prefix with a bare `EINVAL`, and that is the common typo.
-[[nodiscard]] inline std::string endpointHint(std::string_view endpoint) { return endpoint.find("://") == std::string_view::npos ? std::format(" — '{}' names no transport; a libzmq endpoint begins with a prefix such as tcp://, ipc:// or inproc://", endpoint) : std::string{}; }
-
-[[nodiscard]] inline Pattern sendPatternFromName(std::string_view name) {
-    if (name == "pub") {
-        return Pattern::Pub;
-    }
-    if (name == "push") {
-        return Pattern::Push;
-    }
-    throw gr::exception(std::format("pattern is '{}'; a sink takes 'pub' (fan out, never blocks, drops in mute state) or 'push' (round-robin, blocks in mute state, discards nothing)", name));
-}
-
-[[nodiscard]] inline Pattern receivePatternFromName(std::string_view name) {
-    if (name == "sub") {
-        return Pattern::Sub;
-    }
-    if (name == "pull") {
-        return Pattern::Pull;
-    }
-    throw gr::exception(std::format("pattern is '{}'; a source takes 'sub' (subscribes to a prefix) or 'pull' (fair-queued)", name));
 }
 
 /// @brief One finished envelope waiting for the I/O thread, frames 1 to 3. Frame 0 is the block's constant topic.
