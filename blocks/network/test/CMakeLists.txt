@@ -51,6 +51,11 @@ if(GR4_NETWORK_HAVE_LIBZMQ)
   # The exported interface is only ever read from an install, so the test needs one; GR4_INSTALLED_PREFIX names a prefix
   # this tree has already been installed into and the leg is registered only where one is named. --fresh keeps a cache
   # left by an earlier run from answering for the install as it is now.
+  #
+  # Two steps, because the two halves of an exported interface fail in different places. A target name the installed
+  # config file does not define ends the configure; an include directory the interface never carried is not missed until
+  # a translation unit asks for a header, which is what the second step compiles. ctest runs the configure for whoever
+  # selects the compile and does not run the compile when the configure failed.
   if(GR4_INSTALLED_PREFIX)
     add_test(
       NAME qa_NetworkExportedTarget
@@ -59,5 +64,11 @@ if(GR4_NETWORK_HAVE_LIBZMQ)
         ${CMAKE_GENERATOR} -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
         -DCMAKE_PREFIX_PATH=${GR4_INSTALLED_PREFIX})
     set_tests_properties(qa_NetworkExportedTarget PROPERTIES TIMEOUT 120)
+    set_tests_properties(qa_NetworkExportedTarget PROPERTIES FIXTURES_SETUP gr4_network_consumer)
+
+    add_test(NAME qa_NetworkExportedInclude COMMAND ${CMAKE_COMMAND} --build ${CMAKE_CURRENT_BINARY_DIR}/consumer)
+    # one translation unit of framework templates, which is minutes on a slow runner and seconds on a warm one
+    set_tests_properties(qa_NetworkExportedInclude PROPERTIES TIMEOUT 600)
+    set_tests_properties(qa_NetworkExportedInclude PROPERTIES FIXTURES_REQUIRED gr4_network_consumer)
   endif()
 endif()

@@ -232,7 +232,33 @@ if(GR4_ENABLE_NETWORK)
     QUIET
     IMPORTED_TARGET
     libzmq)
-  find_path(GR4_CPPZMQ_INCLUDE_DIR zmq.hpp)
+  # cppzmq as a package before cppzmq as a loose header: a package carries the directory zmq.hpp sits in, and a target
+  # is the only form of that directory an installed config file can re-create for a consumer. The bare header search
+  # stays as the last resort, for a tree that has zmq.hpp and no package files for it; the directory it answers with
+  # belongs to this machine and is no statement about any other, so it is the provider rather than the directory that is
+  # recorded, and the installed config file searches the consumer's own machine.
+  set(GR4_NETWORK_CPPZMQ_TARGET "")
+  set(GR4_NETWORK_CPPZMQ_PROVIDER "")
+  find_package(cppzmq CONFIG QUIET)
+  if(TARGET cppzmq)
+    set(GR4_NETWORK_CPPZMQ_TARGET cppzmq)
+    set(GR4_NETWORK_CPPZMQ_PROVIDER "cmake")
+  else()
+    pkg_check_modules(
+      GR4_CPPZMQ
+      QUIET
+      IMPORTED_TARGET
+      cppzmq)
+    if(TARGET PkgConfig::GR4_CPPZMQ)
+      set(GR4_NETWORK_CPPZMQ_TARGET PkgConfig::GR4_CPPZMQ)
+      set(GR4_NETWORK_CPPZMQ_PROVIDER "pkgconfig")
+    else()
+      find_path(GR4_CPPZMQ_INCLUDE_DIR zmq.hpp)
+      if(GR4_CPPZMQ_INCLUDE_DIR)
+        set(GR4_NETWORK_CPPZMQ_PROVIDER "header")
+      endif()
+    endif()
+  endif()
 endif()
 
 if(GR4_ENABLE_AUDIO AND NOT EMSCRIPTEN)
@@ -282,11 +308,15 @@ add_subdirectory(blocks)
 set(GR4_EXPORT_NAME gnuradio4Targets)
 set(GR4_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/gnuradio4Blocks")
 
-# What the network family recorded when it wrote libzmq into its exported interface. Substituted into the config file as
-# a literal condition, so it must always be one of the two constants and never the empty string.
+# What the network family recorded about the libzmq and the cppzmq its exported interface depends on. Substituted into
+# the config file as literal conditions, so each must always be one of the two constants and never the empty string.
 get_property(GR4_EXPORT_NEEDS_LIBZMQ GLOBAL PROPERTY GR4_EXPORT_NEEDS_LIBZMQ)
 if(NOT GR4_EXPORT_NEEDS_LIBZMQ)
   set(GR4_EXPORT_NEEDS_LIBZMQ FALSE)
+endif()
+get_property(GR4_EXPORT_NEEDS_CPPZMQ GLOBAL PROPERTY GR4_EXPORT_NEEDS_CPPZMQ)
+if(NOT GR4_EXPORT_NEEDS_CPPZMQ)
+  set(GR4_EXPORT_NEEDS_CPPZMQ FALSE)
 endif()
 
 configure_package_config_file(
