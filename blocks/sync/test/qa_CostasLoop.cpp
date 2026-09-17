@@ -10,6 +10,7 @@
 #include <numbers>
 #include <random>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
@@ -276,6 +277,34 @@ const boost::ut::suite<"CostasLoop"> costasTests = [] {
         const auto                 untagged = driveCostas(plain, std::span<const CF>(input), 0UZ, {true, true, true});
         expect(eq(rejected.ignoredTagPayloads(), 2ULL));
         expect(std::ranges::equal(guarded.samples, untagged.samples));
+    };
+
+    "a detector's trigger steers the loop from the estimates inside it, and rides on"_test = [] {
+        constexpr std::size_t kSamples = 200UZ;
+        constexpr std::size_t kAt      = 10UZ;
+        const std::vector<CF> input    = pskStream(kSamples, 4UZ, 1.0, 1e-3, 0.0, 9U);
+
+        // a preamble correlator's tag: the reserved trigger keys, with the burst's estimates in the map the framework
+        // keeps a trigger's additional information in
+        const gr::property_map     estimates{{"phase_est", 0.25}, {"amp_est", 1.0}, {"corr_mag", 4.0}};
+        const std::vector<gr::Tag> trigger{gr::Tag{kAt, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("preamble")}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.125f}, {gr::tag::TRIGGER_META_INFO.shortKey(), estimates}}}};
+
+        CostasLoop block  = makeCostas();
+        const auto driven = driveCostas(block, std::span<const CF>(input), 0UZ, {true, true, true}, std::span<const gr::Tag>(trigger));
+        expect(approx(driven.aux[1][kAt], 0.25f, 1e-6f)) << "the trigger's phase_est is in force on the tagged sample";
+        expect(eq(driven.tags.size(), 1UZ)) << "and the trigger rides on whole, for the blocks that frame the burst";
+
+        const std::vector<gr::Tag> both{gr::Tag{kAt, gr::property_map{{"phase_est", 0.5}, {gr::tag::TRIGGER_META_INFO.shortKey(), estimates}}}};
+        CostasLoop                 contested = makeCostas();
+        const auto                 settled   = driveCostas(contested, std::span<const CF>(input), 0UZ, {true, true, true}, std::span<const gr::Tag>(both));
+        expect(approx(settled.aux[1][kAt], 0.5f, 1e-6f)) << "a top-level key is addressed to this block and is applied last";
+
+        const gr::property_map     unusable{{"phase_est", std::numeric_limits<double>::quiet_NaN()}};
+        const std::vector<gr::Tag> wildTrigger{gr::Tag{kAt, gr::property_map{{gr::tag::TRIGGER_META_INFO.shortKey(), unusable}}}};
+        CostasLoop                 refused = makeCostas();
+        const auto                 held    = driveCostas(refused, std::span<const CF>(input), 0UZ, {true, true, true}, std::span<const gr::Tag>(wildTrigger));
+        expect(eq(refused.ignoredTagPayloads(), 1ULL)) << "a payload that is not a finite number is counted wherever it sits";
+        expect(eq(held.tags.size(), 1UZ)) << "and changes nothing about the tag";
     };
 
     "the output does not depend on chunking, the order, or which side ports are wired"_test = [] {

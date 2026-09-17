@@ -61,9 +61,34 @@ inline void applyCarrierSettings(CarrierLoop& loop, double noiseBandwidth, doubl
     return std::isfinite(number) ? std::optional<float>(static_cast<float>(number)) : std::nullopt;
 }
 
+/// @brief Apply whichever of the two estimate keys @p source holds, counting a payload that is not a finite number.
+template<typename TLoop>
+inline void steerLoop(const property_map& source, TLoop& loop, std::uint64_t& ignored) {
+    if (const auto freq = source.find(property_map::key_type{kFreqEstKey}); freq != source.end()) {
+        if (const std::optional<float> value = finiteReal(freq->second); value.has_value()) {
+            loop.setFrequency(*value);
+        } else {
+            ++ignored;
+        }
+    }
+    if (const auto phase = source.find(property_map::key_type{kPhaseEstKey}); phase != source.end()) {
+        if (const std::optional<float> value = finiteReal(phase->second); value.has_value()) {
+            loop.setPhase(*value);
+        } else {
+            ++ignored;
+        }
+    }
+}
+
 /**
- * @brief The family's stream-tag contract: `phase_est` and `freq_est` steer the loop and are consumed, everything else
- * rides through at its own offset.
+ * @brief The family's stream-tag contract: `phase_est` and `freq_est` steer the loop and are consumed, the same two
+ * keys inside a trigger's `trigger_meta_info` steer it and ride on, and everything else rides through at its own offset.
+ *
+ * A detector states a burst's estimates inside the trigger's own map, which is where the framework keeps a trigger's
+ * additional information and the only place they survive a block standing between the detector and the loop, since a
+ * tag key of neither `gr::tag::kDefaultTags` nor the block's own settings is not forwarded. Those estimates are read
+ * but not taken out: the map describes the trigger, and the framer and the symbol synchronizer downstream read it too.
+ * A top-level key is a directive addressed to this block, is applied after the trigger's and is consumed.
  *
  * Payloads are validated before they reach the loop — an unchecked phase would reach a subtractive wrap
  * with an argument it cannot reduce — and a non-finite one is ignored and counted.
@@ -73,6 +98,12 @@ inline void routeTag(const property_map& map, TLoop& loop, std::uint64_t& ignore
     const property_map::key_type phaseKey{kPhaseEstKey};
     const property_map::key_type freqKey{kFreqEstKey};
 
+    if (const auto meta = map.find(property_map::key_type{gr::tag::TRIGGER_META_INFO.shortKey()}); meta != map.end()) {
+        if (const auto* estimates = meta->second.get_if<property_map>(); estimates != nullptr) {
+            steerLoop(*estimates, loop, ignored);
+        }
+    }
+
     const auto phase = map.find(phaseKey);
     const auto freq  = map.find(freqKey);
     if (phase == map.end() && freq == map.end()) {
@@ -80,20 +111,7 @@ inline void routeTag(const property_map& map, TLoop& loop, std::uint64_t& ignore
         return;
     }
 
-    if (freq != map.end()) {
-        if (const std::optional<float> value = finiteReal(freq->second); value.has_value()) {
-            loop.setFrequency(*value);
-        } else {
-            ++ignored;
-        }
-    }
-    if (phase != map.end()) {
-        if (const std::optional<float> value = finiteReal(phase->second); value.has_value()) {
-            loop.setPhase(*value);
-        } else {
-            ++ignored;
-        }
-    }
+    steerLoop(map, loop, ignored);
 
     property_map rest = map;
     rest.erase(phaseKey);
