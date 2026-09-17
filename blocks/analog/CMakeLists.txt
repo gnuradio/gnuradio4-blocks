@@ -14,6 +14,7 @@ gr_add_block_library(
   HEADERS
   include/gnuradio-4.0/analog/Agc.hpp
   include/gnuradio-4.0/analog/QuadratureDemod.hpp
+  include/gnuradio-4.0/analog/Squelch.hpp
   LINK_LIBRARIES
   gr-analog)
 
