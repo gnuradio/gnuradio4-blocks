@@ -637,6 +637,8 @@ const boost::ut::suite<"ZmqPacketSink"> zmqPacketSinkTests = [] {
         refuses({{"endpoint", endpoint.uri}, {"pattern", std::string("req")}}, "an unknown pattern");
         refuses({{"endpoint", endpoint.uri}, {"overflow", std::string("block")}}, "an unknown overflow policy");
         refuses({{"endpoint", endpoint.uri}, {"max_message_bytes", static_cast<std::uint64_t>(0)}}, "a zero message bound");
+        // the bound is what keeps item_count, payload_bytes and meta_bytes inside the 32 bits each has on the wire
+        refuses({{"endpoint", endpoint.uri}, {"max_message_bytes", std::uint64_t{1ULL} << 32U}}, "a message bound above what the envelope's length fields can state");
         refuses({{"endpoint", endpoint.uri}, {"queue_messages", static_cast<gr::Size_t>(0)}}, "a zero queue depth");
 
         // an endpoint with no transport prefix is the common typo, and the diagnostic names it

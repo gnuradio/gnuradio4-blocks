@@ -6,6 +6,7 @@
 #include <complex>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -62,6 +63,14 @@ inline constexpr std::uint8_t  kMetaEncodingYaml  = 1U;          ///< metadata f
 inline constexpr std::uint32_t kHeaderCrcResidue  = 0x2144DF1CU; ///< CRC-32/ISO-HDLC over all bytes of an intact header
 inline constexpr std::uint16_t kFirstItemTypeCode = 2U;          ///< `gr::pmt::Value::ValueType::Int8`
 inline constexpr std::uint16_t kLastItemTypeCode  = 13U;         ///< `gr::pmt::Value::ValueType::ComplexFloat64`
+
+/// @brief The largest envelope this layout can describe, and so the largest a sender may offer one.
+///
+/// `item_count`, `payload_bytes` and `meta_bytes` are 32 bits wide, and each of them is at most the length of the
+/// whole envelope. A sender that refuses anything longer than this therefore cannot present a value one of the three
+/// fields would have to truncate, which is why the bound belongs on the sender's size setting rather than on each
+/// field: one comparison a block already makes, instead of three it would make per message.
+inline constexpr std::uint64_t kMaxEnvelopeBytes = std::numeric_limits<std::uint32_t>::max();
 
 /// @brief Everything a reader can refuse a header for, reading the 32 bytes alone.
 ///

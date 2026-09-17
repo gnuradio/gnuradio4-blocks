@@ -1122,6 +1122,15 @@ const boost::ut::suite<"SocketPacketIOLifecycle"> socketLifecycleTests = [] {
         refusesUdpSink({{"endpoint", std::string("127.0.0.1:5555")}, {"max_datagram_bytes", static_cast<std::uint64_t>(0)}}, "a zero datagram bound");
         refusesUdpSink({{"endpoint", std::string("127.0.0.1:5555")}, {"max_datagram_bytes", static_cast<std::uint64_t>(70000)}}, "a datagram bound above what IPv4 can carry");
 
+        const auto refusesTcpSink = [](gr::property_map settings, std::string_view what) {
+            gr::Graph graph;
+            auto&     block = graph.emplaceBlock<TcpPacketSink<std::uint8_t>>(std::move(settings));
+            expect(throws<gr::exception>([&block] { block.start(); })) << what;
+        };
+        refusesTcpSink({{"endpoint", std::string("127.0.0.1:5555")}, {"max_message_bytes", static_cast<std::uint64_t>(0)}}, "a zero message bound");
+        // the bound is what keeps item_count, payload_bytes and meta_bytes inside the 32 bits each has on the wire
+        refusesTcpSink({{"endpoint", std::string("127.0.0.1:5555")}, {"max_message_bytes", std::uint64_t{1ULL} << 32U}}, "a message bound above what the envelope's length fields can state");
+
         // a bracketed IPv6 literal parses, which is what the last-colon split exists for
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<TcpPacketSource<std::uint8_t>>({{"endpoint", std::format("[::1]:{}", reservePort(SOCK_STREAM))}, {"bind", true}, {"max_message_bytes", kBound}});
