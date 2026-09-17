@@ -843,6 +843,41 @@ const boost::ut::suite<"SoapySink shutdown"> shutdownTests = [] {
     };
 };
 
+const boost::ut::suite<"SoapySink underflow"> underflowTests = [] {
+    using namespace gr::blocks::sdr;
+    using Sched = gr::scheduler::Simple<>;
+
+    // max_underflow_count bounds a run of underflows, not a transmission: a link that starves once an hour would
+    // otherwise stop the block on its tenth hour, which is what a cumulative count means at the default of ten.
+    "a write the device takes clears the underflow count"_test = [] {
+        constexpr float kRate = 100e3f;
+        gr::Graph       flow;
+
+        // every second write reports an underflow and takes nothing, so the device starves the transmitter again
+        // and again without ever starving it twice in a row. The limit itself is off: what is under test is the
+        // count it reads.
+        auto& clockSrc = flow.emplaceBlock<gr::blocks::basic::ClockSource<CF32>>({
+            {"sample_rate", kRate},
+            {"n_samples_max", gr::Size_t{2000}},
+            {"chunk_size", gr::Size_t{64}},
+        });
+        auto& txSink   = flow.emplaceBlock<SoapySink<CF32, 1UZ>>({
+            {"device", "loopback"},
+            {"device_parameter", std::string("device_mode=tx_only,underflow_every=2")},
+            {"sample_rate", kRate},
+            {"max_chunk_size", std::uint32_t{64}},
+            {"max_underflow_count", gr::Size_t{0}},
+        });
+        expect(flow.connect<"out", "in">(clockSrc, txSink).has_value());
+
+        Sched sched;
+        expect(sched.exchange(std::move(flow)).has_value());
+        expect(runWithWatchdog(sched, std::chrono::seconds{10}).has_value());
+
+        expect(lt(txSink._underflowCount.load(), gr::Size_t{2})) << std::format("{} underflows stand after a run in which a write the device took followed every one of them", txSink._underflowCount.load());
+    };
+};
+
 const boost::ut::suite<"SoapySource device configuration"> configurationTests = [] {
     using namespace gr;
     using namespace gr::blocks::sdr;

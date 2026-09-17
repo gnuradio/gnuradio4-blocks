@@ -79,7 +79,7 @@ the order the driver lists them, after the AGC state.)">;
     soapy::Device                               _device{};
     soapy::Device::Stream<T, SOAPY_SDR_TX>      _txStream{};
     soapy::Kwargs                               _devKwargs{};
-    std::atomic<gr::Size_t>                     _underflowCount{0U};
+    std::atomic<gr::Size_t>                     _underflowCount{0U}; // consecutive underflows; a write the device took clears it
     std::atomic<std::size_t>                    _stalledWrites{0UZ}; // zero-progress writes seen by the shutdown drain and ramp
     std::atomic<bool>                           _rampAbandoned{false};
     bool                                        _ioThreadDone = true;
@@ -389,6 +389,7 @@ the order the driver lists them, after the AGC state.)">;
             }
         }
         if (nWritten > 0UZ) {
+            _underflowCount.store(0U, std::memory_order_relaxed);
             rememberLastTransmitted(0UZ, scratch[nWritten - 1UZ]);
         }
         return {nWritten, true};
@@ -453,6 +454,7 @@ the order the driver lists them, after the AGC state.)">;
             std::ignore = rSpan.consume(nConsumed);
         }
         if (nConsumed > 0UZ) {
+            _underflowCount.store(0U, std::memory_order_relaxed);
             for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
                 rememberLastTransmitted(ch, chScratch[ch][nConsumed - 1UZ]);
             }
