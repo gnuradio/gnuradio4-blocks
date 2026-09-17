@@ -38,8 +38,9 @@ GR_REGISTER_BLOCK(gr::blocks::channel::FadingChannel, [T], [std::complex<float>]
  * the time variation off in place.
  *
  * `delays`, `n_sinusoids` and `seed` draw a new realization and restart the delay line; every other setting is
- * applied to the taps already running, so sweeping a Doppler rate or a tap's power moves the channel without
- * disturbing the stream under it.
+ * applied to the taps already running, and each oscillator keeps the phase it has reached, so sweeping `max_doppler`
+ * or `sample_rate` moves the channel on from the gain it is at instead of stepping it. `powers_db` and `k_factor`
+ * scale that gain, which is what those two ask for.
  */
 template<typename T>
 requires std::is_same_v<T, std::complex<float>>
@@ -109,8 +110,8 @@ realization is reproducible and independent of how the stream is chunked. `delay
             throw gr::exception("FadingChannel: 'seed' is a staged-restart setting — a mid-stream reseed is a new realization, not a parameter change. Stop the graph to restart it.");
         }
         // Only a key that changes what is drawn, or how many draws there are, restarts the realization. Every other
-        // physical parameter is retuned onto the taps already running, which leaves the delay line and the stream
-        // position where they were.
+        // physical parameter is retuned onto the taps already running, which leaves the delay line, the stream
+        // position and the phase every oscillator has reached where they were.
         static constexpr std::array kRedrawKeys{"seed", "delays", "n_sinusoids"};
         validate();
         if (!_running || std::ranges::any_of(kRedrawKeys, [&newSettings](std::string_view key) { return newSettings.contains(key); })) {
@@ -246,7 +247,11 @@ private:
     }
 
     /// Everything the settings fix without a new draw: the tap powers, the Doppler rates, and the phasors at the
-    /// stream position already reached. The angles and the phases at sample 0 stay as they were drawn.
+    /// stream position already reached. The arrival angles stay as they were drawn. Each phase at sample 0 absorbs
+    /// the phase its sinusoid accumulated at the old rate, so that `psi + omega*k` at the current position k is
+    /// still the angle the sinusoid points at: the gain does not step at the update, and every later restore agrees
+    /// with the phasor carried forward at the new rate. A line of sight that a `k_factor` change turns on
+    /// mid-stream had no rate to carry, so its phasor starts at phase 0 at that position.
     void retune() {
         double totalPower = 0.;
         for (const double db : powers_db.value) {
@@ -258,25 +263,34 @@ private:
         const double fs    = static_cast<double>(sample_rate);
         const double twoPi = 2. * std::numbers::pi_v<double>;
 
+        // The phase at sample 0 that leaves a sinusoid pointing where it points now, once it turns at the new rate:
+        // psi + (omega_old - omega_new)*k, so psi_new + omega_new*k == psi_old + omega_old*k. At k = 0 it is the
+        // phase that was drawn.
+        const double position = static_cast<double>(_position);
+        const auto   carried  = [position, twoPi](double psi, double omegaOld, double omegaNew) noexcept { return std::remainder(psi + (omegaOld - omegaNew) * position, twoPi); };
+
         for (std::size_t m = 0UZ; m < _taps.size(); ++m) {
             Tap& tap      = _taps[m];
             tap.amplitude = std::sqrt(std::pow(10., powers_db.value[m] / 10.) * scale);
             for (std::size_t i = 0UZ; i < tap.theta.size(); ++i) {
-                tap.omega[i]   = twoPi * fd * std::cos(tap.theta[i]) / fs;
-                tap.rotator[i] = std::polar(1., tap.omega[i]);
+                const double omega = twoPi * fd * std::cos(tap.theta[i]) / fs;
+                tap.psi[i]         = carried(tap.psi[i], tap.omega[i], omega);
+                tap.omega[i]       = omega;
+                tap.rotator[i]     = std::polar(1., omega);
             }
 
+            double losOmega = 0.;
             if (m == 0UZ && k_factor > 0.0) {
                 tap.diffuseScale = std::sqrt(1. / (1. + k_factor));
                 tap.losScale     = std::sqrt(k_factor / (1. + k_factor));
-                tap.losOmega     = twoPi * fd * los_doppler_ratio / fs;
-                tap.losRotator   = std::polar(1., tap.losOmega);
+                losOmega         = twoPi * fd * los_doppler_ratio / fs;
             } else {
                 tap.diffuseScale = 1.;
                 tap.losScale     = 0.;
-                tap.losOmega     = 0.;
-                tap.losRotator   = std::complex<double>(1., 0.);
             }
+            tap.losPsi     = carried(tap.losPsi, tap.losOmega, losOmega);
+            tap.losOmega   = losOmega;
+            tap.losRotator = std::polar(1., losOmega);
         }
         restorePhasors();
     }

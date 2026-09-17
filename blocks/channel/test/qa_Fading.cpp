@@ -75,6 +75,51 @@ template<typename Block>
     return sum;
 }
 
+/// The most a tap gain of unit amplitude can move in one sample. A unit vector turned by omega moves 2*sin(omega/2)
+/// and never more than 2; a diffuse arm turns by at most omega = 2*pi*f_d/f_s and the line of sight by
+/// `los_doppler_ratio` of that, and `tapGain` sums N arms scaled by sqrt(1/(K+1))/sqrt(N) and adds the line of
+/// sight scaled by sqrt(K/(K+1)).
+[[nodiscard]] double gainStepBound(double fd, double fs, std::size_t nSinusoids, double kFactor = 0., double losRatio = 0.) {
+    const auto   chord    = [](double omega) { return 2. * std::sin(0.5 * std::min(std::abs(omega), std::numbers::pi_v<double>)); };
+    const double omegaMax = 2. * std::numbers::pi_v<double> * std::abs(fd) / fs;
+    return std::sqrt(1. / (1. + kFactor)) * std::sqrt(static_cast<double>(nSinusoids)) * chord(omegaMax) + std::sqrt(kFactor / (1. + kFactor)) * chord(omegaMax * losRatio);
+}
+
+/// The largest one-sample step of a tap process from `from` onward.
+[[nodiscard]] double largestStep(std::span<const C> gains, std::size_t from) {
+    double largest = 0.;
+    for (std::size_t k = from; k + 1UZ < gains.size(); ++k) {
+        largest = std::max(largest, std::abs(std::complex<double>(gains[k + 1UZ]) - std::complex<double>(gains[k])));
+    }
+    return largest;
+}
+
+struct LiveChange {
+    std::vector<C>       gains{};        ///< the tap process; `gains[before]` is the first sample at the new settings
+    std::complex<double> beforeUpdate{}; ///< the tap gain at position `before`, read at the old settings
+    std::complex<double> afterUpdate{};  ///< the same gain, read once the new settings have been applied
+};
+
+/// Runs a single-tap channel for `before` samples, applies `change` to the block while it runs, and runs `after`
+/// more. A constant unit input makes the output the tap process itself.
+[[nodiscard]] LiveChange liveChange(const gr::property_map& settings, const gr::property_map& change, std::size_t before, std::size_t after) {
+    auto block = configured<gr::blocks::channel::FadingChannel<C>>(settings);
+    block.start(); // only a running block retunes; before that a settings change draws a new realization
+
+    LiveChange result;
+    result.gains.resize(before + after);
+    const std::vector<C> ones(std::max(before, after), C(1.f, 0.f));
+    std::ignore = block.processBulk(std::span<const C>(ones.data(), before), std::span<C>(result.gains.data(), before));
+
+    result.beforeUpdate = block.currentGains().front();
+    std::ignore         = block.settings().setStaged(change);
+    std::ignore         = block.settings().applyStagedParameters();
+    result.afterUpdate  = block.currentGains().front();
+
+    std::ignore = block.processBulk(std::span<const C>(ones.data(), after), std::span<C>(result.gains.data() + before, after));
+    return result;
+}
+
 } // namespace
 
 const boost::ut::suite<"fading channel"> fadingTests = [] {
@@ -134,6 +179,82 @@ const boost::ut::suite<"fading channel"> fadingTests = [] {
         other["seed"]          = std::uint64_t(5);
         expect(tapProcess(kSingleTap, 4096UZ, 4096UZ) == tapProcess(kSingleTap, 4096UZ, 4096UZ));
         expect(tapProcess(kSingleTap, 4096UZ, 4096UZ) != tapProcess(other, 4096UZ, 4096UZ));
+    };
+
+    // The block promises that a setting which needs no new draw is applied to the taps already running without
+    // disturbing the stream under them, so a rate change must leave the gain where the process had carried it.
+    constexpr std::size_t kSinusoids = 16UZ;
+    constexpr std::size_t kBefore    = 1000UZ; // not a multiple of the 256-sample phasor restore interval
+    constexpr std::size_t kAfter     = 2000UZ; // carries the stream across the restores that follow the update
+    // the tap carries unit mean power, so this absolute bound on the gain is a relative one on the process
+    constexpr double kUnchanged = 1e-9;
+
+    const gr::property_map kLiveTap{{"sample_rate", static_cast<float>(fs)}, {"delays", std::vector<gr::Size_t>{0U}}, //
+        {"powers_db", std::vector<double>{0.0}}, {"max_doppler", fd}, {"n_sinusoids", static_cast<gr::Size_t>(kSinusoids)}, {"seed", std::uint64_t(4)}};
+
+    // a Rician tap retunes its line of sight along with its diffuse arms, so both carry their phase across
+    "a live Doppler change keeps the gain it had reached"_test = [&] {
+        constexpr double losRatio = 0.7; // the block's default
+        for (const double k : {0., 4.}) {
+            gr::property_map settings     = kLiveTap;
+            settings["k_factor"]          = k;
+            settings["los_doppler_ratio"] = losRatio;
+
+            const auto   run  = liveChange(settings, {{"max_doppler", 2. * fd}}, kBefore, kAfter);
+            const double step = std::abs(run.afterUpdate - run.beforeUpdate);
+            expect(lt(step, kUnchanged)) << std::format("K = {:.0f}: doubling max_doppler stepped the gain by {:g}", k, step);
+
+            const double bound   = gainStepBound(2. * fd, fs, kSinusoids, k, losRatio);
+            const double largest = largestStep(std::span<const C>(run.gains), kBefore - 1UZ);
+            expect(lt(largest, bound)) << std::format("K = {:.0f}: largest one-sample step from the update on {:g}, the sinusoids can move {:g}", k, largest, bound);
+        }
+    };
+
+    "a live sample-rate change keeps the gain it had reached"_test = [&] {
+        // halving the rate doubles every phase increment
+        const auto   run  = liveChange(kLiveTap, {{"sample_rate", static_cast<float>(0.5 * fs)}}, kBefore, kAfter);
+        const double step = std::abs(run.afterUpdate - run.beforeUpdate);
+        expect(lt(step, kUnchanged)) << std::format("halving sample_rate stepped the gain by {:g}", step);
+
+        const double bound   = gainStepBound(fd, 0.5 * fs, kSinusoids);
+        const double largest = largestStep(std::span<const C>(run.gains), kBefore - 1UZ);
+        expect(lt(largest, bound)) << std::format("largest one-sample step from the update on {:g}, the sinusoids can move {:g}", largest, bound);
+    };
+
+    "a retuned Doppler is the rate the process then follows"_test = [&] {
+        constexpr std::size_t kMeasured = 200'000UZ;
+        constexpr double      twoPi     = 2. * std::numbers::pi_v<double>;
+        const double          newFd     = 2. * fd;
+
+        const auto               run = liveChange(kLiveTap, {{"max_doppler", newFd}}, kBefore, kMeasured);
+        const std::span<const C> after(run.gains.data() + kBefore, kMeasured);
+
+        const auto   lag      = static_cast<std::size_t>(std::llround(0.25 / newFd * fs));
+        const double measured = autocorrelationAt(after, lag);
+        const double atNew    = std::abs(besselJ0(twoPi * newFd * static_cast<double>(lag) / fs));
+        const double atOld    = std::abs(besselJ0(twoPi * fd * static_cast<double>(lag) / fs));
+        std::println("Fading after a live retune: autocorrelation {:.4f}, J0 at the new rate {:.4f}, at the old {:.4f}", measured, atNew, atOld);
+        expect(lt(std::abs(measured - atNew), 0.12)) << std::format("measured {:.4f}, J0 at the new Doppler {:.4f}", measured, atNew);
+        expect(gt(std::abs(measured - atOld), 0.12)) << std::format("measured {:.4f} still follows the old Doppler, whose J0 is {:.4f}", measured, atOld);
+    };
+
+    "a live Doppler change starts a frozen channel moving"_test = [&] {
+        gr::property_map frozen = kLiveTap;
+        frozen["max_doppler"]   = 0.0;
+
+        const auto   run  = liveChange(frozen, {{"max_doppler", fd}}, kBefore, kAfter);
+        const double step = std::abs(run.afterUpdate - run.beforeUpdate);
+        expect(lt(step, kUnchanged)) << std::format("unfreezing the channel stepped the gain by {:g}", step);
+
+        const double bound   = gainStepBound(fd, fs, kSinusoids);
+        const double largest = largestStep(std::span<const C>(run.gains), kBefore - 1UZ);
+        expect(lt(largest, bound)) << std::format("largest one-sample step from the update on {:g}, the sinusoids can move {:g}", largest, bound);
+
+        double wandered = 0.;
+        for (std::size_t k = kBefore; k < run.gains.size(); ++k) {
+            wandered = std::max(wandered, std::abs(std::complex<double>(run.gains[k]) - run.afterUpdate));
+        }
+        expect(gt(wandered, 0.1)) << std::format("an unfrozen channel must vary, it moved {:g} over {} samples", wandered, kAfter);
     };
 
     // A line of sight does not shift the mean: it rotates at its own Doppler, so it averages away like the
