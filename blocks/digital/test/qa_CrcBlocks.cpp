@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <numeric>
 #include <span>
 #include <string>
@@ -398,6 +399,16 @@ const boost::ut::suite<"crc blocks"> crcBlockTests = [] {
             const std::vector<Record> justLongEnough{makeRecord(std::vector<std::uint8_t>(shortest + 1UZ, 0x11U))};
             expect(eq(check(checker, std::span<const Record>(justLongEnough)).fail.size(), 1UZ)) << set.name;
         }
+
+        // skip_header_bytes at the largest value its own type holds. The guard reaches it by subtracting from the
+        // record's length, so the record is dropped; a guard that added the skip to the CRC width would wrap on a
+        // target whose size_t is 32 bits, and every record would pass a test it cannot satisfy.
+        CrcCheck                  atMaximumSkip = make<CrcCheck>(settingsOf(kSets[0], "big", std::numeric_limits<gr::Size_t>::max()));
+        const std::vector<Record> oneRecord{makeRecord(std::vector<std::uint8_t>(64UZ, 0x11U))};
+        const Sorted              sorted = check(atMaximumSkip, std::span<const Record>(oneRecord));
+        expect(eq(sorted.ok.size(), 0UZ));
+        expect(eq(sorted.fail.size(), 0UZ)) << "a record shorter than skip_header_bytes is not a failed CRC";
+        expect(eq(sorted.consumed, 1UZ)) << "dropped, and consumed, so nothing wedges";
     };
 
     "skip_header_bytes is excluded from the computation and never stripped"_test = [] {
