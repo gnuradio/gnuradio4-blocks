@@ -12,4 +12,5 @@ function(add_analog_benchmark BM_NAME)
 endfunction()
 
 add_analog_benchmark(bm_Agc)
+add_analog_benchmark(bm_FmEmphasis)
 add_analog_benchmark(bm_QuadratureDemod)

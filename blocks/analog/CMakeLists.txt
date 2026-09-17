@@ -13,6 +13,7 @@ gr_add_block_library(
   ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
   include/gnuradio-4.0/analog/Agc.hpp
+  include/gnuradio-4.0/analog/FmEmphasis.hpp
   include/gnuradio-4.0/analog/QuadratureDemod.hpp
   LINK_LIBRARIES
   gr-analog)
