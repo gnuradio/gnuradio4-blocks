@@ -238,24 +238,28 @@ testing the residue, so it can report what it received: `meta_information[0]` ca
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& okSpan, OutputSpanLike auto& failSpan) {
-        const std::size_t shortest      = static_cast<std::size_t>(skip_header_bytes) + _crcBytes;
-        const std::size_t available     = inSpan.size();
-        const bool        okConnected   = okSpan.isConnected; // read once, so the room test and the store cannot disagree
-        const bool        failConnected = failSpan.isConnected;
-        std::size_t       consumed      = 0UZ;
-        std::size_t       onOk          = 0UZ;
-        std::size_t       onFail        = 0UZ;
+        // the guard subtracts rather than adds: skip_header_bytes is 32 bits wide, so on a target whose size_t is also
+        // 32 bits a skip within width/8 bytes of the maximum would carry the sum past the length it is compared with,
+        // and every record would pass a guard it cannot satisfy. shortest is formed in 64 bits, for the message alone.
+        const std::size_t   skip          = static_cast<std::size_t>(skip_header_bytes);
+        const std::uint64_t shortest      = static_cast<std::uint64_t>(skip_header_bytes) + static_cast<std::uint64_t>(_crcBytes);
+        const std::size_t   available     = inSpan.size();
+        const bool          okConnected   = okSpan.isConnected; // read once, so the room test and the store cannot disagree
+        const bool          failConnected = failSpan.isConnected;
+        std::size_t         consumed      = 0UZ;
+        std::size_t         onOk          = 0UZ;
+        std::size_t         onFail        = 0UZ;
 
         for (std::size_t i = 0UZ; i < available; ++i) {
             const std::span<const std::uint8_t> bytes = detail::payloadOf(inSpan[i]);
-            if (bytes.size() <= shortest) {
+            if (bytes.size() <= skip || bytes.size() - skip <= _crcBytes) {
                 std::println(stderr, "gr::blocks::digital::CrcCheck: dropping a record of {} bytes, which is no longer than skip_header_bytes + width/8 = {}", bytes.size(), shortest);
                 ++consumed;
                 continue;
             }
 
             const std::uint64_t received   = detail::readTrailingCrc(bytes, _crcBytes, _order);
-            const std::uint64_t recomputed = _crc.compute(bytes.subspan(static_cast<std::size_t>(skip_header_bytes), bytes.size() - shortest));
+            const std::uint64_t recomputed = _crc.compute(bytes.subspan(skip, bytes.size() - skip - _crcBytes));
             const bool          passed     = received == recomputed;
 
             if (passed) {
