@@ -315,6 +315,9 @@ private:
         if (max_message_bytes.value == 0ULL) {
             throw gr::exception("max_message_bytes is 0; every chunk would be refused");
         }
+        if (max_message_bytes.value > gr::network::kMaxEnvelopeBytes) {
+            throw gr::exception(std::format("max_message_bytes is {}; {} is the largest envelope the header's 32-bit length fields can state", max_message_bytes.value, gr::network::kMaxEnvelopeBytes));
+        }
     }
 
     /// @brief Refuse a change to a setting the running socket was built from, naming it.

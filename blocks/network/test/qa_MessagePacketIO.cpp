@@ -204,6 +204,8 @@ const boost::ut::suite<"MessagePacketSink"> messagePacketSinkTests = [] {
         refuses({{"endpoint", std::string("")}}, "an empty endpoint");
         refuses({{"endpoint", endpoint.uri}, {"pattern", std::string("sub")}}, "a pattern no sink runs");
         refuses({{"endpoint", endpoint.uri}, {"max_message_bytes", std::uint64_t{0ULL}}}, "a zero message bound");
+        // the bound is what keeps meta_bytes, the one length field a message envelope uses, inside its 32 bits
+        refuses({{"endpoint", endpoint.uri}, {"max_message_bytes", std::uint64_t{1ULL} << 32U}}, "a message bound above what the envelope's length fields can state");
     };
 
     // A message addressed to the sink itself is how a host application reads and changes the sink's own settings, so

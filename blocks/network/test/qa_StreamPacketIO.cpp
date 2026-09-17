@@ -333,6 +333,8 @@ const boost::ut::suite<"StreamPacketSink"> streamPacketSinkTests = [] {
         refuses({{"endpoint", endpoint.uri}, {"pattern", std::string("sub")}}, "a pattern no sink runs");
         refuses({{"endpoint", endpoint.uri}, {"overflow", std::string("wait")}}, "an overflow rule that is neither");
         refuses({{"endpoint", endpoint.uri}, {"max_message_bytes", std::uint64_t{0ULL}}}, "a zero message bound");
+        // the bound is what keeps item_count, payload_bytes and meta_bytes inside the 32 bits each has on the wire
+        refuses({{"endpoint", endpoint.uri}, {"max_message_bytes", std::uint64_t{1ULL} << 32U}}, "a message bound above what the envelope's length fields can state");
     };
 
     // What the sink puts in the metadata frame is the whole of what makes a stream reassemblable at the far end, so

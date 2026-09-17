@@ -486,6 +486,9 @@ private:
         if (max_message_bytes.value == 0ULL) {
             throw gr::exception("max_message_bytes is 0; every packet would be rejected");
         }
+        if (max_message_bytes.value > gr::network::kMaxEnvelopeBytes) {
+            throw gr::exception(std::format("max_message_bytes is {}; {} is the largest envelope the header's 32-bit length fields can state", max_message_bytes.value, gr::network::kMaxEnvelopeBytes));
+        }
         if (reconnect_ms.value == 0U) {
             throw gr::exception("reconnect_ms is 0; a connecting sink would retry without pause and spend the thread on nothing else");
         }
