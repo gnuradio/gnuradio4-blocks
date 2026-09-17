@@ -2,12 +2,12 @@
 # socket pair, which needs nothing beyond POSIX. The socket blocks build whenever the family is enabled; only the ZMQ
 # half is conditional on its dependency.
 set(GR4_NETWORK_HAVE_LIBZMQ FALSE)
-if(TARGET PkgConfig::GR4_LIBZMQ AND GR4_CPPZMQ_INCLUDE_DIR)
+if(TARGET PkgConfig::GR4_LIBZMQ AND (GR4_NETWORK_CPPZMQ_TARGET OR GR4_CPPZMQ_INCLUDE_DIR))
   set(GR4_NETWORK_HAVE_LIBZMQ TRUE)
 else()
   message(
     STATUS
-      "GR4_ENABLE_NETWORK is ON but libzmq or the cppzmq header was not found — the ZMQ transports are not built; the TCP/UDP transports are"
+      "GR4_ENABLE_NETWORK is ON but libzmq or cppzmq was not found — the ZMQ transports are not built; the TCP/UDP transports are"
   )
 endif()
 
@@ -21,8 +21,16 @@ if(GR4_NETWORK_HAVE_LIBZMQ)
   # the exported interface now names a target only this project's configure defines, so the installed config file has to
   # define it too; said here, where the interface is written, and read at the top level where that file is generated
   set_property(GLOBAL PROPERTY GR4_EXPORT_NEEDS_LIBZMQ TRUE)
-  # cppzmq is a stray header rather than a package, so it carries no include directory of its own
-  target_include_directories(gr-network SYSTEM INTERFACE $<BUILD_INTERFACE:${GR4_CPPZMQ_INCLUDE_DIR}>)
+  # cppzmq is header-only, so the directory zmq.hpp sits in is a usage requirement of this family and cannot be derived
+  # from libzmq: the two are separate packages and need not share an include directory. What the install interface can
+  # say about that directory is only that it is needed -- the path itself is this machine's -- so the installed config
+  # file resolves cppzmq on the consumer's machine and attaches what it finds to the imported target.
+  set_property(GLOBAL PROPERTY GR4_EXPORT_NEEDS_CPPZMQ TRUE)
+  if(GR4_NETWORK_CPPZMQ_TARGET)
+    target_link_libraries(gr-network INTERFACE ${GR4_NETWORK_CPPZMQ_TARGET})
+  else()
+    target_include_directories(gr-network SYSTEM INTERFACE $<BUILD_INTERFACE:${GR4_CPPZMQ_INCLUDE_DIR}>)
+  endif()
 endif()
 install(TARGETS gr-network EXPORT gnuradio4Targets)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/network"

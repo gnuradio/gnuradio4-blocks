@@ -28,8 +28,7 @@ unset(_gnuradio4Blocks_needs_ZeroMQ)
 # target this project's configure created for libzmq, so a consumer linking it fails at generate time -- "links to
 # target PkgConfig::GR4_LIBZMQ but the target was not found" -- unless the same target exists there. It is rebuilt here
 # under the same name from the same pkg-config module rather than baked into the export as this machine's library path:
-# a consumer's own libzmq, found the consumer's own way, is the one it should link, and its include directory comes
-# with it, which is where cppzmq's zmq.hpp sits.
+# a consumer's own libzmq, found the consumer's own way, is the one it should link.
 #
 # Not REQUIRED: only the network family names libzmq, and a consumer of any other family must not be refused the whole
 # package for a library it never links. Where libzmq is genuinely absent the target stays undefined and that consumer
@@ -43,6 +42,79 @@ if(@GR4_EXPORT_NEEDS_LIBZMQ@ AND NOT TARGET PkgConfig::GR4_LIBZMQ)
   endif()
 endif()
 
+# The same for cppzmq, which the network family names for a second reason: the C++ binding is header-only, so the
+# target is also the only statement of which directory `#include <zmq.hpp>` resolves in. libzmq's own include directory
+# answers for it only where the two packages happen to share one; where cppzmq lives in its own prefix a consumer that
+# is told nothing configures and then fails in the compiler. Found here by the provider this install was built with,
+# because that is the one whose target name the export carries.
+#
+# Where that provider was a loose header there is no target name in the export and nothing to re-create: a header's
+# directory is a fact about the machine that built the install and about no other, so publishing it would hand a
+# relocated consumer a path that resolves only by coincidence. The consumer's own machine is searched instead, package
+# first, and whatever answers is attached to the imported target once the targets file below has defined it.
+set(_gnuradio4Blocks_cppzmq_link "")
+set(_gnuradio4Blocks_cppzmq_include "")
+set(_gnuradio4Blocks_needs_cppzmq @GR4_EXPORT_NEEDS_CPPZMQ@)
+if(_gnuradio4Blocks_needs_cppzmq)
+  set(_gnuradio4Blocks_cppzmq_provider "@GR4_NETWORK_CPPZMQ_PROVIDER@")
+  if(_gnuradio4Blocks_cppzmq_provider STREQUAL "cmake")
+    if(NOT TARGET cppzmq)
+      find_package(cppzmq CONFIG QUIET)
+    endif()
+    if(NOT TARGET cppzmq)
+      message(STATUS "gnuradio4Blocks: the cppzmq package was not found; gnuradio4::gr-network and"
+                     " gnuradio4::GrNetworkBlocksShared cannot be linked from this install")
+    endif()
+  elseif(_gnuradio4Blocks_cppzmq_provider STREQUAL "pkgconfig")
+    if(NOT TARGET PkgConfig::GR4_CPPZMQ)
+      find_dependency(PkgConfig)
+      pkg_check_modules(GR4_CPPZMQ QUIET IMPORTED_TARGET cppzmq)
+    endif()
+    if(NOT TARGET PkgConfig::GR4_CPPZMQ)
+      message(STATUS "gnuradio4Blocks: cppzmq was not found by pkg-config; gnuradio4::gr-network and"
+                     " gnuradio4::GrNetworkBlocksShared cannot be linked from this install")
+    endif()
+  else()
+    if(NOT TARGET cppzmq)
+      find_package(cppzmq CONFIG QUIET)
+    endif()
+    if(NOT TARGET PkgConfig::GR4_CPPZMQ AND NOT TARGET cppzmq)
+      find_dependency(PkgConfig)
+      pkg_check_modules(GR4_CPPZMQ QUIET IMPORTED_TARGET cppzmq)
+    endif()
+    if(TARGET cppzmq)
+      set(_gnuradio4Blocks_cppzmq_link cppzmq)
+    elseif(TARGET PkgConfig::GR4_CPPZMQ)
+      set(_gnuradio4Blocks_cppzmq_link PkgConfig::GR4_CPPZMQ)
+    else()
+      find_path(GR4_CPPZMQ_INCLUDE_DIR zmq.hpp)
+      if(GR4_CPPZMQ_INCLUDE_DIR)
+        set(_gnuradio4Blocks_cppzmq_include "${GR4_CPPZMQ_INCLUDE_DIR}")
+      else()
+        message(STATUS "gnuradio4Blocks: cppzmq was not found as a package, by pkg-config or as a header on this"
+                       " machine; gnuradio4::gr-network and gnuradio4::GrNetworkBlocksShared cannot compile"
+                       " <zmq.hpp> from this install")
+      endif()
+    endif()
+  endif()
+  unset(_gnuradio4Blocks_cppzmq_provider)
+endif()
+unset(_gnuradio4Blocks_needs_cppzmq)
+
 include("${CMAKE_CURRENT_LIST_DIR}/gnuradio4Targets.cmake")
+
+# The imported target exists only now, so this is where a cppzmq resolved above for a loose-header install is attached
+# to it. An imported target's usage requirements may be appended to; both include properties are set because the second
+# is what keeps the binding's own warnings out of a consumer's build, as SYSTEM INTERFACE did in the tree that built it.
+if(TARGET gnuradio4::gr-network AND _gnuradio4Blocks_cppzmq_link)
+  set_property(TARGET gnuradio4::gr-network APPEND PROPERTY INTERFACE_LINK_LIBRARIES "${_gnuradio4Blocks_cppzmq_link}")
+elseif(TARGET gnuradio4::gr-network AND _gnuradio4Blocks_cppzmq_include)
+  set_property(TARGET gnuradio4::gr-network APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES
+                                                            "${_gnuradio4Blocks_cppzmq_include}")
+  set_property(TARGET gnuradio4::gr-network APPEND PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+                                                            "${_gnuradio4Blocks_cppzmq_include}")
+endif()
+unset(_gnuradio4Blocks_cppzmq_link)
+unset(_gnuradio4Blocks_cppzmq_include)
 
 check_required_components(gnuradio4Blocks)
