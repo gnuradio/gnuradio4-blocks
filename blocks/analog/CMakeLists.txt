@@ -15,6 +15,7 @@ gr_add_block_library(
   include/gnuradio-4.0/analog/Agc.hpp
   include/gnuradio-4.0/analog/FmEmphasis.hpp
   include/gnuradio-4.0/analog/QuadratureDemod.hpp
+  include/gnuradio-4.0/analog/Squelch.hpp
   LINK_LIBRARIES
   gr-analog)
 
