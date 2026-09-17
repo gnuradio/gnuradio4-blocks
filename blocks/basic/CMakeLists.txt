@@ -3,6 +3,7 @@ set(GrBasicBlocks_HDRS
     include/gnuradio-4.0/basic/ConverterBlocks.hpp
     include/gnuradio-4.0/basic/DataSink.hpp
     include/gnuradio-4.0/basic/FunctionGenerator.hpp
+    include/gnuradio-4.0/basic/SampleDelay.hpp
     include/gnuradio-4.0/basic/Selector.hpp
     include/gnuradio-4.0/basic/SignalGenerator.hpp
     include/gnuradio-4.0/basic/StreamToDataSet.hpp
@@ -52,4 +53,8 @@ gr_add_block_library(
 
 if(TARGET gnuradio4::GrBasicBlocksShared AND ENABLE_TESTING)
   add_subdirectory(test)
+endif()
+
+if(ENABLE_EXAMPLES)
+  add_subdirectory(benchmarks)
 endif()
