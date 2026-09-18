@@ -36,25 +36,15 @@
  * correlation, so a demodulator hands over whatever amplitude it has: scaling every value scales
  * the metric and moves no decision.
  *
- * One record is one frame. The encoder appends the K-1 zero bits that return the register to the
- * zero state, so `k` information bits become `(k + K - 1) * n` coded bits, and the decoder holds
- * the whole trellis and tracks back from the state termination guarantees. That is what makes the
- * decode exact maximum likelihood rather than the survivor of a truncated window, and it is why
- * the record boundary, not a truncation depth, is the unit here. The decoders also take
- * `termination = "open"` for a record cut out of a continuous convolutional stream — frames that
- * run into each other, as a CCSDS channel's do: every step carries an information bit, neither
- * end state is known, the trellis converges within about 5K steps of the record's start and the
- * last K-1 information bits lack the future that would resolve them, so a caller extracts that
- * margin beyond its payload and discards it. The encoder has no open mode: an encoder that does
- * not terminate is a stream, not a record.
+ * One record is one frame: the encoder terminates it and the decoder holds the whole trellis and
+ * tracks back from that termination, so a decode is maximum likelihood over the record rather than
+ * the survivor of a truncated window.
  *
- * A Viterbi decode has no refusal — the trellis has a best path through any word — so the
- * decoders write `corrected_errors` and no `uncorrectable_errors`. A key that could only ever be
- * zero would say something about the decode that is not true.
- *
- * The code is immutable configuration rather than a live setting. Both ends of a link agree on it
- * before the first bit, so changing it makes a different chain, which is what rebuilding a graph
- * is for.
+ * The decoders also take `termination = "open"` for a record cut out of a continuous convolutional
+ * stream, as a CCSDS channel's frames are: every step carries an information bit, neither end
+ * state is known, the trellis converges within about 5K steps of the record's start, and the last
+ * K-1 information bits lack the future that would resolve them, so a caller extracts that margin
+ * beyond its payload and discards it. The encoder always terminates.
  */
 namespace gr::blocks::fec {
 
@@ -168,7 +158,7 @@ decoding counterparts.
 
     void rebuild() {
         _code       = detail::convolutionalCode(constraint_length.value, polynomials.value, code.value, invert_outputs.value);
-        _configured = true; // only reached when the settings named a code the kernel accepts
+        _configured = true;
     }
 
     void stop() {
@@ -177,7 +167,7 @@ decoding counterparts.
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        if (!_configured) { // inert rather than coding under a code nobody chose
+        if (!_configured) {
             std::ignore = inSpan.consume(0UZ);
             outSpan.publish(0UZ);
             return work::Status::ERROR;
@@ -263,7 +253,7 @@ zero. The distance in `corrected_errors` is how far the received frame stood fro
         _code        = detail::convolutionalCode(constraint_length.value, polynomials.value, code.value, invert_outputs.value);
         _termination = detail::terminationByName(termination.value);
         std::ignore  = _decoder.configure(_code, _termination);
-        _configured  = true; // only reached when the settings named a code the kernel accepts
+        _configured  = true;
     }
 
     void stop() {
@@ -272,7 +262,7 @@ zero. The distance in `corrected_errors` is how far the received frame stood fro
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        if (!_configured) { // inert rather than decoding under a code nobody chose
+        if (!_configured) {
             std::ignore = inSpan.consume(0UZ);
             outSpan.publish(0UZ);
             return work::Status::ERROR;
@@ -360,7 +350,7 @@ drops and the metadata carry are ViterbiDecode's.
         _code        = detail::convolutionalCode(constraint_length.value, polynomials.value, code.value, invert_outputs.value);
         _termination = detail::terminationByName(termination.value);
         std::ignore  = _decoder.configure(_code, _termination);
-        _configured  = true; // only reached when the settings named a code the kernel accepts
+        _configured  = true;
     }
 
     void stop() {
@@ -369,7 +359,7 @@ drops and the metadata carry are ViterbiDecode's.
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        if (!_configured) { // inert rather than decoding under a code nobody chose
+        if (!_configured) {
             std::ignore = inSpan.consume(0UZ);
             outSpan.publish(0UZ);
             return work::Status::ERROR;

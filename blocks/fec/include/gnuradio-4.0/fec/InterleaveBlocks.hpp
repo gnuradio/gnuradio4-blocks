@@ -44,9 +44,8 @@
  * deinterleaves before its decoder: a permutation never reads a value, so the float
  * registration is addressing arithmetic over a different carrier and nothing more.
  *
- * One block pair carries all three families, selected by an immutable `kind` setting. The
- * settings surfaces barely overlap, but the record contract, the counted drops and the counters
- * are identical across them, and three pairs would state that contract three times.
+ * One block pair carries all three families, selected by `kind`. The record contract, the counted
+ * drops and the counters are the same for all three; the settings each family reads are below.
  *
  * - **`block`** takes `rows` and `cols`, and — on `Interleave` only — optionally the
  *   `window_offset` and `window_length` of a readout that covers only part of the interleaved
@@ -55,22 +54,9 @@
  *   crosses a record boundary: it is stream-shaped, any record length is valid, and splitting a
  *   stream into different records gives the same output items. The end-to-end
  *   interleave-to-deinterleave delay is `branches * (branches - 1) * unit_delay` items and the
- *   initial fill emits `fill_value` rather than swallowing items, so the output is 1:1 with the
- *   input from the first item.
+ *   initial fill emits `fill_value`, so the output is 1:1 with the input from the first item.
  * - **`permutation`** takes an explicit `table`, required with no default: a published table is
- *   an interoperability constant and a default would be an interoperability assumption nobody
- *   made.
- *
- * **Metadata carry.** The framed kinds turn one record into one record and the record's facts
- * cross verbatim. The convolutional kind produces a span whose items came from several earlier
- * records, and the output record carries the facts of the record that held the *first* item of
- * that span — the only causal choice, since that is the record the span begins in. While the
- * delay lines are still filling, the span's first item came from the fill rather than from any
- * record, and the output then carries the facts of the record being consumed.
- *
- * The family and its shape are immutable configuration rather than live settings. Both ends of a
- * link agree on an interleaver before the first item, so changing one makes a different chain,
- * which is what rebuilding a graph is for.
+ *   an interoperability constant.
  */
 namespace gr::blocks::fec {
 
@@ -237,7 +223,7 @@ record being consumed while the delay lines are still filling. Deinterleave puts
     void rebuild() {
         _kernel.emplace(detail::interleaverKernel<T>(kind.value, rows.value, cols.value, window_offset.value, window_length.value, branches.value, unit_delay.value, table.value, fill_value.value));
         _origins.reset();
-        _configured = true; // only reached when the settings named a family the kernel accepts
+        _configured = true;
     }
 
     void stop() {
@@ -246,7 +232,7 @@ record being consumed while the delay lines are still filling. Deinterleave puts
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        if (!_configured) { // inert rather than permuting under a family nobody chose
+        if (!_configured) {
             std::ignore = inSpan.consume(0UZ);
             outSpan.publish(0UZ);
             return work::Status::ERROR;
@@ -369,7 +355,7 @@ Length refusals, the counters and the metadata carry are Interleave's, unchanged
             }
         }
         _origins.reset();
-        _configured = true; // only reached when the settings named a family the kernel accepts
+        _configured = true;
     }
 
     void stop() {
@@ -378,7 +364,7 @@ Length refusals, the counters and the metadata carry are Interleave's, unchanged
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        if (!_configured) { // inert rather than permuting under a family nobody chose
+        if (!_configured) {
             std::ignore = inSpan.consume(0UZ);
             outSpan.publish(0UZ);
             return work::Status::ERROR;

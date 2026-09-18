@@ -16,8 +16,7 @@
 namespace gr::blocks::fec::detail {
 
 // What every adapter in this module does with a record apart from its own arithmetic: shape the output record,
-// carry the input's facts onto it, and state the counters once the graph has stopped. One copy, because eleven
-// blocks answering the same question differently is eleven answers to keep true.
+// carry the input's facts onto it, and state the counters once the graph has stopped.
 
 //! A record's value under @p key, with the key's absence answered by @p fallback.
 template<typename V>

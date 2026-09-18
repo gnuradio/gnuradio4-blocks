@@ -34,9 +34,6 @@
  * and the same rule maps a record's information bits onto the right-aligned information word a
  * kernel accepts and returns. The adapters pack items into a word, call the kernel and unpack
  * its answer; nothing else about the layout is decided here.
- *
- * One code serves a whole chain, so `code` is immutable configuration rather than a live
- * setting. Changing it makes a different chain, which is what rebuilding a graph is for.
  */
 namespace gr::blocks::fec {
 
@@ -194,7 +191,7 @@ and the record that follows is processed normally, so a misaligned record costs 
 
     void rebuild() {
         _code       = detail::binaryCode(code.value);
-        _configured = true; // only reached when the setting named a code this module carries
+        _configured = true;
     }
 
     void stop() {
@@ -203,7 +200,7 @@ and the record that follows is processed normally, so a misaligned record costs 
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        if (!_configured) { // inert rather than coding under a code nobody chose
+        if (!_configured) {
             std::ignore = inSpan.consume(0UZ);
             outSpan.publish(0UZ);
             return work::Status::ERROR;
@@ -293,7 +290,7 @@ report a failure at all; the perfect codes report every word as valid.
 
     void rebuild() {
         _code       = detail::binaryCode(code.value);
-        _configured = true; // only reached when the setting named a code this module carries
+        _configured = true;
     }
 
     void stop() {
@@ -303,7 +300,7 @@ report a failure at all; the perfect codes report every word as valid.
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        if (!_configured) { // inert rather than decoding under a code nobody chose
+        if (!_configured) {
             std::ignore = inSpan.consume(0UZ);
             outSpan.publish(0UZ);
             return work::Status::ERROR;
