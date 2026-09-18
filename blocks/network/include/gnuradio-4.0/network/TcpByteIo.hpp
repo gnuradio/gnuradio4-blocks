@@ -7,7 +7,6 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
-#include <deque>
 #include <expected>
 #include <format>
 #include <mutex>
@@ -34,6 +33,7 @@
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/Port.hpp>
 #include <gnuradio-4.0/annotated.hpp>
+#include <gnuradio-4.0/network/ByteRing.hpp>
 #include <gnuradio-4.0/thread/thread_pool.hpp>
 
 /**
@@ -321,13 +321,13 @@ The socket is owned end to end by a dedicated I/O thread; `processBulk` only enq
     std::uint64_t nDisconnects  = 0ULL; ///< connections lost
     std::uint64_t nReconnects   = 0ULL; ///< connections established after the first
 
-    std::mutex               _mutex;
-    std::condition_variable  _cv;
-    std::deque<std::uint8_t> _queue;
-    bool                     _stopRequested = false;
-    bool                     _opened        = false;
-    std::string              _openFailure{};
-    bool                     _ioThreadDone = true; ///< true until start() launches the I/O thread
+    std::mutex              _mutex;
+    std::condition_variable _cv;
+    ByteRing                _ring{};
+    bool                    _stopRequested = false;
+    bool                    _opened        = false;
+    std::string             _openFailure{};
+    bool                    _ioThreadDone = true; ///< true until start() launches the I/O thread
 
     std::string   _endpoint{}; ///< the socket settings, frozen for the duration of one run
     bool          _bind             = true;
@@ -365,7 +365,7 @@ The socket is owned end to end by a dedicated I/O thread; `processBulk` only enq
             _stopRequested = false;
             _opened        = false;
             _openFailure.clear();
-            _queue.clear();
+            _ring.reset(_queueBytes);
         }
         _everConnected = false;
         gr::atomic_ref(_ioThreadDone).store_release(false);
@@ -407,15 +407,13 @@ The socket is owned end to end by a dedicated I/O thread; `processBulk` only enq
         std::size_t consumed = 0UZ;
         if (inSpan.size() > 0UZ) {
             std::unique_lock lock(_mutex);
-            for (; consumed < inSpan.size(); ++consumed) {
-                if (_queue.size() >= _queueBytes) {
-                    if (_backpressure) {
-                        break; // consume fewer items; the stall propagates upstream by the framework's own path
-                    }
-                    _queue.pop_front(); // the newest bytes are what a live consumer wants
-                    ++nBytesDropped;
-                }
-                _queue.push_back(inSpan[consumed]);
+            // `backpressure` takes only what fits, so the stall propagates upstream by the framework's own path;
+            // `drop_oldest` takes the span whole and the ring sheds the stalest bytes to make room for it
+            consumed = _backpressure ? std::min(inSpan.size(), _ring.capacity() - _ring.size()) : inSpan.size();
+            if (consumed > 0UZ) {
+                const std::size_t held = _ring.size();
+                _ring.push(std::as_bytes(std::span<const std::uint8_t>(inSpan).first(consumed)));
+                nBytesDropped += held + consumed - _ring.size(); // what the ring shed to take the push
             }
             lock.unlock();
             if (consumed > 0UZ) {
@@ -592,18 +590,17 @@ private:
                 continue;
             }
 
-            chunk.clear();
             {
                 std::unique_lock lock(_mutex);
-                _cv.wait_for(lock, std::chrono::milliseconds(detail::bytesockio::kPollMs), [this] { return _stopRequested || !_queue.empty(); });
+                _cv.wait_for(lock, std::chrono::milliseconds(detail::bytesockio::kPollMs), [this] { return _stopRequested || !_ring.empty(); });
                 if (_stopRequested) {
                     break;
                 }
-                if (_queue.empty()) {
+                if (_ring.empty()) {
                     continue;
                 }
-                chunk.assign(_queue.begin(), _queue.end());
-                _queue.clear();
+                chunk.resize(_ring.size());
+                _ring.pop(reinterpret_cast<std::byte*>(chunk.data()), chunk.size());
             }
 
             const std::size_t sent = writeSome(peer, chunk, [this] { return stopRequested(); });
@@ -641,8 +638,8 @@ private:
         std::vector<std::uint8_t> residue;
         {
             std::lock_guard lock(_mutex);
-            residue.assign(_queue.begin(), _queue.end());
-            _queue.clear();
+            residue.resize(_ring.size());
+            _ring.pop(reinterpret_cast<std::byte*>(residue.data()), residue.size());
         }
         if (residue.empty()) {
             return;
@@ -853,15 +850,15 @@ nothing more, and the reconnect loop carries on. `nReaderFailures` counts the re
     std::uint64_t nReconnects     = 0ULL; ///< connections established after the first
     std::uint64_t nReaderFailures = 0ULL; ///< reader threads that ended on a fault of the socket they own
 
-    std::mutex               _mutex;
-    std::condition_variable  _cv;
-    std::deque<std::uint8_t> _queue;
-    bool                     _stopRequested = false;
-    bool                     _opened        = false;
-    bool                     _readerFailed  = false; ///< set if the reader thread ever exits other than by request
-    std::string              _lastReaderError{};     ///< what ended the reader, empty while it runs and after a requested stop
-    std::string              _openFailure{};
-    bool                     _ioThreadDone = true;
+    std::mutex              _mutex;
+    std::condition_variable _cv;
+    ByteRing                _ring{};
+    bool                    _stopRequested = false;
+    bool                    _opened        = false;
+    bool                    _readerFailed  = false; ///< set if the reader thread ever exits other than by request
+    std::string             _lastReaderError{};     ///< what ended the reader, empty while it runs and after a requested stop
+    std::string             _openFailure{};
+    bool                    _ioThreadDone = true;
 
     std::string   _endpoint{};
     bool          _bind             = false;
@@ -899,7 +896,7 @@ nothing more, and the reconnect loop carries on. `nReaderFailures` counts the re
             _readerFailed  = false;
             _lastReaderError.clear();
             _openFailure.clear();
-            _queue.clear();
+            _ring.reset(_queueBytes);
         }
         _everConnected   = false;
         _transientFaults = 0UZ;
@@ -952,15 +949,10 @@ nothing more, and the reconnect loop carries on. `nReaderFailures` counts the re
         bool        readerFailed = false;
         bool        drained      = false;
         {
-            std::lock_guard   lock(_mutex);
-            const std::size_t n = std::min(outSpan.size(), _queue.size());
-            for (std::size_t i = 0UZ; i < n; ++i) {
-                outSpan[i] = _queue.front();
-                _queue.pop_front();
-            }
-            made         = n;
+            std::lock_guard lock(_mutex);
+            made         = _ring.pop(reinterpret_cast<std::byte*>(outSpan.data()), outSpan.size());
             readerFailed = _readerFailed;
-            drained      = _queue.empty();
+            drained      = _ring.empty();
         }
         outSpan.publish(made);
         if (made == 0UZ) {
@@ -1184,7 +1176,7 @@ private:
     /// never shrink: a read cut to it can come up short of the room there now, and cannot overrun the bound.
     [[nodiscard]] std::size_t queueRoom() {
         std::lock_guard lock(_mutex);
-        return _queueBytes - std::min(_queue.size(), _queueBytes);
+        return _ring.capacity() - _ring.size();
     }
 
     /// @brief Serve peers until a stop is asked for, or name the fault of this thread's own socket that ends it.
@@ -1370,14 +1362,10 @@ private:
     /// delivers.
     void enqueue(std::span<const std::uint8_t> bytes) {
         {
-            std::lock_guard lock(_mutex);
-            for (const std::uint8_t byte : bytes) {
-                if (_queue.size() >= _queueBytes) {
-                    _queue.pop_front();
-                    ++nBytesDropped;
-                }
-                _queue.push_back(byte);
-            }
+            std::lock_guard   lock(_mutex);
+            const std::size_t held = _ring.size();
+            _ring.push(std::as_bytes(bytes));
+            nBytesDropped += held + bytes.size() - _ring.size();
             nBytes += bytes.size();
         }
         _cv.notify_one();

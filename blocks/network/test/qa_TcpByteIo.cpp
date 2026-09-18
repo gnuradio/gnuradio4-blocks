@@ -1,6 +1,7 @@
 #include <boost/ut.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -185,6 +186,29 @@ struct RawStream {
         boost::ut::expect(sent == bytes.size()) << "the test could not write " << bytes.size() << " bytes to its raw peer";
     }
 
+    /// @brief Read at most @p count bytes, returning what arrived before @p deadline.
+    [[nodiscard]] std::vector<std::uint8_t> receive(std::size_t count, std::chrono::milliseconds deadline = 5000ms) const {
+        std::vector<std::uint8_t> bytes;
+        bytes.reserve(count);
+        const auto until = std::chrono::steady_clock::now() + deadline;
+        while (bytes.size() < count && std::chrono::steady_clock::now() < until) {
+            ::pollfd item{.fd = fd, .events = POLLIN, .revents = 0};
+            if (::poll(&item, 1UL, 50) <= 0) {
+                continue;
+            }
+            std::array<std::uint8_t, 4096UZ> scratch{};
+            const ::ssize_t                  received = ::recv(fd, scratch.data(), std::min(scratch.size(), count - bytes.size()), MSG_DONTWAIT);
+            if (received > 0) {
+                bytes.insert(bytes.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(received));
+                continue;
+            }
+            if (received == 0 || !(errno == EAGAIN || errno == EINTR)) {
+                break;
+            }
+        }
+        return bytes;
+    }
+
     /// @brief True once the peer has closed: a refused connection is accepted and immediately closed, so a read
     /// returning zero (or an error other than would-block) is the refusal's own evidence.
     [[nodiscard]] bool closedByPeer(std::chrono::milliseconds deadline = 5000ms) const {
@@ -258,6 +282,7 @@ struct ByteVectorSource : gr::Block<ByteVectorSource> {
 
     std::vector<std::uint8_t> _bytes{};
     std::size_t               _next = 0UZ;
+    std::atomic<std::size_t>  _offered{0UZ}; ///< what has been published, for a test thread reading it while the graph runs
 
     [[nodiscard]] gr::work::Status processBulk(gr::OutputSpanLike auto& outSpan) {
         if (_next >= _bytes.size()) {
@@ -269,6 +294,7 @@ struct ByteVectorSource : gr::Block<ByteVectorSource> {
             outSpan[i] = _bytes[_next + i];
         }
         _next += room;
+        _offered.store(_next, std::memory_order_relaxed);
         outSpan.publish(room);
         return room == 0UZ ? gr::work::Status::INSUFFICIENT_OUTPUT_ITEMS : gr::work::Status::OK;
     }
@@ -535,6 +561,68 @@ const boost::ut::suite<"TcpByteIo"> tcpByteIoTests = [] {
         expect(eq(counted.bytes, std::uint64_t{0ULL})) << "no peer ever connected, so nothing was written";
         expect(eq(counted.bytesDropped, std::uint64_t{kOffered})) << "every offered byte was shed: all but the last queue_bytes on overflow, those last ones as the teardown residue";
         expect(eq(counted.socketErrors, std::uint64_t{0ULL})) << "a queue that overflows is not a socket that failed";
+    };
+
+    // Which bytes drop_oldest keeps, rather than how many it sheds: what a peer arriving after the shedding receives
+    // is the newest queue_bytes of the stream, in order.
+    "the sink's drop_oldest keeps the newest bytes for a peer that arrives late"_test = [] {
+        constexpr std::size_t kQueueBytes = 64UZ;
+        constexpr std::size_t kOffered    = 4096UZ;
+        const std::uint16_t   port        = reservePort();
+
+        const std::vector<std::uint8_t> offered = seededStream(kOffered);
+
+        gr::Graph graph;
+        auto&     producer = graph.emplaceBlock<ByteVectorSource>();
+        producer._bytes    = offered;
+        auto& sink         = graph.emplaceBlock<TcpByteSink>({{"endpoint", endpointFor(port)}, {"bind", true}, {"overflow", std::string("drop_oldest")}, {"queue_bytes", gr::Size_t{static_cast<std::uint32_t>(kQueueBytes)}}});
+        expect(graph.connect<"out", "in">(producer, sink).has_value());
+
+        GraphRunner runner(std::move(graph));
+        // this many shed is every offered byte queued once, so what the queue holds from here on is the stream's tail
+        expect(waitFor([&sink] { return sink.counters().bytesDropped >= kOffered - kQueueBytes; })) << "the sink never took all the offered bytes";
+
+        RawStream peer;
+        peer.connectTo(port);
+        const std::vector<std::uint8_t> received = peer.receive(kQueueBytes);
+        const auto                      counted  = sink.counters();
+        runner.stop();
+
+        const std::vector<std::uint8_t> newest(offered.end() - static_cast<std::ptrdiff_t>(kQueueBytes), offered.end());
+        expect(eq(received.size(), kQueueBytes)) << "the late peer received less than a full queue";
+        expect(that % (received == newest)) << "what survived the shedding was not the newest queue_bytes of the stream";
+        expect(eq(counted.bytesDropped, std::uint64_t{kOffered - kQueueBytes})) << "exactly the bytes past the bound were shed";
+    };
+
+    // The same bound under backpressure: fewer input items are consumed, the stall reaches the producer by the
+    // framework's own path, and nothing queued is shed.
+    "the sink's backpressure consumes fewer items rather than shedding any"_test = [] {
+        constexpr std::size_t kQueueBytes = 64UZ;
+        constexpr std::size_t kOffered    = 1UZ << 20U;
+        const std::uint16_t   port        = reservePort();
+
+        gr::Graph graph;
+        auto&     producer = graph.emplaceBlock<ByteVectorSource>();
+        producer._bytes    = seededStream(kOffered);
+        // a listening sink nobody connects to: the queue is the only place a byte can go, so a full one is the only
+        // thing that can stop the producer
+        auto& sink = graph.emplaceBlock<TcpByteSink>({{"endpoint", endpointFor(port)}, {"bind", true}, {"overflow", std::string("backpressure")}, {"queue_bytes", gr::Size_t{static_cast<std::uint32_t>(kQueueBytes)}}});
+        expect(graph.connect<"out", "in">(producer, sink).has_value());
+
+        GraphRunner runner(std::move(graph));
+        expect(waitFor([&producer] { return producer._offered.load() >= kQueueBytes; })) << "the producer never reached the sink's queue bound";
+
+        std::this_thread::sleep_for(300ms); // three poll intervals, in which a sink that shed bytes would have taken more
+        const std::size_t stalled = producer._offered.load();
+        std::this_thread::sleep_for(300ms);
+        const std::size_t later   = producer._offered.load();
+        const auto        counted = sink.counters();
+        runner.stop();
+
+        expect(eq(later, stalled)) << "the producer was still moving, so the full queue had stopped nothing";
+        expect(stalled < kOffered) << "the whole stream was taken, so the bound refused nothing";
+        expect(eq(counted.bytesDropped, std::uint64_t{0ULL})) << "backpressure shed bytes rather than refusing them";
+        expect(eq(counted.bytes, std::uint64_t{0ULL})) << "no peer ever connected, so nothing was written";
     };
 
     // The source's own drop_oldest, including the read that arrives larger than the room left: the byte-stream
