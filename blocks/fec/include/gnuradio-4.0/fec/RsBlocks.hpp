@@ -42,10 +42,6 @@
  * neither sends them. The adapters stage each codeword into the kernel's block with the
  * padding restored, call it with `pad`, and copy the wire region back out; the kernel owns the
  * arithmetic and the checks.
- *
- * One code serves a whole chain, so every one of these settings is immutable configuration
- * rather than a live setting. Changing any makes a different chain, which is what rebuilding a
- * graph is for.
  */
 namespace gr::blocks::fec {
 
@@ -55,8 +51,7 @@ namespace detail {
 inline constexpr std::size_t kRsMaxBlockSymbols = gr::fec::ReedSolomonCcsds255_223::kBlock;
 
 //! Stage @p word into the kernel's own block type, run it, and copy the result back out. The
-//! copies keep one type-erased surface over the GF(64) and GF(256) families; a codeword is a few
-//! hundred bytes and the decode dwarfs them.
+//! copies keep one type-erased surface over the GF(64) and GF(256) families.
 template<typename TKernel>
 inline void rsEncodeThrough(std::span<std::uint8_t> word, std::size_t pad) {
     typename TKernel::Block block{};
@@ -140,8 +135,8 @@ template<typename TKernel>
     throw gr::exception(std::format("basis must be 'conventional' or 'dual', got '{}'", basis));
 }
 
-//! The interleave depth, validated against the family: 4.3.5.1's set under a CCSDS profile —
-//! 6 and 7 are refused — and this document's bound of [1, 8] otherwise.
+//! The interleave depth, validated against the family: under a CCSDS profile the depths 4.3.5.1
+//! allows, which are 1, 2, 3, 4, 5 and 8; otherwise 1 to 8.
 [[nodiscard]] inline std::size_t reedSolomonDepth(const RsCode& code, gr::Size_t interleave) {
     const std::size_t depth = static_cast<std::size_t>(interleave);
     if (code.ccsds && !gr::fec::ccsdsInterleaveDepthAllowed(depth)) {
@@ -237,7 +232,7 @@ and the record that follows is processed normally, so a misaligned record costs 
     [[nodiscard]] std::size_t wireSymbols() const noexcept { return _code.block - _pad; }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        if (!_configured) { // inert rather than coding under a code nobody chose
+        if (!_configured) {
             std::ignore = inSpan.consume(0UZ);
             outSpan.publish(0UZ);
             return work::Status::ERROR;
@@ -389,7 +384,7 @@ separate counter keeps the distinction visible. Information symbols are emitted 
     [[nodiscard]] std::size_t wireSymbols() const noexcept { return _code.block - _pad; }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        if (!_configured) { // inert rather than decoding under a code nobody chose
+        if (!_configured) {
             std::ignore = inSpan.consume(0UZ);
             outSpan.publish(0UZ);
             return work::Status::ERROR;

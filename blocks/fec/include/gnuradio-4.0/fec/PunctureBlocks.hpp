@@ -48,9 +48,6 @@
  * Neither block writes metadata. Puncturing is an encoder-side act with no status, and an inserted
  * erasure is the pattern's own fact rather than a report about the channel; the decoder's
  * `corrected_errors` already accounts for what the channel and the puncturing together cost.
- *
- * The pattern is immutable configuration rather than a live setting, for the reason the code is:
- * both ends of a link agree on it before the first bit.
  */
 namespace gr::blocks::fec {
 
@@ -135,7 +132,7 @@ receiving counterpart.
 
     void rebuild() {
         _pattern    = detail::puncturePattern(pattern.value);
-        _configured = true; // only reached when the setting named a pattern the checks above accept
+        _configured = true;
     }
 
     void stop() {
@@ -144,7 +141,7 @@ receiving counterpart.
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        if (!_configured) { // inert rather than deleting bits under a pattern nobody chose
+        if (!_configured) {
             std::ignore = inSpan.consume(0UZ);
             outSpan.publish(0UZ);
             return work::Status::ERROR;
@@ -227,7 +224,7 @@ decoder's `corrected_errors` reports what the channel and the puncturing togethe
 
     void rebuild() {
         _pattern    = detail::puncturePattern(pattern.value);
-        _configured = true; // only reached when the setting named a pattern the checks above accept
+        _configured = true;
     }
 
     void stop() {
@@ -236,7 +233,7 @@ decoder's `corrected_errors` reports what the channel and the puncturing togethe
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        if (!_configured) { // inert rather than inserting erasures under a pattern nobody chose
+        if (!_configured) {
             std::ignore = inSpan.consume(0UZ);
             outSpan.publish(0UZ);
             return work::Status::ERROR;
