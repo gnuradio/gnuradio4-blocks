@@ -57,6 +57,15 @@ Signal types (A = amplitude, f = tone_frequency, P = phase, O = offset):
 
     gr::signal::SignalGeneratorCore<T> _core;
 
+    // ~Block() invokes stop() for a block that is still active, and by then the timer state the mixin's stop()
+    // waits on has been released: the active states have to be left here, while the derived object still stands.
+    ~SignalGenerator() {
+        if (lifecycle::isActive(this->state())) {
+            std::ignore = this->changeStateTo(lifecycle::State::REQUESTED_STOP);
+        }
+        this->stopTimerAndJoin();
+    }
+
     void start() {
         _core.configure(signal_type.value, tone_frequency, sample_rate, phase, amplitude, offset, seed);
         _core.reset();
