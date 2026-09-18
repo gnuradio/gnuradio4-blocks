@@ -3,6 +3,7 @@ function(add_basic_test TEST_NAME)
   target_link_libraries(${TEST_NAME} PRIVATE gr-basic gr-testing)
 endfunction()
 
+add_basic_test(qa_ClockSourceStop)
 add_basic_test(qa_Converter)
 add_basic_test(qa_Selector)
 add_basic_test(qa_sources)

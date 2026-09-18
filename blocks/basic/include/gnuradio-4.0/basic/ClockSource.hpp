@@ -58,6 +58,15 @@ Terminates when n_samples_max is reached (0 = unlimited).)"">;
     std::size_t _nextTimeTag{0};
     std::size_t _nextTagIndex{0};
 
+    // ~Block() invokes stop() for a block that is still active, and by then the timer state the mixin's stop()
+    // waits on has been released: the active states have to be left here, while the derived object still stands.
+    ~ClockSource() {
+        if (lifecycle::isActive(this->state())) {
+            std::ignore = this->changeStateTo(lifecycle::State::REQUESTED_STOP);
+        }
+        this->stopTimerAndJoin();
+    }
+
     void start() {
         if (verbose_console) {
             std::println("ClockSource::start() - use_internal_thread: {}", static_cast<bool>(use_internal_thread));

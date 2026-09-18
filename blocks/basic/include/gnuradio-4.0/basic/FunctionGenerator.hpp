@@ -184,6 +184,15 @@ Operating modes:
     gr::signal::NoiseGenerator<double> _noise;
     gr::signal::ToneGenerator<double>  _tone;
 
+    // ~Block() invokes stop() for a block that is still active, and by then the timer state the mixin's stop()
+    // waits on has been released: the active states have to be left here, while the derived object still stands.
+    ~FunctionGenerator() {
+        if (lifecycle::isActive(this->state())) {
+            std::ignore = this->changeStateTo(lifecycle::State::REQUESTED_STOP);
+        }
+        this->stopTimerAndJoin();
+    }
+
     void start() {
         _currentTime = 0.;
         _timeTick    = 1. / static_cast<double>(sample_rate);
