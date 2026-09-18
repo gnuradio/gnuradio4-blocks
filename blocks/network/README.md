@@ -92,6 +92,12 @@ All six blocks take the same socket settings, and each side of a pair matches th
 A source's `max_message_bytes` has no default because libzmq's own bound is no limit, so a source that omitted it
 would let a peer's claimed length size an allocation before the block saw a byte.
 
+`queue_bytes` is a bound the queue keeps rather than a size it aims at: an envelope larger than the whole queue is
+never admitted, because shedding what is already queued cannot make room for one. A sink refuses such a packet to
+`reject` with `discard_reason = "over_queue_bytes"` where it has that port and counts it where it does not; a source
+discards the arrival and counts it. What the queue holds therefore never exceeds the setting, whatever `overflow`
+says and however large one packet is.
+
 `ZmqStreamSource` is the exception to the envelope, and is here for compatibility alone: it reads the
 raw sample stream GNU Radio 3.10's `gr-zeromq` publishes — one message per buffer of items, no header
 and no framing — so a stock 3.10 `zmq_pub_sink` or `zmq_push_sink` feeds a GR 4 graph unchanged and a

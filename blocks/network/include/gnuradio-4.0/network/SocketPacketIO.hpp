@@ -320,6 +320,7 @@ truncated prefix either way.
     std::uint64_t nPacketsSent          = 0ULL; ///< envelopes written whole to a peer
     std::uint64_t nBytesSent            = 0ULL; ///< envelope bytes written whole to a peer
     std::uint64_t nRejectedPackets      = 0ULL; ///< packets refused for exceeding max_message_bytes
+    std::uint64_t nOverQueueBytes       = 0ULL; ///< packets refused because one envelope exceeds queue_bytes
     std::uint64_t nDroppedOnOverflow    = 0ULL; ///< queued envelopes discarded under overflow = drop_oldest
     std::uint64_t nBackpressureStalls   = 0ULL; ///< processBulk calls that consumed fewer items than they read
     std::uint64_t nSequenceDeclined     = 0ULL; ///< packets that already stated sequence
@@ -427,18 +428,27 @@ truncated prefix either way.
 
             const std::uint64_t headerBytes = gr::network::kHeaderBytesV1;
             const std::uint64_t total       = headerBytes + metadata.size() + payloadBytes;
-            if (total > _maxMessageBytes) {
+            // the two size bounds, in the order they bind: what the wire will not carry, then what the queue cannot
+            // hold. A queue cannot shed its way to room for an envelope larger than the whole of it, so such an
+            // envelope is refused here rather than admitted over the bound the graph set.
+            const bool overMax   = total > _maxMessageBytes;
+            const bool overQueue = !overMax && total > _queueBytes;
+            if (overMax || overQueue) {
                 if (rejectConnected && onReject >= rejectSpan.size()) {
                     break; // no room on the port this packet belongs on; it stays in the buffer
                 }
                 if (rejectConnected) {
                     Packet<T> refused = packet; // republished whole: what is wrong with it is its size, not its content
                     refused.meta_information.resize(1UZ);
-                    refused.meta_information[0UZ].insert_or_assign(property_map::key_type("discard_reason"), pmt::Value(std::string("over_max_message_bytes")));
+                    refused.meta_information[0UZ].insert_or_assign(property_map::key_type("discard_reason"), pmt::Value(std::string(overMax ? "over_max_message_bytes" : "over_queue_bytes")));
                     rejectSpan[onReject] = std::move(refused);
                 }
                 ++onReject;
-                ++nRejectedPackets;
+                if (overMax) {
+                    ++nRejectedPackets;
+                } else {
+                    ++nOverQueueBytes;
+                }
                 ++consumed;
                 continue; // the sequence counter never advanced, so a refused packet does not renumber the stream
             }
@@ -561,10 +571,13 @@ private:
     }
 
     /// @brief Put an envelope on the send queue, applying `overflow` when it is full. False means "not consumed".
+    ///
+    /// `processBulk` refuses an envelope larger than `queue_bytes` before offering it, so what arrives here always
+    /// fits and shedding always makes room for it: an empty queue holds nothing and the test below is then false.
     [[nodiscard]] bool enqueue(std::vector<std::uint8_t>&& envelope) {
         const std::uint64_t bytes = envelope.size();
         std::unique_lock    lock(_mutex);
-        while (_queue.size() >= _queueMessages || (!_queue.empty() && _queuedBytes + bytes > _queueBytes)) {
+        while (_queue.size() >= _queueMessages || _queuedBytes + bytes > _queueBytes) {
             if (_backpressure) {
                 return false;
             }
@@ -598,6 +611,7 @@ private:
         append("packets sent", nPacketsSent);
         append("bytes sent", nBytesSent);
         append("rejected packets", nRejectedPackets);
+        append("over queue bytes", nOverQueueBytes);
         append("dropped on overflow", nDroppedOnOverflow);
         append("backpressure stalls", nBackpressureStalls);
         append("sequence declined", nSequenceDeclined);
@@ -948,6 +962,7 @@ required and has no default: it is the bound that decides what a peer's claimed 
     std::uint64_t nSequenceResets        = 0ULL; ///< a sequence at or below the last seen from that source
     std::uint64_t nSourcesUntracked      = 0ULL; ///< a distinct source_id beyond max_tracked_sources
     std::uint64_t nDroppedByBackpressure = 0ULL; ///< envelopes discarded because the in-process queue was full
+    std::uint64_t nOverQueueBytes        = 0ULL; ///< arrivals discarded because one alone exceeds queue_bytes
     std::uint64_t nMetaKeysMistyped      = 0ULL; ///< vocabulary keys whose type disagrees with the declaration
     std::uint64_t nTimestampsCarried     = 0ULL; ///< packet_timestamp values consumed into the carrier field
 
@@ -1228,6 +1243,7 @@ private:
         append("sequence resets", nSequenceResets);
         append("sources untracked", nSourcesUntracked);
         append("dropped by backpressure", nDroppedByBackpressure);
+        append("over queue bytes", nOverQueueBytes);
         append("metadata keys mistyped", nMetaKeysMistyped);
         append("timestamps carried", nTimestampsCarried);
         append("peers refused", nPeersRefused);
@@ -1745,10 +1761,19 @@ private:
         enqueue(std::move(arrival));
     }
 
+    /// @brief Put one decoded arrival on the queue `processBulk` drains, shedding the oldest where it does not fit.
+    ///
+    /// An arrival larger than `queue_bytes` is discarded and counted rather than queued: shedding what is queued
+    /// cannot make room for one, and queueing it anyway would put the queue above the bound the graph set. A source
+    /// has no upstream to refuse, so the count is where the loss is stated, as it is for every other loss here.
     void enqueue(Incoming&& arrival) {
         {
             std::lock_guard lock(_mutex);
-            while (_queue.size() >= _queueMessages || (!_queue.empty() && _queuedBytes + arrival.bytes > _queueBytes)) {
+            if (arrival.bytes > _queueBytes) {
+                ++nOverQueueBytes;
+                return;
+            }
+            while (_queue.size() >= _queueMessages || _queuedBytes + arrival.bytes > _queueBytes) {
                 _queuedBytes -= _queue.front().bytes;
                 _queue.pop_front();
                 ++nDroppedByBackpressure; // the one loss class this end counts exactly, which is what makes the
@@ -1843,6 +1868,7 @@ distinct cause, and the next packet is attempted normally.
     std::uint64_t nPacketsSent          = 0ULL; ///< datagrams handed to the kernel
     std::uint64_t nBytesSent            = 0ULL; ///< envelope bytes handed to the kernel
     std::uint64_t nRejectedPackets      = 0ULL; ///< packets refused for exceeding max_datagram_bytes
+    std::uint64_t nOverQueueBytes       = 0ULL; ///< packets refused because one envelope exceeds queue_bytes
     std::uint64_t nDroppedOnOverflow    = 0ULL; ///< queued envelopes discarded under overflow = drop_oldest
     std::uint64_t nBackpressureStalls   = 0ULL; ///< processBulk calls that consumed fewer items than they read
     std::uint64_t nSequenceDeclined     = 0ULL; ///< packets that already stated sequence
@@ -1939,18 +1965,27 @@ distinct cause, and the next packet is attempted normally.
 
             const std::uint64_t headerBytes = gr::network::kHeaderBytesV1;
             const std::uint64_t total       = headerBytes + metadata.size() + payloadBytes;
-            if (total > _maxDatagramBytes) {
+            // the two size bounds, in the order they bind: what one datagram will carry, then what the queue cannot
+            // hold. A queue cannot shed its way to room for an envelope larger than the whole of it, so such an
+            // envelope is refused here rather than admitted over the bound the graph set.
+            const bool overDatagram = total > _maxDatagramBytes;
+            const bool overQueue    = !overDatagram && total > _queueBytes;
+            if (overDatagram || overQueue) {
                 if (rejectConnected && onReject >= rejectSpan.size()) {
                     break; // no room on the port this packet belongs on; it stays in the buffer
                 }
                 if (rejectConnected) {
                     Packet<T> refused = packet; // republished whole: what is wrong with it is its size, not its content
                     refused.meta_information.resize(1UZ);
-                    refused.meta_information[0UZ].insert_or_assign(property_map::key_type("discard_reason"), pmt::Value(std::string("over_max_datagram")));
+                    refused.meta_information[0UZ].insert_or_assign(property_map::key_type("discard_reason"), pmt::Value(std::string(overDatagram ? "over_max_datagram" : "over_queue_bytes")));
                     rejectSpan[onReject] = std::move(refused);
                 }
                 ++onReject;
-                ++nRejectedPackets;
+                if (overDatagram) {
+                    ++nRejectedPackets;
+                } else {
+                    ++nOverQueueBytes;
+                }
                 ++consumed;
                 continue; // the sequence counter never advanced, so a refused packet does not renumber the stream
             }
@@ -2056,10 +2091,14 @@ private:
         return bytes;
     }
 
+    /// @brief Put a datagram on the send queue, applying `overflow` when it is full. False means "not consumed".
+    ///
+    /// `processBulk` refuses an envelope larger than `queue_bytes` before offering it, so what arrives here always
+    /// fits and shedding always makes room for it: an empty queue holds nothing and the test below is then false.
     [[nodiscard]] bool enqueue(std::vector<std::uint8_t>&& envelope) {
         const std::uint64_t bytes = envelope.size();
         std::unique_lock    lock(_mutex);
-        while (_queue.size() >= _queueMessages || (!_queue.empty() && _queuedBytes + bytes > _queueBytes)) {
+        while (_queue.size() >= _queueMessages || _queuedBytes + bytes > _queueBytes) {
             if (_backpressure) {
                 return false;
             }
@@ -2093,6 +2132,7 @@ private:
         append("packets sent", nPacketsSent);
         append("bytes sent", nBytesSent);
         append("rejected packets", nRejectedPackets);
+        append("over queue bytes", nOverQueueBytes);
         append("dropped on overflow", nDroppedOnOverflow);
         append("backpressure stalls", nBackpressureStalls);
         append("sequence declined", nSequenceDeclined);
@@ -2292,6 +2332,7 @@ reader threads that ended on a fault and `lastReaderError()` names the last one.
     std::uint64_t nSequenceResets        = 0ULL; ///< a sequence at or below the last seen from that source
     std::uint64_t nSourcesUntracked      = 0ULL; ///< a distinct source_id beyond max_tracked_sources
     std::uint64_t nDroppedByBackpressure = 0ULL; ///< datagrams discarded because the in-process queue was full
+    std::uint64_t nOverQueueBytes        = 0ULL; ///< arrivals discarded because one alone exceeds queue_bytes
     std::uint64_t nMetaKeysMistyped      = 0ULL; ///< vocabulary keys whose type disagrees with the declaration
     std::uint64_t nTimestampsCarried     = 0ULL; ///< packet_timestamp values consumed into the carrier field
     std::uint64_t nRecvErrors            = 0ULL; ///< read failures other than would-block and interrupt
@@ -2536,6 +2577,7 @@ private:
         append("sequence resets", nSequenceResets);
         append("sources untracked", nSourcesUntracked);
         append("dropped by backpressure", nDroppedByBackpressure);
+        append("over queue bytes", nOverQueueBytes);
         append("metadata keys mistyped", nMetaKeysMistyped);
         append("timestamps carried", nTimestampsCarried);
         append("receive errors", nRecvErrors);
@@ -2787,10 +2829,19 @@ private:
         enqueue(std::move(arrival));
     }
 
+    /// @brief Put one decoded arrival on the queue `processBulk` drains, shedding the oldest where it does not fit.
+    ///
+    /// An arrival larger than `queue_bytes` is discarded and counted rather than queued: shedding what is queued
+    /// cannot make room for one, and queueing it anyway would put the queue above the bound the graph set. A source
+    /// has no upstream to refuse, so the count is where the loss is stated, as it is for every other loss here.
     void enqueue(Incoming&& arrival) {
         {
             std::lock_guard lock(_mutex);
-            while (_queue.size() >= _queueMessages || (!_queue.empty() && _queuedBytes + arrival.bytes > _queueBytes)) {
+            if (arrival.bytes > _queueBytes) {
+                ++nOverQueueBytes;
+                return;
+            }
+            while (_queue.size() >= _queueMessages || _queuedBytes + arrival.bytes > _queueBytes) {
                 _queuedBytes -= _queue.front().bytes;
                 _queue.pop_front();
                 ++nDroppedByBackpressure; // the one loss class this end counts exactly, which is what makes the

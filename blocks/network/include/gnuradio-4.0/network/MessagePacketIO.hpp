@@ -216,6 +216,7 @@ The transport is the module's, with the same settings, patterns and defaults as 
         std::uint64_t messagesForwarded = 0ULL;
         std::uint64_t messagesKeptLocal = 0ULL; ///< messages addressed to this block by name, answered rather than sent
         std::uint64_t messagesRejected  = 0ULL; ///< messages whose envelope would exceed max_message_bytes
+        std::uint64_t overQueueBytes    = 0ULL; ///< messages refused because one envelope exceeds queue_bytes
         std::uint64_t droppedOnOverflow = 0ULL;
         std::uint64_t droppedAtStop     = 0ULL;
         std::uint64_t sendErrors        = 0ULL;
@@ -224,11 +225,13 @@ The transport is the module's, with the same settings, patterns and defaults as 
     std::uint64_t nMessagesForwarded = 0ULL; ///< messages handed to the transport
     std::uint64_t nMessagesKeptLocal = 0ULL; ///< messages this block answered instead of forwarding
     std::uint64_t nMessagesRejected  = 0ULL; ///< messages refused for exceeding max_message_bytes
+    std::uint64_t nOverQueueBytes    = 0ULL; ///< messages refused because one envelope exceeds queue_bytes
 
     std::uint64_t _sequence        = 0ULL; ///< messages this sink has published
     bool          _socketOpen      = false;
     bool          _backpressure    = false;
     std::uint64_t _maxMessageBytes = 16777216ULL;
+    std::uint64_t _queueBytes      = 16777216ULL; ///< frozen beside the transport's copy, which start() configures
 
     detail::zmqenvelope::SocketConfig _frozen{}; ///< the socket settings, read once when the socket opens
     detail::zmqenvelope::SendQueue    _sender{}; ///< joins its own thread however the block dies
@@ -237,8 +240,9 @@ The transport is the module's, with the same settings, patterns and defaults as 
 
     void start() {
         validate();
-        _frozen = frozenSocketConfig();
-        _sender.configure(static_cast<std::size_t>(queue_messages.value), queue_bytes.value, _backpressure);
+        _frozen     = frozenSocketConfig();
+        _queueBytes = queue_bytes.value;
+        _sender.configure(static_cast<std::size_t>(queue_messages.value), _queueBytes, _backpressure);
         _sequence = 0ULL; // a restarted sink restarts its stream, which the far end reads as a producer reset
         _sender.start(_frozen, this->name.value);
         _socketOpen = true;
@@ -261,7 +265,7 @@ The transport is the module's, with the same settings, patterns and defaults as 
 
     [[nodiscard]] Counters counters() const {
         const auto transport = _sender.counters();
-        return {.packetsSent = transport.packetsSent, .bytesSent = transport.bytesSent, .messagesForwarded = nMessagesForwarded, .messagesKeptLocal = nMessagesKeptLocal, .messagesRejected = nMessagesRejected, .droppedOnOverflow = transport.droppedOnOverflow, .droppedAtStop = transport.droppedAtStop, .sendErrors = transport.sendErrors};
+        return {.packetsSent = transport.packetsSent, .bytesSent = transport.bytesSent, .messagesForwarded = nMessagesForwarded, .messagesKeptLocal = nMessagesKeptLocal, .messagesRejected = nMessagesRejected, .overQueueBytes = nOverQueueBytes, .droppedOnOverflow = transport.droppedOnOverflow, .droppedAtStop = transport.droppedAtStop, .sendErrors = transport.sendErrors};
     }
 
     /// @brief What a block with no stream ports does when the scheduler calls it: nothing, and says so.
@@ -346,6 +350,13 @@ private:
             ++_sequence; // the far end reads the hole as one lost message, which is exactly what happened
             return;
         }
+        // a queue cannot shed its way to room for an envelope larger than the whole of it, so such a message is
+        // refused here rather than admitted over the bound the graph set
+        if (envelope.bytes() > _queueBytes) {
+            ++nOverQueueBytes;
+            ++_sequence;
+            return;
+        }
         if (!_sender.enqueue(std::move(envelope))) {
             return; // backpressure: the message stays unsent and is counted by the plane's own dropped-message counter
         }
@@ -366,6 +377,7 @@ private:
         append("messages forwarded", counted.messagesForwarded);
         append("messages kept local", counted.messagesKeptLocal);
         append("messages rejected", counted.messagesRejected);
+        append("over queue bytes", counted.overQueueBytes);
         append("dropped on overflow", counted.droppedOnOverflow);
         append("dropped at stop", counted.droppedAtStop);
         append("send errors", counted.sendErrors);
@@ -425,6 +437,7 @@ the far end's next packet then reports as a gap like any other loss.
         std::uint64_t sequenceResets        = 0ULL;
         std::uint64_t messagesRefused       = 0ULL; ///< the sum of every refusal reason
         std::uint64_t droppedByBackpressure = 0ULL;
+        std::uint64_t overQueueBytes        = 0ULL; ///< arrivals discarded because one alone exceeds queue_bytes
     };
 
     /// @brief One counter per envelope-kernel refusal, indexed by the error, reported under its own `discard_reason`.
@@ -445,6 +458,7 @@ the far end's next packet then reports as a gap like any other loss.
     std::uint64_t nMalformedMessage  = 0ULL; ///< no `message` map, or no command this reader knows
 
     std::uint64_t nDroppedByBackpressure = 0ULL; ///< messages the in-process queue shed
+    std::uint64_t nOverQueueBytes        = 0ULL; ///< arrivals discarded because one alone exceeds queue_bytes
 
     /// @brief One decoded message, everything about it established on the reader thread.
     struct Arrival {
@@ -513,7 +527,7 @@ the far end's next packet then reports as a gap like any other loss.
         for (const std::uint64_t count : nHeaderRefusals) {
             refused += count;
         }
-        return {.envelopesReceived = _receiver.messagesReceived(), .bytesReceived = _receiver.bytesReceived(), .messagesEmitted = nMessagesEmitted, .gapsAnnounced = nGapsAnnounced, .messagesLost = nMessagesLost, .sequenceResets = nSequenceResets, .messagesRefused = refused, .droppedByBackpressure = nDroppedByBackpressure};
+        return {.envelopesReceived = _receiver.messagesReceived(), .bytesReceived = _receiver.bytesReceived(), .messagesEmitted = nMessagesEmitted, .gapsAnnounced = nGapsAnnounced, .messagesLost = nMessagesLost, .sequenceResets = nSequenceResets, .messagesRefused = refused, .droppedByBackpressure = nDroppedByBackpressure, .overQueueBytes = nOverQueueBytes};
     }
 
     /// @brief What a block with no stream ports does when the scheduler calls it: nothing, and says so.
@@ -689,6 +703,7 @@ private:
         append("missing sequence", nMissingSequence);
         append("malformed message", nMalformedMessage);
         append("dropped by backpressure", nDroppedByBackpressure);
+        append("over queue bytes", nOverQueueBytes);
         if (!report.empty()) {
             std::println(stderr, "gr::blocks::network::MessagePacketSource '{}': {}", this->name, report);
         }
@@ -776,9 +791,17 @@ private:
         }
     }
 
+    /// @brief Put one decoded arrival on the queue the message plane drains, shedding the oldest where it does not fit.
+    ///
+    /// An arrival larger than `queue_bytes` is discarded and counted rather than queued: shedding what is queued
+    /// cannot make room for one, and queueing it anyway would put the queue above the bound the graph set.
     void enqueue(Arrival&& arrival) {
         std::lock_guard lock(_mutex);
-        while (_queue.size() >= _queueMessages || (!_queue.empty() && _queuedBytes + arrival.bytes > _queueBytes)) {
+        if (arrival.bytes > _queueBytes) {
+            ++nOverQueueBytes;
+            return;
+        }
+        while (_queue.size() >= _queueMessages || _queuedBytes + arrival.bytes > _queueBytes) {
             _queuedBytes -= _queue.front().bytes;
             _queue.pop_front();
             ++nDroppedByBackpressure; // reported downstream by the same gap message as a loss on the wire

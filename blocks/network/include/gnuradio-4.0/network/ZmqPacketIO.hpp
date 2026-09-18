@@ -106,6 +106,7 @@ counted in `droppedAtStop`, because an unbounded drain against a stalled peer is
         std::uint64_t packetsSent          = 0ULL; ///< envelopes handed to libzmq
         std::uint64_t bytesSent            = 0ULL; ///< envelope bytes handed to libzmq
         std::uint64_t rejectedPackets      = 0ULL; ///< packets refused for exceeding max_message_bytes
+        std::uint64_t overQueueBytes       = 0ULL; ///< packets refused because one envelope exceeds queue_bytes
         std::uint64_t droppedOnOverflow    = 0ULL; ///< queued envelopes discarded under overflow = drop_oldest
         std::uint64_t backpressureStalls   = 0ULL; ///< processBulk calls that consumed fewer items than they read
         std::uint64_t sequenceDeclined     = 0ULL; ///< packets that already stated sequence
@@ -120,6 +121,7 @@ counted in `droppedAtStop`, because an unbounded drain against a stalled peer is
     // Everything the block sheds is counted; what libzmq sheds inside a PUB socket is not countable at the sender and
     // is reported instead at the receiver, from the `sequence` this sink guarantees.
     std::uint64_t nRejectedPackets      = 0ULL; ///< packets refused for exceeding max_message_bytes
+    std::uint64_t nOverQueueBytes       = 0ULL; ///< packets refused because one envelope exceeds queue_bytes
     std::uint64_t nBackpressureStalls   = 0ULL; ///< processBulk calls that consumed fewer items than they read
     std::uint64_t nSequenceDeclined     = 0ULL; ///< packets that already stated sequence
     std::uint64_t nMetaKeysMistyped     = 0ULL; ///< vocabulary keys whose type disagrees with the declaration
@@ -165,7 +167,7 @@ counted in `droppedAtStop`, because an unbounded drain against a stalled peer is
 
     [[nodiscard]] Counters counters() const {
         const auto transport = _sender.counters();
-        return {.packetsSent = transport.packetsSent, .bytesSent = transport.bytesSent, .rejectedPackets = nRejectedPackets, .droppedOnOverflow = transport.droppedOnOverflow, .backpressureStalls = nBackpressureStalls, .sequenceDeclined = nSequenceDeclined, .metaKeysMistyped = nMetaKeysMistyped, .timestampsCarried = nTimestampsCarried, .defaultValuesDropped = nDefaultValuesDropped, .droppedAtStop = transport.droppedAtStop, .sendErrors = transport.sendErrors};
+        return {.packetsSent = transport.packetsSent, .bytesSent = transport.bytesSent, .rejectedPackets = nRejectedPackets, .overQueueBytes = nOverQueueBytes, .droppedOnOverflow = transport.droppedOnOverflow, .backpressureStalls = nBackpressureStalls, .sequenceDeclined = nSequenceDeclined, .metaKeysMistyped = nMetaKeysMistyped, .timestampsCarried = nTimestampsCarried, .defaultValuesDropped = nDefaultValuesDropped, .droppedAtStop = transport.droppedAtStop, .sendErrors = transport.sendErrors};
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& rejectSpan) {
@@ -184,18 +186,27 @@ counted in `droppedAtStop`, because an unbounded drain against a stalled peer is
 
             const std::uint64_t headerBytes = gr::network::kHeaderBytesV1;
             const std::uint64_t total       = headerBytes + envelope.metadata.size() + payloadBytes;
-            if (total > _maxMessageBytes) {
+            // the two size bounds, in the order they bind: what the wire will not carry, then what the queue cannot
+            // hold. A queue cannot shed its way to room for an envelope larger than the whole of it, so such an
+            // envelope is refused here rather than admitted over the bound the graph set.
+            const bool overMax   = total > _maxMessageBytes;
+            const bool overQueue = !overMax && total > _queueBytes;
+            if (overMax || overQueue) {
                 if (rejectConnected && onReject >= rejectSpan.size()) {
                     break; // no room on the port this packet belongs on; it stays in the buffer
                 }
                 if (rejectConnected) {
                     Packet<T> refused = packet; // republished whole: what is wrong with it is its size, not its content
                     refused.meta_information.resize(1UZ);
-                    refused.meta_information[0UZ].insert_or_assign(property_map::key_type("discard_reason"), pmt::Value(std::string("over_max_message_bytes")));
+                    refused.meta_information[0UZ].insert_or_assign(property_map::key_type("discard_reason"), pmt::Value(std::string(overMax ? "over_max_message_bytes" : "over_queue_bytes")));
                     rejectSpan[onReject] = std::move(refused);
                 }
                 ++onReject;
-                ++nRejectedPackets;
+                if (overMax) {
+                    ++nRejectedPackets;
+                } else {
+                    ++nOverQueueBytes;
+                }
                 ++consumed;
                 continue; // the sequence counter never advanced, so a refused packet does not renumber the stream
             }
@@ -322,6 +333,7 @@ private:
         append("packets sent", counted.packetsSent);
         append("bytes sent", counted.bytesSent);
         append("rejected packets", counted.rejectedPackets);
+        append("over queue bytes", counted.overQueueBytes);
         append("dropped on overflow", counted.droppedOnOverflow);
         append("backpressure stalls", counted.backpressureStalls);
         append("sequence declined", counted.sequenceDeclined);
@@ -410,6 +422,7 @@ legitimately join mid-stream.
     std::uint64_t nSequenceResets        = 0ULL; ///< a sequence at or below the last seen from that source
     std::uint64_t nSourcesUntracked      = 0ULL; ///< a distinct source_id beyond max_tracked_sources
     std::uint64_t nDroppedByBackpressure = 0ULL; ///< envelopes discarded because the in-process queue was full
+    std::uint64_t nOverQueueBytes        = 0ULL; ///< arrivals discarded because one alone exceeds queue_bytes
     std::uint64_t nMetaKeysMistyped      = 0ULL; ///< vocabulary keys whose type disagrees with the declaration
     std::uint64_t nTimestampsCarried     = 0ULL; ///< packet_timestamp values consumed into the carrier field
 
@@ -631,6 +644,7 @@ private:
         append("sequence resets", nSequenceResets);
         append("sources untracked", nSourcesUntracked);
         append("dropped by backpressure", nDroppedByBackpressure);
+        append("over queue bytes", nOverQueueBytes);
         append("metadata keys mistyped", nMetaKeysMistyped);
         append("timestamps carried", nTimestampsCarried);
         if (!report.empty()) {
@@ -764,9 +778,17 @@ private:
     ///
     /// Called on the reader thread, which is what the lock is for; nothing waits on the queue, because the scheduler
     /// asks for work rather than being woken by it.
+    ///
+    /// An arrival larger than `queue_bytes` is discarded and counted rather than queued: shedding what is queued
+    /// cannot make room for one, and queueing it anyway would put the queue above the bound the graph set. A source
+    /// has no upstream to refuse, so the count is where the loss is stated, as it is for every other loss here.
     void enqueue(Incoming&& arrival) {
         std::lock_guard lock(_mutex);
-        while (_queue.size() >= _queueMessages || (!_queue.empty() && _queuedBytes + arrival.bytes > _queueBytes)) {
+        if (arrival.bytes > _queueBytes) {
+            ++nOverQueueBytes;
+            return;
+        }
+        while (_queue.size() >= _queueMessages || _queuedBytes + arrival.bytes > _queueBytes) {
             _queuedBytes -= _queue.front().bytes;
             _queue.pop_front();
             ++nDroppedByBackpressure; // the one loss class this end counts exactly, which is what makes the

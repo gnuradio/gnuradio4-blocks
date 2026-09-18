@@ -428,6 +428,35 @@ const boost::ut::suite<"StreamPacketSink"> streamPacketSinkTests = [] {
             expect(std::string_view(*name->get_if<std::pmr::string>()) == std::string_view("interior"));
         }
     };
+
+    // `queue_bytes` is a bound the send queue keeps rather than a size it aims at: a chunk whose envelope is larger
+    // than the whole queue is refused, because shedding what is queued cannot make room for it. The hole it leaves
+    // is the one a refused chunk always leaves, stated in both counters.
+    "a chunk larger than queue_bytes is refused rather than queued"_test = [] {
+        constexpr std::uint64_t kQueueBytes = 64ULL; // below even a one-sample envelope, so how the span is cut cannot matter
+        constexpr std::size_t   kItems      = 64UZ;
+
+        const Endpoint endpoint;
+        gr::Graph      graph;
+        auto&          producer = graph.emplaceBlock<TaggedRunSource>();
+        producer._samples       = countingRun(0UZ, kItems);
+        // push with no peer, so nothing leaves the queue and what it holds is what the test reads
+        auto& sink = graph.emplaceBlock<StreamPacketSink<Sample>>({{"endpoint", endpoint.uri}, {"pattern", std::string("push")}, {"max_items", static_cast<gr::Size_t>(kItems)}, {"queue_bytes", kQueueBytes}});
+        expect(graph.connect<"out", "in">(producer, sink).has_value());
+
+        GraphRunner runner(std::move(graph));
+        expect(waitFor([&sink] { return sink.counters().overQueueBytes >= 1ULL; })) << "the oversize chunk was not refused by the queue";
+        const std::uint64_t queued = sink._sender.queuedBytes();
+        runner.stop();
+
+        expect(le(queued, kQueueBytes)) << "the send queue held" << queued << "bytes against a bound of" << kQueueBytes;
+        const auto counted = sink.counters();
+        expect(ge(counted.overQueueBytes, std::uint64_t{1ULL}));
+        expect(ge(counted.samplesRejected, std::uint64_t{kItems})) << "the samples the refused chunk held were not counted";
+        expect(eq(counted.packetsRejected, std::uint64_t{0ULL})) << "the chunk is inside max_message_bytes; the queue is what refused it";
+        expect(eq(counted.packetsSent, std::uint64_t{0ULL})) << "no peer was connected, so nothing can have been sent";
+        expect(eq(counted.droppedOnOverflow, std::uint64_t{0ULL})) << "nothing queued was shed to make room for what cannot fit";
+    };
 };
 
 const boost::ut::suite<"StreamPacketSource"> streamPacketSourceTests = [] {
@@ -646,6 +675,52 @@ const boost::ut::suite<"StreamPacketSource"> streamPacketSourceTests = [] {
         expect(eq(counted.sequenceGaps, std::uint64_t{0ULL}));
         expect(eq(counted.droppedByBackpressure, std::uint64_t{0ULL}));
         expect(eq(sink.counters().droppedOnOverflow, std::uint64_t{0ULL})) << "backpressure shed an envelope";
+    };
+
+    // The receive queue keeps the same bound, and states it the way a source states every other loss: the arrival is
+    // discarded and counted, because a source has no upstream to refuse.
+    "an arrival larger than queue_bytes never enters the queue"_test = [] {
+        constexpr std::uint64_t kQueueBytes = 256ULL;
+        constexpr std::size_t   kWide       = 64UZ; // 512 payload bytes, which no queue of kQueueBytes can hold
+        constexpr std::size_t   kNarrow     = 8UZ;
+
+        const Endpoint endpoint;
+        // driven without a graph, so nothing drains the receive queue and the queue itself is what the test reads
+        StreamPacketSource<Sample> source({{"endpoint", endpoint.uri}, {"pattern", std::string("pull")}, {"max_message_bytes", kBound}, {"queue_bytes", kQueueBytes}});
+        source.settings().init();
+        std::ignore = source.settings().applyStagedParameters();
+        source.start();
+
+        RawPeer peer(zmq::socket_type::push, endpoint.uri, true);
+        peer.send(makeEnvelope(countingRun(0UZ, kWide), 0ULL, 0ULL));
+        expect(waitFor([&source] { return source.counters().overQueueBytes >= 1ULL; })) << "the oversize message was not refused by the queue";
+        std::uint64_t afterOversize = 0ULL;
+        std::size_t   heldOversize  = 0UZ;
+        {
+            std::lock_guard lock(source._mutex);
+            afterOversize = source._queuedBytes;
+            heldOversize  = source._queue.size();
+        }
+
+        peer.send(makeEnvelope(countingRun(0UZ, kNarrow), 1ULL, static_cast<std::uint64_t>(kWide)));
+        expect(waitFor([&source] {
+            std::lock_guard lock(source._mutex);
+            return !source._queue.empty();
+        })) << "the message that fits never reached the queue";
+        std::uint64_t afterSmall = 0ULL;
+        {
+            std::lock_guard lock(source._mutex);
+            afterSmall = source._queuedBytes;
+        }
+        source.stop();
+
+        expect(eq(heldOversize, 0UZ)) << "the oversize message was queued";
+        expect(eq(afterOversize, std::uint64_t{0ULL})) << "the queue accounted a message it must not hold";
+        expect(le(afterSmall, kQueueBytes)) << "the receive queue held" << afterSmall << "bytes against a bound of" << kQueueBytes;
+        const auto counted = source.counters();
+        expect(eq(counted.overQueueBytes, std::uint64_t{1ULL}));
+        expect(eq(counted.droppedByBackpressure, std::uint64_t{0ULL})) << "a message that cannot fit is not an overflow";
+        expect(eq(counted.messagesRefused, std::uint64_t{0ULL})) << "the message is inside max_message_bytes; the queue is what refused it";
     };
 };
 

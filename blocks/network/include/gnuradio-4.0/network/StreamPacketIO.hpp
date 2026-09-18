@@ -168,6 +168,7 @@ stall the graph.
         std::uint64_t packetsRejected    = 0ULL;
         std::uint64_t samplesRejected    = 0ULL;
         std::uint64_t tagsRejected       = 0ULL;
+        std::uint64_t overQueueBytes     = 0ULL; ///< chunks refused because one envelope exceeds queue_bytes
         std::uint64_t droppedOnOverflow  = 0ULL;
         std::uint64_t backpressureStalls = 0ULL;
         std::uint64_t droppedAtStop      = 0ULL;
@@ -179,6 +180,7 @@ stall the graph.
     std::uint64_t nSamplesSent        = 0ULL; ///< samples enqueued for the wire
     std::uint64_t nTagsCarried        = 0ULL; ///< tags placed in a `packet_tags` list
     std::uint64_t nPacketsRejected    = 0ULL; ///< chunks refused for exceeding max_message_bytes
+    std::uint64_t nOverQueueBytes     = 0ULL; ///< chunks refused because one envelope exceeds queue_bytes
     std::uint64_t nSamplesRejected    = 0ULL; ///< samples those chunks held
     std::uint64_t nTagsRejected       = 0ULL; ///< tags those chunks held
     std::uint64_t nBackpressureStalls = 0ULL; ///< processBulk calls that consumed fewer samples than they read
@@ -192,6 +194,7 @@ stall the graph.
     bool          _socketOpen      = false;
     bool          _backpressure    = false;
     std::uint64_t _maxMessageBytes = 16777216ULL;
+    std::uint64_t _queueBytes      = 16777216ULL; ///< frozen beside the transport's copy, which start() configures
     std::size_t   _maxItems        = 0UZ;
 
     detail::zmqenvelope::SocketConfig _frozen{}; ///< the socket settings, read once when the socket opens
@@ -201,8 +204,9 @@ stall the graph.
 
     void start() {
         validate();
-        _frozen = frozenSocketConfig();
-        _sender.configure(static_cast<std::size_t>(queue_messages.value), queue_bytes.value, _backpressure);
+        _frozen     = frozenSocketConfig();
+        _queueBytes = queue_bytes.value;
+        _sender.configure(static_cast<std::size_t>(queue_messages.value), _queueBytes, _backpressure);
         _sequence       = 0ULL; // a restarted sink restarts its stream, which the far end reads as a producer reset
         _streamPosition = 0ULL;
         _sampleRate.reset();
@@ -229,7 +233,7 @@ stall the graph.
 
     [[nodiscard]] Counters counters() const {
         const auto transport = _sender.counters();
-        return {.packetsSent = transport.packetsSent, .bytesSent = transport.bytesSent, .samplesSent = nSamplesSent, .tagsCarried = nTagsCarried, .packetsRejected = nPacketsRejected, .samplesRejected = nSamplesRejected, .tagsRejected = nTagsRejected, .droppedOnOverflow = transport.droppedOnOverflow, .backpressureStalls = nBackpressureStalls, .droppedAtStop = transport.droppedAtStop, .sendErrors = transport.sendErrors};
+        return {.packetsSent = transport.packetsSent, .bytesSent = transport.bytesSent, .samplesSent = nSamplesSent, .tagsCarried = nTagsCarried, .packetsRejected = nPacketsRejected, .samplesRejected = nSamplesRejected, .tagsRejected = nTagsRejected, .overQueueBytes = nOverQueueBytes, .droppedOnOverflow = transport.droppedOnOverflow, .backpressureStalls = nBackpressureStalls, .droppedAtStop = transport.droppedAtStop, .sendErrors = transport.sendErrors};
     }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan) {
@@ -254,9 +258,16 @@ stall the graph.
             const std::uint64_t payloadBytes = static_cast<std::uint64_t>(items) * sizeof(T);
             const std::uint64_t total        = gr::network::kHeaderBytesV1 + envelope.metadata.size() + payloadBytes;
             if (total > _maxMessageBytes) {
-                rejectChunk(items, nextTag - first);
+                rejectChunk(nPacketsRejected, items, nextTag - first);
                 consumed += items;
                 continue; // both counters advance, so the far end reads the hole as one lost packet of exactly these samples
+            }
+            // a queue cannot shed its way to room for an envelope larger than the whole of it, so such a chunk is
+            // refused here rather than admitted over the bound the graph set
+            if (total > _queueBytes) {
+                rejectChunk(nOverQueueBytes, items, nextTag - first);
+                consumed += items;
+                continue;
             }
 
             gr::network::EnvelopeHeader header;
@@ -378,8 +389,10 @@ private:
     }
 
     /// @brief Skip a chunk whose envelope will not fit, advancing both counters so the hole is exactly stated.
-    void rejectChunk(std::size_t items, std::size_t tags) {
-        ++nPacketsRejected;
+    ///
+    /// @p reason is the counter for the bound that refused it, which is the only thing that differs between the two.
+    void rejectChunk(std::uint64_t& reason, std::size_t items, std::size_t tags) {
+        ++reason;
         nSamplesRejected += items;
         nTagsRejected += tags;
         ++_sequence;
@@ -401,6 +414,7 @@ private:
         append("packets rejected", counted.packetsRejected);
         append("samples rejected", counted.samplesRejected);
         append("tags rejected", counted.tagsRejected);
+        append("over queue bytes", counted.overQueueBytes);
         append("dropped on overflow", counted.droppedOnOverflow);
         append("backpressure stalls", counted.backpressureStalls);
         append("dropped at stop", counted.droppedAtStop);
@@ -477,6 +491,7 @@ sources.
         std::uint64_t sequenceResets        = 0ULL;
         std::uint64_t streamRewinds         = 0ULL;
         std::uint64_t droppedByBackpressure = 0ULL;
+        std::uint64_t overQueueBytes        = 0ULL; ///< arrivals discarded because one alone exceeds queue_bytes
         std::uint64_t tagsMalformed         = 0ULL;
         std::uint64_t emptyPackets          = 0ULL;
         std::uint64_t metaKeysMistyped      = 0ULL;
@@ -505,6 +520,7 @@ sources.
     std::uint64_t nSequenceResets        = 0ULL; ///< a sequence at or below the last seen; a producer restarted
     std::uint64_t nStreamRewinds         = 0ULL; ///< a stream_position behind where the last packet ended
     std::uint64_t nDroppedByBackpressure = 0ULL; ///< packets discarded because the in-process queue was full
+    std::uint64_t nOverQueueBytes        = 0ULL; ///< arrivals discarded because one alone exceeds queue_bytes
     std::uint64_t nTagsMalformed         = 0ULL; ///< `packet_tags` entries that were not an offset in range and a map
     std::uint64_t nEmptyPackets          = 0ULL; ///< a zero-item packet; its tags move to the next packet's first sample
     std::uint64_t nMetaKeysMistyped      = 0ULL; ///< vocabulary keys whose type disagrees with the declaration
@@ -585,7 +601,7 @@ sources.
         for (const std::uint64_t count : nHeaderRefusals) {
             refused += count;
         }
-        return {.envelopesReceived = _receiver.messagesReceived(), .bytesReceived = _receiver.bytesReceived(), .packetsPublished = nPacketsPublished, .samplesPublished = nSamplesPublished, .tagsPublished = nTagsPublished, .messagesRefused = refused, .sequenceGaps = nSequenceGaps, .packetsLost = nPacketsLost, .samplesLost = nSamplesLost, .sequenceResets = nSequenceResets, .streamRewinds = nStreamRewinds, .droppedByBackpressure = nDroppedByBackpressure, .tagsMalformed = nTagsMalformed, .emptyPackets = nEmptyPackets, .metaKeysMistyped = nMetaKeysMistyped};
+        return {.envelopesReceived = _receiver.messagesReceived(), .bytesReceived = _receiver.bytesReceived(), .packetsPublished = nPacketsPublished, .samplesPublished = nSamplesPublished, .tagsPublished = nTagsPublished, .messagesRefused = refused, .sequenceGaps = nSequenceGaps, .packetsLost = nPacketsLost, .samplesLost = nSamplesLost, .sequenceResets = nSequenceResets, .streamRewinds = nStreamRewinds, .droppedByBackpressure = nDroppedByBackpressure, .overQueueBytes = nOverQueueBytes, .tagsMalformed = nTagsMalformed, .emptyPackets = nEmptyPackets, .metaKeysMistyped = nMetaKeysMistyped};
     }
 
     [[nodiscard]] work::Status processBulk(OutputSpanLike auto& outSpan) {
@@ -799,6 +815,7 @@ private:
         append("sequence resets", nSequenceResets);
         append("stream rewinds", nStreamRewinds);
         append("dropped by backpressure", nDroppedByBackpressure);
+        append("over queue bytes", nOverQueueBytes);
         append("tags malformed", nTagsMalformed);
         append("empty packets", nEmptyPackets);
         append("metadata keys mistyped", nMetaKeysMistyped);
@@ -939,9 +956,17 @@ private:
         }
     }
 
+    /// @brief Put one decoded packet on the queue `processBulk` drains, shedding the oldest where it does not fit.
+    ///
+    /// An arrival larger than `queue_bytes` is discarded and counted rather than queued: shedding what is queued
+    /// cannot make room for one, and queueing it anyway would put the queue above the bound the graph set.
     void enqueue(Arrival&& arrival) {
         std::lock_guard lock(_mutex);
-        while (_queue.size() >= _queueMessages || (!_queue.empty() && _queuedBytes + arrival.bytes > _queueBytes)) {
+        if (arrival.bytes > _queueBytes) {
+            ++nOverQueueBytes;
+            return;
+        }
+        while (_queue.size() >= _queueMessages || _queuedBytes + arrival.bytes > _queueBytes) {
             _queuedBytes -= _queue.front().bytes;
             _queue.pop_front();
             ++nDroppedByBackpressure; // announced downstream by the same gap tag as a loss on the wire, and counted

@@ -94,6 +94,15 @@ template<typename TBlock>
     return message;
 }
 
+/// @brief The rich message with one value large enough that its envelope cannot fit the small queues below.
+[[nodiscard]] gr::Message oversizeMessage(std::uint64_t ordinal) {
+    gr::Message      message = richMessage("far/endpoint", ordinal);
+    gr::property_map data    = message.data.value();
+    data.insert_or_assign(gr::property_map::key_type("blob"), gr::pmt::Value(std::string(4096UZ, 'x')));
+    message.data = std::move(data);
+    return message;
+}
+
 /// @brief Compare two messages field for field, so a failure names the field rather than the object.
 void expectSame(const gr::Message& arrived, const gr::Message& sent) {
     using namespace boost::ut;
@@ -217,6 +226,28 @@ const boost::ut::suite<"MessagePacketSink"> messagePacketSinkTests = [] {
         const auto counted = sink->counters();
         expect(eq(counted.messagesKeptLocal, std::uint64_t{1ULL})) << "the sink forwarded a message addressed to itself";
         expect(eq(counted.messagesForwarded, std::uint64_t{1ULL})) << "the sink kept a message addressed elsewhere";
+    };
+
+    // `queue_bytes` is a bound the send queue keeps rather than a size it aims at: a message larger than the whole
+    // queue is refused, because shedding what is queued cannot make room for it.
+    "a message larger than queue_bytes is refused rather than queued"_test = [] {
+        constexpr std::uint64_t kQueueBytes = 512ULL;
+
+        const Endpoint endpoint;
+        // push with no peer, so nothing leaves the queue and what it holds is what the test reads
+        auto sink = started<MessagePacketSink>({{"endpoint", endpoint.uri}, {"pattern", std::string("push")}, {"queue_bytes", kQueueBytes}});
+
+        const std::array batch{richMessage("fits", 0ULL), oversizeMessage(1ULL)};
+        sink->processMessages(sink->msgIn, batch);
+        const std::uint64_t queued = sink->_sender.queuedBytes();
+        sink->stop();
+
+        expect(le(queued, kQueueBytes)) << "the send queue held" << queued << "bytes against a bound of" << kQueueBytes;
+        const auto counted = sink->counters();
+        expect(eq(counted.overQueueBytes, std::uint64_t{1ULL}));
+        expect(eq(counted.messagesForwarded, std::uint64_t{1ULL})) << "the message that fits is the only one queued";
+        expect(eq(counted.messagesRejected, std::uint64_t{0ULL})) << "the message is inside max_message_bytes; the queue is what refused it";
+        expect(eq(counted.droppedOnOverflow, std::uint64_t{0ULL})) << "nothing queued was shed to make room for what cannot fit";
     };
 };
 
@@ -354,6 +385,46 @@ const boost::ut::suite<"MessagePacketSource"> messagePacketSourceTests = [] {
         }
         expect(eq(source->counters().gapsAnnounced, std::uint64_t{0ULL})) << "a lossless pattern lost a message";
         expect(eq(sink->counters().messagesForwarded, std::uint64_t{kMessages}));
+    };
+
+    // The receive queue keeps the same bound, and states it the way a source states every other loss: the arrival is
+    // discarded and counted, because a source has no upstream to refuse.
+    "an arrival larger than queue_bytes never enters the queue"_test = [] {
+        constexpr std::uint64_t kQueueBytes = 512ULL;
+
+        const Endpoint endpoint;
+        auto           source = started<MessagePacketSource>({{"endpoint", endpoint.uri}, {"pattern", std::string("pull")}, {"max_message_bytes", kBound}, {"queue_bytes", kQueueBytes}});
+
+        RawPeer peer(endpoint.uri);
+        peer.send(oversizeMessage(0ULL), 0ULL);
+        expect(waitFor([&source] { return source->counters().overQueueBytes >= 1ULL; })) << "the oversize message was not refused by the queue";
+        std::uint64_t afterOversize = 0ULL;
+        std::size_t   heldOversize  = 0UZ;
+        {
+            std::lock_guard lock(source->_mutex);
+            afterOversize = source->_queuedBytes;
+            heldOversize  = source->_queue.size();
+        }
+
+        peer.send(richMessage("fits", 1ULL), 1ULL);
+        expect(waitFor([&source] {
+            std::lock_guard lock(source->_mutex);
+            return !source->_queue.empty();
+        })) << "the message that fits never reached the queue";
+        std::uint64_t afterSmall = 0ULL;
+        {
+            std::lock_guard lock(source->_mutex);
+            afterSmall = source->_queuedBytes;
+        }
+        source->stop();
+
+        expect(eq(heldOversize, 0UZ)) << "the oversize message was queued";
+        expect(eq(afterOversize, std::uint64_t{0ULL})) << "the queue accounted a message it must not hold";
+        expect(le(afterSmall, kQueueBytes)) << "the receive queue held" << afterSmall << "bytes against a bound of" << kQueueBytes;
+        const auto counted = source->counters();
+        expect(eq(counted.overQueueBytes, std::uint64_t{1ULL}));
+        expect(eq(counted.droppedByBackpressure, std::uint64_t{0ULL})) << "a message that cannot fit is not an overflow";
+        expect(eq(counted.messagesRefused, std::uint64_t{0ULL})) << "the message is inside max_message_bytes; the queue is what refused it";
     };
 };
 
