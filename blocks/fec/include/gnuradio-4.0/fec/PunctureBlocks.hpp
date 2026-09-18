@@ -98,28 +98,26 @@ struct PuncturePattern {
 
 GR_REGISTER_BLOCK(gr::blocks::fec::Puncture)
 
-/*!
-@brief Puncture: a record of coded bits in, the bits the pattern keeps out.
-
-The record's bits are walked with the pattern from phase zero, positions marked '1' being kept in
-order and positions marked '0' dropped. The pattern needs no alignment with the record's end, so any
-nonzero length punctures; only an empty record is refused, counted in `nRecordsRefused` and stated
-at `stop()`, and the record after it is punctured normally.
-
-An encoder-side rate match has no status to report, so the record's metadata crosses unchanged; its
-signal name and its single-map shape follow it, and the output record's extent names its own length.
-
-A record whose length is not a whole number of pattern periods punctures here but is refused by
-Depuncture, whose contract is stated on its own declaration. Framing a chain in whole periods is the
-sender's business, and the receiver counts what does not fit rather than guessing at it.
-*/
 struct Puncture : Block<Puncture> {
-    using Description = Doc<"puncture: a record of coded bits keeps the positions the 'pattern' setting marks '1', walked cyclically from the record's first bit">;
+    using Description = Doc<R""(
+@brief Puncture: a record of coded bits in, the bits `pattern` keeps out.
+
+The record's bits are walked with the pattern from phase zero, positions marked '1' being kept in order and positions
+marked '0' dropped. The pattern needs no alignment with the record's end, so any nonzero length punctures; only an
+empty record is refused, counted in `nRecordsRefused` and stated at `stop()`, and the record after it is punctured
+normally.
+
+An encoder-side rate match has no status to report, so the record's metadata crosses unchanged; its signal name and
+its single-map shape follow it, and the output record's extent names its own length.
+
+A record whose length is not a whole number of pattern periods punctures here and is refused by Depuncture, the
+receiving counterpart.
+)"">;
 
     PortIn<DataSet<std::uint8_t>, Async>  in;
     PortOut<DataSet<std::uint8_t>, Async> out;
 
-    Annotated<std::string, "pattern", Doc<"the mask as '1' (keep) and '0' (delete) characters, walked cyclically over the coded bits in the encoder's output order; \"1110\" and \"111001\" are the classic rate 2/3 and rate 3/4 punctures of a rate 1/2 code. There is no default, because a rate match is not universal">, Visible> pattern{};
+    Annotated<std::string, "pattern", Doc<"'1' keeps and '0' deletes, walked cyclically over the coded bits in the encoder's output order; required. \"1110\" is the classic rate 2/3 puncture of a rate 1/2 code">, Visible> pattern{};
 
     GR_MAKE_REFLECTABLE(Puncture, in, out, pattern);
 
@@ -188,33 +186,30 @@ struct Puncture : Block<Puncture> {
 
 GR_REGISTER_BLOCK(gr::blocks::fec::Depuncture)
 
-/*!
-@brief Depuncture: a record of the soft values that survived the puncture in, the coded frame with
-erasures at the deleted positions out.
-
-The pattern is walked from phase zero over the output. Every position marked '1' takes the next
-input value and every position marked '0' becomes 0.0F, the soft convention's pure erasure, which
-the Viterbi correlation metric weighs at nothing.
-
-The output's length is the input's kept count expanded back over whole periods of the pattern: an
-input of `m` values under a pattern keeping `w` of every `p` positions becomes `(m / w) * p` values.
-An input whose length is not a whole multiple of `w` therefore has no length to expand to and is a
-counted, stated drop, as is an empty record; the record after it is depunctured normally. The pair
-is an exact inverse on records whose length is a whole number of pattern periods, which is the
-domain a chain frames itself onto — outside it a kept count cannot name the length it came from,
-because the deleted positions at a record's end leave no trace in what was sent.
-
-Nothing is written to metadata; every key crosses verbatim. An inserted erasure is the pattern's own
-fact, and the decoder's `corrected_errors` already reports what the channel and the puncturing
-together cost.
-*/
 struct Depuncture : Block<Depuncture> {
-    using Description = Doc<"depuncture: a record of the surviving soft values regains the deleted positions as erasures, under the mask the 'pattern' setting spells">;
+    using Description = Doc<R""(
+@brief Depuncture: a record of the soft values that survived the puncture in, the coded frame with erasures at the
+deleted positions out.
+
+The pattern is walked from phase zero over the output. Every position marked '1' takes the next input value and every
+position marked '0' becomes 0.0F, the soft convention's pure erasure, which the Viterbi correlation metric weighs at
+nothing.
+
+The output's length is the input's kept count expanded back over whole periods of the pattern: an input of `m` values
+under a pattern keeping `w` of every `p` positions becomes `(m / w) * p` values. An input whose length is not a whole
+multiple of `w` has no length to expand to and is a counted, stated drop, as is an empty record; the record after it
+is depunctured normally. The pair is an exact inverse on records whose length is a whole number of pattern periods.
+Outside that domain a kept count cannot name the length it came from, because the deleted positions at a record's end
+leave no trace in what was sent.
+
+Nothing is written to metadata; every key crosses verbatim. An inserted erasure is the pattern's own fact, and a
+decoder's `corrected_errors` reports what the channel and the puncturing together cost.
+)"">;
 
     PortIn<DataSet<float>, Async>  in;
     PortOut<DataSet<float>, Async> out;
 
-    Annotated<std::string, "pattern", Doc<"the mask as '1' (keep) and '0' (delete) characters, the same spelling the sending Puncture was given; a deleted position returns as 0.0F, the soft convention's pure erasure. There is no default, because a rate match is not universal">, Visible> pattern{};
+    Annotated<std::string, "pattern", Doc<"the same mask the sending Puncture was given; required. A position marked '0' returns as 0.0F, the soft convention's pure erasure">, Visible> pattern{};
 
     GR_MAKE_REFLECTABLE(Depuncture, in, out, pattern);
 

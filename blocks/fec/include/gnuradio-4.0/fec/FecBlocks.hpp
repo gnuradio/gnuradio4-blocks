@@ -158,29 +158,25 @@ inline void unpackBits(std::uint64_t word, std::size_t k, std::uint8_t* items) n
 
 GR_REGISTER_BLOCK(gr::blocks::fec::FecEncode)
 
-/*!
-@brief Binary block encode: bit records in, codeword records out, one for one.
-
-Each input record carries a whole number of information words, so its length must be a nonzero
-multiple of the code's `k`, and each group of `k` bits becomes one `n`-bit codeword. The
-codewords follow one another in the output record in the order their information arrived.
-
-An encoder has no status to report, so the record's metadata crosses unchanged; its signal name
-and its single-map shape follow it, and the output record's extent names its own length. See
-FecDecode for the counterpart that reads the codes' verdict back out.
-
-A record whose length is not a multiple of `k` is dropped and counted in `nRecordsRefused`, and
-`stop()` states the total. The record that follows is processed normally, so a misaligned record
-costs one record rather than the stream: a record producer cannot emit one except through a
-fault, and the counter is where such a fault becomes visible.
-*/
 struct FecEncode : Block<FecEncode> {
-    using Description = Doc<"binary block encode: bit records to codeword records, one for one, under the code the 'code' setting names">;
+    using Description = Doc<R""(
+@brief Binary block encode: bit records in, codeword records out, one for one, under the code `code` names.
+
+Each input record carries a whole number of information words, so its length must be a nonzero multiple of the code's
+`k`, and each group of `k` bits becomes one `n`-bit codeword. The codewords follow one another in the output record in
+the order their information arrived.
+
+An encoder has no status to report, so the record's metadata crosses unchanged; its signal name and its single-map
+shape follow it, and the output record's extent names its own length. FecDecode is the counterpart.
+
+A record whose length is not a multiple of `k` is dropped and counted in `nRecordsRefused`, `stop()` states the total,
+and the record that follows is processed normally, so a misaligned record costs one record rather than the stream.
+)"">;
 
     PortIn<DataSet<std::uint8_t>, Async>  in;
     PortOut<DataSet<std::uint8_t>, Async> out;
 
-    Annotated<std::string, "code", Doc<"'golay24', 'golay23', 'golay18', 'hamming15', 'hamming10', 'bch63', 'bch15_11', 'bch15_7' or 'bch15_5'; there is no default, because no code is universal">, Visible> code{};
+    Annotated<std::string, "code", Doc<"'golay24', 'golay23', 'golay18', 'hamming15', 'hamming10', 'bch63', 'bch15_11', 'bch15_7' or 'bch15_5'; required, with no default">, Visible> code{};
 
     GR_MAKE_REFLECTABLE(FecEncode, in, out, code);
 
@@ -255,34 +251,29 @@ struct FecEncode : Block<FecEncode> {
 
 GR_REGISTER_BLOCK(gr::blocks::fec::FecDecode)
 
-/*!
-@brief Binary block decode: codeword records in, information records out, one for one, with the
-code's verdict in metadata.
-
-Each input record carries a whole number of codewords, so its length must be a nonzero multiple
-of the code's `n`, and each `n`-bit codeword becomes `k` information bits. A record whose length
-fails that test is dropped and counted exactly as FecEncode drops one.
-
-The verdict rides the record. `corrected_errors` gains this record's per-codeword error sum and
-`uncorrectable_errors` the count of codewords the kernel reported invalid, each added to
-whatever the key already carried, so a chain of correcting stages reports one total rather than
-its last stage's share. Every other key crosses verbatim, and a record arriving without a
-metadata map gains one to carry the two status keys.
-
-An uncorrectable codeword's information bits are emitted like any other. The kernels return
-their best decode and the counts say what it is worth, so a consumer that cares reads
-`uncorrectable_errors` and one that does not still receives data in the shape it expects.
-Nothing is zeroed and nothing is invented. Which forms can refuse at all is the kernels' own
-contract: the perfect codes report every word as valid, and the forms carrying an overall parity
-bit or an unassigned syndrome are the ones that can say no.
-*/
 struct FecDecode : Block<FecDecode> {
-    using Description = Doc<"binary block decode: codeword records to information records, one for one, the code's corrected and uncorrectable counts accumulating in metadata">;
+    using Description = Doc<R""(
+@brief Binary block decode: codeword records in, information records out, one for one, with the code's verdict in
+metadata.
+
+Each input record carries a whole number of codewords, so its length must be a nonzero multiple of the code's `n`, and
+each `n`-bit codeword becomes `k` information bits. A record whose length fails that test is dropped and counted as
+FecEncode drops one.
+
+The verdict is carried in metadata: `corrected_errors` gains this record's per-codeword error sum and
+`uncorrectable_errors` the count of codewords the kernel reported invalid, each added to whatever the key already
+carried, so a chain of correcting stages reports one total rather than its last stage's share. Every other key crosses
+verbatim, and a record arriving without a metadata map gains one to carry the two status keys.
+
+An uncorrectable codeword's information bits are emitted unmodified like any other's: the kernel returns its best
+decode and the counts say what it is worth. Only the forms carrying an overall parity bit or an unassigned syndrome
+report a failure at all; the perfect codes report every word as valid.
+)"">;
 
     PortIn<DataSet<std::uint8_t>, Async>  in;
     PortOut<DataSet<std::uint8_t>, Async> out;
 
-    Annotated<std::string, "code", Doc<"'golay24', 'golay23', 'golay18', 'hamming15', 'hamming10', 'bch63', 'bch15_11', 'bch15_7' or 'bch15_5'; there is no default, because no code is universal">, Visible> code{};
+    Annotated<std::string, "code", Doc<"'golay24', 'golay23', 'golay18', 'hamming15', 'hamming10', 'bch63', 'bch15_11', 'bch15_7' or 'bch15_5'; required, with no default">, Visible> code{};
 
     GR_MAKE_REFLECTABLE(FecDecode, in, out, code);
 
