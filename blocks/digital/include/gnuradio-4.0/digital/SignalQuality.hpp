@@ -329,9 +329,7 @@ The input is one complex sample per decided symbol, carrier locked and scaled to
 This block does not scale it.
 )"">;
 
-    PortIn<std::complex<F>> in;
-    /// One record per closed window, for a consumer outside C++. The port is optional: leaving it unconnected costs
-    /// nothing and the readers below remain the whole interface for a graph that polls.
+    PortIn<std::complex<F>>                  in;
     PortOut<DataSet<float>, Async, Optional> records;
 
     Annotated<std::string, "method", Visible, Doc<"'m2m4', blind and constant-modulus, or 'decision_directed'">>        method     = std::string("m2m4");
@@ -373,9 +371,6 @@ This block does not scale it.
 
     void start() {
         rebuild();
-        // The framework runs `processEpilogue` only over a non-empty trailing span, and that epilogue is what reports
-        // the window in progress when the stream ends. `processBulk` therefore leaves the last symbol of a call
-        // unconsumed, and asking for two keeps that from stalling the steady state.
         in.min_samples = 2UZ;
     }
 
@@ -449,19 +444,10 @@ This block does not scale it.
         return gr::measurement::makeScalarRecord(std::span<const gr::measurement::ScalarChannel>(channels), std::numeric_limits<float>::quiet_NaN(), _windowStartAt, property_map{{std::pmr::string("n_windows"), pmt::Value(nWindows())}, {std::pmr::string("n_degenerate"), pmt::Value(nDegenerate())}, {std::pmr::string("window"), pmt::Value(static_cast<std::uint64_t>(_window))}, {std::pmr::string("index_unit"), pmt::Value(std::string("symbol"))}});
     }
 
-    /**
-     * @brief One record per window that closes, never one per call: several windows can close inside one chunk and
-     * each is its own reading.
-     *
-     * A symbol is consumed only once it has been folded in, and no more are taken than the output span has room for
-     * the records they would close, so a slow consumer stalls the input rather than growing a backlog here.
-     */
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
         const std::span<const std::complex<F>> input(inSpan);
         std::size_t                            made = drain(outSpan, 0UZ);
 
-        // The last symbol of a call is held back so the end-of-stream epilogue always has a span to run on. A call
-        // carrying a single symbol is one a caller drove by hand rather than one the framework composed, and takes it.
         const std::size_t offer = input.size() >= 2UZ ? input.size() - 1UZ : input.size();
         const std::size_t take  = std::min(offer, roomFor(outSpan, made));
 
@@ -473,14 +459,12 @@ This block does not scale it.
         return take == 0UZ && made == 0UZ && !input.empty() ? work::Status::INSUFFICIENT_OUTPUT_ITEMS : work::Status::OK;
     }
 
-    /// @brief End of stream: fold the trailing symbols, then report the window in progress with the symbol count that
-    /// actually reached it, which is what that record's `coverage` states.
     [[nodiscard]] work::Status processEpilogue(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
         accumulate(std::span<const std::complex<F>>(inSpan), outSpan.isConnected);
         std::size_t made = drain(outSpan, 0UZ);
 
         if (!_flushed && _filled > 0UZ) {
-            publishWindow(); // a partial window is reported, never suppressed
+            publishWindow();
             if (outSpan.isConnected && made < outSpan.size()) {
                 outSpan[made] = makeRecord();
                 ++made;
@@ -512,7 +496,7 @@ private:
             if (_filled == _window) {
                 publishWindow();
                 _windows.fetch_add(1ULL, std::memory_order_relaxed);
-                if (wantRecords) { // built here, so the record states the window that closed and where it began
+                if (wantRecords) {
                     _pending.push_back(makeRecord());
                 }
                 _sumSquared    = 0.;
@@ -522,12 +506,11 @@ private:
                 _windowStartAt = _symbolsSeen;
             }
         }
-        if (!_closedOnce && _filled > 0UZ) { // a partial first window is reported rather than suppressed
+        if (!_closedOnce && _filled > 0UZ) {
             publishWindow();
         }
     }
 
-    /// @brief How many symbols may be taken before a record would have nowhere to go.
     [[nodiscard]] std::size_t roomFor(OutputSpanLike auto& outSpan, std::size_t made) const {
         if (!outSpan.isConnected) {
             return std::numeric_limits<std::size_t>::max();
@@ -540,7 +523,6 @@ private:
         return untilClose + (free - 1UZ) * _window;
     }
 
-    /// @brief Move what has been built into the output span from @p at, and report how many went.
     [[nodiscard]] std::size_t drain(OutputSpanLike auto& outSpan, std::size_t at) {
         if (_pending.empty() || !outSpan.isConnected || at >= outSpan.size()) {
             return 0UZ;

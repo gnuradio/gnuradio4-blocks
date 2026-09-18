@@ -472,8 +472,6 @@ private:
 
         // What the next call needs, measured from where this consume leaves the reader: the loop's own production
         // condition and nothing more, so the block is offered a span exactly when one more output is computable.
-        // A minimum wider than that is a refusal of input the loop could have used, and at the end of a stream the
-        // refused samples are lost -- so the count would move with the chunking.
         _baseLead      = _base - consumeTo;
         in.min_samples = static_cast<gr::Size_t>(_baseLead + readAhead(kTraits.needsLookahead, Polyphase) + _windowLength);
 

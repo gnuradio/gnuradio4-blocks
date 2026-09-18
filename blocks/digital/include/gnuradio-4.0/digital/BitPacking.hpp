@@ -258,7 +258,7 @@ unchanged: the item rate rises by `k` but the sample rate does not.
     }
 
     void start() {
-        configureConversion(); // a block left at its defaults stages nothing, so this is the only call that reaches it
+        configureConversion();
         _tagRoute.clear();
     }
 
@@ -343,7 +343,7 @@ nothing can trail it.
     }
 
     void start() {
-        configureConversion(); // a block left at its defaults stages nothing, so this is the only call that reaches it
+        configureConversion();
         _tagRoute.clear();
     }
 

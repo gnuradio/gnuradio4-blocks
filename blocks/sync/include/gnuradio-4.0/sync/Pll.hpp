@@ -243,8 +243,6 @@ contract are PllCarrierTracking's, and so is the freedom from an AGC.
     detail::LockDetector _lock{};
     std::uint64_t        _ignoredTags = 0ULL;
 
-    /// The loop gains, the frequency clamp and the lock metric are derived from the members, and a batch that moves
-    /// no value never calls back, so a block constructed at its declared defaults is born with the clamp it names.
     explicit PllFreqDet(property_map init = {}) : Block<PllFreqDet, NoTagPropagation>(std::move(init)) { configure(); }
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& /*newSettings*/) { configure(); }
@@ -347,8 +345,6 @@ PllCarrierTracking's, and so is the freedom from an AGC.
     detail::LockDetector _lock{};
     std::uint64_t        _ignoredTags = 0ULL;
 
-    /// The loop gains, the frequency clamp and the lock metric are derived from the members, and a batch that moves
-    /// no value never calls back, so a block constructed at its declared defaults is born with the clamp it names.
     explicit PllRefOut(property_map init = {}) : Block<PllRefOut, NoTagPropagation>(std::move(init)) { configure(); }
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& /*newSettings*/) { configure(); }

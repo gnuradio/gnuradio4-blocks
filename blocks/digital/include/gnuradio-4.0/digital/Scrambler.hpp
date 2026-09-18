@@ -498,7 +498,6 @@ consumed, and `sample_rate` leaves with the value it arrived with.
     void rebuild() { detail::configureScrambler(_state, detail::ScramblerSettings{profile.value, taps.value, seed.value, {}, true, bits_per_item.value, bit_order.value, reset_period.value, invert_output.value, force_transition_after.value, monitor_delays.value}, gr::digital::ScramblerMode::MultiplicativeScramble); }
 
     /// @brief Zero here: an explicit sequence is the additive family's mask source, and a recursion never runs out.
-    /// Read alongside its sibling so one reader shape serves all three blocks.
     [[nodiscard]] std::uint64_t nUnscrambledItems() const noexcept { return static_cast<std::uint64_t>(_state.config.nUnscrambledItems); }
 
     /// @brief Times the forcing term fired, cumulative over the configuration's life. Not a failure: it is what says
@@ -580,7 +579,6 @@ consumed, and `sample_rate` leaves with the value it arrived with.
     void rebuild() { detail::configureScrambler(_state, detail::ScramblerSettings{profile.value, taps.value, seed.value, {}, true, bits_per_item.value, bit_order.value, reset_period.value, invert_output.value, force_transition_after.value, monitor_delays.value}, gr::digital::ScramblerMode::MultiplicativeDescramble); }
 
     /// @brief Zero here: an explicit sequence is the additive family's mask source, and a recursion never runs out.
-    /// Read alongside its sibling so one reader shape serves all three blocks.
     [[nodiscard]] std::uint64_t nUnscrambledItems() const noexcept { return static_cast<std::uint64_t>(_state.config.nUnscrambledItems); }
 
     /// @brief Times the forcing term fired, cumulative over the configuration's life. It must equal the scrambler's
