@@ -543,8 +543,8 @@ const boost::ut::suite<"distributed sync words"> distributedSyncTests = [] {
             }
         }
 
-        // both forms run whole: the long one exercises the register's second limb. The words here are synthetic —
-        // the published AO-40 sync word stays [record at implementation] for whoever lands that profile.
+        // both forms run whole: the long one exercises the register's second limb. The words are synthetic, so
+        // only the geometry is under test and not any published sync word.
         for (const Geometry& form : {kAo40Long, kAo40Short}) {
             Rng         rng;
             std::string word(form.items, '0');
