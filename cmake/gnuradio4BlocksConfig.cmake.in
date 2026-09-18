@@ -101,6 +101,25 @@ if(_gnuradio4Blocks_needs_cppzmq)
 endif()
 unset(_gnuradio4Blocks_needs_cppzmq)
 
+# The audio family links gnuradio4::gr-libsoundio, whose whole content is libsoundio's library and the directory
+# <soundio/soundio.h> resolves in. libsoundio ships no package files of any kind, so both of those are what a
+# find_library and a find_path answered on the machine that built this install and are a statement about no other
+# machine; published, they would hand a relocated consumer paths that resolve only by coincidence. The same two
+# searches run here instead, and what they answer is attached below to the imported target.
+#
+# Not REQUIRED: only the audio family names libsoundio, and a consumer of any other family must not be refused the
+# whole package for a library it never links. Where libsoundio is absent the imported target carries nothing and that
+# consumer meets the compiler's own error at <soundio/soundio.h>, after this message.
+set(_gnuradio4Blocks_needs_libsoundio @GR4_EXPORT_NEEDS_LIBSOUNDIO@)
+if(_gnuradio4Blocks_needs_libsoundio)
+  find_library(GR4_LIBSOUNDIO_LIBRARY soundio)
+  find_path(GR4_LIBSOUNDIO_INCLUDE_DIR soundio/soundio.h)
+  if(NOT GR4_LIBSOUNDIO_LIBRARY OR NOT GR4_LIBSOUNDIO_INCLUDE_DIR)
+    message(STATUS "gnuradio4Blocks: libsoundio was not found on this machine; gnuradio4::gr-audio and"
+                   " gnuradio4::GrAudioBlocksShared cannot compile <soundio/soundio.h> or link from this install")
+  endif()
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/gnuradio4Targets.cmake")
 
 # The imported target exists only now, so this is where a cppzmq resolved above for a loose-header install is attached
@@ -116,5 +135,20 @@ elseif(TARGET gnuradio4::gr-network AND _gnuradio4Blocks_cppzmq_include)
 endif()
 unset(_gnuradio4Blocks_cppzmq_link)
 unset(_gnuradio4Blocks_cppzmq_include)
+
+# The imported target exists only now, so this is where what was found above is attached to it. An imported target's
+# usage requirements may be appended to; both include properties are set because the second is what keeps libsoundio's
+# own header out of a consumer's warnings, as SYSTEM INTERFACE does in the tree that built the install.
+if(_gnuradio4Blocks_needs_libsoundio
+   AND TARGET gnuradio4::gr-libsoundio
+   AND GR4_LIBSOUNDIO_LIBRARY
+   AND GR4_LIBSOUNDIO_INCLUDE_DIR)
+  set_property(TARGET gnuradio4::gr-libsoundio APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES
+                                                               "${GR4_LIBSOUNDIO_INCLUDE_DIR}")
+  set_property(TARGET gnuradio4::gr-libsoundio APPEND PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+                                                               "${GR4_LIBSOUNDIO_INCLUDE_DIR}")
+  set_property(TARGET gnuradio4::gr-libsoundio APPEND PROPERTY INTERFACE_LINK_LIBRARIES "${GR4_LIBSOUNDIO_LIBRARY}")
+endif()
+unset(_gnuradio4Blocks_needs_libsoundio)
 
 check_required_components(gnuradio4Blocks)
