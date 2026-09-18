@@ -989,6 +989,9 @@ the order the driver lists them, after the AGC state.)">;
         }
     }
 
+    // The io thread never stops the block itself: requestStop() runs the block's own stop() on the calling thread
+    // and stop() waits for the io thread to finish, so the io thread would wait for itself. False ends the write
+    // loop instead, and work() makes the finished io thread the stop, on the scheduler thread.
     bool handleStreamError(int ret) {
         switch (ret) {
         case SOAPY_SDR_UNDERFLOW: {
@@ -998,15 +1001,11 @@ the order the driver lists them, after the AGC state.)">;
             }
             if (max_underflow_count > 0 && count >= max_underflow_count) {
                 this->emitErrorMessage("ioWriteLoop()", std::format("UNDERFLOW: {} of max {}", count, max_underflow_count));
-                this->requestStop();
                 return false;
             }
             return true;
         }
-        default:
-            this->emitErrorMessage("ioWriteLoop()", std::format("TX stream error: {}", ret));
-            this->requestStop();
-            return false;
+        default: this->emitErrorMessage("ioWriteLoop()", std::format("TX stream error: {}", ret)); return false;
         }
     }
 

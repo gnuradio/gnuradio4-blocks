@@ -1,10 +1,14 @@
 #include <boost/ut.hpp>
 
+#include <atomic>
+#include <chrono>
 #include <complex>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
+#include <print>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gnuradio-4.0/Scheduler.hpp>
@@ -73,6 +77,31 @@ auto runWithWatchdog(auto& sched, std::chrono::seconds timeout = std::chrono::se
     });
     auto ret      = sched.runAndWait();
     return ret;
+}
+
+// A block that stopped itself from its own io thread parks that thread inside its own stop(), waiting for the
+// thread that is doing the waiting. Neither the watchdog above nor the graph's teardown, which waits for the io
+// thread too, can release it, so the whole case runs on a thread of its own: one that outlives the bound is
+// already wedged, and ending the process with the reason makes that a failure in seconds rather than the test
+// harness's timeout.
+void withinBound(std::chrono::milliseconds bound, std::string_view what, auto&& body) {
+    std::atomic<bool> finished{false};
+
+    auto runner = std::thread([&finished, &body] {
+        body();
+        finished.store(true, std::memory_order_release);
+    });
+
+    const auto deadline = std::chrono::steady_clock::now() + bound;
+    while (!finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (!finished.load(std::memory_order_acquire)) {
+        std::println(stderr, "[qa_SoapyIntegration] {}: still running {} ms after it should have finished", what, bound.count());
+        std::_Exit(1);
+    }
+
+    runner.join();
 }
 
 } // namespace
@@ -875,6 +904,72 @@ const boost::ut::suite<"SoapySink underflow"> underflowTests = [] {
         expect(runWithWatchdog(sched, std::chrono::seconds{10}).has_value());
 
         expect(lt(txSink._underflowCount.load(), gr::Size_t{2})) << std::format("{} underflows stand after a run in which a write the device took followed every one of them", txSink._underflowCount.load());
+    };
+
+    "a sink that reaches its underflow limit stops"_test = [] {
+        withinBound(std::chrono::seconds{5}, "a sink at its underflow limit", [] {
+            constexpr float      kRate         = 100e3f;
+            constexpr gr::Size_t kMaxUnderflow = 3U;
+            gr::Graph            flow;
+
+            // every write reports an underflow and takes nothing, so the limit is reached in as many writes
+            auto& txSource = flow.emplaceBlock<gr::blocks::testing::ConstantSource<CF32>>({{"n_samples_max", gr::Size_t{2000}}});
+            auto& txSink   = flow.emplaceBlock<SoapySink<CF32, 1UZ>>({
+                {"device", "loopback"},
+                {"device_parameter", std::string("device_mode=tx_only,underflow_every=1")},
+                {"sample_rate", kRate},
+                {"max_chunk_size", std::uint32_t{64}},
+                {"max_underflow_count", kMaxUnderflow},
+            });
+            expect(flow.connect<"out", "in">(txSource, txSink).has_value());
+
+            Sched sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            // the sink reports the limit as a block error, which the scheduler may still be holding when the run
+            // ends: what is under test is that the run ends at all, and that the transmit thread is what ended it
+            std::ignore = sched.runAndWait();
+
+            expect(gr::atomic_ref(txSink._ioThreadDone).load_acquire()) << "the transmit thread left the device";
+            expect(ge(txSink._underflowCount.load(), kMaxUnderflow)) << std::format("{} underflows stand against a limit of {}", txSink._underflowCount.load(), kMaxUnderflow);
+        });
+    };
+};
+
+const boost::ut::suite<"SoapySource overflow"> overflowTests = [] {
+    using namespace gr::blocks::sdr;
+    using namespace gr::blocks::testing;
+    using Sched = gr::scheduler::Simple<>;
+
+    "a source that reaches its overflow limit stops"_test = [] {
+        withinBound(std::chrono::seconds{5}, "a source at its overflow limit", [] {
+            constexpr gr::Size_t kMaxOverflow = 3U;
+            gr::Graph            flow;
+
+            // every read reports an overflow and delivers nothing, so the limit is reached in as many reads
+            auto& source = flow.emplaceBlock<SoapySource<CF32, 1UZ>>({
+                {"device", "loopback"},
+                {"device_parameter", std::string("device_mode=rx_only,overflow_every=1")},
+                {"sample_rate", 1e6f},
+                {"frequency", std::vector{100e3}},
+                {"rx_gains", std::vector{0.}},
+                {"max_overflow_count", kMaxOverflow},
+            });
+            auto& sink   = flow.emplaceBlock<TagSink<CF32, ProcessFunction::USE_PROCESS_BULK>>({
+                {"n_samples_expected", gr::Size_t{0}}, // unlimited — stopped by the end of stream the source publishes
+                {"log_tags", false},
+                {"log_samples", false},
+            });
+            expect(flow.connect<"out", "in">(source, sink).has_value());
+
+            Sched sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            // the source reports the limit as a block error, which the scheduler may still be holding when the run
+            // ends: what is under test is that the run ends at all, and that the receive thread is what ended it
+            std::ignore = sched.runAndWait();
+
+            expect(gr::atomic_ref(source._ioThreadDone).load_acquire()) << "the receive thread left the device";
+            expect(ge(source._overflowCount.load(), kMaxOverflow)) << std::format("{} overflows stand against a limit of {}", source._overflowCount.load(), kMaxOverflow);
+        });
     };
 };
 
