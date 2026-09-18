@@ -133,6 +133,7 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::channel::Quantizer<complex<float32>>"sv));
         expect(registry.contains("gr::blocks::analog::HardLimiter<complex<float32>>"sv));
         expect(registry.contains("gr::blocks::filter::DesignedFilter<float32, float32>"sv));
+        expect(registry.contains("gr::blocks::filter::DesignedFilter<float32, complex<float32>>"sv));
         expect(registry.contains("gr::blocks::filter::DesignedFilter<complex<float32>, float32>"sv));
         expect(registry.contains("gr::blocks::sync::PreambleTiming<float32>"sv));
         expect(registry.contains("gr::blocks::digital::PamSlicer<float32>"sv));
