@@ -24,11 +24,10 @@
 
 namespace gr::blocks::filter {
 
-GR_REGISTER_BLOCK(gr::blocks::filter::DesignedFilter, ([T], [U]), [std::complex<float>], [ float, std::complex<float> ])
-GR_REGISTER_BLOCK(gr::blocks::filter::DesignedFilter, ([T], [U]), [float], [float])
+GR_REGISTER_BLOCK(gr::blocks::filter::DesignedFilter, ([T], [U]), [ float, std::complex<float> ], [ float, std::complex<float> ])
 
 template<typename TSample, typename TTap = float>
-requires((std::same_as<TSample, float> && std::same_as<TTap, float>) || (std::same_as<TSample, std::complex<float>> && (std::same_as<TTap, float> || std::same_as<TTap, std::complex<float>>)))
+requires((std::same_as<TSample, float> || std::same_as<TSample, std::complex<float>>) && (std::same_as<TTap, float> || std::same_as<TTap, std::complex<float>>))
 struct DesignedFilter : Block<DesignedFilter<TSample, TTap>, Resampling<1UZ, 1UZ, false>>, detail::FirFilterCore<DesignedFilter<TSample, TTap>, TSample, TTap> {
     using TParent     = Block<DesignedFilter<TSample, TTap>, Resampling<1UZ, 1UZ, false>>;
     using TCore       = detail::FirFilterCore<DesignedFilter<TSample, TTap>, TSample, TTap>;

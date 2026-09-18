@@ -157,6 +157,39 @@ const boost::ut::suite<"DesignedFilter"> designedFilterTests = [] {
         expect(lt(20.0 * std::log10(level(6000.0) / inBand), -50.0)) << "the stopband rejects";
     };
 
+    "a real stream with complex taps comes out as an analytic tone"_test = [] {
+        // A real tone of amplitude A carries A/2 at each of +f and -f, so the surviving positive-frequency copy
+        // leaves a band-pass normalized to `gain` at its center at A * gain / 2: the gain of two puts it back at A.
+        constexpr double fs    = 48000.0;
+        constexpr double tone  = 19000.0;
+        const int        n     = hammingLaw(fs, 100.0);
+        auto             block = make<float, CF>({{"profile", std::string("complex_bandpass")}, {"sample_rate", static_cast<float>(fs)}, {"cutoff", 18800.0}, {"high_cutoff", 19200.0}, {"transition_width", 100.0}, {"gain", 2.0}, {"window", std::string("Hamming")}, {"taps", static_cast<gr::Size_t>(n)}});
+        const auto       want  = gr::filter::fir::design::designComplexBandpass({.sampleRate = fs, .cutoff = 18800.0, .highCutoff = 19200.0, .transitionWidth = 100.0, .gain = 2.0, .window = Type::Hamming, .taps = n});
+        expect(eq(block._designed.size(), want.size()));
+        expect(eq(worstDelta(std::span<const CF>(block._designed), std::span<const CF>(want)), 0.0)) << "the taps are the library designer's for a real sample type too";
+
+        const std::size_t  count = 65536UZ;
+        std::vector<float> in(count);
+        for (std::size_t i = 0UZ; i < count; ++i) {
+            in[i] = static_cast<float>(std::cos(2.0 * std::numbers::pi * tone * static_cast<double>(i) / fs));
+        }
+        const auto out = run(block, in);
+        expect(eq(out.size(), count));
+
+        const auto level = [&](double hz) {
+            std::complex<double> acc{};
+            for (std::size_t i = 4096UZ; i < out.size(); ++i) {
+                acc += std::complex<double>(out[i]) * std::exp(std::complex<double>(0.0, -2.0 * std::numbers::pi * hz * static_cast<double>(i) / fs));
+            }
+            return std::abs(acc) / static_cast<double>(out.size() - 4096UZ);
+        };
+        const double inBand = level(tone);
+        expect(gt(inBand, 0.97) && lt(inBand, 1.03)) << "the analytic tone carries the input amplitude";
+        expect(lt(20.0 * std::log10(level(-tone) / inBand), -50.0)) << "the input's negative-frequency copy is rejected";
+
+        expect(throws([] { std::ignore = make<float, CF>({{"profile", std::string("bandpass")}, {"sample_rate", 48000.f}, {"cutoff", 18800.0}, {"high_cutoff", 19200.0}, {"transition_width", 100.0}}); })) << "a real profile refuses the complex tap type";
+    };
+
     "a live edge change redesigns; an unrelated write does not"_test = [] {
         auto block = make<float, float>({{"profile", std::string("lowpass")}, {"sample_rate", 96000.f}, {"cutoff", 10000.0}, {"transition_width", 2000.0}});
 
