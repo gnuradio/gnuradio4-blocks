@@ -261,6 +261,7 @@ if(GR4_ENABLE_NETWORK)
   endif()
 endif()
 
+set(GR4_EXPORT_NEEDS_LIBSOUNDIO OFF)
 if(GR4_ENABLE_AUDIO AND NOT EMSCRIPTEN)
   # the audio family's backend links gnuradio4::gr-libsoundio, which nothing else defines. libsoundio ships no
   # pkg-config file, so it is found by library and header and wrapped here; under Emscripten the family uses its own
@@ -270,8 +271,14 @@ if(GR4_ENABLE_AUDIO AND NOT EMSCRIPTEN)
   if(GR4_LIBSOUNDIO_LIBRARY AND GR4_LIBSOUNDIO_INCLUDE_DIR)
     add_library(gr-libsoundio INTERFACE)
     add_library(gnuradio4::gr-libsoundio ALIAS gr-libsoundio)
-    target_include_directories(gr-libsoundio INTERFACE "${GR4_LIBSOUNDIO_INCLUDE_DIR}")
-    target_link_libraries(gr-libsoundio INTERFACE "${GR4_LIBSOUNDIO_LIBRARY}")
+    # Both are what a search answered on this machine and are a statement about no other, so neither is exported: a
+    # consumer that reads a library path and an include directory out of an installed targets file resolves them only
+    # where the same paths exist. The install interface says that the dependency is needed and nothing more, and the
+    # installed config file runs the same two searches on the consumer's own machine and attaches what they find to the
+    # imported target.
+    target_include_directories(gr-libsoundio SYSTEM INTERFACE $<BUILD_INTERFACE:${GR4_LIBSOUNDIO_INCLUDE_DIR}>)
+    target_link_libraries(gr-libsoundio INTERFACE $<BUILD_INTERFACE:${GR4_LIBSOUNDIO_LIBRARY}>)
+    set(GR4_EXPORT_NEEDS_LIBSOUNDIO ON)
     install(TARGETS gr-libsoundio EXPORT gnuradio4Targets)
   else()
     message(WARNING "GR4_ENABLE_AUDIO is ON but libsoundio was not found — the audio block family is not built")
