@@ -130,10 +130,18 @@ public:
     }
 
     /// @brief Put an envelope on the queue, applying the overflow rule when it is full. False means "not consumed".
+    ///
+    /// An envelope larger than `queueBytes` is never queued: shedding what is queued cannot make room for one, and
+    /// queueing it anyway would put the queue above the bound its owner configured. Every caller states that refusal
+    /// in its own vocabulary before offering the envelope, so the early return below is unreachable from this module
+    /// and a false from the loop is backpressure and nothing else.
     [[nodiscard]] bool enqueue(Outgoing&& envelope) {
         const std::uint64_t bytes = envelope.bytes();
         std::unique_lock    lock(_mutex);
-        while (_queue.size() >= _queueMessages || (!_queue.empty() && _queuedBytes + bytes > _queueBytes)) {
+        if (bytes > _queueBytes) {
+            return false;
+        }
+        while (_queue.size() >= _queueMessages || _queuedBytes + bytes > _queueBytes) {
             if (_backpressure) {
                 return false;
             }
@@ -151,6 +159,12 @@ public:
     [[nodiscard]] Counters counters() const {
         std::lock_guard lock(_mutex);
         return _counters;
+    }
+
+    /// @brief The envelope bytes the queue holds, which never exceeds the `queueBytes` it was configured with.
+    [[nodiscard]] std::uint64_t queuedBytes() const {
+        std::lock_guard lock(_mutex);
+        return _queuedBytes;
     }
 
 private:

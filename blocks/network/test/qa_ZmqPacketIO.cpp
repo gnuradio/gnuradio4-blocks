@@ -707,6 +707,39 @@ const boost::ut::suite<"ZmqPacketSink"> zmqPacketSinkTests = [] {
         expect(eq(packetsSent, std::uint64_t{0ULL})) << "no peer was connected, so nothing can have been sent";
     };
 
+    // `queue_bytes` is a bound the queue keeps rather than a size it aims at: an envelope larger than the whole
+    // queue is refused, because shedding what is queued cannot make room for it.
+    "an envelope larger than queue_bytes leaves the sink by reject"_test = [] {
+        constexpr std::uint64_t kQueueBytes = 256ULL;
+        const Endpoint          endpoint;
+
+        gr::Graph graph;
+        auto&     source = graph.emplaceBlock<PacketVectorSource<std::uint8_t>>();
+        source._packets  = {countingPacket(4UZ, 1U), countingPacket(4096UZ, 0U)};
+        // push with no peer, so nothing leaves the queue and what it holds is what the test reads
+        auto& sink   = graph.emplaceBlock<ZmqPacketSink<std::uint8_t>>({{"endpoint", endpoint.uri}, {"bind", true}, {"pattern", std::string("push")}, {"queue_bytes", kQueueBytes}});
+        auto& reject = graph.emplaceBlock<PacketVectorSink<std::uint8_t>>();
+        expect(graph.connect<"out", "in">(source, sink).has_value());
+        expect(graph.connect<"reject", "in">(sink, reject).has_value());
+
+        GraphRunner runner(std::move(graph));
+        expect(waitFor([&reject] { return reject.count() >= 1UZ; })) << "the oversize packet never reached the failure port";
+        const std::uint64_t queued = sink._sender.queuedBytes();
+        runner.stop();
+
+        expect(le(queued, kQueueBytes)) << "the send queue held" << queued << "bytes against a bound of" << kQueueBytes;
+        const auto counted = sink.counters();
+        expect(eq(counted.overQueueBytes, std::uint64_t{1ULL}));
+        expect(eq(counted.rejectedPackets, std::uint64_t{0ULL})) << "the packet is inside max_message_bytes; the queue is what refused it";
+        expect(eq(counted.droppedOnOverflow, std::uint64_t{0ULL})) << "nothing queued was shed to make room for what cannot fit";
+        const std::vector<gr::Packet<std::uint8_t>> refused = reject.take();
+        expect(eq(refused.size(), 1UZ));
+        if (refused.size() == 1UZ) {
+            expect(eq(reasonOf(refused[0UZ]), std::string("over_queue_bytes")));
+            expect(eq(refused[0UZ].signal_values.size(), 4096UZ)) << "a refused packet is republished whole";
+        }
+    };
+
     "start, stop and start again leave nothing behind"_test = [] {
         const Endpoint endpoint;
         gr::Graph      graph;
@@ -1169,6 +1202,51 @@ const boost::ut::suite<"ZmqPacketSource"> zmqPacketSourceTests = [] {
         }
         running.stop();
         expect(refusal.contains("max_message_bytes")) << "a live change to a socket setting was not refused by name: " << refusal;
+    };
+
+    // The receive queue keeps the same bound, and states it the way a source states every other loss: the arrival is
+    // discarded and counted, because a source has no upstream to refuse.
+    "an arrival larger than queue_bytes never enters the queue"_test = [] {
+        constexpr std::uint64_t kQueueBytes = 256ULL;
+        const Endpoint          endpoint;
+
+        // driven without a graph, so nothing drains the receive queue and the queue itself is what the test reads
+        ZmqPacketSource<std::uint8_t> source({{"endpoint", endpoint.uri}, {"bind", true}, {"pattern", std::string("pull")}, {"max_message_bytes", kBound}, {"queue_bytes", kQueueBytes}});
+        source.settings().init();
+        std::ignore = source.settings().applyStagedParameters();
+        source.start();
+
+        RawSender                       peer(endpoint.uri);
+        const std::vector<std::uint8_t> wide(4096UZ, 0xA5U);
+        peer.sendFrames(uint8Envelope(wide, 1ULL));
+        expect(waitFor([&source] { return source.nOverQueueBytes >= 1ULL; })) << "the oversize message was not refused by the queue";
+        std::uint64_t afterOversize = 0ULL;
+        std::size_t   heldOversize  = 0UZ;
+        {
+            std::lock_guard lock(source._mutex);
+            afterOversize = source._queuedBytes;
+            heldOversize  = source._queue.size();
+        }
+
+        const std::array<std::uint8_t, 4> small{1U, 2U, 3U, 4U};
+        peer.sendFrames(uint8Envelope(small, 2ULL));
+        expect(waitFor([&source] {
+            std::lock_guard lock(source._mutex);
+            return !source._queue.empty();
+        })) << "the message that fits never reached the queue";
+        std::uint64_t afterSmall = 0ULL;
+        {
+            std::lock_guard lock(source._mutex);
+            afterSmall = source._queuedBytes;
+        }
+        source.stop();
+
+        expect(eq(heldOversize, 0UZ)) << "the oversize message was queued";
+        expect(eq(afterOversize, std::uint64_t{0ULL})) << "the queue accounted a message it must not hold";
+        expect(le(afterSmall, kQueueBytes)) << "the receive queue held" << afterSmall << "bytes against a bound of" << kQueueBytes;
+        expect(eq(source.nOverQueueBytes, std::uint64_t{1ULL}));
+        expect(eq(source.nDroppedByBackpressure, std::uint64_t{0ULL})) << "a message that cannot fit is not an overflow";
+        expect(eq(source.nOverMax, std::uint64_t{0ULL})) << "the message is inside max_message_bytes; the queue is what refused it";
     };
 
     "start, stop and start again leave nothing behind"_test = [] {

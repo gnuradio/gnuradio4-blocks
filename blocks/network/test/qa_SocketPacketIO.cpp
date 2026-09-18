@@ -661,6 +661,91 @@ const boost::ut::suite<"TcpPacketIO"> tcpPacketIoTests = [] {
         expect(eq(source.nSequenceGaps, std::uint64_t{1ULL})) << "the loss was not visible in sequence";
         expect(eq(source.nPacketsLost, std::uint64_t{3ULL})) << "the gap between sequence 1 and sequence 5 is three packets";
     };
+
+    // `queue_bytes` is a bound the queue keeps rather than a size it aims at: an envelope larger than the whole
+    // queue is refused, because shedding what is queued cannot make room for it.
+    "an envelope larger than queue_bytes leaves a TCP sink by reject"_test = [] {
+        constexpr std::uint64_t kQueueBytes = 256ULL;
+        const std::uint16_t     port        = reservePort(SOCK_STREAM);
+
+        gr::Graph graph;
+        auto&     producer = graph.emplaceBlock<PacketVectorSource<std::uint8_t>>();
+        producer._packets  = {countingPacket(4UZ, 1U), countingPacket(4096UZ, 0U)};
+        // a listening sink nobody connects to: nothing leaves the queue, so what it holds is what the test reads
+        auto& sink     = graph.emplaceBlock<TcpPacketSink<std::uint8_t>>({{"endpoint", endpointFor(port)}, {"bind", true}, {"queue_bytes", kQueueBytes}});
+        auto& refusals = graph.emplaceBlock<PacketVectorSink<std::uint8_t>>();
+        expect(graph.connect<"out", "in">(producer, sink).has_value());
+        expect(graph.connect<"reject", "in">(sink, refusals).has_value());
+
+        GraphRunner runner(std::move(graph));
+        expect(waitFor([&refusals] { return refusals.count() >= 1UZ; })) << "the oversize packet never reached the failure port";
+        std::uint64_t queued = 0ULL;
+        std::size_t   held   = 0UZ;
+        {
+            std::lock_guard lock(sink._mutex);
+            queued = sink._queuedBytes;
+            held   = sink._queue.size();
+        }
+        runner.stop();
+
+        expect(le(queued, kQueueBytes)) << "the send queue held" << queued << "bytes against a bound of" << kQueueBytes;
+        expect(eq(held, 1UZ)) << "the envelope that fits is the only one queued";
+        expect(eq(sink.nOverQueueBytes, std::uint64_t{1ULL}));
+        expect(eq(sink.nRejectedPackets, std::uint64_t{0ULL})) << "the packet is inside max_message_bytes; the queue is what refused it";
+        expect(eq(sink.nDroppedOnOverflow, std::uint64_t{0ULL})) << "nothing queued was shed to make room for what cannot fit";
+        const std::vector<gr::Packet<std::uint8_t>> refused = refusals.take();
+        expect(eq(refused.size(), 1UZ));
+        if (refused.size() == 1UZ) {
+            expect(eq(reasonOf(refused[0UZ]), std::string("over_queue_bytes")));
+            expect(eq(refused[0UZ].signal_values.size(), 4096UZ)) << "a refused packet is republished whole";
+        }
+    };
+
+    // The receive queue keeps the same bound, and states it the way a source states every other loss: the arrival is
+    // discarded and counted, because a source has no upstream to refuse.
+    "an arrival larger than queue_bytes never enters a TCP source's queue"_test = [] {
+        constexpr std::uint64_t kQueueBytes = 256ULL;
+        const std::uint16_t     port        = reservePort(SOCK_STREAM);
+
+        // driven without a graph, so nothing drains the receive queue and the queue itself is what the test reads
+        TcpPacketSource<std::uint8_t> source({{"endpoint", endpointFor(port)}, {"bind", true}, {"max_message_bytes", kBound}, {"queue_bytes", kQueueBytes}});
+        source.settings().init();
+        std::ignore = source.settings().applyStagedParameters();
+        source.start();
+
+        RawStream peer;
+        peer.connectTo(port);
+        const std::vector<std::uint8_t> wide(4096UZ, 0xA5U);
+        peer.write(uint8Envelope(wide, 1ULL));
+        expect(waitFor([&source] { return source.nOverQueueBytes >= 1ULL; })) << "the oversize envelope was not refused by the queue";
+        std::uint64_t afterOversize = 0ULL;
+        std::size_t   heldOversize  = 0UZ;
+        {
+            std::lock_guard lock(source._mutex);
+            afterOversize = source._queuedBytes;
+            heldOversize  = source._queue.size();
+        }
+
+        const std::array<std::uint8_t, 4> small{1U, 2U, 3U, 4U};
+        peer.write(uint8Envelope(small, 2ULL));
+        expect(waitFor([&source] {
+            std::lock_guard lock(source._mutex);
+            return !source._queue.empty();
+        })) << "the envelope that fits never reached the queue";
+        std::uint64_t afterSmall = 0ULL;
+        {
+            std::lock_guard lock(source._mutex);
+            afterSmall = source._queuedBytes;
+        }
+        source.stop();
+
+        expect(eq(heldOversize, 0UZ)) << "the oversize envelope was queued";
+        expect(eq(afterOversize, std::uint64_t{0ULL})) << "the queue accounted an envelope it must not hold";
+        expect(le(afterSmall, kQueueBytes)) << "the receive queue held" << afterSmall << "bytes against a bound of" << kQueueBytes;
+        expect(eq(source.nOverQueueBytes, std::uint64_t{1ULL}));
+        expect(eq(source.nDroppedByBackpressure, std::uint64_t{0ULL})) << "an envelope that cannot fit is not an overflow";
+        expect(eq(source.nEnvelopesReceived, std::uint64_t{2ULL})) << "both envelopes were read off the wire";
+    };
 };
 
 const boost::ut::suite<"UdpPacketIO"> udpPacketIoTests = [] {
@@ -811,6 +896,78 @@ const boost::ut::suite<"UdpPacketIO"> udpPacketIoTests = [] {
             const std::uint64_t total = datagram.size();
             expect(eq(refused[0UZ].meta_information[0UZ].at("envelope_bytes_total").value_or<std::uint64_t>(0ULL), total)) << "the datagram's true length was not reported from the truncated read";
         }
+    };
+
+    // The datagram sink keeps the queue's bound the same way, under its own name for the size that is legal on a
+    // wire: a datagram inside `max_datagram_bytes` may still be larger than the whole send queue.
+    "an envelope larger than queue_bytes leaves a UDP sink by reject"_test = [] {
+        constexpr std::uint64_t kQueueBytes = 256ULL;
+        const std::uint16_t     port        = reservePort(SOCK_DGRAM);
+
+        gr::Graph graph;
+        auto&     producer = graph.emplaceBlock<PacketVectorSource<std::uint8_t>>();
+        producer._packets  = {countingPacket(4096UZ, 0U), countingPacket(4UZ, 1U)};
+        auto& sink         = graph.emplaceBlock<UdpPacketSink<std::uint8_t>>({{"endpoint", endpointFor(port)}, {"queue_bytes", kQueueBytes}});
+        auto& refusals     = graph.emplaceBlock<PacketVectorSink<std::uint8_t>>();
+        expect(graph.connect<"out", "in">(producer, sink).has_value());
+        expect(graph.connect<"reject", "in">(sink, refusals).has_value());
+
+        GraphRunner runner(std::move(graph));
+        expect(waitFor([&refusals] { return refusals.count() >= 1UZ; })) << "the oversize packet never reached the failure port";
+        expect(waitFor([&sink] { return sink.nPacketsSent >= 1ULL; })) << "the packet that fits never left the queue";
+        runner.stop();
+
+        expect(eq(sink.nOverQueueBytes, std::uint64_t{1ULL}));
+        expect(eq(sink.nRejectedPackets, std::uint64_t{0ULL})) << "the packet is a legal datagram; the queue is what refused it";
+        expect(eq(sink.nPacketsSent, std::uint64_t{1ULL})) << "an envelope the queue must not hold was sent anyway";
+        const std::vector<gr::Packet<std::uint8_t>> refused = refusals.take();
+        expect(eq(refused.size(), 1UZ));
+        if (refused.size() == 1UZ) {
+            expect(eq(reasonOf(refused[0UZ]), std::string("over_queue_bytes")));
+            expect(eq(refused[0UZ].signal_values.size(), 4096UZ)) << "a refused packet is republished whole";
+        }
+    };
+
+    "an arrival larger than queue_bytes never enters a UDP source's queue"_test = [] {
+        constexpr std::uint64_t kQueueBytes = 256ULL;
+        const std::uint16_t     port        = reservePort(SOCK_DGRAM);
+
+        // driven without a graph, so nothing drains the receive queue and the queue itself is what the test reads
+        UdpPacketSource<std::uint8_t> source({{"endpoint", endpointFor(port)}, {"max_message_bytes", kBound}, {"queue_bytes", kQueueBytes}});
+        source.settings().init();
+        std::ignore = source.settings().applyStagedParameters();
+        source.start();
+
+        const RawDatagram               peer;
+        const std::vector<std::uint8_t> wide(4096UZ, 0xA5U);
+        peer.sendTo(port, uint8Envelope(wide, 1ULL));
+        expect(waitFor([&source] { return source.nOverQueueBytes >= 1ULL; })) << "the oversize datagram was not refused by the queue";
+        std::uint64_t afterOversize = 0ULL;
+        std::size_t   heldOversize  = 0UZ;
+        {
+            std::lock_guard lock(source._mutex);
+            afterOversize = source._queuedBytes;
+            heldOversize  = source._queue.size();
+        }
+
+        const std::array<std::uint8_t, 4> small{1U, 2U, 3U, 4U};
+        peer.sendTo(port, uint8Envelope(small, 2ULL));
+        expect(waitFor([&source] {
+            std::lock_guard lock(source._mutex);
+            return !source._queue.empty();
+        })) << "the datagram that fits never reached the queue";
+        std::uint64_t afterSmall = 0ULL;
+        {
+            std::lock_guard lock(source._mutex);
+            afterSmall = source._queuedBytes;
+        }
+        source.stop();
+
+        expect(eq(heldOversize, 0UZ)) << "the oversize datagram was queued";
+        expect(eq(afterOversize, std::uint64_t{0ULL})) << "the queue accounted a datagram it must not hold";
+        expect(le(afterSmall, kQueueBytes)) << "the receive queue held" << afterSmall << "bytes against a bound of" << kQueueBytes;
+        expect(eq(source.nOverQueueBytes, std::uint64_t{1ULL}));
+        expect(eq(source.nDroppedByBackpressure, std::uint64_t{0ULL})) << "a datagram that cannot fit is not an overflow";
     };
 };
 
