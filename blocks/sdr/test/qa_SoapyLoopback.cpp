@@ -416,6 +416,28 @@ const boost::ut::suite<"LoopbackDevice"> loopbackDeviceTests = [] {
         dev.deactivateStream(rxStream);
     };
 
+    "overflow_every reports OVERFLOW from every Nth read"_test = [] {
+        LoopbackDevice dev(SoapySDR::Kwargs{{"device_mode", "rx_only"}, {"overflow_every", "3"}});
+        auto*          rxStream = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32);
+        dev.activateStream(rxStream);
+
+        std::vector<CF32> rxData(64);
+        void*             rxBufs[] = {rxData.data()};
+        int               flags    = 0;
+        long long         timeNs   = 0;
+        std::vector<int>  returns;
+        for (std::size_t i = 0UZ; i < 6UZ; ++i) {
+            returns.push_back(dev.readStream(rxStream, rxBufs, 64, flags, timeNs, 100000));
+        }
+
+        expect(eq(returns[2], SOAPY_SDR_OVERFLOW)) << "the third read reports the overflow";
+        expect(eq(returns[5], SOAPY_SDR_OVERFLOW)) << "and so does every third read after it";
+        expect(gt(returns[0], 0)) << "a read between two overflows still delivers samples";
+        expect(gt(returns[3], 0)) << "a read between two overflows still delivers samples";
+
+        dev.deactivateStream(rxStream);
+    };
+
     "buffer drain on deactivate clears stale data"_test = [] {
         LoopbackDevice dev(SoapySDR::Kwargs{});
         auto*          rxStream = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32);

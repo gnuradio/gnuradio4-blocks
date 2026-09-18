@@ -68,6 +68,9 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *  - underflow_every=N reports SOAPY_SDR_UNDERFLOW from every Nth writeStream
  *    and takes nothing on it, which is the starved transmitter a caller has to
  *    survive (0, the default, never underflows)
+ *  - overflow_every=N reports SOAPY_SDR_OVERFLOW from every Nth readStream and
+ *    returns no samples on it, which is the receiver that lost data a caller
+ *    has to survive (0, the default, never overflows)
  *  - configurable frontend: gain elements with ranges, an AGC whose default
  *    state and refusals are set per instance, antennas, frequency components
  *    with a tuning step, and the has* facilities a caller queries first
@@ -265,6 +268,8 @@ class LoopbackDevice : public SoapySDR::Device {
     std::size_t                                          _maxWriteSamples = 0UZ; // 0: accept the whole request
     std::size_t                                          _underflowEvery  = 0UZ; // 0: never report an underflow
     std::size_t                                          _writeCalls      = 0UZ; // TX thread only, counted for _underflowEvery
+    std::size_t                                          _overflowEvery   = 0UZ; // 0: never report an overflow
+    std::size_t                                          _readCalls       = 0UZ; // RX thread only, counted for _overflowEvery
     DeviceMode                                           _deviceMode      = DeviceMode::Loopback;
     std::atomic<bool>                                    _simulateTiming{false};
     std::vector<CF32>                                    _rxToneScratch;  // reusable per-readStream call
@@ -325,6 +330,12 @@ public:
             auto [ptr, ec] = std::from_chars(it->second.data(), it->second.data() + it->second.size(), _underflowEvery);
             if (ec != std::errc{}) {
                 _underflowEvery = 0UZ;
+            }
+        }
+        if (auto it = args.find("overflow_every"); it != args.end()) {
+            auto [ptr, ec] = std::from_chars(it->second.data(), it->second.data() + it->second.size(), _overflowEvery);
+            if (ec != std::errc{}) {
+                _overflowEvery = 0UZ;
             }
         }
         if (auto it = args.find("device_mode"); it != args.end()) {
@@ -633,6 +644,11 @@ public:
 
         flags  = 0;
         timeNs = 0;
+
+        ++_readCalls;
+        if (_overflowEvery != 0UZ && _readCalls % _overflowEvery == 0UZ) {
+            return SOAPY_SDR_OVERFLOW;
+        }
 
         if (_simulateTiming.load(std::memory_order_relaxed) && !_rxChannels.empty()) {
             auto ch       = _rxChannels[0];

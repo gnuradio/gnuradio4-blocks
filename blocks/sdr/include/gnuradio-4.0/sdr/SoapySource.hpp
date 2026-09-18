@@ -120,6 +120,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     float                                       _ppmLastEmitted   = 0.0f;
     bool                                        _clockEosReceived = false;
     std::atomic<bool>                           _ioThreadStarted{false};
+    std::atomic<bool>                           _ioStopRequested{false};
     std::atomic<bool>                           _dcFilterDirty{false};
     std::atomic<bool>                           _rateEstimatorDirty{false};
     soapy::detail::DeviceRegistry::Registration _activation;
@@ -205,6 +206,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         _ppmLastEmitted   = 0.0f;
         _clockEosReceived = false;
         _ioThreadStarted.store(false, std::memory_order_relaxed);
+        _ioStopRequested.store(false, std::memory_order_relaxed);
         _dcFilterDirty.store(false, std::memory_order_relaxed);
         _rateEstimatorDirty.store(false, std::memory_order_relaxed);
         rebuildDcFilter();
@@ -250,6 +252,12 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         return {requestedWork, 0UZ, work::Status::OK};
     }
 
+    // The io thread never stops the block itself: requestStop() runs the block's own stop() on the calling thread
+    // and stop() waits for the io thread to finish, so the io thread would wait for itself. Whatever the io thread
+    // meets that ends the stream is recorded in _ioStopRequested, which ends the read loop, and work() makes the
+    // finished io thread the stop, on the scheduler thread.
+    [[nodiscard]] bool ioActive() const noexcept { return lifecycle::isActive(this->state()) && !_ioStopRequested.load(std::memory_order_acquire); }
+
     void ioReadLoop() {
         thread_pool::thread::setThreadName(std::format("soapy:{}", this->name.value));
 
@@ -263,7 +271,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
             std::vector<T> readBuf(kReadSize);
             auto&          outWriter = out.streamWriter();
 
-            while (lifecycle::isActive(this->state())) {
+            while (ioActive()) {
                 this->applyChangedSettings();
                 applyDirtyFlags();
 
@@ -337,7 +345,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
                 outWriters.push_back(std::ref(out[ch].streamWriter()));
             }
 
-            while (lifecycle::isActive(this->state())) {
+            while (ioActive()) {
                 this->applyChangedSettings();
                 applyDirtyFlags();
 
@@ -473,7 +481,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         std::ignore  = clkSpan.consume(nAvailable);
 
         if (_clockEosReceived) {
-            this->requestStop();
+            _ioStopRequested.store(true, std::memory_order_release);
         }
     }
 
@@ -939,18 +947,18 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
             emitOverflowTag();
             if (max_overflow_count > 0 && count >= max_overflow_count) {
                 this->emitErrorMessage("ioReadLoop()", std::format("OVERFLOW: {} of max {}", count, max_overflow_count));
-                this->requestStop();
+                _ioStopRequested.store(true, std::memory_order_release);
                 return false;
             }
             return true;
         }
         case SOAPY_SDR_CORRUPTION:
             this->emitErrorMessage("ioReadLoop()", "CORRUPTION");
-            this->requestStop();
+            _ioStopRequested.store(true, std::memory_order_release);
             return false;
         default:
             this->emitErrorMessage("ioReadLoop()", std::format("stream error: {}", ret));
-            this->requestStop();
+            _ioStopRequested.store(true, std::memory_order_release);
             return false;
         }
     }
@@ -960,7 +968,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
             auto count = _fragmentCount.fetch_add(1U, std::memory_order_relaxed) + 1U;
             if (count > max_fragment_count) {
                 this->emitErrorMessage("ioReadLoop()", std::format("MORE_FRAGMENTS: {} of max {}", count, max_fragment_count));
-                this->requestStop();
+                _ioStopRequested.store(true, std::memory_order_release);
             }
         } else {
             _fragmentCount.store(0U, std::memory_order_relaxed);
