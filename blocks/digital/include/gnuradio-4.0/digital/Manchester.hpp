@@ -185,7 +185,7 @@ item floor(t/2). Being a rate changer it forwards the framework's own tag vocabu
 
     void rebuild() {
         detail::configureManchester(_coder, convention, bits_per_item, bit_order, chip_phase);
-        _configured = true; // only reached when every setting was accepted
+        _configured = true;
     }
 
     /// @brief Items fabricated by a grid change to phase 1, cumulative across settings changes and resets.
