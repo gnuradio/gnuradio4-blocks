@@ -165,34 +165,33 @@ template<typename TKernel>
 
 GR_REGISTER_BLOCK(gr::blocks::fec::RsEncode)
 
-/*!
-@brief Reed-Solomon encode: information-symbol records in, codeword records out, one for one.
-
-Each input record carries a whole number of information words, so its length must be a nonzero
-multiple of the code's information length — `63 - roots - pad` symbols in the GF(64) family, and
-`255 - 2*roots - pad` under a CCSDS profile — and each group becomes one codeword of `63 - pad`
-or `255 - pad` symbols on the wire. A GF(64) item holds its symbol in the low six bits, the bits
-above ignored on read and emitted zero; a CCSDS symbol is the whole byte.
-
-An encoder has no status to report, so the record's metadata crosses unchanged; its signal name
-and its single-map shape follow it, and the output record's extent names its own length. See
-RsDecode for the counterpart that reads the code's verdict back out.
-
-A record whose length is not a multiple of the information length is dropped and counted in
-`nRecordsRefused`, and `stop()` states the total. The record that follows is processed normally,
-so a misaligned record costs one record rather than the stream.
-*/
 struct RsEncode : Block<RsEncode> {
-    using Description = Doc<"Reed-Solomon encode over the GF(64) family or a CCSDS GF(256) profile: information-symbol records to codeword records, one for one, shortened by 'pad' leading symbols">;
+    using Description = Doc<R""(
+@brief Reed-Solomon encode over the GF(64) family or a CCSDS GF(256) profile: information-symbol records in, codeword
+records out, one for one.
+
+Each input record carries a whole number of codeblocks, so its length must be a nonzero multiple of
+`(block - roots - pad) * interleave` symbols, `block` being 63 in the GF(64) family and 255 under a CCSDS profile.
+Each group of `block - roots - pad` symbols becomes one codeword of `block - pad` symbols on the wire, and the
+`interleave` codewords of a codeblock alternate symbol by symbol there. A GF(64) item holds its symbol in the low six
+bits, the bits above ignored on read and emitted zero; a CCSDS symbol is the whole byte, dual-basis where `basis`
+says so.
+
+An encoder has no status to report, so the record's metadata crosses unchanged; its signal name and its single-map
+shape follow it, and the output record's extent names its own length. RsDecode is the counterpart.
+
+A record whose length is not such a multiple is dropped and counted in `nRecordsRefused`, `stop()` states the total,
+and the record that follows is processed normally, so a misaligned record costs one record rather than the stream.
+)"">;
 
     PortIn<DataSet<std::uint8_t>, Async>  in;
     PortOut<DataSet<std::uint8_t>, Async> out;
 
-    Annotated<gr::Size_t, "roots", Doc<"parity symbols per codeword: 8, 12 or 16 in the GF(64) family; under a CCSDS profile it may stay unset or must equal the profile's count">, Visible>              roots{};
-    Annotated<gr::Size_t, "pad", Doc<"the shortening in leading zero symbols neither end transmits; must leave the code room for information">>                                                           pad = 0U;
-    Annotated<std::string, "code", Doc<"a code profile: '' for the GF(64) family the roots setting selects, or 'ccsds_255_223' / 'ccsds_255_239' supplying field, parity, first root and step">, Visible> code{};
-    Annotated<std::string, "basis", Doc<"'conventional' or 'dual', required under a CCSDS profile whose symbols are dual-basis strings on the wire; must stay empty for the GF(64) family">>              basis{};
-    Annotated<gr::Size_t, "interleave", Doc<"I, the codewords one record's codeblock holds; 4.3.5.1's {1,2,3,4,5,8} under a CCSDS profile, 1 to 8 otherwise">>                                            interleave = 1U;
+    Annotated<gr::Size_t, "roots", Doc<"parity symbols per codeword: 8, 12 or 16 in the GF(64) family; under a CCSDS profile it may stay unset or must equal the profile's count">, Visible> roots{};
+    Annotated<gr::Size_t, "pad", Doc<"the shortening in leading zero symbols neither end transmits; must leave the code room for information">>                                              pad = 0U;
+    Annotated<std::string, "code", Doc<"'' selects the GF(64) family that roots names; 'ccsds_255_223' and 'ccsds_255_239' are the CCSDS profiles over GF(256)">, Visible>                   code{};
+    Annotated<std::string, "basis", Doc<"'conventional' or 'dual', required under a CCSDS profile and empty for the GF(64) family, which has no dual basis">>                                basis{};
+    Annotated<gr::Size_t, "interleave", Doc<"I, the codewords one record's codeblock holds; 4.3.5.1's {1,2,3,4,5,8} under a CCSDS profile, 1 to 8 otherwise">>                               interleave = 1U;
 
     GR_MAKE_REFLECTABLE(RsEncode, in, out, roots, pad, code, basis, interleave);
 
@@ -313,38 +312,34 @@ struct RsEncode : Block<RsEncode> {
 
 GR_REGISTER_BLOCK(gr::blocks::fec::RsDecode)
 
-/*!
-@brief Reed-Solomon decode: codeword records in, information-symbol records out, one for one,
-with the code's verdict in metadata.
-
-Each input record carries a whole number of codewords, so its length must be a nonzero multiple
-of `63 - pad` symbols, and each codeword becomes `63 - roots - pad` information symbols. A
-record whose length fails that test is dropped and counted exactly as RsEncode drops one.
-
-The verdict rides the record. `corrected_errors` gains this record's per-codeword error sum and
-`uncorrectable_errors` the count of codewords the kernel reported invalid, each added to
-whatever the key already carried, so a chain of correcting stages reports one total rather than
-its last stage's share. Every other key crosses verbatim, and a record arriving without a
-metadata map gains one to carry the two status keys.
-
-A codeword whose correction lands inside the padding is counted in `nPadCorrupted` and is
-uncorrectable as well. Such a word violates the shortening both ends agreed on, so it is not a
-trustworthy decode; folding it into `uncorrectable_errors` keeps the metadata to the two keys
-the vocabulary declares, and the separate counter is where the distinction stays visible.
-Information symbols are emitted for it as for any other codeword, because the kernel returns its
-best decode and the counts say what it is worth.
-*/
 struct RsDecode : Block<RsDecode> {
-    using Description = Doc<"Reed-Solomon decode over the GF(64) family or a CCSDS GF(256) profile: codeword records to information-symbol records, one for one, the code's corrected and uncorrectable counts accumulating in metadata">;
+    using Description = Doc<R""(
+@brief Reed-Solomon decode over the GF(64) family or a CCSDS GF(256) profile: codeword records in, information-symbol
+records out, one for one, with the code's verdict in metadata.
+
+Each input record carries a whole number of codeblocks, so its length must be a nonzero multiple of
+`(block - pad) * interleave` symbols, `block` being 63 in the GF(64) family and 255 under a CCSDS profile, and each
+codeword becomes `block - roots - pad` information symbols. A record whose length fails that test is dropped and
+counted as RsEncode drops one.
+
+The verdict is carried in metadata: `corrected_errors` gains this record's per-codeword error sum and
+`uncorrectable_errors` the count of codewords the kernel reported invalid, each added to whatever the key already
+carried, so a chain of correcting stages reports one total rather than its last stage's share. Every other key crosses
+verbatim, and a record arriving without a metadata map gains one to carry the two status keys.
+
+A codeword whose correction lands inside the padding is counted in `nPadCorrupted` and in `uncorrectable_errors` as
+well: such a word violates the shortening both ends agreed on. The metadata carries the two status keys and the
+separate counter keeps the distinction visible. Information symbols are emitted for such a codeword as for any other.
+)"">;
 
     PortIn<DataSet<std::uint8_t>, Async>  in;
     PortOut<DataSet<std::uint8_t>, Async> out;
 
-    Annotated<gr::Size_t, "roots", Doc<"parity symbols per codeword: 8, 12 or 16 in the GF(64) family; under a CCSDS profile it may stay unset or must equal the profile's count">, Visible>              roots{};
-    Annotated<gr::Size_t, "pad", Doc<"the shortening in leading zero symbols neither end transmits; must leave the code room for information">>                                                           pad = 0U;
-    Annotated<std::string, "code", Doc<"a code profile: '' for the GF(64) family the roots setting selects, or 'ccsds_255_223' / 'ccsds_255_239' supplying field, parity, first root and step">, Visible> code{};
-    Annotated<std::string, "basis", Doc<"'conventional' or 'dual', required under a CCSDS profile whose symbols are dual-basis strings on the wire; must stay empty for the GF(64) family">>              basis{};
-    Annotated<gr::Size_t, "interleave", Doc<"I, the codewords one record's codeblock holds; 4.3.5.1's {1,2,3,4,5,8} under a CCSDS profile, 1 to 8 otherwise">>                                            interleave = 1U;
+    Annotated<gr::Size_t, "roots", Doc<"parity symbols per codeword: 8, 12 or 16 in the GF(64) family; under a CCSDS profile it may stay unset or must equal the profile's count">, Visible> roots{};
+    Annotated<gr::Size_t, "pad", Doc<"the shortening in leading zero symbols neither end transmits; must leave the code room for information">>                                              pad = 0U;
+    Annotated<std::string, "code", Doc<"'' selects the GF(64) family that roots names; 'ccsds_255_223' and 'ccsds_255_239' are the CCSDS profiles over GF(256)">, Visible>                   code{};
+    Annotated<std::string, "basis", Doc<"'conventional' or 'dual', required under a CCSDS profile and empty for the GF(64) family, which has no dual basis">>                                basis{};
+    Annotated<gr::Size_t, "interleave", Doc<"I, the codewords one record's codeblock holds; 4.3.5.1's {1,2,3,4,5,8} under a CCSDS profile, 1 to 8 otherwise">>                               interleave = 1U;
 
     GR_MAKE_REFLECTABLE(RsDecode, in, out, roots, pad, code, basis, interleave);
 

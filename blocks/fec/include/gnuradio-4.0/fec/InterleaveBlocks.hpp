@@ -184,44 +184,40 @@ private:
 
 GR_REGISTER_BLOCK(gr::blocks::fec::Interleave, [T], [ std::uint8_t, float ])
 
-/*!
-@brief Interleave: item records in, the same items in the family's permuted order out.
-
-The framed kinds — `block` and `permutation` — turn one record into one record. A record's length
-must be a nonzero multiple of the family's frame, and each frame becomes `rows * cols` items, or
-the window's length where `kind` is `block` and a window is set. A record whose length fails that
-test is dropped and counted in `nRecordsRefused`, one line at `stop()` reports the total, and the
-record after it is interleaved normally: a record producer cannot emit a misaligned record except
-through a fault, and the counter is where such a fault becomes visible.
-
-The `convolutional` kind is stream-shaped. Any nonzero length is a valid record, the output is 1:1
-with the input from the first item, and the delay lines keep their contents across records, so the
-same stream cut into different records interleaves identically. Only an empty record is refused.
-It carries bytes only: a `float` block refuses it at configure, because its fill and its
-across-record state have no float semantics and no consumer asks.
-
-An interleaver has no status to report, so the record's facts cross unchanged; its signal name and
-its single-map shape follow it, and the output record's extent names its own length. Which record's
-facts a convolutional output inherits is the file's stated rule. See Deinterleave for the
-counterpart that puts the items back.
-*/
 template<typename T>
 requires std::same_as<T, std::uint8_t> || std::same_as<T, float>
 struct Interleave : Block<Interleave<T>> {
-    using Description = Doc<"interleave: item records in, the same items in the permuted order of the family the 'kind' setting names">;
+    using Description = Doc<R""(
+@brief Interleave: item records in, the same items in the permuted order of the family `kind` names out.
+
+The framed kinds, `block` and `permutation`, turn one record into one record. A record's length must be a nonzero
+multiple of the family's frame, and each frame becomes `rows * cols` items, or the window's length where `kind` is
+`block` and a window is set. A record whose length fails that test is dropped and counted in `nRecordsRefused`, one
+line at `stop()` reports the total, and the record after it is interleaved normally.
+
+The `convolutional` kind is stream-shaped. Any nonzero length is a valid record, the output is 1:1 with the input from
+the first item, and the delay lines keep their contents across records, so the same stream cut into different records
+interleaves identically. Only an empty record is refused. It carries bytes only: a `float` block refuses it at
+configure.
+
+An interleaver has no status to report, so the record's facts cross unchanged; its signal name and its single-map
+shape follow it, and the output record's extent names its own length. A framed output carries the facts of the record
+it came from; a convolutional output carries those of the record that held the first item of its span, or those of the
+record being consumed while the delay lines are still filling. Deinterleave puts the items back.
+)"">;
 
     PortIn<DataSet<T>, Async>  in;
     PortOut<DataSet<T>, Async> out;
 
-    Annotated<std::string, "kind", Doc<"'block', 'convolutional' or 'permutation'; there is no default, because the three families share a contract but not a shape">, Visible> kind{};
-    Annotated<gr::Size_t, "rows", Doc<"kind 'block': rows of the rectangle, written row-major and read column-major">, Visible>                                                 rows          = 0U;
-    Annotated<gr::Size_t, "cols", Doc<"kind 'block': columns of the rectangle; items adjacent at the input land 'rows' apart at the output">, Visible>                          cols          = 0U;
-    Annotated<gr::Size_t, "window_offset", Doc<"kind 'block': first item of the column-major readout to emit">>                                                                 window_offset = 0U;
-    Annotated<gr::Size_t, "window_length", Doc<"kind 'block': items of the readout to emit; 0 means the whole frame">>                                                          window_length = 0U;
-    Annotated<gr::Size_t, "branches", Doc<"kind 'convolutional': delay lines B, at least two; branch b holds b * unit_delay cells">, Visible>                                   branches      = 0U;
-    Annotated<gr::Size_t, "unit_delay", Doc<"kind 'convolutional': cells M per branch step; the end-to-end delay is B * (B - 1) * M items">, Visible>                           unit_delay    = 0U;
-    Annotated<std::vector<gr::Size_t>, "table", Doc<"kind 'permutation': the gather out[i] = in[table[i]], every index below the frame size once; required, with no default">>  table{};
-    Annotated<gr::Size_t, "fill_value", Doc<"the item value the convolutional fill emits, 0 to 255">>                                                                           fill_value = 0U;
+    Annotated<std::string, "kind", Doc<"'block', 'convolutional' or 'permutation'; required, with no default">, Visible>                                                       kind{};
+    Annotated<gr::Size_t, "rows", Doc<"kind 'block': rows of the rectangle, written row-major and read column-major">, Visible>                                                rows          = 0U;
+    Annotated<gr::Size_t, "cols", Doc<"kind 'block': columns of the rectangle; items adjacent at the input land 'rows' apart at the output">, Visible>                         cols          = 0U;
+    Annotated<gr::Size_t, "window_offset", Doc<"kind 'block': first item of the column-major readout to emit">>                                                                window_offset = 0U;
+    Annotated<gr::Size_t, "window_length", Doc<"kind 'block': items of the readout to emit; 0 means the whole frame">>                                                         window_length = 0U;
+    Annotated<gr::Size_t, "branches", Doc<"kind 'convolutional': delay lines B, at least two; branch b holds b * unit_delay cells">, Visible>                                  branches      = 0U;
+    Annotated<gr::Size_t, "unit_delay", Doc<"kind 'convolutional': cells M per branch step; the end-to-end delay is B * (B - 1) * M items">, Visible>                          unit_delay    = 0U;
+    Annotated<std::vector<gr::Size_t>, "table", Doc<"kind 'permutation': the gather out[i] = in[table[i]], every index below the frame size once; required, with no default">> table{};
+    Annotated<gr::Size_t, "fill_value", Doc<"the item value the convolutional fill emits, 0 to 255">>                                                                          fill_value = 0U;
 
     GR_MAKE_REFLECTABLE(Interleave, in, out, kind, rows, cols, window_offset, window_length, branches, unit_delay, table, fill_value);
 
@@ -301,42 +297,39 @@ struct Interleave : Block<Interleave<T>> {
 
 GR_REGISTER_BLOCK(gr::blocks::fec::Deinterleave, [T], [ std::uint8_t, float ])
 
-/*!
-@brief Deinterleave: the interleaved items in, the original order out.
-
-The inverse of Interleave under the same settings, item for item. The `convolutional` kind runs
-the complementary delay set, so an interleave followed by a deinterleave delays the stream by
-exactly `branches * (branches - 1) * unit_delay` items and changes nothing else about it; it
-carries bytes only, as on Interleave.
-
-`output_offset` and `output_length` window the DEINTERLEAVED frame: the emitted record is items
-`[output_offset, output_offset + output_length)` of each frame, with a length of 0 meaning "to
-the end of the frame", and the record's extent names the emitted length. A distributed sync word
-occupies the deinterleaved frame's first items, so `output_offset` at the word's item count hands
-the decoder the coded block alone. The window addresses a frame, so the stream-shaped
-`convolutional` kind refuses it. Interleave's readout window is a different thing — a partial
-readout of the INTERLEAVED frame on the transmit side — and deliberately has no counterpart here:
-the pair's inverse relationship must not depend on two settings agreeing.
-
-Length refusals, the counters and the metadata carry are Interleave's, unchanged.
-*/
 template<typename T>
 requires std::same_as<T, std::uint8_t> || std::same_as<T, float>
 struct Deinterleave : Block<Deinterleave<T>> {
-    using Description = Doc<"deinterleave: the interleaved items in, the original order out, under the family the 'kind' setting names">;
+    using Description = Doc<R""(
+@brief Deinterleave: the interleaved items in, the original order out, under the family `kind` names.
+
+The inverse of Interleave under the same settings, item for item. The `convolutional` kind runs the complementary
+delay set, so an interleave followed by a deinterleave delays the stream by exactly
+`branches * (branches - 1) * unit_delay` items and changes nothing else about it; it carries bytes only, as on
+Interleave.
+
+`output_offset` and `output_length` window the deinterleaved frame: the emitted record is items
+`[output_offset, output_offset + output_length)` of each frame, a length of 0 meaning to the end of the frame, and the
+record's extent names the emitted length. A distributed sync word occupies the deinterleaved frame's first items, so
+`output_offset` at the word's item count hands the decoder the coded block alone. The window addresses a frame, so the
+stream-shaped `convolutional` kind refuses it. Interleave's readout window is a different thing, a partial readout of
+the interleaved frame on the transmit side, and has no counterpart here.
+
+Length refusals, the counters and the metadata carry are Interleave's, unchanged.
+)"">;
 
     PortIn<DataSet<T>, Async>  in;
     PortOut<DataSet<T>, Async> out;
 
-    Annotated<std::string, "kind", Doc<"'block', 'convolutional' or 'permutation'; there is no default, because the three families share a contract but not a shape">, Visible> kind{};
-    Annotated<gr::Size_t, "rows", Doc<"kind 'block': rows of the rectangle, written row-major and read column-major">, Visible>                                                 rows          = 0U;
-    Annotated<gr::Size_t, "cols", Doc<"kind 'block': columns of the rectangle; items adjacent at the input land 'rows' apart at the output">, Visible>                          cols          = 0U;
-    Annotated<gr::Size_t, "output_offset", Doc<"framed kinds: items dropped from the front of each deinterleaved frame">>                                                       output_offset = 0U;
-    Annotated<gr::Size_t, "output_length", Doc<"framed kinds: items kept of each deinterleaved frame; 0 means to the end of the frame">>                                        output_length = 0U;
-    Annotated<gr::Size_t, "branches", Doc<"kind 'convolutional': delay lines B, at least two; branch b holds (B - 1 - b) * unit_delay cells on this side">, Visible>            branches      = 0U;
-    Annotated<gr::Size_t, "unit_delay", Doc<"kind 'convolutional': cells M per branch step; the end-to-end delay is B * (B - 1) * M items">, Visible>                           unit_delay    = 0U;
-    Annotated<std::vector<gr::Size_t>, "table", Doc<"kind 'permutation': the interleaver's table, inverted once at configure; required, with no default">>                      table{};
-    Annotated<gr::Size_t, "fill_value", Doc<"the item value the convolutional fill emits, 0 to 255">>                                                                           fill_value = 0U;
+    Annotated<std::string, "kind", Doc<"'block', 'convolutional' or 'permutation'; required, with no default">, Visible>                                             kind{};
+    Annotated<gr::Size_t, "rows", Doc<"kind 'block': rows of the rectangle, written row-major and read column-major">, Visible>                                      rows          = 0U;
+    Annotated<gr::Size_t, "cols", Doc<"kind 'block': columns of the rectangle; items adjacent at the input land 'rows' apart at the output">, Visible>               cols          = 0U;
+    Annotated<gr::Size_t, "output_offset", Doc<"framed kinds: items dropped from the front of each deinterleaved frame">>                                            output_offset = 0U;
+    Annotated<gr::Size_t, "output_length", Doc<"framed kinds: items kept of each deinterleaved frame; 0 means to the end of the frame">>                             output_length = 0U;
+    Annotated<gr::Size_t, "branches", Doc<"kind 'convolutional': delay lines B, at least two; branch b holds (B - 1 - b) * unit_delay cells on this side">, Visible> branches      = 0U;
+    Annotated<gr::Size_t, "unit_delay", Doc<"kind 'convolutional': cells M per branch step; the end-to-end delay is B * (B - 1) * M items">, Visible>                unit_delay    = 0U;
+    Annotated<std::vector<gr::Size_t>, "table", Doc<"kind 'permutation': the interleaver's table, inverted once at configure; required, with no default">>           table{};
+    Annotated<gr::Size_t, "fill_value", Doc<"the item value the convolutional fill emits, 0 to 255">>                                                                fill_value = 0U;
 
     GR_MAKE_REFLECTABLE(Deinterleave, in, out, kind, rows, cols, output_offset, output_length, branches, unit_delay, table, fill_value);
 

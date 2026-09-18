@@ -129,29 +129,28 @@ namespace detail {
 
 GR_REGISTER_BLOCK(gr::blocks::fec::ConvEncode)
 
-/*!
-@brief Convolutional encode: one information-bit record in, one terminated coded frame out.
-
-A record is a frame. Its `k` information bits become `(k + K - 1) * n` coded bits, the tail being
-the K-1 zero bits that leave the register in the zero state so the decoder's traceback is exact.
-Any nonzero length encodes, since a frame's length is the sender's business and every one of them
-is a valid frame; only an empty record is refused, counted in `nRecordsRefused` and stated at
-`stop()`, and the record after it is encoded normally.
-
-An encoder has no status to report, so the record's metadata crosses unchanged; its signal name and
-its single-map shape follow it, and the output record's extent names its own length. See
-ViterbiDecode and ViterbiDecodeSoft for the counterparts that read the channel's account back out.
-*/
 struct ConvEncode : Block<ConvEncode> {
-    using Description = Doc<"convolutional encode: one bit record becomes one terminated coded frame under the code the 'constraint_length' and 'polynomials' settings name">;
+    using Description = Doc<R""(
+@brief Convolutional encode: one information-bit record in, one terminated coded frame out, under the code
+`constraint_length` and `polynomials` name.
+
+A record is a frame. Its `k` information bits become `(k + K - 1) * n` coded bits, the tail being the K-1 zero bits
+that leave the register in the zero state, so the decoder's traceback is exact. Any nonzero length encodes; an empty
+record is refused, counted in `nRecordsRefused` and stated at `stop()`, and the record after it is encoded normally.
+Every frame is terminated, so this block has no `termination` setting.
+
+An encoder has no status to report, so the record's metadata crosses unchanged; its signal name and its single-map
+shape follow it, and the output record's extent names its own length. ViterbiDecode and ViterbiDecodeSoft are the
+decoding counterparts.
+)"">;
 
     PortIn<DataSet<std::uint8_t>, Async>  in;
     PortOut<DataSet<std::uint8_t>, Async> out;
 
-    Annotated<gr::Size_t, "constraint_length", Doc<"K, the register's width in input bits: 3 to 9; there is no default, because a code is not universal">, Visible>                                                                                                                       constraint_length{};
-    Annotated<std::vector<gr::Size_t>, "polynomials", Doc<"one generator per coded bit, 2 to 4 of them, each the value of its octal spelling (0171 and 0133 for the classic K = 7 pair); bit 0 taps the current input bit">, Visible>                                                     polynomials{};
-    Annotated<std::string, "code", Doc<"a named convention supplying constraint_length, polynomials and invert_outputs: 'ccsds', 'ccsds_uninverted', 'nasa_dsn' or 'nasa_dsn_uninverted'; empty selects none, and an explicit setting staged beside a name must agree with it">, Visible> code{};
-    Annotated<gr::Size_t, "invert_outputs", Doc<"bit j set: coded output j is emitted complemented; bits at or past the polynomial count are refused">>                                                                                                                                   invert_outputs = 0U;
+    Annotated<gr::Size_t, "constraint_length", Doc<"K, the register's width in input bits: 3 to 9; required, with no default">, Visible>                                                                                                                  constraint_length{};
+    Annotated<std::vector<gr::Size_t>, "polynomials", Doc<"one generator per coded bit, 2 to 4 of them, each the octal spelling's value, 0171 and 0133 for the classic K = 7 pair; bit 0 taps the current input bit">, Visible>                           polynomials{};
+    Annotated<std::string, "code", Doc<"a published convention supplying constraint_length, polynomials and invert_outputs: 'ccsds', 'ccsds_uninverted', 'nasa_dsn' or 'nasa_dsn_uninverted'; an explicit setting staged beside it must agree">, Visible> code{};
+    Annotated<gr::Size_t, "invert_outputs", Doc<"bit j set: coded output j is emitted complemented; bits at or past the polynomial count are refused">>                                                                                                   invert_outputs = 0U;
 
     GR_MAKE_REFLECTABLE(ConvEncode, in, out, constraint_length, polynomials, code, invert_outputs);
 
@@ -216,36 +215,32 @@ struct ConvEncode : Block<ConvEncode> {
 
 GR_REGISTER_BLOCK(gr::blocks::fec::ViterbiDecode)
 
-/*!
-@brief Viterbi decode of hard decisions: one terminated coded frame in, its information bits out,
-with the channel's account in metadata.
-
-A record's length must be a nonzero multiple of `n` and hold at least `K * n` bits, since a frame
-shorter than the tail carries no information; the record then yields `len / n - (K - 1)`
-information bits. A length failing that test is a counted, stated drop, exactly as ConvEncode drops
-an empty record.
-
-The account rides the record. `corrected_errors` gains the decode's distance — the bits by which
-the received frame and the winning path disagree — added to whatever the key already carried, so a
-chain of correcting stages reports one total rather than its last stage's share. Every other key
-crosses verbatim, and a record arriving without a metadata map gains one to carry the key.
-
-There is no `uncorrectable_errors`. A Viterbi decode cannot refuse: the trellis has a best path
-through any received word, so a key that could only ever be zero would misstate what the decoder
-knows. What the distance says instead is how far the word was from the path chosen, which is the
-honest measure of how much to trust the frame.
-*/
 struct ViterbiDecode : Block<ViterbiDecode> {
-    using Description = Doc<"Viterbi decode of hard decisions: one terminated coded frame becomes its information bits, the distance to the winning path accumulating in metadata">;
+    using Description = Doc<R""(
+@brief Viterbi decode of hard decisions: one terminated coded frame in, its information bits out, with the channel's
+account in metadata.
+
+A record's length must be a nonzero multiple of `n` and hold at least `K * n` bits, a frame shorter than the tail
+carrying no information; the record then yields `len / n - (K - 1)` information bits. A length failing that test is a
+counted, stated drop, as an empty record is at ConvEncode.
+
+The account is carried in metadata: `corrected_errors` gains the decode's distance (the bits by which the received frame and
+the winning path disagree) added to whatever the key already carried, so a chain of correcting stages reports one
+total rather than its last stage's share. Every other key crosses verbatim, and a record arriving without a metadata
+map gains one to carry the key.
+
+There is no `uncorrectable_errors`: the trellis has a best path through any received word, so the key would always be
+zero. The distance in `corrected_errors` is how far the received frame stood from the path chosen.
+)"">;
 
     PortIn<DataSet<std::uint8_t>, Async>  in;
     PortOut<DataSet<std::uint8_t>, Async> out;
 
-    Annotated<gr::Size_t, "constraint_length", Doc<"K, the register's width in input bits: 3 to 9; there is no default, because a code is not universal">, Visible>                                                                                                                       constraint_length{};
-    Annotated<std::vector<gr::Size_t>, "polynomials", Doc<"one generator per coded bit, 2 to 4 of them, each the value of its octal spelling (0171 and 0133 for the classic K = 7 pair); bit 0 taps the current input bit">, Visible>                                                     polynomials{};
-    Annotated<std::string, "code", Doc<"a named convention supplying constraint_length, polynomials and invert_outputs: 'ccsds', 'ccsds_uninverted', 'nasa_dsn' or 'nasa_dsn_uninverted'; empty selects none, and an explicit setting staged beside a name must agree with it">, Visible> code{};
-    Annotated<gr::Size_t, "invert_outputs", Doc<"bit j set: coded output j arrived complemented and the branch metrics compare against the complement; bits at or past the polynomial count are refused">>                                                                                invert_outputs = 0U;
-    Annotated<std::string, "termination", Doc<"'terminated' (the frame ends in the zero state and carries K-1 tail bits) or 'open' (a record cut out of a continuous stream: every step an information bit, both end states free)">>                                                      termination    = std::string("terminated");
+    Annotated<gr::Size_t, "constraint_length", Doc<"K, the register's width in input bits: 3 to 9; required, with no default">, Visible>                                                                                                                  constraint_length{};
+    Annotated<std::vector<gr::Size_t>, "polynomials", Doc<"one generator per coded bit, 2 to 4 of them, each the octal spelling's value, 0171 and 0133 for the classic K = 7 pair; bit 0 taps the current input bit">, Visible>                           polynomials{};
+    Annotated<std::string, "code", Doc<"a published convention supplying constraint_length, polynomials and invert_outputs: 'ccsds', 'ccsds_uninverted', 'nasa_dsn' or 'nasa_dsn_uninverted'; an explicit setting staged beside it must agree">, Visible> code{};
+    Annotated<gr::Size_t, "invert_outputs", Doc<"bit j set: coded output j arrived complemented and is compared against the complement; bits at or past the polynomial count are refused">>                                                               invert_outputs = 0U;
+    Annotated<std::string, "termination", Doc<"'terminated': the frame ends in the zero state and carries K-1 tail bits. 'open': a record cut out of a continuous stream, every step an information bit and both end states free">>                       termination    = std::string("terminated");
 
     GR_MAKE_REFLECTABLE(ViterbiDecode, in, out, constraint_length, polynomials, code, invert_outputs, termination);
 
@@ -320,32 +315,29 @@ struct ViterbiDecode : Block<ViterbiDecode> {
 
 GR_REGISTER_BLOCK(gr::blocks::fec::ViterbiDecodeSoft)
 
-/*!
-@brief Viterbi decode of soft decisions: one record of soft coded values in, its information bits
-out, with the channel's account in metadata.
-
-Identical to ViterbiDecode but for the carrier. One `float` per coded bit, the sign carrying the
-bit — positive is a one — and the magnitude the confidence, with zero a pure erasure. The branch
-metric is the correlation between a branch's output and the received values, so any consistent
-scaling of the input scales the metric and changes no decision: a demodulator needs neither a
-normalization step nor a quantization table before this block.
-
-`corrected_errors` gains the distance between the sign-sliced input and the winning path, the same
-account of the channel the hard decoder gives, so that a chain reports one comparable total
-whichever decoder is in it. What the soft decoder wins is a better path, not a different measure of
-one.
-*/
 struct ViterbiDecodeSoft : Block<ViterbiDecodeSoft> {
-    using Description = Doc<"Viterbi decode of soft decisions: one record of soft coded values becomes its information bits, the distance to the winning path accumulating in metadata">;
+    using Description = Doc<R""(
+@brief Viterbi decode of soft decisions: one record of soft coded values in, its information bits out, with the
+channel's account in metadata.
+
+Identical to ViterbiDecode but for the carrier: one `float` per coded bit, the sign carrying the bit (positive is a
+one) and the magnitude the confidence, with zero a pure erasure. The branch metric is the correlation between a
+branch's output and the received values, so any consistent scaling of the input scales the metric and changes no
+decision; a demodulator needs neither a normalization step nor a quantization table before this block.
+
+`corrected_errors` gains the distance between the sign-sliced input and the winning path, the same account of the
+channel the hard decoder gives, and there is no `uncorrectable_errors` here either. The length contract, the counted
+drops and the metadata carry are ViterbiDecode's.
+)"">;
 
     PortIn<DataSet<float>, Async>         in;
     PortOut<DataSet<std::uint8_t>, Async> out;
 
-    Annotated<gr::Size_t, "constraint_length", Doc<"K, the register's width in input bits: 3 to 9; there is no default, because a code is not universal">, Visible>                                                                                                                       constraint_length{};
-    Annotated<std::vector<gr::Size_t>, "polynomials", Doc<"one generator per coded bit, 2 to 4 of them, each the value of its octal spelling (0171 and 0133 for the classic K = 7 pair); bit 0 taps the current input bit">, Visible>                                                     polynomials{};
-    Annotated<std::string, "code", Doc<"a named convention supplying constraint_length, polynomials and invert_outputs: 'ccsds', 'ccsds_uninverted', 'nasa_dsn' or 'nasa_dsn_uninverted'; empty selects none, and an explicit setting staged beside a name must agree with it">, Visible> code{};
-    Annotated<gr::Size_t, "invert_outputs", Doc<"bit j set: coded output j arrived complemented and its soft values enter the correlation sign-flipped; bits at or past the polynomial count are refused">>                                                                               invert_outputs = 0U;
-    Annotated<std::string, "termination", Doc<"'terminated' (the frame ends in the zero state and carries K-1 tail bits) or 'open' (a record cut out of a continuous stream: every step an information bit, both end states free)">>                                                      termination    = std::string("terminated");
+    Annotated<gr::Size_t, "constraint_length", Doc<"K, the register's width in input bits: 3 to 9; required, with no default">, Visible>                                                                                                                  constraint_length{};
+    Annotated<std::vector<gr::Size_t>, "polynomials", Doc<"one generator per coded bit, 2 to 4 of them, each the octal spelling's value, 0171 and 0133 for the classic K = 7 pair; bit 0 taps the current input bit">, Visible>                           polynomials{};
+    Annotated<std::string, "code", Doc<"a published convention supplying constraint_length, polynomials and invert_outputs: 'ccsds', 'ccsds_uninverted', 'nasa_dsn' or 'nasa_dsn_uninverted'; an explicit setting staged beside it must agree">, Visible> code{};
+    Annotated<gr::Size_t, "invert_outputs", Doc<"bit j set: coded output j arrived complemented and enters the correlation sign-flipped; bits at or past the polynomial count are refused">>                                                              invert_outputs = 0U;
+    Annotated<std::string, "termination", Doc<"'terminated': the frame ends in the zero state and carries K-1 tail bits. 'open': a record cut out of a continuous stream, every step an information bit and both end states free">>                       termination    = std::string("terminated");
 
     GR_MAKE_REFLECTABLE(ViterbiDecodeSoft, in, out, constraint_length, polynomials, code, invert_outputs, termination);
 
