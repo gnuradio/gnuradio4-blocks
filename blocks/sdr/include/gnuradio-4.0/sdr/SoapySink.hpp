@@ -1,8 +1,14 @@
 #ifndef GNURADIO_SOAPY_SINK_HPP
 #define GNURADIO_SOAPY_SINK_HPP
 
+#include <cstdint>
+#include <deque>
+#include <mutex>
+#include <optional>
+
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
+#include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/thread/thread_pool.hpp>
 
 #include <gnuradio-4.0/algorithm/BurstTaper.hpp>
@@ -30,7 +36,14 @@ caller gives it a value, which leaves the device's own gain, bandwidth, antenna,
 unchanged. A setting the caller gives is applied whatever that value is. A block restored from a fully
 serialized settings map has been given every setting that map holds, and a setting changed while the block
 runs is given by that change. tx_gain_elements names the driver's gain elements directly and is applied in
-the order the driver lists them, after the AGC state.)">;
+the order the driver lists them, after the AGC state.
+
+Transmit bursts: a write ends at a sample tagged tx_eob (true) and goes to the device with SOAPY_SDR_END_BURST, and a
+write starts at a sample tagged tx_time (std::uint64_t, UTC ns) and goes with SOAPY_SDR_HAS_TIME and that time. A write
+the device takes only part of is completed with the same flag, and the time goes with the first sample alone. tx_sob
+asks nothing of the device: SoapySDR begins a burst with the first write after an end of burst. A tag on any input
+applies to every channel at that sample. The burst taper ramps up the stream's first samples and ramps down after
+its last, and does not shape the bursts in between; no ramp-down follows a stream whose last sample ended a burst.)">;
 
     using TSizeChecker  = Limits<std::uint32_t{1}, std::numeric_limits<std::uint32_t>::max(), [](std::uint32_t x) { return std::has_single_bit(x); }>;
     using TBasePort     = PortIn<T>;
@@ -104,11 +117,36 @@ the order the driver lists them, after the AGC state.)">;
     };
     IoThreadGuard _ioGuard{this};
 
+    // a staged sample that carries a burst tag, by its index since start()
+    struct BurstMark {
+        std::uint64_t                position  = 0U;
+        bool                         endsBurst = false;
+        std::optional<std::uint64_t> timeNs;
+    };
+    // what the next write to the device takes and carries
+    struct BurstWrite {
+        std::size_t nSamples = 0UZ;
+        int         flags    = 0;
+        long long   timeNs   = 0LL;
+    };
+    std::mutex            _burstMarkMutex;
+    std::deque<BurstMark> _burstMarks;             // ordered by position; processBulk adds, the io thread retires
+    std::uint64_t         _samplesStaged  = 0U;    // scheduler thread only
+    std::uint64_t         _samplesWritten = 0U;    // io thread only
+    bool                  _burstEnded     = false; // io thread only: the last sample the device took ended a burst
+
     void start() {
         _underflowCount.store(0U, std::memory_order_relaxed);
         _stalledWrites.store(0UZ, std::memory_order_relaxed);
         _rampAbandoned.store(false, std::memory_order_relaxed);
         _ioThreadStarted.store(false, std::memory_order_relaxed);
+        _samplesStaged  = 0U;
+        _samplesWritten = 0U;
+        _burstEnded     = false;
+        {
+            std::lock_guard lock(_burstMarkMutex);
+            _burstMarks.clear();
+        }
         configureTaper();
         reinitDevice();
         if (!_txStream.get()) {
@@ -189,7 +227,9 @@ the order the driver lists them, after the AGC state.)">;
         auto nCopy     = std::min(nToWrite, span.size());
         auto inputSpan = std::span<const T>(input.begin(), nCopy);
         std::memcpy(span.data(), inputSpan.data(), nCopy * sizeof(T));
+        markBurstTags(input, nCopy);
         span.publish(nCopy);
+        _samplesStaged += nCopy;
         std::ignore = input.consume(nCopy);
         return gr::work::Status::OK;
     }
@@ -236,15 +276,102 @@ the order the driver lists them, after the AGC state.)">;
             return gr::work::Status::INSUFFICIENT_OUTPUT_ITEMS;
         }
 
+        for (auto& input : inputs) {
+            markBurstTags(input, nCopy);
+        }
         for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
             auto inputSpan = std::span<const T>(inputs[ch].begin(), nCopy);
             std::memcpy(spans[ch].data(), inputSpan.data(), nCopy * sizeof(T));
             spans[ch].publish(nCopy);
         }
+        _samplesStaged += nCopy;
         for (auto& input : inputs) {
             std::ignore = input.consume(nCopy);
         }
         return gr::work::Status::OK;
+    }
+
+    // Marks the staged samples that carry tx_eob or tx_time, before they are published to the io thread. Only the tags
+    // of the nStaged samples are read, and each once: a tag the span leaves unretired returns at a negative index.
+    void markBurstTags(InputSpanLike auto& input, std::size_t nStaged) {
+        for (const auto& [relIndex, tagMap] : input.tags(nStaged)) {
+            if (relIndex >= 0) {
+                addBurstMark(_samplesStaged + static_cast<std::uint64_t>(relIndex), tagMap.get());
+            }
+        }
+    }
+
+    void addBurstMark(std::uint64_t position, const property_map& tagMap) {
+        BurstMark mark{.position = position};
+        if (const auto it = tagMap.find(std::string_view(gr::tag::TX_EOB.shortKey())); it != tagMap.end()) {
+            const bool* endsBurst = it->second.template get_if<bool>();
+            mark.endsBurst        = endsBurst != nullptr && *endsBurst;
+        }
+        if (const auto it = tagMap.find(std::string_view(gr::tag::TX_TIME.shortKey())); it != tagMap.end()) {
+            if (const std::uint64_t* timeNs = it->second.template get_if<std::uint64_t>(); timeNs != nullptr) {
+                mark.timeNs = *timeNs;
+            }
+        }
+        if (!mark.endsBurst && !mark.timeNs.has_value()) {
+            return;
+        }
+        // the ports of an N-port sink are marked one after the other, so a mark can precede or match one already held
+        std::lock_guard lock(_burstMarkMutex);
+        const auto      held = std::ranges::lower_bound(_burstMarks, position, std::ranges::less{}, &BurstMark::position);
+        if (held == _burstMarks.end() || held->position != position) {
+            _burstMarks.insert(held, mark);
+            return;
+        }
+        held->endsBurst = held->endsBurst || mark.endsBurst;
+        if (mark.timeNs.has_value()) {
+            held->timeNs = mark.timeNs;
+        }
+    }
+
+    // The next write takes at most nAvailable samples. It ends at a burst's last sample, with END_BURST, and before a
+    // timed sample, which starts the following write with HAS_TIME and its time.
+    [[nodiscard]] BurstWrite nextBurstWrite(std::size_t nAvailable) {
+        BurstWrite      write{.nSamples = nAvailable};
+        std::lock_guard lock(_burstMarkMutex);
+        for (const BurstMark& mark : _burstMarks) {
+            const std::uint64_t offset = mark.position - _samplesWritten;
+            if (offset >= write.nSamples) {
+                break;
+            }
+            if (mark.timeNs.has_value()) {
+                if (offset > 0U) {
+                    write.nSamples = static_cast<std::size_t>(offset);
+                    break;
+                }
+                write.flags |= SOAPY_SDR_HAS_TIME;
+                write.timeNs = static_cast<long long>(*mark.timeNs);
+            }
+            if (mark.endsBurst) {
+                write.nSamples = static_cast<std::size_t>(offset) + 1UZ;
+                write.flags |= SOAPY_SDR_END_BURST;
+                break;
+            }
+        }
+        return write;
+    }
+
+    // retires the marks of the samples the device took; a write that stopped short of a burst's last sample keeps its
+    // mark, so the write of the remainder carries END_BURST again
+    void retireBurstMarks(std::size_t nTaken) {
+        if (nTaken == 0UZ) {
+            return;
+        }
+        const std::uint64_t end        = _samplesWritten + nTaken;
+        bool                endedBurst = false;
+        {
+            std::lock_guard lock(_burstMarkMutex);
+            while (!_burstMarks.empty() && _burstMarks.front().position < end) {
+                endedBurst = _burstMarks.front().endsBurst && _burstMarks.front().position + 1U == end;
+                _burstMarks.pop_front();
+            }
+        }
+        _samplesWritten = end;
+        _burstEnded     = endedBurst;
     }
 
     void settingsChanged(const property_map& /*oldSettings*/, property_map& newSettings, property_map& /*forwardSettings*/) {
@@ -354,9 +481,11 @@ the order the driver lists them, after the AGC state.)">;
         gr::atomic_ref(_ioThreadDone).notify_all();
     }
 
-    std::pair<std::size_t, bool> taperAndWrite(auto srcIter, std::size_t n, std::vector<T>& scratch) {
-        auto savedPhase   = _taper._phase;
-        auto savedRampPos = _taper._rampPosition;
+    std::pair<std::size_t, bool> taperAndWrite(auto srcIter, std::size_t nAvailable, std::vector<T>& scratch) {
+        const BurstWrite  burst        = nextBurstWrite(nAvailable);
+        const std::size_t n            = burst.nSamples;
+        auto              savedPhase   = _taper._phase;
+        auto              savedRampPos = _taper._rampPosition;
 
         std::memcpy(scratch.data(), &(*srcIter), n * sizeof(T));
         if (burst_taper_enabled) {
@@ -367,8 +496,8 @@ the order the driver lists them, after the AGC state.)">;
         // wraps to the opposite sign. Saturating here keeps every driver inside the contract.
         saturateForDevice(scratch.data(), n);
 
-        int  flags = 0;
-        auto ret   = _txStream.writeStream(flags, 0LL, static_cast<long>(max_time_out_us), std::span<const T>(scratch.data(), n));
+        int  flags = burst.flags;
+        auto ret   = _txStream.writeStream(flags, burst.timeNs, static_cast<long>(max_time_out_us), std::span<const T>(scratch.data(), n));
 
         if (ret == SOAPY_SDR_TIMEOUT) {
             _taper._phase        = savedPhase;
@@ -391,6 +520,7 @@ the order the driver lists them, after the AGC state.)">;
         if (nWritten > 0UZ) {
             _underflowCount.store(0U, std::memory_order_relaxed);
             rememberLastTransmitted(0UZ, scratch[nWritten - 1UZ]);
+            retireBurstMarks(nWritten);
         }
         return {nWritten, true};
     }
@@ -421,6 +551,8 @@ the order the driver lists them, after the AGC state.)">;
             rSpans.push_back(_stagingReaders[ch].get(nToWrite));
             nActual = std::min(nActual, rSpans.back().size());
         }
+        const BurstWrite burst = nextBurstWrite(nActual);
+        nActual                = burst.nSamples;
         if (nActual == 0UZ) {
             return {0UZ, true};
         }
@@ -435,8 +567,8 @@ the order the driver lists them, after the AGC state.)">;
             writeSpans.push_back(std::span<const T>(chScratch[ch].data(), nActual));
         }
 
-        int  flags = 0;
-        auto ret   = _txStream.writeStreamFromBufferList(flags, 0LL, static_cast<long>(max_time_out_us), std::span<std::span<const T>>(writeSpans));
+        int  flags = burst.flags;
+        auto ret   = _txStream.writeStreamFromBufferList(flags, burst.timeNs, static_cast<long>(max_time_out_us), std::span<std::span<const T>>(writeSpans));
 
         if (ret == SOAPY_SDR_TIMEOUT || ret < 0) {
             _taper._phase        = savedPhase;
@@ -458,6 +590,7 @@ the order the driver lists them, after the AGC state.)">;
             for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
                 rememberLastTransmitted(ch, chScratch[ch][nConsumed - 1UZ]);
             }
+            retireBurstMarks(nConsumed);
         }
         if (ret < 0 && ret != SOAPY_SDR_TIMEOUT) {
             return {nConsumed, handleStreamError(ret)};
@@ -539,8 +672,10 @@ the order the driver lists them, after the AGC state.)">;
         }
     }
 
+    // A stream whose last sample ended a burst has left the transmitter idle, and a ramp-down after it would key the
+    // transmitter again for a burst of its own.
     void completeSafetyRampDown(std::vector<T>& scratch) {
-        if (!burst_taper_enabled || !burst_safety_rampdown || _taper.isOff()) {
+        if (!burst_taper_enabled || !burst_safety_rampdown || _taper.isOff() || _burstEnded) {
             return;
         }
         std::println(stderr, "[SoapySink] forced safety ramp-down on shutdown (upstream did not taper)");

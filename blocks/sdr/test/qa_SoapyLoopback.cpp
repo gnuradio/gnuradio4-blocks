@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <complex>
+#include <format>
 #include <thread>
 #include <vector>
 
@@ -1234,6 +1235,27 @@ const boost::ut::suite<"LoopbackDevice frontend"> frontendTests = [] {
         expect(dev.readSetting("call_log").starts_with("setGainMode(RX,0,false);"));
         dev.writeSetting("call_log", "");
         expect(dev.callLog().empty());
+    };
+
+    "the write log records what each write carried and a write clears it"_test = [] {
+        LoopbackDevice dev(SoapySDR::Kwargs{{"driver", "loopback"}, {"device_mode", "tx_only"}, {"max_write_samples", "5"}});
+        auto*          txStream = dev.setupStream(SOAPY_SDR_TX, SOAPY_SDR_CF32);
+        dev.activateStream(txStream);
+
+        constexpr int     kBurstFlags = SOAPY_SDR_END_BURST | SOAPY_SDR_HAS_TIME;
+        std::vector<CF32> txData(8, CF32{1.f, 0.f});
+        const void*       txBufs[]   = {txData.data()};
+        int               burstFlags = kBurstFlags;
+        int               noFlags    = 0;
+        expect(eq(dev.writeStream(txStream, txBufs, 8, burstFlags, 123LL), 5)) << "the device takes what max_write_samples allows";
+        expect(eq(dev.writeStream(txStream, txBufs, 3, noFlags, 0LL), 3));
+
+        const std::vector<WriteRecord> expected{{.requested = 8UZ, .taken = 5UZ, .flags = kBurstFlags, .timeNs = 123LL}, {.requested = 3UZ, .taken = 3UZ, .flags = 0, .timeNs = 0LL}};
+        expect(dev.writeLog() == expected);
+        expect(eq(dev.readSetting("write_log"), std::format("8,5,{},123;3,3,0,0;", kBurstFlags)));
+        dev.writeSetting("write_log", "");
+        expect(dev.writeLog().empty());
+        dev.deactivateStream(txStream);
     };
 
     "a device without a facility says so"_test = [] {

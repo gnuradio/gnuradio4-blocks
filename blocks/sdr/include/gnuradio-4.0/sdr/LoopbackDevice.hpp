@@ -77,6 +77,9 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *  - every configuration call the device receives is recorded in order; the log
  *    is read back through readSetting("call_log") and cleared by writing that
  *    key, which reaches it through the SoapySDR API alone
+ *  - every writeStream that takes samples is recorded with the count asked for,
+ *    the count taken, and the flags and time it carried; the log is read back
+ *    through readSetting("write_log") and cleared by writing that key
  *
  * Frontend device arguments (all optional, all with the defaults of a plain
  * one-element RX device):
@@ -177,6 +180,16 @@ struct ChannelModel {
             }
         }};
     }
+};
+
+// one writeStream call that took samples: the count asked for, the count taken, and the flags and time it carried
+struct WriteRecord {
+    std::size_t requested = 0UZ;
+    std::size_t taken     = 0UZ;
+    int         flags     = 0;
+    long long   timeNs    = 0LL;
+
+    bool operator==(const WriteRecord&) const = default;
 };
 
 class LoopbackDevice; // forward declaration for DeviceRegistry
@@ -304,6 +317,8 @@ class LoopbackDevice : public SoapySDR::Device {
     bool                             _hasFrequencyCorrection = true;
     mutable std::mutex               _callLogMutex;
     mutable std::vector<std::string> _callLog;
+    mutable std::mutex               _writeLogMutex;
+    std::vector<WriteRecord>         _writeLog;
 
 public:
     explicit LoopbackDevice(const SoapySDR::Kwargs& args) {
@@ -412,6 +427,16 @@ public:
     void clearCallLog() {
         auto lock = std::lock_guard(_callLogMutex);
         _callLog.clear();
+    }
+
+    // Every writeStream that took samples, in order.
+    [[nodiscard]] std::vector<WriteRecord> writeLog() const {
+        auto lock = std::lock_guard(_writeLogMutex);
+        return _writeLog;
+    }
+    void clearWriteLog() {
+        auto lock = std::lock_guard(_writeLogMutex);
+        _writeLog.clear();
     }
 
     std::vector<std::string> listAntennas(const int direction, const size_t /*channel*/) const override { return (direction == SOAPY_SDR_RX) ? _rxAntennas : std::vector<std::string>{"TX"}; }
@@ -592,7 +617,7 @@ public:
         return 0;
     }
 
-    int writeStream(SoapySDR::Stream* /*stream*/, const void* const* buffs, const size_t numElems, int& /*flags*/, const long long /*timeNs*/ = 0, const long /*timeoutUs*/ = 100000) override {
+    int writeStream(SoapySDR::Stream* /*stream*/, const void* const* buffs, const size_t numElems, int& flags, const long long timeNs = 0, const long /*timeoutUs*/ = 100000) override {
         if (!_txStreamActive.load(std::memory_order_relaxed)) {
             return SOAPY_SDR_STREAM_ERROR;
         }
@@ -602,6 +627,7 @@ public:
         }
         const std::size_t nRequested = (_maxWriteSamples == 0UZ) ? numElems : std::min(numElems, _maxWriteSamples);
         if (_deviceMode == DeviceMode::TxOnly) {
+            recordWrite(WriteRecord{.requested = numElems, .taken = nRequested, .flags = flags, .timeNs = timeNs});
             return static_cast<int>(nRequested); // null sink — accept and discard
         }
 
@@ -634,6 +660,7 @@ public:
             state.model.process(txSpan, outSpan);
             writerSpan.publish(nWrite);
         }
+        recordWrite(WriteRecord{.requested = numElems, .taken = nWritten, .flags = flags, .timeNs = timeNs});
         return static_cast<int>(nWritten);
     }
 
@@ -825,6 +852,10 @@ public:
             clearCallLog();
             return;
         }
+        if (key == "write_log") {
+            clearWriteLog();
+            return;
+        }
         record(std::format("writeSetting({},{})", key, value));
         if (key == "simulate_timing") {
             _simulateTiming.store(value == "true" || value == "1", std::memory_order_relaxed);
@@ -850,6 +881,14 @@ public:
             for (const auto& call : _callLog) {
                 joined += call;
                 joined += ';';
+            }
+            return joined;
+        }
+        if (key == "write_log") {
+            auto        lock = std::lock_guard(_writeLogMutex);
+            std::string joined;
+            for (const WriteRecord& write : _writeLog) {
+                joined += std::format("{},{},{},{};", write.requested, write.taken, write.flags, write.timeNs);
             }
             return joined;
         }
@@ -955,6 +994,14 @@ public:
             info.description = "configuration calls the device received, ';'-separated; writing the key clears it";
             infos.push_back(info);
         }
+        {
+            SoapySDR::ArgInfo info;
+            info.key         = "write_log";
+            info.value       = "";
+            info.type        = SoapySDR::ArgInfo::STRING;
+            info.description = "writes that took samples as requested,taken,flags,timeNs, ';'-separated; writing the key clears it";
+            infos.push_back(info);
+        }
         return infos;
     }
 
@@ -962,6 +1009,11 @@ private:
     void record(std::string call) const {
         auto lock = std::lock_guard(_callLogMutex);
         _callLog.push_back(std::move(call));
+    }
+
+    void recordWrite(const WriteRecord& write) {
+        auto lock = std::lock_guard(_writeLogMutex);
+        _writeLog.push_back(write);
     }
 
     static const char* directionName(int direction) { return (direction == SOAPY_SDR_RX) ? "RX" : "TX"; }

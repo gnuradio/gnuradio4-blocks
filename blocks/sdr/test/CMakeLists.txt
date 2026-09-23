@@ -177,6 +177,28 @@ if(TARGET SoapySDR)
                                               ${CMAKE_CURRENT_BINARY_DIR}/qa_SoapyIntegration)
     set_tests_properties(qa_SoapyIntegration
                          PROPERTIES ENVIRONMENT "SOAPY_SDR_PLUGIN_PATH=${SOAPY_MODULE_DIR};ASAN_OPTIONS=detect_leaks=0")
+    # SoapySink's transmit burst tags against the loopback module, which records the flags and time of every write.
+    # Every case names the loopback driver alone.
+    add_executable(qa_SoapySinkBurst qa_SoapySinkBurst.cpp)
+    target_link_libraries(
+      qa_SoapySinkBurst
+      PRIVATE gnuradio-options
+              gnuradio-core
+              gnuradio-blocklib-core
+              gr-sdr
+              gr-testing
+              ut)
+    add_dependencies(qa_SoapySinkBurst gr-sdr-loopback)
+    add_custom_command(
+      TARGET qa_SoapySinkBurst
+      POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${SOAPY_MODULE_DIR}
+      COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:gr-sdr-loopback> ${SOAPY_MODULE_DIR}/
+      COMMENT "Copying gr-sdr-loopback.so for the burst test")
+    add_test(NAME qa_SoapySinkBurst COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
+                                            ${CMAKE_CURRENT_BINARY_DIR}/qa_SoapySinkBurst)
+    set_tests_properties(qa_SoapySinkBurst
+                         PROPERTIES ENVIRONMENT "SOAPY_SDR_PLUGIN_PATH=${SOAPY_MODULE_DIR};ASAN_OPTIONS=detect_leaks=0")
   else()
     message(STATUS "qa_SoapyRaiiWrapper SKIPPED (loopback .so module requires matching SoapySDR ABI)")
   endif()
