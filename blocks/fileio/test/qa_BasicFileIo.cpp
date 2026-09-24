@@ -17,7 +17,8 @@ auto createWatchdog(Scheduler& sched, std::chrono::seconds timeOut = 2s, std::ch
     std::thread watchdogThread([&sched, externalInterventionNeeded, timeOut, pollingPeriod]() {
         auto timeout = std::chrono::steady_clock::now() + timeOut;
         while (std::chrono::steady_clock::now() < timeout) {
-            if (sched.state() == gr::lifecycle::State::STOPPED) {
+            // a run ends in STOPPED, or in ERROR when the scheduler's start could not complete
+            if (const auto state = sched.state(); state == gr::lifecycle::State::STOPPED || state == gr::lifecycle::State::ERROR) {
                 return;
             }
             std::this_thread::sleep_for(pollingPeriod);
