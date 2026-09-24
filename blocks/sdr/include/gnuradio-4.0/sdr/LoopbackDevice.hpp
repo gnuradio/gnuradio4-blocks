@@ -71,6 +71,9 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *  - overflow_every=N reports SOAPY_SDR_OVERFLOW from every Nth readStream and
  *    returns no samples on it, which is the receiver that lost data a caller
  *    has to survive (0, the default, never overflows)
+ *  - refuse_activation=true makes every activateStream report
+ *    SOAPY_SDR_STREAM_ERROR, which is the device a caller cannot start (false,
+ *    the default, activates)
  *  - configurable frontend: gain elements with ranges, an AGC whose default
  *    state and refusals are set per instance, antennas, frequency components
  *    with a tuning step, and the has* facilities a caller queries first
@@ -289,6 +292,7 @@ class LoopbackDevice : public SoapySDR::Device {
     std::size_t                                          _readCalls       = 0UZ; // RX thread only, counted for _overflowEvery
     DeviceMode                                           _deviceMode      = DeviceMode::Loopback;
     std::atomic<bool>                                    _simulateTiming{false};
+    bool                                                 _refuseActivation{false};
     std::vector<CF32>                                    _rxToneScratch;  // reusable per-readStream call
     std::vector<CF32>                                    _rxModelScratch; // reusable per-readStream call
     std::vector<std::unique_ptr<ChannelState>>           _channels;
@@ -358,6 +362,9 @@ public:
             if (ec != std::errc{}) {
                 _overflowEvery = 0UZ;
             }
+        }
+        if (auto it = args.find("refuse_activation"); it != args.end()) {
+            _refuseActivation = parseBool(it->second);
         }
         if (auto it = args.find("device_mode"); it != args.end()) {
             _deviceMode = parseDeviceMode(it->second);
@@ -607,6 +614,9 @@ public:
 
     int activateStream(SoapySDR::Stream* stream, const int /*flags*/ = 0, const long long /*timeNs*/ = 0, const size_t /*numElems*/ = 0) override {
         record(std::format("activateStream({})", (stream == reinterpret_cast<SoapySDR::Stream*>(&_rxStreamSentinel)) ? "RX" : "TX"));
+        if (_refuseActivation) {
+            return SOAPY_SDR_STREAM_ERROR;
+        }
         if (stream == reinterpret_cast<SoapySDR::Stream*>(&_rxStreamSentinel)) {
             _rxStreamActive.store(true, std::memory_order_release);
             _lastReadTime = std::chrono::steady_clock::now();
