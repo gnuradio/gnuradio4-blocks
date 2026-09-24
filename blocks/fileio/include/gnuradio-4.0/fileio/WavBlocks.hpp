@@ -240,9 +240,9 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
 
         std::filesystem::path filePath(uri.value);
         if (mode.value == Mode::multi) {
-            if (std::filesystem::exists(filePath.parent_path())) {
+            if (std::filesystem::exists(detail::parentDirectory(filePath))) {
                 auto stem = filePath.filename().string();
-                for (const auto& entry : std::filesystem::directory_iterator(filePath.parent_path())) {
+                for (const auto& entry : std::filesystem::directory_iterator(detail::parentDirectory(filePath))) {
                     if (entry.is_regular_file() && entry.path().string().find(stem) != std::string::npos) {
                         _filesToRead.push_back(entry.path());
                     }
@@ -770,10 +770,10 @@ private:
             std::array<char, 32>  timeBuf{};
             std::strftime(timeBuf.data(), timeBuf.size(), "%Y%m%dT%H%M%S", std::gmtime(&timeT));
             actualPath = (filePath.parent_path() / std::format("{}_{}_{}", std::string_view(timeBuf.data()), _fileCounter++, filePath.filename().string())).string();
-            std::filesystem::create_directories(std::filesystem::path(actualPath).parent_path());
+            detail::ensureDirectoryExists(actualPath);
         } else {
             actualPath = uri.value;
-            std::filesystem::create_directories(std::filesystem::path(actualPath).parent_path());
+            detail::ensureDirectoryExists(actualPath);
         }
 
         _file.open(actualPath, std::ios::binary | std::ios::trunc);

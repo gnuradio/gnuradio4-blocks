@@ -209,6 +209,52 @@ std::expected<void, gr::Error> runSchedulerFor(gr::scheduler::Simple<>& sched, s
     return std::move(*result);
 }
 
+// sets the working directory to a new temporary directory, and restores it and removes the directory on exit
+struct ScopedWorkingDirectory {
+    std::filesystem::path previous  = std::filesystem::current_path();
+    std::filesystem::path directory = std::filesystem::temp_directory_path() / std::format("gr4-wav-cwd-{}", std::chrono::steady_clock::now().time_since_epoch().count());
+
+    ScopedWorkingDirectory() {
+        std::filesystem::create_directories(directory);
+        std::filesystem::current_path(directory);
+    }
+    ScopedWorkingDirectory(const ScopedWorkingDirectory&)            = delete;
+    ScopedWorkingDirectory& operator=(const ScopedWorkingDirectory&) = delete;
+    ~ScopedWorkingDirectory() {
+        std::error_code ec;
+        std::filesystem::current_path(previous, ec);
+        std::filesystem::remove_all(directory, ec);
+    }
+};
+
+std::string errorMessage(const std::expected<void, gr::Error>& result) { return result.has_value() ? std::string{} : result.error().message; }
+
+std::expected<void, gr::Error> writeWavFile(const std::string& uri, const std::string& modeName, const std::vector<std::int16_t>& samples, gr::Size_t maxBytesPerFile = 0U) {
+    TempFile inputFile{writeTempAudioFile(makeWav(1U, 1U, 16U, 8000U, encodePcm16(samples)))};
+
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", inputFile.path.string()}});
+    auto&     sink   = graph.emplaceBlock<gr::blocks::fileio::WavSink<std::int16_t>>({{"uri", uri}, {"mode", modeName}, {"max_bytes_per_file", maxBytesPerFile}, {"sample_rate", 8000.f}, {"num_channels", gr::Size_t(1)}});
+    expect(graph.connect<"out", "in">(source, sink).has_value()) << uri;
+
+    gr::scheduler::Simple<> sched;
+    expect(sched.exchange(std::move(graph)).has_value()) << uri;
+    return runSchedulerUntilDone(sched, 2s);
+}
+
+std::vector<std::int16_t> readWavFile(const std::string& uri, const std::string& modeName) {
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", uri}, {"mode", modeName}});
+    auto&     sink   = graph.emplaceBlock<gr::blocks::testing::TagSink<std::int16_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
+    expect(graph.connect<"out", "in">(source, sink).has_value()) << uri;
+
+    gr::scheduler::Simple<> sched;
+    expect(sched.exchange(std::move(graph)).has_value()) << uri;
+    const auto result = runSchedulerUntilDone(sched, 2s);
+    expect(result.has_value()) << uri << ": " << errorMessage(result);
+    return {sink._samples.begin(), sink._samples.end()};
+}
+
 const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
     using namespace boost::ut;
 
@@ -491,6 +537,57 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         // first three samples should match the reference
         const auto samples = std::vector<std::int16_t>(sink._samples.begin(), sink._samples.begin() + static_cast<std::ptrdiff_t>(reference.size()));
         expect(eq(samples, reference)) << caseName;
+    };
+
+    "WavSink writes a bare file name into the working directory"_test = [] {
+        std::vector<std::int16_t> reference(64UZ);
+        std::iota(reference.begin(), reference.end(), std::int16_t(1));
+        constexpr gr::Size_t maxBytesPerFile = 75U; // 15 samples after the 44-byte header: five files
+
+        for (const std::string modeName : {"overwrite", "multi"}) {
+            ScopedWorkingDirectory workingDirectory;
+            const auto             written = writeWavFile("tone.wav", modeName, reference, modeName == "multi" ? maxBytesPerFile : 0U);
+            expect(written.has_value()) << modeName << ": " << errorMessage(written);
+
+            // the multi mode names each file '<time>_<index>_tone.wav'
+            std::size_t    nFiles = 0UZ;
+            std::uintmax_t nBytes = 0U;
+            for (const auto& entry : std::filesystem::directory_iterator(workingDirectory.directory)) {
+                expect(entry.is_regular_file() && entry.path().filename().string().ends_with("tone.wav")) << modeName << ": " << entry.path().string();
+                nFiles++;
+                nBytes += entry.file_size();
+            }
+            if (modeName == "multi") {
+                expect(gt(nFiles, 1UZ)) << modeName;
+            } else {
+                expect(eq(nFiles, 1UZ)) << modeName;
+            }
+            expect(eq(nBytes, nFiles * gr::blocks::fileio::WavSink<std::int16_t>::kHeaderSize + reference.size() * sizeof(std::int16_t))) << modeName;
+        }
+    };
+
+    "WavSource reads a bare file name from the working directory"_test = [] {
+        std::vector<std::int16_t> reference(64UZ);
+        std::iota(reference.begin(), reference.end(), std::int16_t(1));
+        constexpr gr::Size_t maxBytesPerFile = 75U;
+
+        for (const std::string modeName : {"overwrite", "multi"}) {
+            ScopedWorkingDirectory workingDirectory;
+            const auto             written = writeWavFile((workingDirectory.directory / "tone.wav").string(), modeName, reference, modeName == "multi" ? maxBytesPerFile : 0U);
+            expect(written.has_value()) << modeName << ": " << errorMessage(written);
+
+            expect(eq(readWavFile("tone.wav", modeName), reference)) << modeName;
+        }
+    };
+
+    "WavSink creates the missing directories of a file name"_test = [] {
+        const std::vector<std::int16_t> reference{1000, 2000, 3000};
+        ScopedWorkingDirectory          workingDirectory;
+
+        const auto written = writeWavFile("missing/sub/tone.wav", "overwrite", reference);
+        expect(written.has_value()) << errorMessage(written);
+        std::error_code ec;
+        expect(eq(std::filesystem::file_size(workingDirectory.directory / "missing/sub/tone.wav", ec), gr::blocks::fileio::WavSink<std::int16_t>::kHeaderSize + reference.size() * sizeof(std::int16_t))) << ec.message();
     };
 
 #if GR4_ENABLE_HTTP_TESTS && !defined(__EMSCRIPTEN__)

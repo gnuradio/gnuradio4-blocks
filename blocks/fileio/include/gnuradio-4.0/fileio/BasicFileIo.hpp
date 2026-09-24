@@ -21,16 +21,14 @@ namespace gr::blocks::fileio {
 
 namespace detail {
 
-inline void ensureDirectoryExists(const std::filesystem::path& filePath) { std::filesystem::create_directories(filePath.parent_path()); }
-
 inline std::vector<std::filesystem::path> getSortedFilesContaining(const std::string& fileName) {
     std::filesystem::path filePath(fileName);
-    if (!std::filesystem::exists(filePath.parent_path())) {
+    if (!std::filesystem::exists(parentDirectory(filePath))) {
         throw gr::exception(std::format("path/file '{}' does not exist.", fileName));
     }
 
     std::vector<std::filesystem::path> matchingFiles;
-    std::copy_if(std::filesystem::directory_iterator(filePath.parent_path()), std::filesystem::directory_iterator{}, std::back_inserter(matchingFiles), //
+    std::copy_if(std::filesystem::directory_iterator(parentDirectory(filePath)), std::filesystem::directory_iterator{}, std::back_inserter(matchingFiles), //
         [&](const auto& entry) { return entry.is_regular_file() && entry.path().string().find(filePath.filename().string()) != std::string::npos; });
 
     std::sort(matchingFiles.begin(), matchingFiles.end());
@@ -46,12 +44,12 @@ inline std::vector<std::filesystem::path> getSortedFilesContaining(const std::st
 
 [[maybe_unused]] inline std::vector<std::string> deleteFilesContaining(const std::string& fileName) {
     std::filesystem::path filePath(fileName);
-    if (!std::filesystem::exists(filePath.parent_path())) {
+    if (!std::filesystem::exists(parentDirectory(filePath))) {
         return {};
     }
 
     std::vector<std::string> deletedFiles;
-    for (const auto& entry : std::filesystem::directory_iterator(filePath.parent_path())) {
+    for (const auto& entry : std::filesystem::directory_iterator(parentDirectory(filePath))) {
         if (entry.is_regular_file() && entry.path().string().find(filePath.filename().string()) != std::string::npos) {
             deletedFiles.push_back(entry.path().string());
             std::filesystem::remove(entry.path());
@@ -151,7 +149,7 @@ private:
         detail::ensureDirectoryExists(file_name.value);
 
         std::filesystem::path filePath(file_name.value);
-        if (!std::filesystem::exists(filePath.parent_path())) {
+        if (!std::filesystem::exists(detail::parentDirectory(filePath))) {
             throw gr::exception(std::format("path/file '{}' does not exist.", file_name.value));
         }
 
@@ -226,7 +224,7 @@ Important: this implementation assumes a host-order, CPU architecture specific b
         _readerActive = false;
 
         std::filesystem::path filePath(file_name.value);
-        if (!std::filesystem::exists(filePath.parent_path())) {
+        if (!std::filesystem::exists(detail::parentDirectory(filePath))) {
             throw gr::exception(std::format("path/file '{}' does not exist.", file_name.value));
         }
 
