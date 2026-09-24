@@ -238,6 +238,39 @@ struct AudioSourceState : AudioStateBase<T> {
     using AudioStateBase<T>::stopRequested;
     using AudioStateBase<T>::writer;
 
+    static constexpr std::int64_t kNoCaptureTime = std::numeric_limits<std::int64_t>::min();
+
+    // the capture time of the ring's frame zero on the wallClockNs() clock, extrapolated at the
+    // nominal rate from the newest frame whose capture time the backend measured; kNoCaptureTime
+    // until a backend records one. One value carries the time and the ring position it belongs to.
+    std::atomic<std::int64_t> frameZeroCaptureNs{kNoCaptureTime};
+
+    void recreateBuffer(std::size_t capacitySamples) {
+        AudioStateBase<T>::recreateBuffer(capacitySamples);
+        frameZeroCaptureNs.store(kNoCaptureTime, std::memory_order_relaxed);
+    }
+
+    // called by the capture callback after it stored its frames: the newest frame in the ring was
+    // captured at newestCaptureNs
+    void recordCaptureTime(std::int64_t newestCaptureNs, std::size_t channelCount, double sampleRate) {
+        const std::size_t nFrames = writer.position() / std::max<std::size_t>(1U, channelCount);
+        if (nFrames == 0U || !(sampleRate > 0.0)) {
+            return;
+        }
+        frameZeroCaptureNs.store(newestCaptureNs - framesToNs(nFrames - 1U, sampleRate), std::memory_order_relaxed);
+    }
+
+    // the capture time of ring frame `frame`, counted from the ring's start, where a backend measured one
+    [[nodiscard]] std::optional<std::int64_t> captureTimeNs(std::size_t frame, double sampleRate) const {
+        const std::int64_t frameZeroNs = frameZeroCaptureNs.load(std::memory_order_relaxed);
+        if (frameZeroNs == kNoCaptureTime || !(sampleRate > 0.0)) {
+            return std::nullopt;
+        }
+        return frameZeroNs + framesToNs(frame, sampleRate);
+    }
+
+    [[nodiscard]] static std::int64_t framesToNs(std::size_t nFrames, double sampleRate) { return static_cast<std::int64_t>(std::llround(static_cast<double>(nFrames) * 1e9 / sampleRate)); }
+
     [[nodiscard]] std::size_t writePlanarFloat(const float* input, std::size_t frameCount, std::size_t inputChannels, std::size_t outputChannels) {
         if (stopRequested.load(std::memory_order_acquire) || input == nullptr || frameCount == 0U) {
             return 0U;

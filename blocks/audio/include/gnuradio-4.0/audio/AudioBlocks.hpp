@@ -227,7 +227,8 @@ private:
             return;
         }
 
-        std::size_t nProduced = _backendImpl.readToOutput(std::span<T>(outSpan.data(), nToTake), channelCount);
+        const std::size_t firstFrame = _backendImpl._state.reader.position() / channelCount;
+        std::size_t       nProduced  = _backendImpl.readToOutput(std::span<T>(outSpan.data(), nToTake), channelCount);
 
         const bool streamActive = _backendImpl.isStreamActive();
         if (static_cast<bool>(permission.value) != streamActive) {
@@ -236,7 +237,8 @@ private:
         }
 
         if (nProduced > 0U) {
-            const std::uint64_t tNowNs = detail::wallClockNs();
+            const std::uint64_t tNowNs     = detail::wallClockNs();
+            const std::int64_t  tCaptureNs = captureTimeNs(firstFrame, nProduced / channelCount, channelCount);
             _rateEstimator.update(static_cast<double>(tNowNs) * 1e-9, nProduced / channelCount);
 
             const double nomRate       = static_cast<double>(sample_rate.value);
@@ -256,7 +258,7 @@ private:
             }
 
             if (emit_timing_tags.value) {
-                maybeEmitTimingTag(tNowNs, nProduced, channelCount);
+                maybeEmitTimingTag(tNowNs, tCaptureNs);
             }
         }
 
@@ -296,14 +298,27 @@ private:
         }
     }
 
-    void maybeEmitTimingTag(std::uint64_t tNowNs, std::size_t /*nSamples*/, std::size_t /*channelCount*/) {
+    // the capture time of the chunk that starts at ring frame firstFrame, on the wallClockNs() clock:
+    // the backend's measurement where it records one, otherwise the present time less the duration
+    // of the chunk and of the frames stored behind it, all of which were captured by now
+    [[nodiscard]] std::int64_t captureTimeNs(std::size_t firstFrame, std::size_t nFrames, std::size_t channelCount) const {
+        const double rate = static_cast<double>(sample_rate.value);
+        if (const auto measured = _backendImpl._state.captureTimeNs(firstFrame, rate)) {
+            return *measured;
+        }
+        const std::size_t nBehind = _backendImpl._state.reader.available() / channelCount;
+        return static_cast<std::int64_t>(detail::wallClockNs()) - detail::AudioSourceState<T>::framesToNs(nFrames - 1U + nBehind, rate);
+    }
+
+    // trigger_time marks the capture of the chunk's first sample, the sample the tag is published on
+    void maybeEmitTimingTag(std::uint64_t tNowNs, std::int64_t tCaptureNs) {
         const auto intervalNs = static_cast<std::uint64_t>(tag_interval.value * 1e9f);
         if (tNowNs - _lastTagTimeNs < intervalNs) {
             return;
         }
         _lastTagTimeNs = tNowNs;
 
-        const auto tUtcNs   = static_cast<std::uint64_t>(static_cast<std::int64_t>(tNowNs) + _clockOffsetNs);
+        const auto tUtcNs   = static_cast<std::uint64_t>(std::max(std::int64_t{0}, tCaptureNs + _clockOffsetNs));
         const bool hasClock = clk_in.isConnected() && !_clockTriggerName.empty();
 
         auto tagMap = out.makeTagMap();

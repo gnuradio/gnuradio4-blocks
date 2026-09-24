@@ -663,8 +663,10 @@ private:
             return;
         }
 
-        const std::size_t channelCount = std::max<std::size_t>(1U, static_cast<std::size_t>(instream->layout.channel_count));
-        int               framesLeft   = frameCountMax;
+        const std::size_t channelCount  = std::max<std::size_t>(1U, static_cast<std::size_t>(instream->layout.channel_count));
+        const std::size_t firstPosition = self->_state.writer.position();
+        std::size_t       nOffered      = 0U;
+        int               framesLeft    = frameCountMax;
 
         while (framesLeft > 0) {
             SoundIoChannelArea* areas      = nullptr;
@@ -680,6 +682,7 @@ private:
             }
 
             const std::size_t frames = static_cast<std::size_t>(frameCount);
+            nOffered += frames * channelCount;
             if (areas == nullptr) {
                 self->writeSilenceFrames(frames, channelCount);
             } else {
@@ -693,6 +696,15 @@ private:
             }
 
             framesLeft -= frameCount;
+        }
+
+        // after the reads, soundio_instream_get_latency() returns the age of the newest frame read, and
+        // libsoundio answers it only inside this callback; a callback that lost frames records nothing,
+        // because the ring's newest frame then precedes the newest frame read
+        double latency = 0.0;
+        if (nOffered > 0U && self->_state.writer.position() - firstPosition == nOffered && soundio_instream_get_latency(instream, &latency) == SoundIoErrorNone && std::isfinite(latency) && latency >= 0.0) {
+            const auto tNowNs = static_cast<std::int64_t>(wallClockNs());
+            self->_state.recordCaptureTime(tNowNs - static_cast<std::int64_t>(std::llround(latency * 1e9)), channelCount, static_cast<double>(instream->sample_rate));
         }
     }
 };

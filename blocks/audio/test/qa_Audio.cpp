@@ -4,10 +4,14 @@
 #include <array>
 #include <bit>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <limits>
 #include <optional>
+#include <print>
 #include <span>
 #include <string>
 #include <string_view>
@@ -206,6 +210,39 @@ public:
     }
 };
 
+// records the trigger_time of every timing tag with the sample it marks, and the time each sample
+// arrived: a sample cannot arrive before it was captured
+template<typename T>
+class ArrivalSink : public gr::Block<ArrivalSink<T>> {
+public:
+    gr::PortIn<T> in;
+
+    GR_MAKE_REFLECTABLE(ArrivalSink, in);
+
+    struct Stamp {
+        std::size_t   index;
+        std::uint64_t timeNs;
+    };
+    std::vector<Stamp> _triggerTimes; // the sample a timing tag marks, and its trigger_time
+    std::vector<Stamp> _arrivals;     // every sample before `index` had arrived by `timeNs`
+    std::size_t        _nSamples{0UZ};
+
+    [[nodiscard]] gr::work::Status processBulk(gr::InputSpanLike auto& inSpan) {
+        const std::uint64_t tArrivalNs = gr::blocks::audio::detail::wallClockNs();
+        for (const auto& [relIndex, tagMapRef] : inSpan.tags()) {
+            const auto& tagMap = tagMapRef.get();
+            if (const auto it = tagMap.find(gr::tag::TRIGGER_TIME.shortKey()); it != tagMap.end()) {
+                if (const auto* triggerTime = it->second.template get_if<std::uint64_t>(); triggerTime != nullptr) {
+                    _triggerTimes.push_back({_nSamples + (relIndex < 0 ? 0UZ : static_cast<std::size_t>(relIndex)), *triggerTime});
+                }
+            }
+        }
+        _nSamples += inSpan.size();
+        _arrivals.push_back({_nSamples, tArrivalNs});
+        return gr::work::Status::OK;
+    }
+};
+
 std::expected<void, gr::Error> runSchedulerFor(gr::scheduler::Simple<>& sched, std::chrono::milliseconds duration) {
     std::optional<std::expected<void, gr::Error>> result;
     auto                                          schedThread = std::thread([&sched, &result] { result = sched.runAndWait(); });
@@ -341,6 +378,37 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         source._backendImpl._state.silenceSamples.fetch_add(17U);
         source.stop();
         expect(eq(source.dropped_samples.value, gr::Size_t(17))) << std::format("{}: holes pending at stop must reach the public count, got {}", caseName, source.dropped_samples.value);
+    };
+
+    "the soundio capture callback dates the frames it stores"_test = [] {
+        constexpr std::string_view caseName = "SoundIo capture time";
+        constexpr double           kRate    = 48000.0;
+        using State                         = gr::blocks::audio::detail::AudioSourceState<float>;
+
+        gr::blocks::audio::detail::SoundIoSourceBackend<float> backend;
+
+        const auto tStartNs = static_cast<std::int64_t>(gr::blocks::audio::detail::wallClockNs());
+        expect(backend.start({.sampleRate = 48000U, .numChannels = 1U, .bufferFrames = 8192UZ, .device = "", .useDummyBackendForTests = true}).has_value()) << caseName;
+        // the first callback that stores frames records their capture time
+        for (std::size_t attempt = 0UZ; attempt < 2000UZ && !backend._state.captureTimeNs(0UZ, kRate).has_value(); ++attempt) {
+            std::this_thread::sleep_for(1ms);
+        }
+        backend.quiesceCapture(); // no callback runs after this; the ring and its record stay unchanged
+        const auto tEndNs = static_cast<std::int64_t>(gr::blocks::audio::detail::wallClockNs());
+
+        const std::size_t nStored = backend._state.writer.position();
+        const auto        oldest  = backend._state.captureTimeNs(0UZ, kRate);
+        const auto        newest  = backend._state.captureTimeNs(nStored > 0UZ ? nStored - 1UZ : 0UZ, kRate);
+        expect(gt(nStored, 0UZ)) << caseName;
+        expect(oldest.has_value() && newest.has_value()) << "the dummy backend reports a capture latency, so its callback records a capture time";
+        if (nStored > 0UZ && oldest.has_value() && newest.has_value()) {
+            // one sample period apart, captured after the start and before the frames were read
+            expect(eq(*newest - *oldest, State::framesToNs(nStored - 1UZ, kRate))) << caseName;
+            expect(ge(*oldest, tStartNs)) << std::format("{}: the first frame is dated {} ns before the start", caseName, tStartNs - *oldest);
+            expect(le(*newest, tEndNs)) << std::format("{}: the newest frame is dated {} ns after it was read", caseName, *newest - tEndNs);
+        }
+        backend.shutdown();
+        expect(!backend._state.captureTimeNs(0UZ, kRate).has_value()) << "a new ring holds no capture time until a callback records one";
     };
 
     "an evicted silence placeholder is counted once"_test = [] {
@@ -628,6 +696,65 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
             }
         }
         expect(foundTimingTag) << "should have at least one timing tag";
+    };
+
+    "AudioSource stamps a chunk with the capture time of its first sample"_test = [] {
+        constexpr std::string_view caseName = "AudioSource capture time";
+        constexpr double           kRate    = 48000.0;
+
+        gr::Graph graph;
+        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", static_cast<float>(kRate)}, {"num_channels", gr::Size_t(1)}, {"io_buffer_size", 0.1f}, {"emit_timing_tags", true}, {"tag_interval", 0.0f}});
+        source._useDummyBackendForTests = true;
+        // without drift compensation every output sample is a captured one, and its index counts the sample periods before it
+        source.drift_correction = gr::algorithm::DriftCorrection::None;
+        auto& sink              = graph.emplaceBlock<ArrivalSink<float>>();
+        expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
+
+        gr::scheduler::Simple<> sched;
+        expect(sched.exchange(std::move(graph)).has_value()) << caseName;
+        const auto tStartNs = static_cast<std::int64_t>(gr::blocks::audio::detail::wallClockNs());
+        expect(runSchedulerFor(sched, 500ms).has_value()) << caseName;
+        expect(sched.state() != gr::lifecycle::State::ERROR) << caseName;
+
+        // with tag_interval 0 every chunk carries a timing tag on its first sample; a chunk ends where the next tag begins
+        const auto& stamps   = sink._triggerTimes;
+        const auto& arrivals = sink._arrivals;
+        const auto  duration = [](std::size_t nSamples) { return static_cast<std::int64_t>(std::llround(static_cast<double>(nSamples) * 1e9 / kRate)); };
+
+        std::int64_t latestNs   = std::numeric_limits<std::int64_t>::min(); // stamp less the latest possible capture
+        std::int64_t earliestNs = std::numeric_limits<std::int64_t>::max(); // stamp less the earliest possible capture
+        std::int64_t minEpochNs = std::numeric_limits<std::int64_t>::max(); // stamp less the sample's offset in the stream
+        std::int64_t maxEpochNs = std::numeric_limits<std::int64_t>::min();
+        std::size_t  nChunks    = 0UZ;
+        std::size_t  maxLength  = 0UZ;
+        for (std::size_t i = 0UZ; i + 1UZ < stamps.size(); ++i) {
+            const std::size_t first = stamps[i].index;
+            const std::size_t last  = stamps[i + 1UZ].index - 1UZ;
+            const auto        seen  = std::ranges::find_if(arrivals, [last](const auto& arrival) { return arrival.index > last; });
+            if (last < first || seen == arrivals.end()) {
+                continue;
+            }
+            // upper bound: the chunk's last sample was captured before it arrived, and its first
+            // sample (last - first) sample periods earlier; lower bound: the backend captured no
+            // sample before the graph started, nor faster than its rate
+            const std::int64_t upperNs = static_cast<std::int64_t>(seen->timeNs) - duration(last - first);
+            const std::int64_t lowerNs = tStartNs + duration(first);
+            const auto         stampNs = static_cast<std::int64_t>(stamps[i].timeNs);
+            latestNs                   = std::max(latestNs, stampNs - upperNs);
+            earliestNs                 = std::min(earliestNs, stampNs - lowerNs);
+            minEpochNs                 = std::min(minEpochNs, stampNs - duration(first));
+            maxEpochNs                 = std::max(maxEpochNs, stampNs - duration(first));
+            maxLength                  = std::max(maxLength, last - first + 1UZ);
+            ++nChunks;
+        }
+
+        expect(ge(nChunks, 2UZ)) << caseName;
+        if (nChunks > 0UZ) {
+            std::println("{}: {} chunks of at most {} samples ({:.3f} ms); trigger_time less the latest possible capture of the chunk's first sample at most {:+.3f} ms, less the earliest at least {:+.3f} ms; trigger_time less the sample's offset spread {:.3f} ms", //
+                caseName, nChunks, maxLength, static_cast<double>(duration(maxLength)) * 1e-6, static_cast<double>(latestNs) * 1e-6, static_cast<double>(earliestNs) * 1e-6, static_cast<double>(maxEpochNs - minEpochNs) * 1e-6);
+        }
+        expect(le(latestNs, std::int64_t{0})) << std::format("{}: a chunk is stamped {:.3f} ms after its first sample could have been captured", caseName, static_cast<double>(latestNs) * 1e-6);
+        expect(ge(earliestNs, std::int64_t{0})) << std::format("{}: a chunk is stamped {:.3f} ms before its first sample could have been captured", caseName, static_cast<double>(-earliestNs) * 1e-6);
     };
 
     "DriftCompensator inserts sample when source is fast"_test = [] {
