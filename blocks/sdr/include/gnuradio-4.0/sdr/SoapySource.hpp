@@ -274,26 +274,45 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     // finished io thread the stop, on the scheduler thread.
     [[nodiscard]] bool ioActive() const noexcept { return lifecycle::isActive(this->state()) && !_ioStopRequested.load(std::memory_order_acquire); }
 
+    // The device writes each read straight into the reserved output spans. A read waits until every output has room
+    // for all of it; until then the device's own buffer holds the samples, and the device reports an overflow once
+    // that buffer is full. A read is max_chunk_size samples, or the output buffer's size where that is smaller,
+    // rounded down to whole MTUs where it holds one.
+    [[nodiscard]] static std::size_t readSize(std::size_t maxChunkSize, std::size_t outputCapacity, std::size_t mtu) noexcept {
+        const std::size_t nRead = std::min(maxChunkSize, outputCapacity);
+        return (mtu > 0UZ && nRead >= mtu) ? nRead - nRead % mtu : nRead;
+    }
+
     void ioReadLoop() {
         thread_pool::thread::setThreadName(std::format("soapy:{}", this->name.value));
 
-        constexpr std::size_t kReadSize = 512UZ * 16UZ;
-        std::size_t           nCh       = static_cast<std::size_t>(num_channels.value);
+        std::size_t       nCh = static_cast<std::size_t>(num_channels.value);
+        const std::size_t mtu = _rxStream.mtu();
 
         auto& clkReader = clk_in.streamReader();
         auto& clkTagRdr = clk_in.tagReader();
 
         if constexpr (nPorts == 1U) {
-            std::vector<T> readBuf(kReadSize);
-            auto&          outWriter = out.streamWriter();
+            auto&             outWriter = out.streamWriter();
+            const std::size_t capacity  = outWriter.buffer().size();
 
             while (ioActive()) {
                 this->applyChangedSettings();
                 applyDirtyFlags();
 
+                const std::size_t nRead = readSize(max_chunk_size, capacity, mtu);
+                if (outWriter.available() < nRead) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(200));
+                    continue;
+                }
+                auto span = outWriter.template tryReserve<SpanReleasePolicy::ProcessNone>(nRead);
+                if (span.empty()) {
+                    continue;
+                }
+
                 int       flags   = 0;
                 long long time_ns = 0;
-                int       ret     = _rxStream.readStream(flags, time_ns, max_time_out_us, std::span<T>(readBuf));
+                int       ret     = _rxStream.readStream(flags, time_ns, max_time_out_us, std::span<T>(span.data(), span.size()));
 
                 if (ret == SOAPY_SDR_TIMEOUT) {
                     continue;
@@ -319,117 +338,83 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
 
                 drainClockInput(clkReader, clkTagRdr);
 
-                // an already-read chunk is never dropped: a gap in a continuous IQ stream is a phase
-                // discontinuity downstream, while a genuine device overrun surfaces as SOAPY_SDR_OVERFLOW
-                std::size_t done = 0UZ;
-                while (done < nSamples && lifecycle::isActive(this->state())) {
-                    auto span = outWriter.template tryReserve<SpanReleasePolicy::ProcessNone>(nSamples - done);
-                    if (span.empty()) {
-                        std::this_thread::sleep_for(std::chrono::microseconds(200));
-                        this->applyChangedSettings();
-                        applyDirtyFlags();
-                        continue;
+                if constexpr (std::is_same_v<T, std::complex<float>>) {
+                    if (dc_blocker_enabled) {
+                        applyDcBlocker(span.data(), nSamples);
                     }
-                    const auto nCopy = std::min(nSamples - done, span.size());
-                    std::memcpy(span.data(), readBuf.data() + done, nCopy * sizeof(T));
-
-                    if constexpr (std::is_same_v<T, std::complex<float>>) {
-                        if (dc_blocker_enabled) {
-                            applyDcBlocker(span.data(), nCopy);
-                        }
-                    }
-
-                    if (done == 0UZ && emit_timing_tags) {
-                        auto intervalNs = static_cast<std::uint64_t>(tag_interval.value * 1e9f);
-                        if (intervalNs == 0UL || _lastTagTimeNs == 0UL || (tWallNs - _lastTagTimeNs) >= intervalNs) {
-                            emitTimingTag(nCopy, tWallNs);
-                            _lastTagTimeNs = tWallNs;
-                        }
-                    }
-
-                    span.publish(nCopy);
-                    done += nCopy;
-                    this->progress->incrementAndGet();
-                    this->progress->notify_all();
                 }
+
+                if (emit_timing_tags) {
+                    auto intervalNs = static_cast<std::uint64_t>(tag_interval.value * 1e9f);
+                    if (intervalNs == 0UL || _lastTagTimeNs == 0UL || (tWallNs - _lastTagTimeNs) >= intervalNs) {
+                        emitTimingTag(nSamples, tWallNs);
+                        _lastTagTimeNs = tWallNs;
+                    }
+                }
+
+                span.publish(nSamples);
+                this->progress->incrementAndGet();
+                this->progress->notify_all();
             }
         } else {
-            std::vector<std::vector<T>> readBufs(nCh, std::vector<T>(kReadSize));
             using WriterType = std::remove_reference_t<decltype(out[0].streamWriter())>;
             std::vector<std::reference_wrapper<WriterType>> outWriters;
+            std::size_t                                     capacity = std::numeric_limits<std::size_t>::max();
             for (std::size_t ch = 0UZ; ch < nCh && ch < out.size(); ++ch) {
                 outWriters.push_back(std::ref(out[ch].streamWriter()));
+                capacity = std::min(capacity, outWriters.back().get().buffer().size());
             }
 
             while (ioActive()) {
                 this->applyChangedSettings();
                 applyDirtyFlags();
 
-                int       flags   = 0;
-                long long time_ns = 0;
-
-                std::vector<std::span<T>> spans;
-                spans.reserve(nCh);
-                for (auto& buf : readBufs) {
-                    spans.push_back(std::span<T>(buf));
-                }
-                int ret = _rxStream.readStreamIntoBufferList(flags, time_ns, static_cast<long>(max_time_out_us.value), spans);
-
-                if (ret == SOAPY_SDR_TIMEOUT) {
-                    continue;
-                }
-                if (ret < 0) {
-                    if (!handleStreamError(ret)) {
-                        break;
-                    }
-                    continue;
-                }
-                if (ret == 0) {
-                    continue;
-                }
-
-                _overflowCount.store(0U, std::memory_order_relaxed);
-                handleStreamFlags(flags);
-                auto nSamples = static_cast<std::size_t>(ret);
-                auto tWallNs  = detail::wallClockNs();
-
-                if (ppm_estimator_cutoff > 0.f) {
-                    _rateEstimator.update(static_cast<double>(tWallNs) * 1e-9, nSamples);
-                }
-
-                drainClockInput(clkReader, clkTagRdr);
-
-                // hold the chunk until every writer has space, as on the 1-port path
-                bool allAvailable = std::ranges::all_of(outWriters, [nSamples](auto& w) { return w.get().available() >= nSamples; });
-                while (!allAvailable && lifecycle::isActive(this->state())) {
+                const std::size_t nRead = readSize(max_chunk_size, capacity, mtu);
+                if (!std::ranges::all_of(outWriters, [nRead](auto& w) { return w.get().available() >= nRead; })) {
                     std::this_thread::sleep_for(std::chrono::microseconds(200));
-                    this->applyChangedSettings();
-                    applyDirtyFlags();
-                    allAvailable = std::ranges::all_of(outWriters, [nSamples](auto& w) { return w.get().available() >= nSamples; });
-                }
-                if (!allAvailable) {
-                    continue; // stopping
+                    continue;
                 }
 
                 using OutSpanType = decltype(outWriters[0].get().template tryReserve<SpanReleasePolicy::ProcessNone>(0UZ));
                 std::vector<OutSpanType> outSpans;
                 outSpans.reserve(outWriters.size());
-                bool allReserved = true;
                 for (auto& w : outWriters) {
-                    outSpans.push_back(w.get().template tryReserve<SpanReleasePolicy::ProcessNone>(nSamples));
-                    if (outSpans.back().empty()) {
-                        allReserved = false;
-                        break;
-                    }
+                    outSpans.push_back(w.get().template tryReserve<SpanReleasePolicy::ProcessNone>(nRead));
                 }
-                if (!allReserved) {
-                    outSpans.clear();
+                if (std::ranges::any_of(outSpans, [](const auto& s) { return s.empty(); })) {
                     continue;
                 }
-                for (std::size_t ch = 0UZ; ch < outSpans.size(); ++ch) {
-                    auto nCopy = std::min(nSamples, outSpans[ch].size());
-                    std::memcpy(outSpans[ch].data(), readBufs[ch].data(), nCopy * sizeof(T));
-                    outSpans[ch].publish(nCopy);
+
+                int       flags   = 0;
+                long long time_ns = 0;
+                int       ret     = _rxStream.readStreamIntoBufferList(flags, time_ns, static_cast<long>(max_time_out_us.value), outSpans);
+
+                if (ret == SOAPY_SDR_TIMEOUT) {
+                    continue;
+                }
+                if (ret < 0) {
+                    if (!handleStreamError(ret)) {
+                        break;
+                    }
+                    continue;
+                }
+                if (ret == 0) {
+                    continue;
+                }
+
+                _overflowCount.store(0U, std::memory_order_relaxed);
+                handleStreamFlags(flags);
+                auto nSamples = static_cast<std::size_t>(ret);
+                auto tWallNs  = detail::wallClockNs();
+
+                if (ppm_estimator_cutoff > 0.f) {
+                    _rateEstimator.update(static_cast<double>(tWallNs) * 1e-9, nSamples);
+                }
+
+                drainClockInput(clkReader, clkTagRdr);
+
+                for (auto& s : outSpans) {
+                    s.publish(nSamples);
                 }
 
                 if (emit_timing_tags) {

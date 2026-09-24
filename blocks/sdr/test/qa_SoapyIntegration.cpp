@@ -5,6 +5,7 @@
 #include <complex>
 #include <cstdlib>
 #include <filesystem>
+#include <numbers>
 #include <optional>
 #include <print>
 #include <string>
@@ -117,6 +118,39 @@ bool sawError(gr::MsgPortIn& port, std::string_view fragment) {
     auto& reader   = port.streamReader();
     auto  messages = reader.get<gr::SpanReleasePolicy::ProcessAll>(reader.available());
     return std::ranges::any_of(messages, [fragment](const gr::Message& message) { return !message.data.has_value() && message.data.error().message.contains(fragment); });
+}
+
+// The receive-only loopback turns its tone by 2*pi*frequency/sampleRate from one sample to the next, so a stream that
+// holds every sample once and in order shows that step between every pair of neighbors.
+std::optional<std::size_t> firstPhaseBreak(const auto& samples, double frequency, double sampleRate) {
+    const double step = 2.0 * std::numbers::pi * frequency / sampleRate;
+    for (std::size_t i = 1UZ; i < samples.size(); ++i) {
+        const auto turn = std::complex<double>(samples[i]) * std::conj(std::complex<double>(samples[i - 1UZ]));
+        if (std::abs(std::arg(turn) - step) > 1e-3) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+std::vector<std::size_t> tagIndices(const std::vector<gr::Tag>& tags, std::string_view key) {
+    std::vector<std::size_t> indices;
+    for (const auto& tag : tags) {
+        if (tag.map.contains(std::pmr::string(key))) {
+            indices.push_back(tag.index);
+        }
+    }
+    return indices;
+}
+
+// true when the indices are 0, nRead, 2 * nRead and so on, one for each read of nRead samples
+bool evenlySpaced(const std::vector<std::size_t>& indices, std::size_t nRead) {
+    for (std::size_t i = 0UZ; i < indices.size(); ++i) {
+        if (indices[i] != i * nRead) {
+            return false;
+        }
+    }
+    return !indices.empty();
 }
 
 } // namespace
@@ -358,6 +392,111 @@ const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
         auto ret = runWithWatchdog(sched, std::chrono::seconds{3});
         expect(ret.has_value());
         expect(lt(sink.count.value, nSamples)) << "loopback without TX should not deliver all samples";
+    };
+};
+
+const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
+    using namespace gr;
+    using namespace gr::blocks::sdr;
+    using namespace gr::blocks::testing;
+    using Sched = gr::scheduler::Simple<>;
+
+    static constexpr float  kRate      = 1e6f;
+    static constexpr double kFrequency = 100e3;
+
+    struct Received {
+        std::vector<CF32>    samples;
+        std::vector<gr::Tag> tags;
+        std::size_t          maxChunkSize = 0UZ;
+    };
+
+    // Without its rate limit the receive-only loopback hands over a read as soon as it is asked for one, so the
+    // source's output fills and every read waits for room. A timing tag marks every read.
+    auto receive = [](const std::string& parameters, property_map extraSettings, gr::Size_t nSamples) {
+        gr::Graph    flow;
+        property_map settings{{"device", "loopback"}, {"device_parameter", parameters}, {"device_settings", std::string("simulate_timing=false")}, {"sample_rate", kRate}, {"frequency", std::vector{kFrequency}}, {"emit_timing_tags", true}, {"tag_interval", 0.f}};
+        for (auto& [key, value] : extraSettings) {
+            settings.insert_or_assign(key, value);
+        }
+        auto& source = flow.emplaceBlock<SoapySource<CF32, 1UZ>>(std::move(settings));
+        auto& sink   = flow.emplaceBlock<TagSink<CF32, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_expected", nSamples}, {"log_tags", true}, {"log_samples", true}});
+        expect(flow.connect<"out", "in">(source, sink).has_value());
+
+        Sched sched;
+        expect(sched.exchange(std::move(flow)).has_value());
+        expect(runWithWatchdog(sched).has_value());
+        return Received{.samples = std::vector<CF32>(sink._samples.begin(), sink._samples.end()), .tags = sink._tags, .maxChunkSize = source.max_chunk_size};
+    };
+
+    "every sample arrives once and in order, and a read's tags mark its first sample"_test = [&receive] {
+        constexpr std::size_t kOverflowEvery = 4UZ;
+        constexpr gr::Size_t  nSamples       = 200'000U;
+
+        const auto received = receive(std::format("device_mode=rx_only,overflow_every={}", kOverflowEvery), {}, nSamples);
+        expect(ge(received.samples.size(), std::size_t{nSamples}));
+        const auto brokenAt = firstPhaseBreak(received.samples, kFrequency, static_cast<double>(kRate));
+        expect(!brokenAt.has_value()) << std::format("the tone breaks at sample {}", brokenAt.value_or(0UZ));
+
+        // the loopback's MTU is its buffer size, which is larger than max_chunk_size, so a read is max_chunk_size
+        const std::size_t nRead  = received.maxChunkSize;
+        const auto        timing = tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey());
+        expect(evenlySpaced(timing, nRead)) << std::format("{} timing tags, {} samples per read", timing.size(), nRead);
+
+        // every kOverflowEvery-th read reports an overflow and delivers nothing, so its tag sits where the next read
+        // starts, after the kOverflowEvery - 1 reads before it
+        const auto overflows = tagIndices(received.tags, "rx_overflow");
+        expect(!overflows.empty()) << "the device reported overflows";
+        for (std::size_t i = 0UZ; i < overflows.size(); ++i) {
+            expect(eq(overflows[i], (i + 1UZ) * (kOverflowEvery - 1UZ) * nRead)) << std::format("overflow tag {}", i);
+        }
+    };
+
+    "a read is at most max_chunk_size samples"_test = [&receive] {
+        constexpr std::uint32_t kMaxChunkSize = 2048U;
+        const auto              received      = receive("device_mode=rx_only", {{"max_chunk_size", kMaxChunkSize}}, 20'000U);
+        expect(!firstPhaseBreak(received.samples, kFrequency, static_cast<double>(kRate)).has_value());
+        expect(evenlySpaced(tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey()), kMaxChunkSize));
+    };
+
+    "a read is a whole number of MTUs where max_chunk_size holds one"_test = [&receive] {
+        constexpr std::size_t kMtu     = 3000UZ; // the loopback reports its buffer size as its MTU
+        const auto            received = receive(std::format("device_mode=rx_only,buffer_size={}", kMtu), {}, 60'000U);
+        expect(!firstPhaseBreak(received.samples, kFrequency, static_cast<double>(kRate)).has_value());
+        const std::size_t nRead = received.maxChunkSize - received.maxChunkSize % kMtu;
+        expect(evenlySpaced(tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey()), nRead)) << std::format("{} samples per read", nRead);
+    };
+
+    "both channels of a two-channel read arrive whole, in order and marked together"_test = [] {
+        constexpr gr::Size_t nSamples = 100'000U;
+        constexpr double     kSecond  = 250e3;
+
+        gr::Graph flow;
+        auto&     source = flow.emplaceBlock<SoapySource<CF32, 2UZ>>({
+            {"device", "loopback"},
+            {"device_parameter", std::string("device_mode=rx_only,num_channels=2")},
+            {"device_settings", std::string("simulate_timing=false")},
+            {"sample_rate", kRate},
+            {"num_channels", gr::Size_t{2}},
+            {"frequency", std::vector{kFrequency, kSecond}},
+            {"emit_timing_tags", true},
+            {"tag_interval", 0.f},
+        });
+        auto&     sink0  = flow.emplaceBlock<TagSink<CF32, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_expected", nSamples}, {"log_tags", true}, {"log_samples", true}});
+        auto&     sink1  = flow.emplaceBlock<TagSink<CF32, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_expected", nSamples}, {"log_tags", true}, {"log_samples", true}});
+        expect(flow.connect<"out#0", "in">(source, sink0).has_value());
+        expect(flow.connect<"out#1", "in">(source, sink1).has_value());
+
+        Sched sched;
+        expect(sched.exchange(std::move(flow)).has_value());
+        expect(runWithWatchdog(sched).has_value());
+
+        const std::size_t nRead = source.max_chunk_size;
+        for (const auto& [sink, frequency] : {std::pair{&sink0, kFrequency}, std::pair{&sink1, kSecond}}) {
+            expect(ge(sink->_samples.size(), std::size_t{nSamples}));
+            const auto brokenAt = firstPhaseBreak(sink->_samples, frequency, static_cast<double>(kRate));
+            expect(!brokenAt.has_value()) << std::format("the {} Hz tone breaks at sample {}", frequency, brokenAt.value_or(0UZ));
+            expect(evenlySpaced(tagIndices(sink->_tags, gr::tag::TRIGGER_TIME.shortKey()), nRead)) << std::format("{} Hz channel", frequency);
+        }
     };
 };
 

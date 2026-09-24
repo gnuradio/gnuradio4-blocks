@@ -879,6 +879,14 @@ public:
             return {};
         }
 
+        // the driver's transfer unit in samples; 0 without a stream
+        [[nodiscard]] std::size_t mtu() const {
+            if (_device.get() == nullptr || _stream.get() == nullptr) {
+                return 0UZ;
+            }
+            return SoapySDRDevice_getStreamMTU(_device.get(), _stream.get());
+        }
+
         template<typename... TBuffers>
         requires(Direction == SOAPY_SDR_RX && sizeof...(TBuffers) > 0UZ)
         [[maybe_unused]] int readStream(int& flags, long long& timeNs, std::uint32_t timeOutUs, TBuffers&&... ioBuffers) {
