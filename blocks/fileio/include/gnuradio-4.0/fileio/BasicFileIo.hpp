@@ -216,6 +216,8 @@ Important: this implementation assumes a host-order, CPU architecture specific b
         }
     }
 
+    // throws when there is nothing to read: the directory or the file is missing, the file does not open, or in
+    // multi mode no file name in the directory holds the base name
     void start() {
         _currentFileIndex = 0UZ;
         _totalBytesRead   = 0UZ;
@@ -231,10 +233,16 @@ Important: this implementation assumes a host-order, CPU architecture specific b
         switch (mode) {
         case Mode::overwrite:
         case Mode::append: {
+            if (const auto reason = detail::unreadableFileReason(filePath)) {
+                throw gr::exception(*reason);
+            }
             _filesToRead.push_back(filePath);
         } break;
         case Mode::multi: {
             _filesToRead = detail::getSortedFilesContaining(file_name.value);
+            if (_filesToRead.empty()) {
+                throw gr::exception(std::format("no file in '{}' has a name containing '{}'", detail::parentDirectory(filePath).string(), filePath.filename().string()));
+            }
         } break;
         default: throw gr::exception("unsupported file mode.");
         }

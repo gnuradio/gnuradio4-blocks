@@ -229,7 +229,15 @@ struct ScopedWorkingDirectory {
 
 std::string errorMessage(const std::expected<void, gr::Error>& result) { return result.has_value() ? std::string{} : result.error().message; }
 
-std::expected<void, gr::Error> writeWavFile(const std::string& uri, const std::string& modeName, const std::vector<std::int16_t>& samples, gr::Size_t maxBytesPerFile = 0U) {
+// the result of a run, with the file block's name and its lifecycle state once the run ended; a source run also holds the samples it delivered
+struct FileBlockRun {
+    std::expected<void, gr::Error> result;
+    std::string                    blockName;
+    gr::lifecycle::State           blockState;
+    std::vector<std::int16_t>      samples;
+};
+
+FileBlockRun runWavSink(const std::string& uri, const std::string& modeName, const std::vector<std::int16_t>& samples, gr::Size_t maxBytesPerFile = 0U) {
     TempFile inputFile{writeTempAudioFile(makeWav(1U, 1U, 16U, 8000U, encodePcm16(samples)))};
 
     gr::Graph graph;
@@ -239,10 +247,13 @@ std::expected<void, gr::Error> writeWavFile(const std::string& uri, const std::s
 
     gr::scheduler::Simple<> sched;
     expect(sched.exchange(std::move(graph)).has_value()) << uri;
-    return runSchedulerUntilDone(sched, 2s);
+    auto result = runSchedulerUntilDone(sched, 2s);
+    return {std::move(result), sink.unique_name.value(), sink.state(), {}};
 }
 
-std::vector<std::int16_t> readWavFile(const std::string& uri, const std::string& modeName) {
+std::expected<void, gr::Error> writeWavFile(const std::string& uri, const std::string& modeName, const std::vector<std::int16_t>& samples, gr::Size_t maxBytesPerFile = 0U) { return runWavSink(uri, modeName, samples, maxBytesPerFile).result; }
+
+FileBlockRun runWavSource(const std::string& uri, const std::string& modeName) {
     gr::Graph graph;
     auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<std::int16_t>>({{"uri", uri}, {"mode", modeName}});
     auto&     sink   = graph.emplaceBlock<gr::blocks::testing::TagSink<std::int16_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
@@ -250,9 +261,26 @@ std::vector<std::int16_t> readWavFile(const std::string& uri, const std::string&
 
     gr::scheduler::Simple<> sched;
     expect(sched.exchange(std::move(graph)).has_value()) << uri;
-    const auto result = runSchedulerUntilDone(sched, 2s);
-    expect(result.has_value()) << uri << ": " << errorMessage(result);
-    return {sink._samples.begin(), sink._samples.end()};
+    auto result = runSchedulerUntilDone(sched, 2s);
+    return {std::move(result), source.unique_name.value(), source.state(), {sink._samples.begin(), sink._samples.end()}};
+}
+
+std::vector<std::int16_t> readWavFile(const std::string& uri, const std::string& modeName) {
+    auto run = runWavSource(uri, modeName);
+    expect(run.result.has_value()) << uri << ": " << errorMessage(run.result);
+    return std::move(run.samples);
+}
+
+// expects a run that the file block ended at its start, with an error naming the block and each of the given texts
+void expectRefusedStart(const FileBlockRun& run, std::initializer_list<std::string_view> texts) {
+    const std::string message = errorMessage(run.result);
+    expect(!run.result.has_value()) << "the run must fail";
+    expect(run.blockState == gr::lifecycle::State::ERROR) << "the block's start() must fail, state " << gr::meta::enumName(run.blockState).value_or("");
+    expect(run.samples.empty());
+    expect(message.contains(run.blockName)) << "names " << run.blockName << ": " << message;
+    for (const auto text : texts) {
+        expect(message.contains(text)) << "names " << text << ": " << message;
+    }
 }
 
 const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
@@ -588,6 +616,35 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         expect(written.has_value()) << errorMessage(written);
         std::error_code ec;
         expect(eq(std::filesystem::file_size(workingDirectory.directory / "missing/sub/tone.wav", ec), gr::blocks::fileio::WavSink<std::int16_t>::kHeaderSize + reference.size() * sizeof(std::int16_t))) << ec.message();
+    };
+
+    "WavSource in multi mode refuses at start a stem that no file name holds"_test = [] {
+        ScopedWorkingDirectory workingDirectory;
+        std::ofstream(workingDirectory.directory / "noise.wav", std::ios::binary) << "RIFF";
+
+        expectRefusedStart(runWavSource((workingDirectory.directory / "tone.wav").string(), "multi"), {workingDirectory.directory.string(), "tone.wav"});
+        expectRefusedStart(runWavSource((workingDirectory.directory / "missing" / "tone.wav").string(), "multi"), {(workingDirectory.directory / "missing").string(), "tone.wav", "does not exist"});
+    };
+
+    "WavSource refuses at start a file that does not exist or is not a regular file"_test = [] {
+        ScopedWorkingDirectory workingDirectory;
+        const std::string      uri = (workingDirectory.directory / "tone.wav").string();
+
+        expectRefusedStart(runWavSource(uri, "overwrite"), {uri, "does not exist"});
+        expectRefusedStart(runWavSource(std::format("file://{}", uri), "overwrite"), {uri, "does not exist"});
+
+        std::filesystem::create_directory(uri);
+        expectRefusedStart(runWavSource(uri, "overwrite"), {uri, "not a regular file"});
+    };
+
+    "WavSource refuses at start a uri scheme it cannot read"_test = [] { expectRefusedStart(runWavSource("ftp://127.0.0.1/tone.wav", "overwrite"), {"ftp://127.0.0.1/tone.wav"}); };
+
+    "WavSink refuses at start an empty uri or a file it cannot open"_test = [] {
+        const std::vector<std::int16_t> reference{1000, 2000, 3000};
+        ScopedWorkingDirectory          workingDirectory;
+
+        expectRefusedStart(runWavSink("", "overwrite", reference), {"uri is empty"});
+        expectRefusedStart(runWavSink(workingDirectory.directory.string(), "overwrite", reference), {workingDirectory.directory.string(), "cannot open"});
     };
 
 #if GR4_ENABLE_HTTP_TESTS && !defined(__EMSCRIPTEN__)

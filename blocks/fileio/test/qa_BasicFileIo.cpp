@@ -198,8 +198,15 @@ std::expected<void, gr::Error> writeFloatFile(const std::string& fileName, const
     return result;
 }
 
-// returns the number of samples the source delivered
-std::expected<gr::Size_t, gr::Error> readFloatFile(const std::string& fileName, const std::string& modeName) {
+// the result of a BasicFileSource run, with the source's name and its lifecycle state once the run ended
+struct SourceRun {
+    std::expected<void, gr::Error> result;
+    std::string                    sourceName;
+    gr::lifecycle::State           sourceState;
+    gr::Size_t                     nSamples;
+};
+
+SourceRun runFloatSource(const std::string& fileName, const std::string& modeName) {
     using namespace boost::ut;
     using namespace gr::blocks::fileio;
     using namespace gr::blocks::testing;
@@ -219,10 +226,30 @@ std::expected<gr::Size_t, gr::Error> readFloatFile(const std::string& fileName, 
         watchdogThread.join();
     }
     expect(!externalInterventionNeeded->load(std::memory_order_relaxed)) << fileName;
-    if (!result.has_value()) {
-        return std::unexpected(result.error());
+    return {std::move(result), fileSource.unique_name.value(), fileSource.state(), sink.count.value};
+}
+
+// returns the number of samples the source delivered
+std::expected<gr::Size_t, gr::Error> readFloatFile(const std::string& fileName, const std::string& modeName) {
+    auto run = runFloatSource(fileName, modeName);
+    if (!run.result.has_value()) {
+        return std::unexpected(run.result.error());
     }
-    return sink.count.value;
+    return run.nSamples;
+}
+
+// expects a run that the source ended at its start, with an error naming the source and each of the given texts
+void expectRefusedStart(const SourceRun& run, std::initializer_list<std::string_view> texts) {
+    using namespace boost::ut;
+
+    const std::string message = errorMessage(run.result);
+    expect(!run.result.has_value()) << "the run must fail";
+    expect(run.sourceState == gr::lifecycle::State::ERROR) << "the source's start() must fail, state " << gr::meta::enumName(run.sourceState).value_or("");
+    expect(eq(run.nSamples, 0U));
+    expect(message.contains(run.sourceName)) << "names " << run.sourceName << ": " << message;
+    for (const auto text : texts) {
+        expect(message.contains(text)) << "names " << text << ": " << message;
+    }
 }
 
 } // anonymous namespace
@@ -357,6 +384,25 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
         expect(!nRead.has_value());
         expect(errorMessage(nRead).contains("path/file 'missing/tone.f32' does not exist.")) << errorMessage(nRead);
         expect(!std::filesystem::exists(workingDirectory.directory / "missing"));
+    };
+
+    "BasicFileSource refuses at start a file that does not exist or is not a regular file"_test = [] {
+        ScopedWorkingDirectory workingDirectory;
+        const std::string      fileName = (workingDirectory.directory / "tone.f32").string();
+
+        for (const std::string modeName : {"overwrite", "append"}) {
+            expectRefusedStart(runFloatSource(fileName, modeName), {fileName, "does not exist"});
+        }
+
+        std::filesystem::create_directory(fileName);
+        expectRefusedStart(runFloatSource(fileName, "overwrite"), {fileName, "not a regular file"});
+    };
+
+    "BasicFileSource in multi mode refuses at start a stem that no file name holds"_test = [] {
+        ScopedWorkingDirectory workingDirectory;
+        std::ofstream(workingDirectory.directory / "noise.f32", std::ios::binary) << "0123";
+
+        expectRefusedStart(runFloatSource((workingDirectory.directory / "tone.f32").string(), "multi"), {workingDirectory.directory.string(), "tone.f32"});
     };
 };
 
