@@ -104,6 +104,21 @@ void withinBound(std::chrono::milliseconds bound, std::string_view what, auto&& 
     runner.join();
 }
 
+// The number of users of a device that have registered and not yet finished configuring it. The device's
+// streams are activated when it reaches zero.
+std::size_t pendingUsers(const soapy::Kwargs& kwargs) {
+    auto  lock    = std::lock_guard(soapy::detail::DeviceRegistry::mutex());
+    auto& devices = soapy::detail::DeviceRegistry::devices();
+    auto  it      = devices.find(kwargs);
+    return it == devices.end() ? 0UZ : it->second.pendingUsers;
+}
+
+bool sawError(gr::MsgPortIn& port, std::string_view fragment) {
+    auto& reader   = port.streamReader();
+    auto  messages = reader.get<gr::SpanReleasePolicy::ProcessAll>(reader.available());
+    return std::ranges::any_of(messages, [fragment](const gr::Message& message) { return !message.data.has_value() && message.data.error().message.contains(fragment); });
+}
+
 } // namespace
 
 const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
@@ -665,6 +680,9 @@ int main() {
             std::println(stderr, "[qa_SoapyIntegration] SOAPY_SDR_PLUGIN_PATH not set and {} not found — loopback tests will fail", modulePath.string());
         }
     }
+    // SoapySDR loads every module it finds on these paths the first time a device is made or enumerated
+    const auto modules = soapy::getSoapySDRModules();
+    std::println(stderr, "[qa_SoapyIntegration] {} SoapySDR module(s): {}", modules.size(), gr::join(modules, ", "));
 }
 
 const boost::ut::suite<"SoapySink BurstTaper"> taperTests = [] {
@@ -1189,5 +1207,208 @@ const boost::ut::suite<"SoapySource device configuration"> configurationTests = 
         expect(!sawCall(without, "setBandwidth("));
         auto [withDevice, with] = runSource("loopback", "device_mode=rx_only", {{"rx_bandwidths", std::vector{200e3}}});
         expect(sawCall(with, "setBandwidth(RX,0,200000)"));
+    };
+};
+
+// A block that cannot start fails the run, and runAndWait() returns. Every case runs within a bound: a block that
+// stops itself inside start() leaves the blocks around it waiting forever. Each graph has a scheduler subscriber,
+// which keeps a block's error report a message.
+const boost::ut::suite<"Soapy blocks that cannot start"> startFailureTests = [] {
+    using namespace gr;
+    using namespace gr::blocks::sdr;
+    using namespace gr::blocks::testing;
+    using Sched = gr::scheduler::Simple<>;
+    using gr::lifecycle::State;
+
+    // Another user registers on the device before the graph starts and settles when the trigger sink receives its
+    // first tag. The scheduler calls work() only after every block of the graph has started. The block's
+    // activation therefore runs inside the trigger sink's work(), off the block's own start().
+    auto addLateSettlingUser = [](gr::Graph& flow, soapy::detail::DeviceRegistry::Registration& otherUser, std::atomic<bool>& settled) {
+        auto& trigger = flow.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", gr::Size_t{1}}});
+        trigger._tags.emplace_back(0UZ, gr::property_map{{"settle", true}});
+        auto& settle        = flow.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_BULK>>({{"log_samples", false}});
+        settle._tagCallback = [&otherUser, &settled](const gr::Tag&) {
+            otherUser.activate({});
+            settled.store(true);
+        };
+        expect(flow.connect<"out", "in">(trigger, settle).has_value());
+    };
+
+    "a source whose driver no loaded module provides fails the run"_test = [] {
+        withinBound(std::chrono::seconds{5}, "a source without a driver", [] {
+            gr::Graph flow;
+            auto&     source = flow.emplaceBlock<SoapySource<CF32, 1UZ>>({{"device", "gr4-no-such-driver"}, {"sample_rate", 1e6f}});
+            auto&     sink   = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", gr::Size_t{1000}}});
+            expect(flow.connect<"out", "in">(source, sink).has_value());
+
+            gr::MsgPortIn fromScheduler;
+            Sched         sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            expect(sched.msgOut.connect(fromScheduler).has_value());
+            const auto result = sched.runAndWait();
+
+            expect(!result.has_value() && result.error().message.contains("device creation failed")) << "the run fails with the reason";
+            expect(source.state() == State::ERROR) << "start() threw";
+            expect(eq(pendingUsers(loopbackKwargs("gr4-no-such-driver", "")), 0UZ)) << "the start released its place among the device's users";
+        });
+    };
+
+    "a source that needs more channels than the device has fails the run"_test = [] {
+        withinBound(std::chrono::seconds{5}, "a source short of channels", [] {
+            const std::string parameters = "device_mode=rx_only,num_channels=1";
+            gr::Graph         flow;
+            auto&             source = flow.emplaceBlock<SoapySource<CF32, 2UZ>>({{"device", "loopback"}, {"device_parameter", parameters}, {"sample_rate", 1e6f}, {"num_channels", gr::Size_t{2}}});
+            auto&             sink0  = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", gr::Size_t{1000}}});
+            auto&             sink1  = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", gr::Size_t{1000}}});
+            expect(flow.connect<"out#0", "in">(source, sink0).has_value());
+            expect(flow.connect<"out#1", "in">(source, sink1).has_value());
+
+            gr::MsgPortIn fromScheduler;
+            Sched         sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            expect(sched.msgOut.connect(fromScheduler).has_value());
+            const auto result = sched.runAndWait();
+
+            expect(!result.has_value() && result.error().message.contains("channel mismatch: need 2 but device has 1")) << "the run fails with the reason";
+            expect(source.state() == State::ERROR) << "start() threw";
+            expect(source._device.get() == nullptr) << "the start released the device it had opened";
+            expect(eq(pendingUsers(loopbackKwargs("loopback", parameters)), 0UZ)) << "the start released its place among the device's users";
+        });
+    };
+
+    "a source whose device refuses to activate the stream fails the run from start()"_test = [] {
+        withinBound(std::chrono::seconds{5}, "a source the device will not start", [] {
+            const std::string parameters = "device_mode=rx_only,refuse_activation=true";
+            gr::Graph         flow;
+            auto&             source = flow.emplaceBlock<SoapySource<CF32, 1UZ>>({{"device", "loopback"}, {"device_parameter", parameters}, {"sample_rate", 1e6f}});
+            auto&             sink   = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", gr::Size_t{1000}}});
+            expect(flow.connect<"out", "in">(source, sink).has_value());
+
+            gr::MsgPortIn fromScheduler;
+            Sched         sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            expect(sched.msgOut.connect(fromScheduler).has_value());
+            const auto result = sched.runAndWait();
+
+            expect(!result.has_value() && result.error().message.contains("activate(")) << "the run fails with the reason";
+            expect(source.state() == State::ERROR) << "the device was the source's alone, so the activation ran inside start(), which threw";
+            expect(source._device.get() == nullptr) << "the start released the device it had opened";
+        });
+    };
+
+    "a source whose device refuses to activate the stream after start() has returned ends the run from work()"_test = [&addLateSettlingUser] {
+        withinBound(std::chrono::seconds{5}, "a source the device will not start later", [&addLateSettlingUser] {
+            const std::string                           parameters = "device_mode=rx_only,refuse_activation=true";
+            soapy::detail::DeviceRegistry::Registration otherUser(loopbackKwargs("loopback", parameters));
+            std::atomic<bool>                           settled{false};
+
+            gr::Graph flow;
+            auto&     source = flow.emplaceBlock<SoapySource<CF32, 1UZ>>({{"device", "loopback"}, {"device_parameter", parameters}, {"sample_rate", 1e6f}});
+            auto&     sink   = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", gr::Size_t{1000}}});
+            expect(flow.connect<"out", "in">(source, sink).has_value());
+            addLateSettlingUser(flow, otherUser, settled);
+
+            gr::MsgPortIn fromScheduler;
+            Sched         sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            expect(sched.msgOut.connect(fromScheduler).has_value());
+            const auto result = sched.runAndWait();
+
+            expect(settled.load()) << "the other user settled while the graph ran";
+            expect(!result.has_value()) << "the run fails";
+            expect(sched.state() == State::ERROR) << "a block answered ERROR";
+            expect(source.state() != State::ERROR) << "the source's start() returned before the device refused the stream";
+            expect(sawError(fromScheduler, "activate(")) << "the reason reached the scheduler's subscriber";
+            expect(source._device.get() == nullptr) << "stopping the run released the device";
+        });
+    };
+
+    "a sink whose driver no loaded module provides fails the run"_test = [] {
+        withinBound(std::chrono::seconds{5}, "a sink without a driver", [] {
+            gr::Graph flow;
+            auto&     source = flow.emplaceBlock<ConstantSource<CF32>>();
+            auto&     sink   = flow.emplaceBlock<SoapySink<CF32, 1UZ>>({{"device", "gr4-no-such-driver"}, {"sample_rate", 1e6f}});
+            expect(flow.connect<"out", "in">(source, sink).has_value());
+
+            gr::MsgPortIn fromScheduler;
+            Sched         sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            expect(sched.msgOut.connect(fromScheduler).has_value());
+            const auto result = sched.runAndWait();
+
+            expect(!result.has_value() && result.error().message.contains("device creation failed")) << "the run fails with the reason";
+            expect(sink.state() == State::ERROR) << "start() threw";
+            expect(eq(pendingUsers(loopbackKwargs("gr4-no-such-driver", "")), 0UZ)) << "the start released its place among the device's users";
+        });
+    };
+
+    "a sink that needs more channels than the device has fails the run"_test = [] {
+        withinBound(std::chrono::seconds{5}, "a sink short of channels", [] {
+            const std::string parameters = "device_mode=tx_only,num_channels=1";
+            gr::Graph         flow;
+            auto&             source0 = flow.emplaceBlock<ConstantSource<CF32>>();
+            auto&             source1 = flow.emplaceBlock<ConstantSource<CF32>>();
+            auto&             sink    = flow.emplaceBlock<SoapySink<CF32, 2UZ>>({{"device", "loopback"}, {"device_parameter", parameters}, {"sample_rate", 1e6f}, {"num_channels", gr::Size_t{2}}});
+            expect(flow.connect<"out", "in#0">(source0, sink).has_value());
+            expect(flow.connect<"out", "in#1">(source1, sink).has_value());
+
+            gr::MsgPortIn fromScheduler;
+            Sched         sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            expect(sched.msgOut.connect(fromScheduler).has_value());
+            const auto result = sched.runAndWait();
+
+            expect(!result.has_value() && result.error().message.contains("TX channel mismatch: need 2 but device has 1")) << "the run fails with the reason";
+            expect(sink.state() == State::ERROR) << "start() threw";
+            expect(sink._device.get() == nullptr) << "the start released the device it had opened";
+            expect(eq(pendingUsers(loopbackKwargs("loopback", parameters)), 0UZ)) << "the start released its place among the device's users";
+        });
+    };
+
+    "a sink whose device refuses to activate the stream fails the run from start()"_test = [] {
+        withinBound(std::chrono::seconds{5}, "a sink the device will not start", [] {
+            const std::string parameters = "device_mode=tx_only,refuse_activation=true";
+            gr::Graph         flow;
+            auto&             source = flow.emplaceBlock<ConstantSource<CF32>>();
+            auto&             sink   = flow.emplaceBlock<SoapySink<CF32, 1UZ>>({{"device", "loopback"}, {"device_parameter", parameters}, {"sample_rate", 1e6f}});
+            expect(flow.connect<"out", "in">(source, sink).has_value());
+
+            gr::MsgPortIn fromScheduler;
+            Sched         sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            expect(sched.msgOut.connect(fromScheduler).has_value());
+            const auto result = sched.runAndWait();
+
+            expect(!result.has_value() && result.error().message.contains("activate(")) << "the run fails with the reason";
+            expect(sink.state() == State::ERROR) << "the device was the sink's alone, so the activation ran inside start(), which threw";
+            expect(sink._device.get() == nullptr) << "the start released the device it had opened";
+        });
+    };
+
+    "a sink whose device refuses to activate the stream after start() has returned ends the run from work()"_test = [&addLateSettlingUser] {
+        withinBound(std::chrono::seconds{5}, "a sink the device will not start later", [&addLateSettlingUser] {
+            const std::string                           parameters = "device_mode=tx_only,refuse_activation=true";
+            soapy::detail::DeviceRegistry::Registration otherUser(loopbackKwargs("loopback", parameters));
+            std::atomic<bool>                           settled{false};
+
+            gr::Graph flow;
+            auto&     source = flow.emplaceBlock<ConstantSource<CF32>>();
+            auto&     sink   = flow.emplaceBlock<SoapySink<CF32, 1UZ>>({{"device", "loopback"}, {"device_parameter", parameters}, {"sample_rate", 1e6f}});
+            expect(flow.connect<"out", "in">(source, sink).has_value());
+            addLateSettlingUser(flow, otherUser, settled);
+
+            gr::MsgPortIn fromScheduler;
+            Sched         sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            expect(sched.msgOut.connect(fromScheduler).has_value());
+            const auto result = sched.runAndWait();
+
+            expect(settled.load()) << "the other user settled while the graph ran";
+            expect(!result.has_value()) << "the run fails";
+            expect(sched.state() == State::ERROR) << "a block answered ERROR";
+            expect(sink.state() != State::ERROR) << "the sink's start() returned before the device refused the stream";
+            expect(sawError(fromScheduler, "activate(")) << "the reason reached the scheduler's subscriber";
+            expect(sink._device.get() == nullptr) << "stopping the run released the device";
+        });
     };
 };
