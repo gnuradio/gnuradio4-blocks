@@ -179,6 +179,21 @@ const boost::ut::suite<"full-scale saturation"> saturateTests = [] {
         saturateToFullScale(std::span<std::complex<float>>{});
     };
 
+    "the two-span form writes what the in-place form leaves and does not touch its input"_test = [] {
+        constexpr float                        infinity = std::numeric_limits<float>::infinity();
+        const std::vector<std::complex<float>> from     = {{0.0f, -0.0f}, {0.5f, -0.25f}, {std::nextafter(1.0f, 2.0f), -7.25f}, {infinity, -infinity}, {std::numeric_limits<float>::quiet_NaN(), 0.75f}};
+        std::vector<std::complex<float>>       inPlace  = from;
+        std::vector<std::complex<float>>       to(from.size(), std::complex<float>{3.0f, 3.0f});
+
+        saturateToFullScale(inPlace);
+        saturateToFullScale(from, to);
+
+        for (std::size_t i = 0UZ; i < from.size(); ++i) {
+            expect(identical(inPlace[i].real(), to[i].real()) && identical(inPlace[i].imag(), to[i].imag())) << std::format("sample {}", i);
+        }
+        expect(std::isnan(from[4UZ].real()) && identical(from[2UZ].imag(), -7.25f)) << "the input moved";
+    };
+
     "a shaped unit-power stream runs past full scale and comes back inside it"_test = [] {
         const std::vector<std::complex<float>> stream = shapedStream();
         const StreamStats                      before = measure(stream);

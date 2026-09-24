@@ -1,11 +1,14 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <complex>
 #include <cstdlib>
 #include <filesystem>
 #include <numbers>
+#include <numeric>
 #include <optional>
 #include <print>
 #include <string>
@@ -151,6 +154,106 @@ bool evenlySpaced(const std::vector<std::size_t>& indices, std::size_t nRead) {
         }
     }
     return !indices.empty();
+}
+
+// A pattern of prime length, so that no chunk, read or write size is a multiple of it. The imaginary parts are
+// distinct and within full scale, so each sample shows its place in the pattern; every seventh real part lies beyond
+// full scale, on alternating sides.
+std::vector<CF32> placeMarkedPattern(std::size_t length) {
+    std::vector<CF32> values(length);
+    for (std::size_t k = 0UZ; k < length; ++k) {
+        const float place = -0.99f + 1.98f * static_cast<float>(k) / static_cast<float>(length);
+        const float real  = (k % 7UZ != 0UZ) ? 0.5f * place : ((k % 2UZ == 0UZ) ? 1.5f : -2.25f);
+        values[k]         = CF32{real, place};
+    }
+    return values;
+}
+
+// What a sink sends for the first n samples of the repeated pattern: each part saturated to full scale and, with a
+// ramp time, each sample scaled by the envelope of a linear taper started as the sink starts its own, followed by
+// the ramp-down the sink sends from its last sample when it stops.
+std::vector<CF32> expectedTransmission(const std::vector<CF32>& values, std::size_t n, std::optional<float> rampTime, float sampleRate) {
+    const auto atFullScale = [](CF32 sample) { return CF32{std::clamp(sample.real(), -1.0f, 1.0f), std::clamp(sample.imag(), -1.0f, 1.0f)}; };
+
+    gr::algorithm::BurstTaper<float> taper;
+    if (rampTime.has_value()) {
+        std::ignore = taper.configure(gr::algorithm::TaperType::Linear, *rampTime, sampleRate, 1.0f);
+        std::ignore = taper.setTarget(true);
+    }
+    std::vector<CF32> sent(n);
+    for (std::size_t i = 0UZ; i < n; ++i) {
+        sent[i] = atFullScale(rampTime.has_value() ? values[i % values.size()] * taper.processOne() : values[i % values.size()]);
+    }
+    if (rampTime.has_value()) {
+        const CF32 last = sent.back();
+        std::ignore     = taper.setTarget(false, true);
+        for (std::size_t k = 0UZ, nRamp = taper.rampLength(); k < nRamp; ++k) {
+            sent.push_back(atFullScale(last * taper.processOne()));
+        }
+    }
+    return sent;
+}
+
+std::optional<std::size_t> firstDifference(const std::vector<CF32>& received, const std::vector<CF32>& expected) {
+    const auto mismatch = std::ranges::mismatch(received, expected);
+    if (mismatch.in1 == received.end() && mismatch.in2 == expected.end()) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(mismatch.in1 - received.begin());
+}
+
+// Sends each channel's pattern through a sink on the loopback device and returns what the device's receiver holds
+// once the sink has stopped, which in loopback mode is every sample the sink sent. The probe opens the device with
+// the sink's arguments first, so the two share it and the device outlives the sink.
+template<std::size_t nChannels>
+requires(nChannels == 1UZ || nChannels == 2UZ)
+std::array<std::vector<CF32>, nChannels> transmitThroughLoopback(const std::string& parameters, gr::property_map settings, const std::array<std::vector<CF32>, nChannels>& patterns, gr::Size_t nSamples) {
+    using gr::blocks::testing::ProcessFunction;
+    using Source = gr::blocks::testing::TagSource<CF32, ProcessFunction::USE_PROCESS_BULK>;
+
+    auto probe = soapy::Device::make(loopbackKwargs("loopback", parameters));
+    expect(fatal(probe.has_value())) << "the probe must open the device the sink will open";
+
+    settings.insert_or_assign(std::pmr::string("device"), std::string("loopback"));
+    settings.insert_or_assign(std::pmr::string("device_parameter"), parameters);
+    settings.insert_or_assign(std::pmr::string("num_channels"), static_cast<gr::Size_t>(nChannels));
+
+    gr::Graph                      flow;
+    auto&                          sink = flow.emplaceBlock<gr::blocks::sdr::SoapySink<CF32, nChannels>>(std::move(settings));
+    std::array<Source*, nChannels> sources{};
+    for (std::size_t ch = 0UZ; ch < nChannels; ++ch) {
+        sources[ch] = std::addressof(flow.emplaceBlock<Source>({{"n_samples_max", nSamples}, {"values", gr::Tensor<CF32>(patterns[ch].begin(), patterns[ch].end())}}));
+    }
+    if constexpr (nChannels == 1UZ) {
+        expect(flow.connect<"out", "in">(*sources[0], sink).has_value());
+    } else {
+        expect(flow.connect<"out", "in#0">(*sources[0], sink).has_value());
+        expect(flow.connect<"out", "in#1">(*sources[1], sink).has_value());
+    }
+
+    gr::scheduler::Simple<> sched;
+    expect(sched.exchange(std::move(flow)).has_value());
+    expect(runWithWatchdog(sched, std::chrono::seconds{10}).has_value());
+
+    std::vector<gr::Size_t> channels(nChannels);
+    std::iota(channels.begin(), channels.end(), gr::Size_t{0});
+    auto receiver = probe->setupStream<CF32, SOAPY_SDR_RX>(channels);
+    expect(fatal(receiver.has_value()));
+    expect(receiver->activate().has_value());
+
+    std::array<std::vector<CF32>, nChannels> received;
+    std::vector<std::vector<CF32>>           buffers(nChannels, std::vector<CF32>(4096UZ));
+    int                                      nRead = 0;
+    do {
+        int       flags  = 0;
+        long long timeNs = 0;
+        nRead            = receiver->readStreamIntoBufferList(flags, timeNs, 0L, buffers);
+        for (std::size_t ch = 0UZ; ch < nChannels && nRead > 0; ++ch) {
+            received[ch].insert(received[ch].end(), buffers[ch].begin(), buffers[ch].begin() + nRead);
+        }
+    } while (nRead > 0);
+    std::ignore = receiver->deactivate();
+    return received;
 }
 
 } // namespace
@@ -496,6 +599,58 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
             const auto brokenAt = firstPhaseBreak(sink->_samples, frequency, static_cast<double>(kRate));
             expect(!brokenAt.has_value()) << std::format("the {} Hz tone breaks at sample {}", frequency, brokenAt.value_or(0UZ));
             expect(evenlySpaced(tagIndices(sink->_tags, gr::tag::TRIGGER_TIME.shortKey()), nRead)) << std::format("{} Hz channel", frequency);
+        }
+    };
+};
+
+const boost::ut::suite<"SoapySink write path"> writePathTests = [] {
+    using namespace gr;
+
+    static constexpr float      kRate     = 1e6f;
+    static constexpr float      kRampTime = 1e-3f;
+    static constexpr gr::Size_t kSamples  = 100'000U;
+
+    // The receiver's buffer holds every sample a run sends, and the device takes at most 3001 samples a write, so
+    // writes end short of the chunks the sink hands it.
+    static const std::string kDevice = "buffer_size=131072,max_write_samples=3001";
+
+    const property_map taperOn{{"burst_taper_enabled", true}, {"burst_ramp_time", kRampTime}, {"burst_taper_type", std::string("Linear")}};
+
+    "every sample reaches the device once and in order, each part saturated to full scale"_test = [] {
+        const auto values   = placeMarkedPattern(997UZ);
+        const auto received = transmitThroughLoopback<1UZ>(kDevice, {{"sample_rate", kRate}}, {values}, kSamples);
+        const auto expected = expectedTransmission(values, kSamples, std::nullopt, kRate);
+        expect(eq(received[0].size(), expected.size()));
+        const auto differsAt = firstDifference(received[0], expected);
+        expect(!differsAt.has_value()) << std::format("the device received another sample at {}", differsAt.value_or(0UZ));
+    };
+
+    "with the taper on, every sample reaches the device once, in order and tapered, and the ramp-down follows"_test = [&taperOn] {
+        property_map settings = taperOn;
+        settings.insert_or_assign(std::pmr::string("sample_rate"), kRate);
+
+        const auto values   = placeMarkedPattern(997UZ);
+        const auto received = transmitThroughLoopback<1UZ>(kDevice, settings, {values}, kSamples);
+        const auto expected = expectedTransmission(values, kSamples, kRampTime, kRate);
+        expect(eq(received[0].size(), expected.size()));
+        const auto differsAt = firstDifference(received[0], expected);
+        expect(!differsAt.has_value()) << std::format("the device received another sample at {}", differsAt.value_or(0UZ));
+    };
+
+    "both channels reach the device whole and in order, tapered alike, with the taper on and off"_test = [&taperOn] {
+        const std::array patterns{placeMarkedPattern(997UZ), placeMarkedPattern(1009UZ)};
+        for (const bool tapered : {false, true}) {
+            property_map settings = tapered ? taperOn : property_map{};
+            settings.insert_or_assign(std::pmr::string("sample_rate"), kRate);
+            settings.insert_or_assign(std::pmr::string("frequency"), std::vector{100e3, 200e3});
+
+            const auto received = transmitThroughLoopback<2UZ>("num_channels=2," + kDevice, settings, patterns, kSamples);
+            for (std::size_t ch = 0UZ; ch < patterns.size(); ++ch) {
+                const auto expected = expectedTransmission(patterns[ch], kSamples, tapered ? std::optional{kRampTime} : std::nullopt, kRate);
+                expect(eq(received[ch].size(), expected.size())) << std::format("channel {}, taper {}", ch, tapered);
+                const auto differsAt = firstDifference(received[ch], expected);
+                expect(!differsAt.has_value()) << std::format("channel {}, taper {}: the device received another sample at {}", ch, tapered, differsAt.value_or(0UZ));
+            }
         }
     };
 };
