@@ -655,17 +655,14 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
         auto              savedPhase   = _taper._phase;
         auto              savedRampPos = _taper._rampPosition;
 
-        std::memcpy(scratch.data(), &(*srcIter), n * sizeof(T));
-        if (burst_taper_enabled) {
-            applyTaper(scratch.data(), n);
+        const T* samples = &(*srcIter);
+        if (transformsSamples()) {
+            prepareForDevice(samples, scratch.data(), n);
+            samples = scratch.data();
         }
-        // A CF32 stream is full scale at +/-1.0 and what a driver does with a part past that is its own: SoapyHackRF
-        // converts a part to the device's eight bits as (int8_t)(part * 127.0) with no clamp, so an overrange part
-        // wraps to the opposite sign. Saturating here keeps every driver inside the contract.
-        saturateForDevice(scratch.data(), n);
 
         int  flags = burst.flags;
-        auto ret   = _txStream.writeStream(flags, burst.timeNs, static_cast<long>(max_time_out_us), std::span<const T>(scratch.data(), n));
+        auto ret   = _txStream.writeStream(flags, burst.timeNs, static_cast<long>(max_time_out_us), std::span<const T>(samples, n));
 
         if (ret == SOAPY_SDR_TIMEOUT) {
             _taper._phase        = savedPhase;
@@ -687,7 +684,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
         }
         if (nWritten > 0UZ) {
             _underflowCount.store(0U, std::memory_order_relaxed);
-            rememberLastTransmitted(0UZ, scratch[nWritten - 1UZ]);
+            rememberLastTransmitted(0UZ, samples[nWritten - 1UZ]);
             retireBurstMarks(nWritten, (burst.flags & SOAPY_SDR_END_BURST) != 0);
         }
         return {nWritten, true};
@@ -725,14 +722,16 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
             return {0UZ, true};
         }
         for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
-            std::memcpy(chScratch[ch].data(), &(*rSpans[ch].begin()), nActual * sizeof(T));
-            if (burst_taper_enabled) {
-                _taper._phase        = savedPhase;
-                _taper._rampPosition = savedRampPos;
-                applyTaper(chScratch[ch].data(), nActual);
+            const T* samples = &(*rSpans[ch].begin());
+            if (transformsSamples()) {
+                if (burst_taper_enabled) {
+                    _taper._phase        = savedPhase;
+                    _taper._rampPosition = savedRampPos;
+                }
+                prepareForDevice(samples, chScratch[ch].data(), nActual);
+                samples = chScratch[ch].data();
             }
-            saturateForDevice(chScratch[ch].data(), nActual);
-            writeSpans.push_back(std::span<const T>(chScratch[ch].data(), nActual));
+            writeSpans.push_back(std::span<const T>(samples, nActual));
         }
 
         int  flags = burst.flags;
@@ -756,7 +755,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
         if (nConsumed > 0UZ) {
             _underflowCount.store(0U, std::memory_order_relaxed);
             for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
-                rememberLastTransmitted(ch, chScratch[ch][nConsumed - 1UZ]);
+                rememberLastTransmitted(ch, writeSpans[ch][nConsumed - 1UZ]);
             }
             retireBurstMarks(nConsumed, (burst.flags & SOAPY_SDR_END_BURST) != 0);
         }
@@ -775,12 +774,41 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
 
     void applyTaper(T* samples, std::size_t n) {
         for (std::size_t i = 0UZ; i < n; ++i) {
-            float envelope = _taper.processOne();
-            if constexpr (std::is_same_v<T, std::complex<float>>) {
-                samples[i] *= envelope;
-            } else {
-                samples[i] = static_cast<T>(static_cast<float>(samples[i]) * envelope);
+            samples[i] = scaled(samples[i], _taper.processOne());
+        }
+    }
+
+    [[nodiscard]] static T scaled(const T& sample, float envelope) noexcept {
+        if constexpr (std::is_same_v<T, std::complex<float>>) {
+            return sample * envelope;
+        } else {
+            return static_cast<T>(static_cast<float>(sample) * envelope);
+        }
+    }
+
+    // A CF32 sample is saturated on every write and any sample is tapered while the taper is enabled. An integer
+    // sample with the taper off goes to the device straight from the staging buffer.
+    [[nodiscard]] bool transformsSamples() const noexcept { return std::is_same_v<T, std::complex<float>> || burst_taper_enabled; }
+
+    // Copies n samples, tapered while the taper is enabled and saturated for the device. The envelope is 1 once the
+    // taper is on, and scaling by 1 leaves a sample unchanged, so from there the samples are copied and saturated in
+    // one pass. The samples of a ramp are tapered one by one and then saturated in place.
+    //
+    // A CF32 stream is full scale at +/-1.0 and what a driver does with a part past that is its own: SoapyHackRF
+    // converts a part to the device's eight bits as (int8_t)(part * 127.0) with no clamp, so an overrange part
+    // wraps to the opposite sign. Saturating here keeps every driver inside the contract.
+    void prepareForDevice(const T* from, T* to, std::size_t n) {
+        std::size_t nTapered = 0UZ;
+        if (burst_taper_enabled) {
+            for (; nTapered < n && !_taper.isOn(); ++nTapered) {
+                to[nTapered] = scaled(from[nTapered], _taper.processOne());
             }
+            saturateForDevice(to, nTapered);
+        }
+        if constexpr (std::is_same_v<T, std::complex<float>>) {
+            saturateToFullScale(std::span<const T>(from + nTapered, n - nTapered), std::span<T>(to + nTapered, n - nTapered));
+        } else {
+            std::copy_n(from + nTapered, n - nTapered, to + nTapered);
         }
     }
 
