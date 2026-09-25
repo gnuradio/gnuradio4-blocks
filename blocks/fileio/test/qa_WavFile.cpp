@@ -24,6 +24,8 @@
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
+#include "ScopedWorkingDirectory.hpp"
+
 #if GR4_ENABLE_HTTP_TESTS && !defined(__EMSCRIPTEN__)
 #ifdef __GNUC__
 #pragma GCC diagnostic push
@@ -209,23 +211,7 @@ std::expected<void, gr::Error> runSchedulerFor(gr::scheduler::Simple<>& sched, s
     return std::move(*result);
 }
 
-// sets the working directory to a new temporary directory, and restores it and removes the directory on exit
-struct ScopedWorkingDirectory {
-    std::filesystem::path previous  = std::filesystem::current_path();
-    std::filesystem::path directory = std::filesystem::temp_directory_path() / std::format("gr4-wav-cwd-{}", std::chrono::steady_clock::now().time_since_epoch().count());
-
-    ScopedWorkingDirectory() {
-        std::filesystem::create_directories(directory);
-        std::filesystem::current_path(directory);
-    }
-    ScopedWorkingDirectory(const ScopedWorkingDirectory&)            = delete;
-    ScopedWorkingDirectory& operator=(const ScopedWorkingDirectory&) = delete;
-    ~ScopedWorkingDirectory() {
-        std::error_code ec;
-        std::filesystem::current_path(previous, ec);
-        std::filesystem::remove_all(directory, ec);
-    }
-};
+using gr::blocks::fileio::test::ScopedWorkingDirectory;
 
 std::string errorMessage(const std::expected<void, gr::Error>& result) { return result.has_value() ? std::string{} : result.error().message; }
 
@@ -623,18 +609,20 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         std::ofstream(workingDirectory.directory / "noise.wav", std::ios::binary) << "RIFF";
 
         expectRefusedStart(runWavSource((workingDirectory.directory / "tone.wav").string(), "multi"), {workingDirectory.directory.string(), "tone.wav"});
-        expectRefusedStart(runWavSource((workingDirectory.directory / "missing" / "tone.wav").string(), "multi"), {(workingDirectory.directory / "missing").string(), "tone.wav", "does not exist"});
+        expectRefusedStart(runWavSource((workingDirectory.directory / "missing" / "tone.wav").string(), "multi"), {(workingDirectory.directory / "missing").string(), "tone.wav", std::make_error_code(std::errc::no_such_file_or_directory).message()});
     };
 
     "WavSource refuses at start a file that does not exist or is not a regular file"_test = [] {
         ScopedWorkingDirectory workingDirectory;
-        const std::string      uri = (workingDirectory.directory / "tone.wav").string();
+        const std::string      uri          = (workingDirectory.directory / "tone.wav").string();
+        const std::string      noSuchFile   = std::make_error_code(std::errc::no_such_file_or_directory).message();
+        const std::string      isADirectory = std::make_error_code(std::errc::is_a_directory).message();
 
-        expectRefusedStart(runWavSource(uri, "overwrite"), {uri, "does not exist"});
-        expectRefusedStart(runWavSource(std::format("file://{}", uri), "overwrite"), {uri, "does not exist"});
+        expectRefusedStart(runWavSource(uri, "overwrite"), {uri, noSuchFile});
+        expectRefusedStart(runWavSource(std::format("file://{}", uri), "overwrite"), {uri, noSuchFile});
 
         std::filesystem::create_directory(uri);
-        expectRefusedStart(runWavSource(uri, "overwrite"), {uri, "not a regular file"});
+        expectRefusedStart(runWavSource(uri, "overwrite"), {uri, isADirectory});
     };
 
     "WavSource refuses at start a uri scheme it cannot read"_test = [] { expectRefusedStart(runWavSource("ftp://127.0.0.1/tone.wav", "overwrite"), {"ftp://127.0.0.1/tone.wav"}); };

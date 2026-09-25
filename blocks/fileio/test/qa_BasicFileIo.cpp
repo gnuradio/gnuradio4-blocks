@@ -5,6 +5,8 @@
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
 
+#include "ScopedWorkingDirectory.hpp"
+
 #include <format>
 #include <optional>
 
@@ -152,23 +154,7 @@ void runTest(const gr::blocks::fileio::Mode mode) {
     expect(!gr::blocks::fileio::detail::deleteFilesContaining(fileName).empty());
 }
 
-// sets the working directory to a new temporary directory, and restores it and removes the directory on exit
-struct ScopedWorkingDirectory {
-    std::filesystem::path previous  = std::filesystem::current_path();
-    std::filesystem::path directory = std::filesystem::temp_directory_path() / std::format("gr4_file_io_cwd_{}", std::chrono::steady_clock::now().time_since_epoch().count());
-
-    ScopedWorkingDirectory() {
-        std::filesystem::create_directories(directory);
-        std::filesystem::current_path(directory);
-    }
-    ScopedWorkingDirectory(const ScopedWorkingDirectory&)            = delete;
-    ScopedWorkingDirectory& operator=(const ScopedWorkingDirectory&) = delete;
-    ~ScopedWorkingDirectory() {
-        std::error_code ec;
-        std::filesystem::current_path(previous, ec);
-        std::filesystem::remove_all(directory, ec);
-    }
-};
+using gr::blocks::fileio::test::ScopedWorkingDirectory;
 
 template<typename TValue>
 std::string errorMessage(const std::expected<TValue, gr::Error>& result) {
@@ -382,20 +368,23 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
 
         const auto nRead = readFloatFile("missing/tone.f32", "overwrite");
         expect(!nRead.has_value());
-        expect(errorMessage(nRead).contains("path/file 'missing/tone.f32' does not exist.")) << errorMessage(nRead);
+        expect(errorMessage(nRead).contains("missing/tone.f32")) << errorMessage(nRead);
+        expect(errorMessage(nRead).contains(std::make_error_code(std::errc::no_such_file_or_directory).message())) << errorMessage(nRead);
         expect(!std::filesystem::exists(workingDirectory.directory / "missing"));
     };
 
     "BasicFileSource refuses at start a file that does not exist or is not a regular file"_test = [] {
         ScopedWorkingDirectory workingDirectory;
-        const std::string      fileName = (workingDirectory.directory / "tone.f32").string();
+        const std::string      fileName     = (workingDirectory.directory / "tone.f32").string();
+        const std::string      noSuchFile   = std::make_error_code(std::errc::no_such_file_or_directory).message();
+        const std::string      isADirectory = std::make_error_code(std::errc::is_a_directory).message();
 
         for (const std::string modeName : {"overwrite", "append"}) {
-            expectRefusedStart(runFloatSource(fileName, modeName), {fileName, "does not exist"});
+            expectRefusedStart(runFloatSource(fileName, modeName), {fileName, noSuchFile});
         }
 
         std::filesystem::create_directory(fileName);
-        expectRefusedStart(runFloatSource(fileName, "overwrite"), {fileName, "not a regular file"});
+        expectRefusedStart(runFloatSource(fileName, "overwrite"), {fileName, isADirectory});
     };
 
     "BasicFileSource in multi mode refuses at start a stem that no file name holds"_test = [] {

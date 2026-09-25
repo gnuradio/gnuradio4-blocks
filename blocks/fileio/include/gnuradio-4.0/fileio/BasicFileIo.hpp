@@ -21,15 +21,21 @@ namespace gr::blocks::fileio {
 
 namespace detail {
 
+// the regular files of the file name's directory whose names hold its file name, sorted by path
 inline std::vector<std::filesystem::path> getSortedFilesContaining(const std::string& fileName) {
-    std::filesystem::path filePath(fileName);
-    if (!std::filesystem::exists(parentDirectory(filePath))) {
-        throw gr::exception(std::format("path/file '{}' does not exist.", fileName));
+    const std::filesystem::path filePath(fileName);
+    const std::filesystem::path directory = parentDirectory(filePath);
+    const std::string           baseName  = filePath.filename().string();
+
+    std::error_code                     listError;
+    std::filesystem::directory_iterator entries(directory, listError);
+    if (listError) {
+        throw gr::exception(std::format("cannot list directory '{}' for the file names containing '{}': {}", directory.string(), baseName, listError.message()));
     }
 
     std::vector<std::filesystem::path> matchingFiles;
-    std::copy_if(std::filesystem::directory_iterator(parentDirectory(filePath)), std::filesystem::directory_iterator{}, std::back_inserter(matchingFiles), //
-        [&](const auto& entry) { return entry.is_regular_file() && entry.path().string().find(filePath.filename().string()) != std::string::npos; });
+    std::copy_if(entries, std::filesystem::directory_iterator{}, std::back_inserter(matchingFiles), //
+        [&](const auto& entry) { return entry.is_regular_file() && entry.path().filename().string().contains(baseName); });
 
     std::sort(matchingFiles.begin(), matchingFiles.end());
     return matchingFiles;
@@ -50,7 +56,7 @@ inline std::vector<std::filesystem::path> getSortedFilesContaining(const std::st
 
     std::vector<std::string> deletedFiles;
     for (const auto& entry : std::filesystem::directory_iterator(parentDirectory(filePath))) {
-        if (entry.is_regular_file() && entry.path().string().find(filePath.filename().string()) != std::string::npos) {
+        if (entry.is_regular_file() && entry.path().filename().string().contains(filePath.filename().string())) {
             deletedFiles.push_back(entry.path().string());
             std::filesystem::remove(entry.path());
         }
@@ -149,10 +155,6 @@ private:
         detail::ensureDirectoryExists(file_name.value);
 
         std::filesystem::path filePath(file_name.value);
-        if (!std::filesystem::exists(detail::parentDirectory(filePath))) {
-            throw gr::exception(std::format("path/file '{}' does not exist.", file_name.value));
-        }
-
         // Open file handle based on mode
         switch (mode) {
         case Mode::overwrite: {
@@ -216,8 +218,8 @@ Important: this implementation assumes a host-order, CPU architecture specific b
         }
     }
 
-    // throws when there is nothing to read: the directory or the file is missing, the file does not open, or in
-    // multi mode no file name in the directory holds the base name
+    // throws when there is nothing to read: the file does not open or its first read fails (a directory in its place),
+    // or in multi mode the directory cannot be listed or no file name in it holds the base name
     void start() {
         _currentFileIndex = 0UZ;
         _totalBytesRead   = 0UZ;
@@ -226,10 +228,6 @@ Important: this implementation assumes a host-order, CPU architecture specific b
         _readerActive = false;
 
         std::filesystem::path filePath(file_name.value);
-        if (!std::filesystem::exists(detail::parentDirectory(filePath))) {
-            throw gr::exception(std::format("path/file '{}' does not exist.", file_name.value));
-        }
-
         switch (mode) {
         case Mode::overwrite:
         case Mode::append: {

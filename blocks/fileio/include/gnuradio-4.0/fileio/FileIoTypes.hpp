@@ -1,6 +1,7 @@
 #ifndef GNURADIO_FILEIO_TYPES_HPP
 #define GNURADIO_FILEIO_TYPES_HPP
 
+#include <cerrno>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -16,8 +17,8 @@ enum class Mode { overwrite, append, multi };
 
 namespace detail {
 
-// the directory of a file name: its parent path, or "." for a bare name such as "tone.f32" whose parent path is empty
-[[nodiscard]] inline std::filesystem::path parentDirectory(const std::filesystem::path& filePath) { return filePath.has_parent_path() ? filePath.parent_path() : std::filesystem::path("."); }
+// the directory of a file name: its parent path, or the working directory for a bare name such as "tone.f32"
+[[nodiscard]] inline std::filesystem::path parentDirectory(const std::filesystem::path& filePath) { return filePath.has_parent_path() ? filePath.parent_path() : std::filesystem::current_path(); }
 
 inline void ensureDirectoryExists(const std::filesystem::path& filePath) {
     if (filePath.has_parent_path()) {
@@ -25,21 +26,17 @@ inline void ensureDirectoryExists(const std::filesystem::path& filePath) {
     }
 }
 
-// the reason a local file cannot be read, or nothing when it opens for reading
+// the reason a local file cannot be read, taken from an open and a first read of it, or nothing when both succeed
 [[nodiscard]] inline std::optional<std::string> unreadableFileReason(const std::filesystem::path& filePath) {
-    std::error_code ec;
-    const auto      status = std::filesystem::status(filePath, ec);
-    if (status.type() == std::filesystem::file_type::not_found) {
-        return std::format("file '{}' does not exist", filePath.string());
+    errno = 0;
+    std::ifstream in(filePath, std::ios::binary);
+    if (!in.is_open()) {
+        const std::error_code reason(errno, std::generic_category());
+        return reason ? std::format("cannot open '{}' for reading: {}", filePath.string(), reason.message()) : std::format("cannot open '{}' for reading", filePath.string());
     }
-    if (ec) {
-        return std::format("cannot read '{}': {}", filePath.string(), ec.message());
-    }
-    if (!std::filesystem::is_regular_file(status)) {
-        return std::format("'{}' is not a regular file", filePath.string());
-    }
-    if (!std::ifstream(filePath, std::ios::binary).is_open()) {
-        return std::format("cannot open '{}' for reading", filePath.string());
+    errno = 0;
+    if (in.peek() == std::char_traits<char>::eof() && errno != 0) { // a directory opens for reading on most systems and fails at the first read
+        return std::format("cannot read '{}': {}", filePath.string(), std::error_code(errno, std::generic_category()).message());
     }
     return std::nullopt;
 }

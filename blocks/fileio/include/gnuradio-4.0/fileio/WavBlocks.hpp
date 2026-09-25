@@ -23,6 +23,7 @@
 #include <fstream>
 #include <limits>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -189,22 +190,22 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
         std::size_t bytesConsumed{0U};
     };
 
-    gr::algorithm::fileio::Reader      _reader;
-    std::vector<std::filesystem::path> _filesToRead;
-    std::size_t                        _currentFileIndex{0U};
-    bool                               _headerParsed{false};
-    bool                               _readerFinalSeen{false};
-    bool                               _readerActive{false};
-    bool                               _failed{false};
-    detail::WavFormat                  _format{};
-    std::size_t                        _dataBytesRemaining{0U};
-    std::size_t                        _totalSamplesRead{0U};
-    std::size_t                        _offsetBytesRemaining{0U};
-    std::vector<std::uint8_t>          _headerBuffer;
-    std::array<std::uint8_t, 4>        _partialSample{};
-    std::size_t                        _partialSampleSize{0U};
-    bool                               _formatTagPending{true};
-    std::size_t                        _fileBytes{0U}; // 0 when the source is not a local file
+    gr::algorithm::fileio::Reader             _reader;
+    std::set<std::filesystem::path>           _filesToRead; // sorted by path, so a multi-mode set plays in name order
+    std::set<std::filesystem::path>::iterator _nextFile{_filesToRead.end()};
+    bool                                      _headerParsed{false};
+    bool                                      _readerFinalSeen{false};
+    bool                                      _readerActive{false};
+    bool                                      _failed{false};
+    detail::WavFormat                         _format{};
+    std::size_t                               _dataBytesRemaining{0U};
+    std::size_t                               _totalSamplesRead{0U};
+    std::size_t                               _offsetBytesRemaining{0U};
+    std::vector<std::uint8_t>                 _headerBuffer;
+    std::array<std::uint8_t, 4>               _partialSample{};
+    std::size_t                               _partialSampleSize{0U};
+    bool                                      _formatTagPending{true};
+    std::size_t                               _fileBytes{0U}; // 0 when the source is not a local file
 
     using gr::Block<WavSource<T>>::Block;
 
@@ -232,34 +233,36 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
         _failed          = true;
     }
 
-    // Throws when there is nothing to read: in multi mode the directory is missing or no file name in it holds the
-    // base name; a local file is missing, not a regular file or does not open; the reader refuses the uri. A failure
-    // the reader meets later, and a header that is not valid WAV, end the stream with ERROR during the run.
+    // Throws when there is nothing to read: in multi mode the directory cannot be listed or no file name in it holds
+    // the base name; a local file does not open or its first read fails (a directory in its place); the reader refuses
+    // the uri. A failure the reader meets later, and a header that is not valid WAV, end the stream with ERROR during the run.
     void start() {
-        _currentFileIndex = 0U;
-        sample_rate       = 0.f;
-        num_channels      = 0U;
+        sample_rate  = 0.f;
+        num_channels = 0U;
         _filesToRead.clear();
 
         std::filesystem::path filePath(uri.value);
         if (mode.value == Mode::multi) {
-            const auto directory = detail::parentDirectory(filePath);
-            const auto stem      = filePath.filename().string();
-            if (!std::filesystem::exists(directory)) {
-                throw gr::exception(std::format("directory '{}' for the file names containing '{}' does not exist", directory.string(), stem));
+            const auto        directory = detail::parentDirectory(filePath);
+            const std::string baseName  = filePath.filename().string();
+
+            std::error_code                     listError;
+            std::filesystem::directory_iterator entries(directory, listError);
+            if (listError) {
+                throw gr::exception(std::format("cannot list directory '{}' for the file names containing '{}': {}", directory.string(), baseName, listError.message()));
             }
-            for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-                if (entry.is_regular_file() && entry.path().string().find(stem) != std::string::npos) {
-                    _filesToRead.push_back(entry.path());
+            for (const auto& entry : entries) {
+                if (entry.is_regular_file() && entry.path().filename().string().contains(baseName)) {
+                    _filesToRead.insert(entry.path());
                 }
             }
-            std::sort(_filesToRead.begin(), _filesToRead.end());
             if (_filesToRead.empty()) {
-                throw gr::exception(std::format("no file in '{}' has a name containing '{}'", directory.string(), stem));
+                throw gr::exception(std::format("no file in '{}' has a name containing '{}'", directory.string(), baseName));
             }
         } else {
-            _filesToRead.push_back(filePath);
+            _filesToRead.insert(filePath);
         }
+        _nextFile = _filesToRead.begin();
 
         if (auto opened = openFile(); !opened) {
             throw gr::exception(opened.error().message, opened.error().sourceLocation);
@@ -455,7 +458,7 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
 
 private:
     void openNextFile() {
-        if (_currentFileIndex >= _filesToRead.size()) {
+        if (_nextFile == _filesToRead.end()) {
             return;
         }
         if (auto opened = openFile(); !opened) {
@@ -463,11 +466,11 @@ private:
         }
     }
 
-    // opens the file at _currentFileIndex, testing a local file before the reader starts on it
+    // opens the next file of the set, reading a local file once itself so that one that cannot be read is reported here
     [[nodiscard]] std::expected<void, gr::Error> openFile() {
         resetFileState();
 
-        const std::string fileUri = _filesToRead[_currentFileIndex].string();
+        const std::string fileUri = _nextFile->string();
         if (const auto localPath = gr::algorithm::fileio::detail::toLocalPath(fileUri); localPath) {
             if (const auto reason = detail::unreadableFileReason(*localPath)) {
                 return std::unexpected(gr::Error(*reason));
@@ -482,7 +485,7 @@ private:
         config.chunkAlignmentBytes = 1U;
 
         std::error_code sizeError;
-        const auto      physicalSize = std::filesystem::file_size(_filesToRead[_currentFileIndex], sizeError);
+        const auto      physicalSize = std::filesystem::file_size(*_nextFile, sizeError);
         _fileBytes                   = sizeError ? 0UZ : static_cast<std::size_t>(physicalSize);
 
         auto readerExp = gr::algorithm::fileio::readAsync(fileUri, std::move(config));
@@ -491,19 +494,19 @@ private:
         }
         _reader       = std::move(readerExp.value());
         _readerActive = true;
-        _currentFileIndex++;
+        ++_nextFile;
         return {};
     }
 
     [[nodiscard]] gr::work::Status finishCurrentFile() {
         _reader.cancel();
         _readerActive = false;
-        if (_currentFileIndex < _filesToRead.size()) {
+        if (_nextFile != _filesToRead.end()) {
             openNextFile();
             return gr::work::Status::OK;
         }
         if (repeat && !_filesToRead.empty()) {
-            _currentFileIndex = 0U;
+            _nextFile = _filesToRead.begin();
             openNextFile();
             return gr::work::Status::OK;
         }
