@@ -612,6 +612,24 @@ const boost::ut::suite<"crc blocks"> crcBlockTests = [] {
         const std::vector<Record> input{twoSignals};
         expect(throws([&appender, &input] { std::ignore = append(appender, std::span<const Record>(input)); }));
     };
+
+    "an idle CRC block answers that it waits for input, not progress"_test = [] {
+        CrcAppend appender = make<CrcAppend>(settingsOf(kSets[0], "big"));
+        CrcCheck  checker  = make<CrcCheck>(settingsOf(kSets[0], "big"));
+        appender.start();
+        checker.start();
+        std::vector<Record> okBuffer(2UZ);
+        std::vector<Record> failBuffer(2UZ);
+
+        gr::blocks::testing::span::InputSpan<Record>  appendIn{std::span<const Record>{}};
+        gr::blocks::testing::span::OutputSpan<Record> appendOut{std::span<Record>(okBuffer)};
+        expect(appender.processBulk(appendIn, appendOut) == gr::work::Status::INSUFFICIENT_INPUT_ITEMS) << "CrcAppend";
+
+        gr::blocks::testing::span::InputSpan<Record>  checkIn{std::span<const Record>{}};
+        gr::blocks::testing::span::OutputSpan<Record> okSpan{std::span<Record>(okBuffer)};
+        gr::blocks::testing::span::OutputSpan<Record> failSpan{std::span<Record>(failBuffer)};
+        expect(checker.processBulk(checkIn, okSpan, failSpan) == gr::work::Status::INSUFFICIENT_INPUT_ITEMS) << "CrcCheck";
+    };
 };
 
 int main() { /* not needed for UT */ }

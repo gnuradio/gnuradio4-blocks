@@ -666,6 +666,15 @@ const boost::ut::suite<"delimiter framer"> delimiterFramerTests = [] {
         expect(eq(inSpan.consumed, 0UZ));
         expect(eq(outSpan.count, 0UZ));
     };
+
+    "an idle framer answers that it waits for input, not progress"_test = [] {
+        DelimiterFramer block = make<DelimiterFramer>(hdlcFraming(1024U));
+        block.start();
+        std::vector<Record> room(2UZ);
+        InputSpan<Record>   inSpan(std::span<const Record>{}, 0UZ);
+        OutputSpan<Record>  outSpan(std::span<Record>(room), 0UZ, nullptr, true);
+        expect(block.processBulk(inSpan, outSpan) == gr::work::Status::INSUFFICIENT_INPUT_ITEMS);
+    };
 };
 
 int main() { /* not needed for UT */ }

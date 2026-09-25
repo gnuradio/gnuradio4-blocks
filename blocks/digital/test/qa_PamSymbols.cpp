@@ -263,6 +263,24 @@ const boost::ut::suite<"PamSymbols"> pamSymbolsTests = [] {
         expect(eq(bare.offset, wired.offset));
         expect(that % (bare.samples == wired.samples)) << "nor does the stream the block normalizes";
     };
+
+    "an idle tracker answers what it waits for, not progress"_test = [] {
+        namespace test = gr::blocks::testing::span;
+        LevelTracker<float> block;
+        block.start();
+        std::vector<float>                   room(4UZ);
+        const std::vector<float>             symbols{1.f, -1.f, 3.f, -3.f};
+        test::OutputSpan<gr::DataSet<float>> recordSpan(std::span<gr::DataSet<float>>{}, 0UZ, nullptr, false);
+
+        test::InputSpan<float>  empty{std::span<const float>{}};
+        test::OutputSpan<float> outSpan{std::span<float>(room)};
+        expect(block.processBulk(empty, outSpan, recordSpan) == gr::work::Status::INSUFFICIENT_INPUT_ITEMS) << "an empty input";
+
+        test::InputSpan<float>  inSpan{std::span<const float>(symbols)};
+        test::OutputSpan<float> full{std::span<float>{}};
+        expect(block.processBulk(inSpan, full, recordSpan) == gr::work::Status::INSUFFICIENT_OUTPUT_ITEMS) << "a full output";
+        expect(eq(inSpan.consumed, 0UZ));
+    };
 };
 
 int main() { /* not needed for UT */ }

@@ -330,6 +330,15 @@ const boost::ut::suite<"length header framer"> lengthHeaderFramerTests = [] {
 
         expect(nothrow([] { std::ignore = make<LengthHeaderFramer>({{"max_payload_items", 256U}}); })) << "and the realizations in use need none of them";
     };
+
+    "an idle framer answers that it waits for input, not progress"_test = [] {
+        LengthHeaderFramer block = make<LengthHeaderFramer>({{"max_payload_items", 256U}});
+        block.start();
+        std::vector<Record> room(2UZ);
+        InputSpan<Record>   inSpan{std::span<const Record>{}};
+        OutputSpan<Record>  outSpan{std::span<Record>(room)};
+        expect(block.processBulk(inSpan, outSpan) == gr::work::Status::INSUFFICIENT_INPUT_ITEMS);
+    };
 };
 
 int main() { /* not needed for UT */ }

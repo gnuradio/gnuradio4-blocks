@@ -678,6 +678,23 @@ const boost::ut::suite<"signal quality"> signalQualityTests = [] {
             expect(index != nullptr && *index == kWindow) << "and starts where the last whole window ended";
         }
     };
+
+    "an idle meter answers that it waits for input, not progress"_test = [] {
+        namespace test = gr::blocks::testing::span;
+        EvmMeter<float> evm({{"constellation", std::string("qpsk")}});
+        init(evm);
+        SnrEstimator<float> snr({{"method", std::string("m2m4")}});
+        init(snr);
+        std::vector<gr::DataSet<float>> room(4UZ);
+
+        test::InputSpan<CF>                  evmIn{std::span<const CF>{}};
+        test::OutputSpan<gr::DataSet<float>> evmOut{std::span<gr::DataSet<float>>(room)};
+        expect(evm.processBulk(evmIn, evmOut) == gr::work::Status::INSUFFICIENT_INPUT_ITEMS) << "EvmMeter";
+
+        test::InputSpan<CF>                  snrIn{std::span<const CF>{}};
+        test::OutputSpan<gr::DataSet<float>> snrOut{std::span<gr::DataSet<float>>(room)};
+        expect(snr.processBulk(snrIn, snrOut) == gr::work::Status::INSUFFICIENT_INPUT_ITEMS) << "SnrEstimator";
+    };
 };
 
 int main() { /* not needed for UT */ }

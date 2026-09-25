@@ -174,9 +174,13 @@ field the most significant byte sits at and defaults to `big`.
 
         std::ignore = inSpan.consume(nRecords);
         outSpan.publish(connected ? published : 0UZ);
-        // No room on the output is backpressure, not a stall: the framework counts a bare OK with nothing consumed and
-        // nothing published as no progress and reports the block.
-        return nRecords == 0UZ && available != 0UZ ? work::Status::INSUFFICIENT_OUTPUT_ITEMS : work::Status::OK;
+        // No room on the output is backpressure and an empty input is waiting, not a stall: the framework counts a bare
+        // OK with nothing consumed and nothing published as no progress and reports the block. The async output counts
+        // as ready whenever it has room, so the framework also calls on an empty input.
+        if (available == 0UZ) {
+            return work::Status::INSUFFICIENT_INPUT_ITEMS;
+        }
+        return nRecords == 0UZ ? work::Status::INSUFFICIENT_OUTPUT_ITEMS : work::Status::OK;
     }
 };
 
@@ -302,9 +306,13 @@ testing the residue, so it can report what it received: `meta_information[0]` ca
         std::ignore = inSpan.consume(consumed);
         okSpan.publish(okConnected ? onOk : 0UZ);
         failSpan.publish(failConnected ? onFail : 0UZ);
-        // No room on `ok` is backpressure, not a stall: the framework counts a bare OK with nothing consumed and
-        // nothing published as no progress and reports the block.
-        return consumed == 0UZ && available != 0UZ ? work::Status::INSUFFICIENT_OUTPUT_ITEMS : work::Status::OK;
+        // No room on `ok` is backpressure and an empty input is waiting, not a stall: the framework counts a bare OK
+        // with nothing consumed and nothing published as no progress and reports the block. The async outputs count as
+        // ready whenever they have room, so the framework also calls on an empty input.
+        if (available == 0UZ) {
+            return work::Status::INSUFFICIENT_INPUT_ITEMS;
+        }
+        return consumed == 0UZ ? work::Status::INSUFFICIENT_OUTPUT_ITEMS : work::Status::OK;
     }
 };
 

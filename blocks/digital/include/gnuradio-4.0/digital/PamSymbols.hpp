@@ -125,7 +125,10 @@ Even M only; a grid with a level at zero changes the decision and both loops, an
     }
 
     /// @brief One record per call, built where the two readings are of one instant. Building it allocates, which is
-    /// why the method is not `noexcept`; the tracking loops themselves allocate nothing.
+    /// why the method is not `noexcept`; the tracking loops themselves allocate nothing. The framework also calls this
+    /// on an empty input, because the async `records` port counts as ready whenever it has room or is unconnected; a
+    /// call that moves nothing answers `INSUFFICIENT_INPUT_ITEMS` on an empty input and `INSUFFICIENT_OUTPUT_ITEMS`
+    /// on a full output.
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan, OutputSpanLike auto& recordSpan) {
         const std::size_t nSamples = std::min(inSpan.size(), outSpan.size());
         const auto        levels   = static_cast<std::size_t>(n_levels.value);
@@ -160,7 +163,10 @@ Even M only; a grid with a level at zero changes the decision and both loops, an
         std::ignore = inSpan.consume(nSamples);
         outSpan.publish(nSamples);
         recordSpan.publish(made);
-        return work::Status::OK;
+        if (nSamples > 0UZ) {
+            return work::Status::OK;
+        }
+        return inSpan.size() == 0UZ ? work::Status::INSUFFICIENT_INPUT_ITEMS : work::Status::INSUFFICIENT_OUTPUT_ITEMS;
     }
 };
 

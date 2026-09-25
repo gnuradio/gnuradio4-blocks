@@ -209,7 +209,11 @@ the stream `SymbolSync` and the carrier loops deliver. This block does not scale
 
         outSpan.publish(made);
         std::ignore = inSpan.consume(take);
-        return take == 0UZ && made == 0UZ && !input.empty() ? work::Status::INSUFFICIENT_OUTPUT_ITEMS : work::Status::OK;
+        if (take > 0UZ || made > 0UZ) {
+            return work::Status::OK;
+        }
+        // the async `records` port counts as ready whenever it has room, so the framework also calls on an empty input
+        return input.empty() ? work::Status::INSUFFICIENT_INPUT_ITEMS : work::Status::INSUFFICIENT_OUTPUT_ITEMS;
     }
 
     /// @brief End of stream: fold the trailing symbols, then report the window in progress with the symbol count that
@@ -456,7 +460,11 @@ This block does not scale it.
 
         outSpan.publish(made);
         std::ignore = inSpan.consume(take);
-        return take == 0UZ && made == 0UZ && !input.empty() ? work::Status::INSUFFICIENT_OUTPUT_ITEMS : work::Status::OK;
+        if (take > 0UZ || made > 0UZ) {
+            return work::Status::OK;
+        }
+        // the async `records` port counts as ready whenever it has room, so the framework also calls on an empty input
+        return input.empty() ? work::Status::INSUFFICIENT_INPUT_ITEMS : work::Status::INSUFFICIENT_OUTPUT_ITEMS;
     }
 
     [[nodiscard]] work::Status processEpilogue(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
