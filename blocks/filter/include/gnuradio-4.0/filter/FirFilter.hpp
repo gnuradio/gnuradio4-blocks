@@ -19,6 +19,7 @@
 #include <gnuradio-4.0/algorithm/filter/PolyphaseResampler.hpp>
 
 #include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
+#include <gnuradio-4.0/filter/TagDelay.hpp>
 
 namespace gr::blocks::filter {
 
@@ -27,8 +28,8 @@ namespace detail {
 /**
  * @brief The FIR machinery a taps-driven block runs on, shared by every block that owns a tap
  * vector by whatever authority: the polyphase kernel binding, the newest `N-1` input history
- * that lets a live tap change keep the input/output alignment, and the decimation-aware tag
- * placement with its re-origination on a rate change.
+ * that lets a live tap change keep the input/output alignment, and the tag placement that moves
+ * each tag by the filter's delay and the decimation, with its re-origination on a rate change.
  *
  * The deriving block owns the taps and the decimation setting and passes both into
  * `coreRebuild`/`coreStart`; the core owns everything downstream of them. `TDerived` reaches
@@ -43,9 +44,10 @@ struct FirFilterCore {
     std::optional<TKernel>                              _fir;
     std::size_t                                         _decimation = 1UZ;
     std::vector<TSample>                                _history; /// the newest N-1 input samples, oldest first, so a tap change can keep the alignment
-    std::uint64_t                                       _inOrigin  = 0ULL;
-    std::uint64_t                                       _outOrigin = 0ULL;
-    bool                                                _reorigin  = false;
+    std::uint64_t                                       _inOrigin   = 0ULL;
+    std::uint64_t                                       _outOrigin  = 0ULL;
+    std::uint64_t                                       _twiceDelay = 0ULL; /// the taps' delay in half input samples, `twiceTapDelay`
+    bool                                                _reorigin   = false;
     std::vector<std::pair<std::uint64_t, property_map>> _pendingTags;
 
     [[nodiscard]] TDerived&       self() noexcept { return static_cast<TDerived&>(*this); }
@@ -73,6 +75,7 @@ struct FirFilterCore {
 
         _fir.emplace(1UZ, static_cast<std::size_t>(decimation), taps);
         _decimation = decimation;
+        _twiceDelay = twiceTapDelay(taps);
         _history.assign(taps.size() - 1UZ, TSample{});
 
         self().input_chunk_size  = static_cast<gr::Size_t>(decimation);
@@ -104,7 +107,15 @@ struct FirFilterCore {
     void coreMarkReorigin() noexcept { _reorigin = true; }
 
     /**
-     * @brief Place every input tag at the output offset the decimation puts it at, from the current phase origin.
+     * @brief Place every input tag that marks a time position on the output sample that carries its input sample's
+     * energy, from the current phase origin.
+     *
+     * Input `i` maps to output `round((i + d) / M)`, `d` being the taps' delay and a half rounding up. The keys that state
+     * a property of the stream (`detail::kStreamPropertyKeys`) go to output `round(i / M)` instead. A tag whose
+     * output is not in this call is held and published by the call that produces that output. A tag is placed once,
+     * when it crosses, under the delay and the decimation in force then. A taps or decimation change moves no held
+     * tag, and a tag that crosses after one is never placed ahead of a tag held from before it. Tags therefore leave
+     * in the order they arrived. A held tag whose output the stream ends before is never published.
      *
      * This replaces the framework's forwarding rather than adjusting it, and it is also where a `decimation` change
      * takes its new origin: the change is applied on the settings path, between calls, where neither absolute offset
@@ -131,9 +142,9 @@ struct FirFilterCore {
             _reorigin = false;
         }
 
-        std::vector<std::pair<std::uint64_t, property_map>> arriving;
+        std::uint64_t latest = _pendingTags.empty() ? 0ULL : _pendingTags.back().first;
         gr::for_each_reader_span(
-            [&arriving, processedIn, this](auto& span) {
+            [&latest, processedIn, this](auto& span) {
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
@@ -144,12 +155,12 @@ struct FirFilterCore {
                     const std::uint64_t at = static_cast<std::uint64_t>(span.streamIndex) + static_cast<std::uint64_t>(relIndex);
                     property_map        forwarded(tagMap.get());
                     self().scaleSampleRateByChunkRatio(forwarded); // the rate in force where the tag crossed, not where it is published
-                    arriving.emplace_back(_outOrigin + gr::filter::mapResampledOffset(at - _inOrigin, 1ULL, _decimation), std::move(forwarded));
+                    holdTag(_pendingTags, latest, _outOrigin + mapDelayedOffset(at - _inOrigin, 1ULL, _decimation, 0ULL), _outOrigin + mapDelayedOffset(at - _inOrigin, 1ULL, _decimation, _twiceDelay), std::move(forwarded));
                 }
             },
             inputSpans);
 
-        if (arriving.empty() && _pendingTags.empty()) {
+        if (_pendingTags.empty()) {
             return;
         }
 
@@ -170,9 +181,6 @@ struct FirFilterCore {
                     span.publishTag(tag.second, static_cast<std::size_t>(tag.first > base ? tag.first - base : 0ULL));
                 };
                 for (const auto& tag : _pendingTags) {
-                    place(tag);
-                }
-                for (const auto& tag : arriving) {
                     place(tag);
                 }
             },
@@ -223,10 +231,15 @@ struct FirFilter : Block<FirFilter<TSample, TTap>, Resampling<1UZ, 1UZ, false>>,
 combinations exist. There is no design path - taps come from `gr::filter::fir::design` - and an empty `taps` throws rather
 than becoming a pass-through; a pass-through is `taps = {1}`.
 
-A taps change preserves the input/output alignment exactly; changing `decimation` moves the phase origin. The group
-delay is stated, not compensated. A forwarded `sample_rate` tag is divided by the decimation, so downstream reads the
-rate of the stream this block hands it.
-)"">;
+A taps change preserves the input/output alignment exactly; changing `decimation` moves the phase origin. Every
+forwarded tag that marks a time position, such as a trigger, a burst edge or a time stamp, moves by the filter's delay
+`d`: a tag on input `i` leaves on output `round((i + d) / decimation)`, the sample that carries the energy of input `i`.
+A tag that states a property of the stream, such as `sample_rate`, `signal_name` or `context`, crosses unmoved, to the
+output of input `i` itself. A symmetric or antisymmetric tap set delays by `(N-1)/2`. An asymmetric set moves its tags
+by the centroid of its energy, rounded to the whole input sample. A tag keeps the output it was given when it crossed,
+whatever taps or decimation change follows, and a tag whose output lies past the end of the stream is not published. A
+forwarded `sample_rate` tag is divided by the decimation, so downstream reads the rate of the stream this block hands
+it. )"">;
 
     PortIn<TSample> in;
     PortOut<TOut>   out;
@@ -249,8 +262,8 @@ rate of the stream this block hands it.
 
     void start() { this->coreStart(std::span<const TTap>(taps.value), decimation); }
 
-    /// @brief The delay of a symmetric design of this length, in input samples. An asymmetric tap set has no single group delay.
-    [[nodiscard]] double groupDelaySamples() const noexcept { return 0.5 * static_cast<double>(taps.value.size() - 1UZ); }
+    /// @brief The delay every forwarded tag moves by, in input samples: `(N-1)/2` for a symmetric or antisymmetric set, the energy centroid otherwise.
+    [[nodiscard]] double groupDelaySamples() const noexcept { return 0.5 * static_cast<double>(detail::twiceTapDelay(std::span<const TTap>(taps.value))); }
 
     [[nodiscard]] std::size_t tapCount() const noexcept { return taps.value.size(); }
 };

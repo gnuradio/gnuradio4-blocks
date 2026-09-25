@@ -41,6 +41,12 @@ transition width or an explicit odd length, a window or a Kaiser attenuation, ga
 design-affecting setting is live: a redesign keeps the input/output alignment exactly, and a `decimation` change moves
 the phase origin. `taps` here is an observable count, never a setting - a chain supplies a passband, not a vector.
 
+Every forwarded tag that marks a time position, such as a trigger, a burst edge or a time stamp, moves by the design's
+delay `d = (designed_taps - 1) / 2`: a tag on input `i` leaves on output `round((i + d) / decimation)`, the sample that
+carries the energy of input `i`. A tag that states a property of the stream, such as `sample_rate`, `signal_name` or
+`context`, crosses unmoved, to the output of input `i` itself. A tag keeps the output it was given when it crossed,
+whatever redesign or decimation change follows, and a tag whose output lies past the end of the stream is not published.
+
 The tap type states which family the block designs: real taps carry `lowpass`, `highpass`, `bandpass`, `bandstop`,
 `root_raised_cosine` and `hilbert`; complex taps carry `complex_bandpass` and `complex_bandstop`. A profile outside the
 tap type's family is refused by name. `root_raised_cosine` requires an explicit `taps` length and a positive
@@ -120,7 +126,7 @@ nothing and is not a second request, but the design stays stale and the next sta
         this->coreStart(std::span<const TTap>(_designed), decimation);
     }
 
-    /// @brief The delay of the symmetric design, in input samples.
+    /// @brief The delay every forwarded tag moves by, in input samples; every profile designs a symmetric or antisymmetric set.
     [[nodiscard]] double groupDelaySamples() const noexcept { return 0.5 * static_cast<double>(_designed.size() - 1UZ); }
 
 private:

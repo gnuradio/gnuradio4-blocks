@@ -20,6 +20,7 @@
 #include <gnuradio-4.0/algorithm/filter/ArbitraryResampler.hpp>
 
 #include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
+#include <gnuradio-4.0/filter/TagDelay.hpp>
 
 namespace gr::blocks::filter {
 
@@ -43,7 +44,15 @@ rebuilds it; `min_rate` states that floor once and keeps the design search off t
 pass-through.
 
 A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the rate of the stream this block hands it.
-)"">;
+
+Every forwarded tag that marks a time position, such as a trigger, a burst edge or a time stamp, moves by the
+prototype's delay `d`, in samples of the interpolated rate `L*fs_in`: a tag on input `i` leaves on the output nearest
+the interpolated position `i*L + d`, the sample that carries the energy of input `i`. A tag that states a property of
+the stream, such as `sample_rate`, `signal_name` or `context`, crosses unmoved, to the output of input `i` itself. A
+designed or other symmetric prototype of `N` taps delays by `(N-1)/2`. An asymmetric supplied prototype moves its tags
+by the centroid of its energy, rounded to the whole interpolated sample. A tag is placed when its sample is consumed and
+keeps that output whatever rate change or rebuild follows, and a tag whose output lies past the end of the stream is not
+published. )"">;
 
     PortIn<T, Async>  in;
     PortOut<T, Async> out;
@@ -66,8 +75,10 @@ A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the r
     std::uint64_t                                       _outOrigin   = 0ULL;
     std::uint64_t                                       _stepOrigin  = 0ULL;
     std::int64_t                                        _phaseOrigin = 0LL;
+    std::uint64_t                                       _twiceDelay  = 0ULL; /// the prototype's delay in half interpolated samples, `twiceTapDelay`
     bool                                                _reorigin    = false;
     std::vector<std::pair<std::uint64_t, property_map>> _pendingTags;
+    std::uint64_t                                       _latestHeld = 0ULL; /// the output of the last held tag that marks a time position
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         static constexpr std::array kRebuildKeys{"bank_size", "interpolation_order", "taps", "rolloff", "attenuation_db", "max_ripple_db"};
@@ -86,9 +97,10 @@ A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the r
     void start() {
         rebuild();
         _pendingTags.clear();
-        _inOrigin  = 0ULL;
-        _outOrigin = 0ULL;
-        _reorigin  = false;
+        _latestHeld = 0ULL;
+        _inOrigin   = 0ULL;
+        _outOrigin  = 0ULL;
+        _reorigin   = false;
     }
 
     /// @brief `L*2^32/step`, the rational the block actually runs at. Exact as a `double` while `step` is below `2^53`.
@@ -96,8 +108,8 @@ A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the r
     /// @brief `B`, the taps one arm holds — the wrap term included, so a dot product is this long.
     [[nodiscard]] std::size_t tapsPerArm() const noexcept { return _resampler->tapsPerArm(); }
     [[nodiscard]] std::size_t bankSize() const noexcept { return _bankSize; }
-    /// @brief `(N-1)/(2L)` input samples, stated and not compensated.
-    [[nodiscard]] double         groupDelaySamples() const noexcept { return _resampler->groupDelaySamples(); }
+    /// @brief The delay every forwarded tag moves by, in input samples: `(N-1)/(2L)` for a symmetric prototype.
+    [[nodiscard]] double         groupDelaySamples() const noexcept { return 0.5 * static_cast<double>(_twiceDelay) / static_cast<double>(_bankSize); }
     [[nodiscard]] std::size_t    outputsFor(std::size_t nInput) const noexcept { return _resampler->outputsFor(nInput); }
     [[nodiscard]] std::size_t    inputsFor(std::size_t nOutput) const noexcept { return _resampler->inputsFor(nOutput); }
     [[nodiscard]] const TKernel& kernel() const noexcept { return *_resampler; }
@@ -128,6 +140,7 @@ A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the r
         _resampler.emplace(rate, _bankSize, order, std::span<const float>(prototype));
         _stepOrigin  = _resampler->step();
         _phaseOrigin = _resampler->phase();
+        _twiceDelay  = detail::twiceTapDelay(std::span<const float>(prototype));
     }
 
     /**
@@ -149,6 +162,7 @@ A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the r
             }
             _resampler->setTaps(design.taps); // keeps the phase and as much of the window as the new B holds
             _designedFor = wanted;
+            _twiceDelay  = detail::twiceTapDelay(std::span<const float>(design.taps));
         }
         _resampler->setRate(rate);
     }
@@ -223,6 +237,11 @@ private:
     /**
      * @brief Place the tags of the samples this call consumes at their output offsets, under the regime in force now.
      *
+     * Input `i` maps to the output nearest the interpolated position `i*L + d`, `d` being the prototype's delay and a
+     * half rounding up. The keys that state a property of the stream (`detail::kStreamPropertyKeys`) go to the output
+     * nearest `i*L` instead. A tag whose sample is consumed after a rate change or a rebuild is never placed ahead of a
+     * tag held from before it. Tags therefore leave in the order they arrived.
+     *
      * A tag's mapping is committed here, where its sample is consumed, and not where the tag first becomes visible.
      * An `Async` port is presented every sample it holds and the block consumes a prefix of them, so a tag past that
      * prefix is presented again next call, and `rate` may have changed in between: mapping it on sight would fix its
@@ -234,8 +253,9 @@ private:
         if (nIn == 0UZ || !inSpan.isConnected) {
             return;
         }
-        const std::uint64_t first = static_cast<std::uint64_t>(inSpan.streamIndex);
-        const std::uint64_t last  = first + static_cast<std::uint64_t>(nIn);
+        const std::uint64_t first   = static_cast<std::uint64_t>(inSpan.streamIndex);
+        const std::uint64_t last    = first + static_cast<std::uint64_t>(nIn);
+        const std::int64_t  delayed = _phaseOrigin - static_cast<std::int64_t>(_twiceDelay << (gr::filter::kArbitraryFractionBits - 1)); // the first output's position less the delay, in 2^-F interpolated samples
         for (const gr::Tag& tag : inSpan.rawTags) {
             const std::uint64_t at = static_cast<std::uint64_t>(tag.index);
             if (at < first || at >= last) {
@@ -243,7 +263,7 @@ private:
             }
             property_map forwarded(tag.map);
             scaleSampleRate(forwarded); // the rate that consumes the sample, which is the rate the tag describes
-            _pendingTags.emplace_back(_outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, _phaseOrigin), std::move(forwarded));
+            detail::holdTag(_pendingTags, _latestHeld, _outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, _phaseOrigin), _outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, delayed), std::move(forwarded));
         }
     }
 

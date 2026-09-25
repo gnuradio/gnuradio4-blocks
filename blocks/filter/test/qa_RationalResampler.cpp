@@ -1,6 +1,7 @@
 #include <boost/ut.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <complex>
 #include <concepts>
 #include <cstdlib>
@@ -99,6 +100,18 @@ constexpr const char* kTagKeys[] = {"t0", "t1", "t2", "t3", "t4", "t5", "t6", "t
         out += std::format("{}{}", out.empty() ? "" : ", ", v);
     }
     return out;
+}
+
+/// @brief The index of the sample of largest magnitude, the first of several equal ones.
+template<typename T>
+[[nodiscard]] std::size_t peakIndex(std::span<const T> y) {
+    std::size_t at = 0UZ;
+    for (std::size_t k = 1UZ; k < y.size(); ++k) {
+        if (std::abs(y[k]) > std::abs(y[at])) {
+            at = k;
+        }
+    }
+    return at;
 }
 
 [[nodiscard]] std::size_t countOwnKeys(const gr::Tag& tag) {
@@ -297,6 +310,97 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
         const auto tail = runChunks<float>(block, std::span<const float>(x).subspan(6UZ), 1UZ, {}, 6UZ, 2UZ);
         expect(eq(tail.samples.size(), 2UZ));
         expect(that % (tail.offsetsOf("t0") == std::vector<std::size_t>{2UZ})) << "a rebuild for a key that moves no tag keeps the held one, at the offset it already had";
+    };
+
+    "a tag that states a property of the stream crosses unmoved, and a trigger moves by the delay"_test = [] {
+        // the rate describes output 0 as it describes input 0; the trigger leaves on output round(d / M), d being the
+        // prototype's delay at the interpolated rate
+        for (const auto& [l, m] : {std::pair<gr::Size_t, gr::Size_t>{3U, 2U}, std::pair<gr::Size_t, gr::Size_t>{1U, 4U}}) {
+            RationalResampler<float> block = makeResampler<float>({{"interpolation", l}, {"decimation", m}});
+            const std::size_t        twice = narrowIndex<std::size_t>(std::llround(2.0 * block.groupDelaySamples() * static_cast<double>(l)));
+            gr::property_map         opening; // a source's opening tag: the stream's rate and the trigger of its first sample
+            opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
+            opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
+            const std::vector<gr::Tag> tags{gr::Tag{0UZ, opening}};
+            const std::vector<float>   x(400UZ * m, 0.0f);
+            const auto                 got = runChunks<float>(block, std::span<const float>(x), 10UZ, std::span<const gr::Tag>(tags));
+
+            expect(that % (got.offsetsOf("sample_rate") == std::vector<std::size_t>{0UZ})) << std::format("{}/{}: the rate stays on output 0", l, m);
+            expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{(twice + m) / (2UZ * m)})) << std::format("{}/{}: the trigger moves by the delay", l, m);
+        }
+    };
+
+    "a tag leaves on the output that carries its sample's energy"_test = [] {
+        // The designed prototype delays by d interpolated samples, and input i lands on output (i*L + d) / M. Each input
+        // below puts that position on a whole output. Inputs 19 and 39 sit in the last chunk of the first call, and the
+        // outputs they land on belong to a later call.
+        struct Row {
+            gr::Size_t  l, m;
+            std::size_t at;
+        };
+        constexpr Row         kRows[] = {{3U, 2U, 19UZ}, {3U, 2U, 1UZ}, {1U, 4U, 39UZ}};
+        constexpr std::size_t kChunks = 10UZ; // M-input chunks a call
+        for (const auto& [l, m, at] : kRows) {
+            RationalResampler<float> block = makeResampler<float>({{"interpolation", l}, {"decimation", m}});
+            const std::size_t        d     = narrowIndex<std::size_t>(std::llround(block.groupDelaySamples() * static_cast<double>(l)));
+            expect(eq((at * l + d) % m, 0UZ)) << "the fixture puts the delayed position on a whole output";
+            const std::size_t want = (at * l + d) / m;
+
+            std::vector<float> x(400UZ * m, 0.0f);
+            x[at] = 1.0f;
+            const std::vector<gr::Tag> tags{gr::Tag{at, tagKey(0)}};
+            const auto                 got = runChunks<float>(block, std::span<const float>(x), kChunks, std::span<const gr::Tag>(tags));
+
+            expect(that % (got.offsetsOf("t0") == std::vector<std::size_t>{want})) << std::format("{}/{}: input {} leaves on output {} and on no other", l, m, at, want);
+            expect(eq(peakIndex(std::span<const float>(got.samples)), want)) << std::format("{}/{}: the impulse at input {} peaks on output {}", l, m, at, want);
+        }
+    };
+
+    "an asymmetric supplied prototype moves its tags by the centroid of its energy"_test = [] {
+        // a lone tap at 4 of 6 at 2/1 is a delay of four interpolated samples, not the 2.5 the length alone gives:
+        // input i comes out on output 2i + 4
+        RationalResampler<float> block = makeResampler<float>({{"interpolation", 2U}, {"decimation", 1U}, {"taps", std::vector<float>{0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f}}});
+        expect(eq(block.groupDelaySamples(), 2.0)) << "four interpolated samples are two input samples";
+
+        std::vector<float> x(40UZ, 0.0f);
+        x[9] = 1.0f;
+        const std::vector<gr::Tag> tags{gr::Tag{9UZ, tagKey(0)}};
+        const auto                 got = runChunks<float>(block, std::span<const float>(x), 10UZ, std::span<const gr::Tag>(tags));
+        expect(eq(peakIndex(std::span<const float>(got.samples)), 22UZ));
+        expect(that % (got.offsetsOf("t0") == std::vector<std::size_t>{22UZ})) << "held out of the call that carried input 9, and published on output 22";
+    };
+
+    "a ratio change moves no held tag, and a later tag never lands ahead of it"_test = [] {
+        // a lone tap at 20 delays by 20 at 1/1: input 95 is held for output 115
+        std::vector<float> lone(21UZ, 0.0f);
+        lone.back()                    = 1.0f;
+        RationalResampler<float> block = makeResampler<float>({{"interpolation", 1U}, {"decimation", 1U}, {"taps", lone}});
+        expect(eq(block.groupDelaySamples(), 20.0));
+
+        const std::vector<float>   x(300UZ, 0.5f);
+        const std::vector<gr::Tag> early{gr::Tag{95UZ, tagKey(0)}};
+        const auto                 head = runChunks<float>(block, std::span<const float>(x).first(100UZ), 10UZ, std::span<const gr::Tag>(early));
+        expect(that % head.offsetsOf("t0").empty()) << "output 115 is not produced by the first 100 inputs";
+
+        // 3/2 with a unit tap and no delay, from the new origin input 100 / output 100: input 102 maps to output 103,
+        // ahead of the held tag, and input 140 to output 160
+        std::ignore = block.settings().setStaged({{"interpolation", 3U}, {"decimation", 2U}, {"taps", std::vector<float>{1.0f}}});
+        std::ignore = block.settings().applyStagedParameters();
+        expect(eq(block.groupDelaySamples(), 0.0));
+
+        const std::vector<gr::Tag> late{gr::Tag{102UZ, tagKey(1)}, gr::Tag{140UZ, tagKey(2)}};
+        const auto                 tail = runChunks<float>(block, std::span<const float>(x).subspan(100UZ, 100UZ), 10UZ, std::span<const gr::Tag>(late), 100UZ, 100UZ);
+        expect(eq(tail.samples.size(), 150UZ));
+        expect(that % (tail.offsetsOf("t0") == std::vector<std::size_t>{115UZ})) << "held across the change, at the output it crossed with";
+        expect(that % (tail.offsetsOf("t1") == std::vector<std::size_t>{115UZ})) << "placed with the held tag, never ahead of it";
+        expect(that % (tail.offsetsOf("t2") == std::vector<std::size_t>{160UZ})) << "and past it, by the new ratio";
+
+        std::vector<std::size_t> order;
+        for (const gr::Tag& published : tail.tags) {
+            order.push_back(published.index);
+        }
+        expect(std::ranges::is_sorted(order)) << std::format("published in index order: [{}]", join(order));
+        expect(!tail.tags.empty() && tail.tags.front().map.contains(gr::property_map::key_type{"t0"})) << "the tag that crossed first leaves first";
     };
 
     "degenerate settings"_test = [] {

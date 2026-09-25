@@ -20,6 +20,7 @@
 #include <gnuradio-4.0/algorithm/filter/PolyphaseResampler.hpp>
 
 #include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
+#include <gnuradio-4.0/filter/TagDelay.hpp>
 
 namespace gr::blocks::filter {
 
@@ -39,10 +40,16 @@ unreduced ratio and with no gain applied.
 
 Single-stage only: 48 kHz to 44.1 kHz is `147/160` after reduction and costs 5880 taps. Changing `interpolation`,
 `decimation` or `taps` rebuilds the filter and resets the phase and the history, with a discontinuity at the seam; a
-ratio change also moves the tag map's origin, everything else leaving the alignment alone. The group delay is stated,
-not compensated. A forwarded `sample_rate` tag is multiplied by `L/M`, so downstream reads the rate of the stream this
-block hands it.
-)"">;
+ratio change also moves the tag map's origin, everything else leaving the alignment alone. A forwarded `sample_rate`
+tag is multiplied by `L/M`, so downstream reads the rate of the stream this block hands it.
+
+Every forwarded tag that marks a time position, such as a trigger, a burst edge or a time stamp, moves by the filter's
+delay `d`, in samples of the interpolated rate: a tag on input `i` leaves on output `round((i*L + d) / M)`, the sample
+that carries the energy of input `i`. A tag that states a property of the stream, such as `sample_rate`, `signal_name`
+or `context`, crosses unmoved, to the output of input `i` itself. A designed or other symmetric prototype of `N` taps
+delays by `(N-1)/2`. An asymmetric supplied prototype moves its tags by the centroid of its energy, rounded to the whole
+interpolated sample. A tag keeps the output it was given when it crossed, whatever rebuild follows, and a tag whose
+output lies past the end of the stream is not published. )"">;
 
     PortIn<T>  in;
     PortOut<T> out;
@@ -59,7 +66,7 @@ block hands it.
     std::optional<gr::filter::PolyphaseResampler<T>>    _resampler;
     std::uint64_t                                       _interpolation = 1ULL; /// after reduction, where the taps were designed
     std::uint64_t                                       _decimation    = 1ULL;
-    std::size_t                                         _designLength  = 1UZ;
+    std::uint64_t                                       _twiceDelay    = 0ULL; /// the prototype's delay in half interpolated samples, `twiceTapDelay`
     std::uint64_t                                       _inOrigin      = 0ULL;
     std::uint64_t                                       _outOrigin     = 0ULL;
     bool                                                _reorigin      = false;
@@ -88,8 +95,8 @@ block hands it.
         _reorigin  = false;
     }
 
-    /// @brief The filter's delay in input samples — stated, not compensated. Generally not an integer.
-    [[nodiscard]] double groupDelaySamples() const noexcept { return static_cast<double>(_designLength - 1UZ) / (2.0 * static_cast<double>(_interpolation)); }
+    /// @brief The delay every forwarded tag moves by, in input samples. Generally not an integer.
+    [[nodiscard]] double groupDelaySamples() const noexcept { return static_cast<double>(_twiceDelay) / (2.0 * static_cast<double>(_interpolation)); }
 
     void rebuild() {
         if (interpolation < 1U || decimation < 1U) {
@@ -100,6 +107,8 @@ block hands it.
         std::uint64_t      l         = interpolation;
         std::uint64_t      m         = decimation;
 
+        // supplied taps were designed against L*fs_in, and a reduced L would be a different interpolated rate: only a
+        // designed prototype reduces the ratio, and supplied taps at a reducible ratio cost gcd(L, M) times the branches
         if (prototype.empty()) {
             const std::uint64_t g = std::gcd(l, m);
             l /= g;
@@ -108,24 +117,28 @@ block hands it.
             if (!design.ok) {
                 throw gr::exception(std::format("no filter under the tap cap meets {} dB stopband and {} dB ripple for {}/{}", attenuation_db.value, max_ripple_db.value, l, m));
             }
-            prototype     = design.taps;
-            _designLength = static_cast<std::size_t>(design.designLength);
-        } else {
-            // the taps were designed against L*fs_in, and a reduced L would be a different interpolated rate, so the
-            // ratio is left unreduced: supplied taps at a reducible ratio cost gcd(L, M) times the branches
-            _designLength = prototype.size();
+            prototype = design.taps;
         }
 
         _resampler.emplace(static_cast<std::size_t>(l), static_cast<std::size_t>(m), std::span<const float>(prototype));
         _interpolation = l;
         _decimation    = m;
+        _twiceDelay    = detail::twiceTapDelay(std::span<const float>(prototype));
 
         this->input_chunk_size  = static_cast<gr::Size_t>(m);
         this->output_chunk_size = static_cast<gr::Size_t>(l);
     }
 
     /**
-     * @brief Place every input tag at the output offset the rate change puts it at, from the current phase origin.
+     * @brief Place every input tag that marks a time position on the output sample that carries its input sample's
+     * energy, from the current phase origin.
+     *
+     * Input `i` maps to output `round((i*L + d) / M)`, `d` being the prototype's delay at the interpolated rate and a
+     * half rounding up. The keys that state a property of the stream (`detail::kStreamPropertyKeys`) go to output
+     * `round(i*L / M)` instead. A tag whose output is not in this call is held and published by the call that produces that
+     * output. A tag is placed once, when it crosses, under the delay and the ratio in force then. A rebuild moves no
+     * held tag, and a tag that crosses after one is never placed ahead of a tag held from before it. Tags therefore
+     * leave in the order they arrived. A held tag whose output the stream ends before is never published.
      *
      * This replaces the framework's forwarding rather than adjusting it: the default publishes a tag at the output
      * index matching its input index, which is only right at a ratio of one. It is also where a ratio change takes its
@@ -153,9 +166,9 @@ block hands it.
             _reorigin = false;
         }
 
-        std::vector<std::pair<std::uint64_t, property_map>> arriving;
+        std::uint64_t latest = _pendingTags.empty() ? 0ULL : _pendingTags.back().first;
         gr::for_each_reader_span(
-            [&arriving, processedIn, this](auto& span) {
+            [&latest, processedIn, this](auto& span) {
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
@@ -169,12 +182,12 @@ block hands it.
                     const std::uint64_t at = static_cast<std::uint64_t>(span.streamIndex) + static_cast<std::uint64_t>(relIndex);
                     property_map        forwarded(tagMap.get());
                     this->scaleSampleRateByChunkRatio(forwarded); // the ratio in force where the tag crossed, not where it is published
-                    arriving.emplace_back(_outOrigin + gr::filter::mapResampledOffset(at - _inOrigin, _interpolation, _decimation), std::move(forwarded));
+                    detail::holdTag(_pendingTags, latest, _outOrigin + detail::mapDelayedOffset(at - _inOrigin, _interpolation, _decimation, 0ULL), _outOrigin + detail::mapDelayedOffset(at - _inOrigin, _interpolation, _decimation, _twiceDelay), std::move(forwarded));
                 }
             },
             inputSpans);
 
-        if (arriving.empty() && _pendingTags.empty()) {
+        if (_pendingTags.empty()) {
             return;
         }
 
@@ -195,9 +208,6 @@ block hands it.
                     span.publishTag(tag.second, static_cast<std::size_t>(tag.first > base ? tag.first - base : 0ULL));
                 };
                 for (const auto& tag : _pendingTags) {
-                    place(tag);
-                }
-                for (const auto& tag : arriving) {
                     place(tag);
                 }
             },

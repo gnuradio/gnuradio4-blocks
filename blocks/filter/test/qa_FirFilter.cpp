@@ -137,6 +137,30 @@ template<typename T>
     return static_cast<std::size_t>(std::ranges::count_if(tag.map, [](const auto& entry) { return std::string_view(entry.first).starts_with("tag"); }));
 }
 
+/// @brief The index of the sample of largest magnitude, the first of several equal ones.
+template<typename T>
+[[nodiscard]] std::size_t peakIndex(std::span<const T> y) {
+    std::size_t at = 0UZ;
+    for (std::size_t k = 1UZ; k < y.size(); ++k) {
+        if (std::abs(y[k]) > std::abs(y[at])) {
+            at = k;
+        }
+    }
+    return at;
+}
+
+/// @brief The absolute offsets at which @p sink received a tag carrying @p key.
+template<typename TSink>
+[[nodiscard]] std::vector<std::size_t> sinkOffsetsOf(const TSink& sink, std::string_view key) {
+    std::vector<std::size_t> offsets;
+    for (const gr::Tag& seenTag : sink._tags) {
+        if (seenTag.map.contains(gr::property_map::key_type{key})) {
+            offsets.push_back(seenTag.index);
+        }
+    }
+    return offsets;
+}
+
 [[nodiscard]] std::string join(const std::vector<std::size_t>& values) {
     std::string out;
     for (const std::size_t v : values) {
@@ -401,6 +425,144 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         const auto                 tail = test::runDecimating<float>(block, std::span<const float>(x).subspan(200UZ), 100UZ, 4UZ, std::span<const gr::Tag>(late), 200UZ, 20UZ);
         expect(eq(tail.samples.size(), 50UZ)) << "200 further inputs at M = 4";
         expect(that % (tail.offsetsOf("tag2") == std::vector<std::size_t>{22UZ})) << "mapped from the new origin, not rescaled from zero";
+    };
+
+    "a tag that states a property of the stream crosses unmoved, and a trigger moves by the delay"_test = [] {
+        // the rate describes output 0 as it describes input 0; the trigger leaves on the output that carries input 0's
+        // energy, 15 samples later for 31 symmetric taps
+        const std::vector<float> h      = gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0);
+        constexpr std::size_t    kDelay = 15UZ;
+        for (const std::size_t m : {1UZ, 4UZ}) {
+            FirFilter<float, float> block = makeFir<float, float>({{"taps", h}, {"decimation", static_cast<gr::Size_t>(m)}});
+            gr::property_map        opening; // a source's opening tag: the stream's rate and the trigger of its first sample
+            opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
+            opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
+            const std::vector<gr::Tag> tags{gr::Tag{0UZ, opening}};
+            const std::vector<float>   x(256UZ, 0.0f);
+            const auto                 got = test::runDecimating<float>(block, std::span<const float>(x), 64UZ, m, std::span<const gr::Tag>(tags));
+
+            expect(that % (got.offsetsOf("sample_rate") == std::vector<std::size_t>{0UZ})) << std::format("M = {}: the rate stays on output 0", m);
+            expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{(2UZ * kDelay + m) / (2UZ * m)})) << std::format("M = {}: the trigger moves by the delay", m);
+        }
+    };
+
+    "a tag leaves on the output that carries its sample's energy"_test = [] {
+        // a symmetric set of 31 taps delays by 15 input samples, so input i lands on output (i + 15) / M; each input
+        // below is one whose delayed position is a whole output, and a call takes 64 inputs
+        const std::vector<float> h      = gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0);
+        constexpr std::size_t    kDelay = 15UZ;
+        constexpr std::size_t    kChunk = 64UZ;
+
+        struct Row {
+            std::size_t m, at;
+        };
+        constexpr Row kRows[] = {{1UZ, 5UZ}, {1UZ, 62UZ}, {1UZ, 63UZ}, {4UZ, 5UZ}, {4UZ, 61UZ}};
+        for (const auto& [m, at] : kRows) {
+            FirFilter<float, float> block = makeFir<float, float>({{"taps", h}, {"decimation", static_cast<gr::Size_t>(m)}});
+            expect(eq(block.groupDelaySamples(), static_cast<double>(kDelay)));
+
+            std::vector<float> x(256UZ, 0.0f);
+            x[at] = 1.0f;
+            const std::vector<gr::Tag> tags{gr::Tag{at, tagKey(0)}};
+            const auto                 got  = test::runDecimating<float>(block, std::span<const float>(x), kChunk, m, std::span<const gr::Tag>(tags));
+            const std::size_t          want = (at + kDelay) / m;
+
+            expect(that % (got.offsetsOf("tag0") == std::vector<std::size_t>{want})) << std::format("M = {}: input {} leaves on output {} and on no other", m, at, want);
+            expect(eq(peakIndex(std::span<const float>(got.samples)), want)) << std::format("M = {}: the impulse at input {} peaks on output {}", m, at, want);
+            if (at + m >= kChunk) { // the tag rides the first call's last output group
+                expect(ge(want, kChunk / m)) << "the delayed output belongs to a later call than the tag's input";
+            }
+        }
+    };
+
+    "an even-length set delays by a half sample, and the half rounds up"_test = [] {
+        // {1, 2, 2, 1} delays by 1.5: the impulse at 63 comes out 1, 2, 2, 1 on outputs 63 to 66, and the tag goes to the
+        // later of the two equal peaks, in the call after the one that carried it
+        FirFilter<float, float> block = makeFir<float, float>({{"taps", std::vector<float>{1.0f, 2.0f, 2.0f, 1.0f}}, {"decimation", 1U}});
+        expect(eq(block.groupDelaySamples(), 1.5));
+
+        std::vector<float> x(128UZ, 0.0f);
+        x[63] = 1.0f;
+        const std::vector<gr::Tag> tags{gr::Tag{63UZ, tagKey(0)}};
+        const auto                 got = test::runDecimating<float>(block, std::span<const float>(x), 64UZ, 1UZ, std::span<const gr::Tag>(tags));
+
+        expect(eq(got.samples[64], got.samples[65])) << "the energy is split evenly between outputs 64 and 65";
+        expect(that % (got.offsetsOf("tag0") == std::vector<std::size_t>{65UZ}));
+    };
+
+    "an asymmetric set moves its tags by the centroid of its energy"_test = [] {
+        struct Row {
+            std::vector<float> taps;
+            std::size_t        delay; // where the impulse comes out largest
+        };
+        // a lone tap at 5 of 9 is a pure delay of 5, not the 4 the length alone gives; {4, 2, 1} has its centroid at 2/7
+        // and delays by none
+        const Row rows[] = {{{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f}, 5UZ}, {{4.0f, 2.0f, 1.0f}, 0UZ}};
+        for (const Row& row : rows) {
+            FirFilter<float, float> block = makeFir<float, float>({{"taps", row.taps}, {"decimation", 1U}});
+            expect(eq(block.groupDelaySamples(), static_cast<double>(row.delay)));
+
+            std::vector<float> x(128UZ, 0.0f);
+            x[62] = 1.0f;
+            const std::vector<gr::Tag> tags{gr::Tag{62UZ, tagKey(0)}};
+            const auto                 got = test::runDecimating<float>(block, std::span<const float>(x), 64UZ, 1UZ, std::span<const gr::Tag>(tags));
+
+            expect(eq(peakIndex(std::span<const float>(got.samples)), 62UZ + row.delay));
+            expect(that % (got.offsetsOf("tag0") == std::vector<std::size_t>{62UZ + row.delay})) << row.taps.size() << " taps";
+        }
+    };
+
+    "a tag whose delayed output lies past the end of the stream is not published"_test = [] {
+        constexpr gr::Size_t kSamples = 1000U;
+        gr::Graph            graph;
+
+        // 31 taps delay by 15: input 900 leaves on output 915, and input 990 would leave on output 1005, which a stream of
+        // 1000 samples never produces
+        auto& source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        source._tags.emplace_back(900UZ, tagKey(0));
+        source._tags.emplace_back(990UZ, tagKey(1));
+        auto& filter = graph.emplaceBlock<FirFilter<float, float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 1U}});
+        auto& sink   = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+        expect(graph.connect<"out", "in">(source, filter).has_value());
+        expect(graph.connect<"out", "in">(filter, sink).has_value());
+
+        gr::scheduler::Simple scheduler;
+        expect(scheduler.exchange(std::move(graph)).has_value());
+        expect(scheduler.runAndWait().has_value());
+
+        expect(eq(sink._samples.size(), static_cast<std::size_t>(kSamples)));
+        expect(that % (sinkOffsetsOf(sink, "tag0") == std::vector<std::size_t>{915UZ})) << "a delayed tag inside the stream arrives through the scheduler";
+        expect(that % sinkOffsetsOf(sink, "tag1").empty()) << "the stream ends with the tag's energy still inside the filter";
+    };
+
+    "a taps change moves no held tag, and a later tag never lands ahead of it"_test = [] {
+        const std::vector<float> longer  = gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0); // delays by 15
+        const std::vector<float> shorter = gr::filter::fir::design::kaiserLowpass(5, 0.1, 60.0);  // delays by 2
+        const std::vector<float> x       = noise<float>(400UZ, 0xD1B54A32D192ED03ULL);
+
+        FirFilter<float, float>    block = makeFir<float, float>({{"taps", longer}, {"decimation", 1U}});
+        const std::vector<gr::Tag> early{gr::Tag{195UZ, tagKey(0)}};
+        const auto                 head = test::runDecimating<float>(block, std::span<const float>(x).first(200UZ), 50UZ, 1UZ, std::span<const gr::Tag>(early));
+        expect(that % head.offsetsOf("tag0").empty()) << "input 195 leaves on output 210, which the first 200 inputs do not produce";
+
+        std::ignore = block.settings().setStaged({{"taps", shorter}});
+        std::ignore = block.settings().applyStagedParameters();
+        expect(eq(block.groupDelaySamples(), 2.0));
+
+        // under the new delay input 201 maps to 203, ahead of the held tag, and input 250 to 252
+        const std::vector<gr::Tag> late{gr::Tag{201UZ, tagKey(1)}, gr::Tag{250UZ, tagKey(2)}};
+        const auto                 tail = test::runDecimating<float>(block, std::span<const float>(x).subspan(200UZ), 50UZ, 1UZ, std::span<const gr::Tag>(late), 200UZ, 200UZ);
+        expect(that % (tail.offsetsOf("tag0") == std::vector<std::size_t>{210UZ})) << "held across the change, at the output it crossed with";
+        expect(that % (tail.offsetsOf("tag1") == std::vector<std::size_t>{210UZ})) << "placed with the held tag, never ahead of it";
+        expect(that % (tail.offsetsOf("tag2") == std::vector<std::size_t>{252UZ})) << "and past it, by the new delay";
+
+        std::vector<std::size_t> order;
+        for (const gr::Tag& published : tail.tags) {
+            order.push_back(published.index);
+        }
+        expect(std::ranges::is_sorted(order)) << std::format("published in index order: [{}]", join(order));
+        expect(!tail.tags.empty() && tail.tags.front().map.contains(gr::property_map::key_type{"tag0"})) << "the tag that crossed first leaves first";
     };
 
     "the frequency-translating identity"_test = [] {

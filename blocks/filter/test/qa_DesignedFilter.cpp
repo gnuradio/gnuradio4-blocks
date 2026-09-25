@@ -50,6 +50,25 @@ template<typename TSample, typename TTap>
 /// the transition width, and is odd by construction.
 [[nodiscard]] constexpr int hammingLaw(double fs, double tw) { return static_cast<int>(53.0 * fs / (22.0 * tw)) | 1; }
 
+/// A key per tag, so a tag that survives is visible wherever it lands.
+[[nodiscard]] gr::property_map tagKey(std::size_t which) {
+    gr::property_map map;
+    map.insert_or_assign(gr::property_map::key_type{std::format("tag{}", which)}, static_cast<gr::Size_t>(which));
+    return map;
+}
+
+/// @brief The index of the sample of largest magnitude, the first of several equal ones.
+template<typename T>
+[[nodiscard]] std::size_t peakIndex(std::span<const T> y) {
+    std::size_t at = 0UZ;
+    for (std::size_t k = 1UZ; k < y.size(); ++k) {
+        if (std::abs(y[k]) > std::abs(y[at])) {
+            at = k;
+        }
+    }
+    return at;
+}
+
 template<typename T>
 [[nodiscard]] double worstDelta(std::span<const T> a, std::span<const T> b) {
     double worst = 0.0;
@@ -247,6 +266,57 @@ const boost::ut::suite<"DesignedFilter"> designedFilterTests = [] {
             }
         }
         expect(sawUpstream) << "the upstream rate tag rode through at its offset";
+    };
+
+    "a tag leaves on the output that carries its sample's energy"_test = [] {
+        // 41 designed taps delay by 20 input samples, so input i lands on output (i + 20) / M. A call takes 60 inputs,
+        // and each input below sits in the first call's last output group with a delayed position on a whole output.
+        constexpr std::size_t kDelay = 20UZ;
+        constexpr std::size_t kChunk = 60UZ;
+        struct Row {
+            gr::Size_t  m;
+            std::size_t at;
+        };
+        constexpr Row kRows[] = {{1U, 59UZ}, {3U, 58UZ}};
+        for (const auto& [m, at] : kRows) {
+            auto block = make<float, float>({{"profile", std::string("lowpass")}, {"sample_rate", 96000.f}, {"cutoff", 10000.0}, {"taps", gr::Size_t(41)}, {"decimation", m}});
+            expect(eq(block.designed_taps.value, 41U));
+            expect(eq(block.groupDelaySamples(), static_cast<double>(kDelay)));
+
+            std::vector<float> x(240UZ, 0.0f);
+            x[at] = 1.0f;
+            const std::vector<gr::Tag> tags{gr::Tag{at, tagKey(0)}};
+            const auto                 got  = test::runDecimating<float>(block, std::span<const float>(x), kChunk, m, std::span<const gr::Tag>(tags));
+            const std::size_t          want = (at + kDelay) / m;
+
+            expect(ge(want, kChunk / m)) << "the delayed output belongs to a later call than the tag's input";
+            expect(that % (got.offsetsOf("tag0") == std::vector<std::size_t>{want})) << std::format("M = {}: input {} leaves on output {} and on no other", m, at, want);
+            expect(eq(peakIndex(std::span<const float>(got.samples)), want)) << std::format("M = {}: the impulse at input {} peaks on output {}", m, at, want);
+        }
+
+        // a complex band-pass is a modulated low-pass: its magnitude stays symmetric and its delay (N-1)/2
+        auto band = make<CF, CF>({{"profile", std::string("complex_bandpass")}, {"sample_rate", 96000.f}, {"cutoff", 5000.0}, {"high_cutoff", 15000.0}, {"taps", gr::Size_t(41)}});
+        expect(eq(band.groupDelaySamples(), static_cast<double>(kDelay)));
+        std::vector<CF> z(240UZ, CF{});
+        z[59] = CF{1.0f, 0.0f};
+        const std::vector<gr::Tag> bandTags{gr::Tag{59UZ, tagKey(0)}};
+        const auto                 banded = test::runDecimating<CF>(band, std::span<const CF>(z), kChunk, 1UZ, std::span<const gr::Tag>(bandTags));
+        expect(that % (banded.offsetsOf("tag0") == std::vector<std::size_t>{79UZ}));
+        expect(eq(peakIndex(std::span<const CF>(banded.samples)), 79UZ));
+
+        // a Hilbert transformer has no center tap: the tag sits on the zero between the two equal peaks, the output
+        // that pairs with the input delayed by (N-1)/2
+        auto hilbert = make<float, float>({{"profile", std::string("hilbert")}, {"sample_rate", 48000.f}, {"taps", gr::Size_t(31)}});
+        expect(eq(hilbert.groupDelaySamples(), 15.0));
+        std::vector<float> h(240UZ, 0.0f);
+        h[59] = 1.0f;
+        const std::vector<gr::Tag> hilbertTags{gr::Tag{59UZ, tagKey(0)}};
+        const auto                 shifted = test::runDecimating<float>(hilbert, std::span<const float>(h), kChunk, 1UZ, std::span<const gr::Tag>(hilbertTags));
+        expect(that % (shifted.offsetsOf("tag0") == std::vector<std::size_t>{74UZ}));
+        expect(eq(shifted.samples[74], 0.0f));
+        expect(lt(std::abs(std::abs(shifted.samples[73]) - std::abs(shifted.samples[75])), 1e-6f));
+        const std::size_t peak = peakIndex(std::span<const float>(shifted.samples));
+        expect(peak == 73UZ || peak == 75UZ) << "the largest outputs flank the tag";
     };
 
     "refusals fire by name and leave the previous design running"_test = [] {

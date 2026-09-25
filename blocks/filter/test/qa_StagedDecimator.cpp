@@ -146,6 +146,39 @@ template<typename T>
     return out;
 }
 
+/**
+ * @brief The delay of the running path in input samples, read off the block's ladder: `((N_i - 1)/2) * p_{i-1}` summed over
+ * the stages, less one sample of each halving stage's input rate over complex samples, where the halfband cascade
+ * samples a halving's output early.
+ */
+template<typename T>
+[[nodiscard]] std::uint64_t pathDelay(const StagedDecimator<T>& block) {
+    std::uint64_t delay  = 0ULL;
+    std::uint64_t stride = 1ULL;
+    for (std::size_t s = 0UZ; s < block.stages(); ++s) {
+        delay += ((block.stageTaps(s).size() - 1ULL) / 2ULL) * stride;
+        if constexpr (std::same_as<T, CF>) {
+            if (block.stageDecimation(s) == 2UZ) {
+                delay -= stride;
+            }
+        }
+        stride *= block.stageDecimation(s);
+    }
+    return delay;
+}
+
+/// @brief The index of the sample of largest magnitude, the first of several equal ones.
+template<typename T>
+[[nodiscard]] std::size_t peakIndex(std::span<const T> y) {
+    std::size_t at = 0UZ;
+    for (std::size_t k = 1UZ; k < y.size(); ++k) {
+        if (std::abs(y[k]) > std::abs(y[at])) {
+            at = k;
+        }
+    }
+    return at;
+}
+
 /// The tables are quoted to two decimal places, so a value ending in `.xx5` sits exactly on the rounding
 /// boundary and half a quantum is not enough slack.
 constexpr double kTabulated = 0.0051;
@@ -429,22 +462,69 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         for (std::size_t i = 0UZ; i < kD; ++i) { // D tags on consecutive inputs, all of which belong at the offsets the map gives
             tags.emplace_back(i, tagKey(i));
         }
-        const auto y = run(block, noise<CF>(200UZ * kD, 0xA24BAED4963EE407ULL), 4UZ, std::span<const gr::Tag>(tags));
+        const auto          y     = run(block, noise<CF>(200UZ * kD, 0xA24BAED4963EE407ULL), 4UZ, std::span<const gr::Tag>(tags));
+        const std::uint64_t delay = pathDelay(block);
 
-        expect(that % (y.offsetsOf("tag0") == std::vector<std::size_t>{0UZ})) << "a tag at input 0 lands at output 0";
+        expect(that % (y.offsetsOf("tag0") == std::vector<std::size_t>{narrowIndex<std::size_t>(mapResampledOffset(delay, 1ULL, kD))})) << "a tag at input 0 lands on the output of the delay alone";
         for (std::size_t i = 0UZ; i < kD; ++i) {
-            expect(that % (y.offsetsOf(std::format("tag{}", i)) == std::vector<std::size_t>{narrowIndex<std::size_t>(mapResampledOffset(i, 1ULL, kD))})) << "tag " << i;
+            expect(that % (y.offsetsOf(std::format("tag{}", i)) == std::vector<std::size_t>{narrowIndex<std::size_t>(mapResampledOffset(i + delay, 1ULL, kD))})) << "tag " << i;
         }
     };
+
+    "a tag that states a property of the stream crosses unmoved, and a trigger moves by the delay"_test = [] {
+        // the rate describes output 0 as it describes input 0; the trigger leaves on the output of the path's delay alone
+        for (const gr::Size_t decimation : {8U, 10U}) {
+            StagedDecimator<float> block = makeBlock<float>({{"decimation", decimation}});
+            const std::uint64_t    delay = pathDelay(block);
+            gr::property_map       opening; // a source's opening tag: the stream's rate and the trigger of its first sample
+            opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
+            opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
+            const std::vector<gr::Tag> tags{gr::Tag{0UZ, opening}};
+            const std::vector<float>   x(narrowIndex<std::size_t>(delay + 40ULL * decimation), 0.0f);
+            const auto                 y = run(block, x, 4UZ, std::span<const gr::Tag>(tags));
+
+            expect(that % (y.offsetsOf("sample_rate") == std::vector<std::size_t>{0UZ})) << std::format("D = {}: the rate stays on output 0", decimation);
+            expect(that % (y.offsetsOf("trigger_time") == std::vector<std::size_t>{narrowIndex<std::size_t>(mapResampledOffset(delay, 1ULL, decimation))})) << std::format("D = {}: the trigger moves by the delay", decimation);
+        }
+    };
+
+    "a tag leaves on the output that carries its sample's energy"_test = []<typename T>() {
+        // Input i lands on output (i + d) / D, d being the path's delay. Each input below is the one in the second call's
+        // last output group whose delayed position is a whole output, so the output it lands on belongs to a later call.
+        constexpr std::size_t kChunkOutputs = 4UZ;
+        for (const gr::Size_t decimation : {8U, 10U}) {
+            const std::size_t   d     = static_cast<std::size_t>(decimation);
+            StagedDecimator<T>  block = makeBlock<T>({{"decimation", decimation}});
+            const std::uint64_t delay = pathDelay(block);
+
+            const std::size_t callEnd = 2UZ * kChunkOutputs * d;
+            std::size_t       at      = callEnd - d;
+            while ((at + delay) % d != 0UZ) {
+                ++at;
+            }
+            const std::size_t want = narrowIndex<std::size_t>((at + delay) / d);
+
+            std::vector<T> x(narrowIndex<std::size_t>(callEnd + delay + 20UZ * d), T{});
+            x[at] = T{1.0f};
+            const std::vector<gr::Tag> tags{gr::Tag{at, tagKey(0)}};
+            const auto                 y = run(block, x, kChunkOutputs, std::span<const gr::Tag>(tags));
+
+            expect(ge(want, 2UZ * kChunkOutputs)) << "the delayed output belongs to a later call than the tag's input";
+            expect(that % (y.offsetsOf("tag0") == std::vector<std::size_t>{want})) << std::format("D = {}: input {} leaves on output {} and on no other", d, at, want);
+            expect(eq(peakIndex(std::span<const T>(y.samples)), want)) << std::format("D = {}: the impulse at input {} peaks on output {}", d, at, want);
+        }
+    } | std::tuple<float, CF>{};
 
     "a tag whose output falls past the current call is published when that output is produced"_test = [] {
         constexpr std::size_t kD    = 10UZ;
         StagedDecimator<CF>   block = makeBlock<CF>({{"decimation", static_cast<gr::Size_t>(kD)}});
 
-        // input 995 maps to output 100, which is one past the last output of the call that carries it
+        // input 995 maps past output 99, the last output of the call that carries it
         const std::vector<gr::Tag> tags{gr::Tag{995UZ, tagKey(0)}};
-        const auto                 y = run(block, noise<CF>(1010UZ * kD, 0x9E3779B97F4A7C15ULL), 1UZ, std::span<const gr::Tag>(tags));
-        expect(that % (y.offsetsOf("tag0") == std::vector<std::size_t>{100UZ})) << "held, then published at the offset the map gave it";
+        const auto                 y    = run(block, noise<CF>(1010UZ * kD, 0x9E3779B97F4A7C15ULL), 1UZ, std::span<const gr::Tag>(tags));
+        const std::size_t          want = narrowIndex<std::size_t>(mapResampledOffset(995ULL + pathDelay(block), 1ULL, kD));
+        expect(gt(want, 99UZ));
+        expect(that % (y.offsetsOf("tag0") == std::vector<std::size_t>{want})) << "held, then published at the offset the map gave it";
     };
 
     "tags land where the decimation puts them, through a graph"_test = [] {
@@ -466,9 +546,10 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
+        const std::uint64_t      delay = pathDelay(decimator);
         std::vector<std::size_t> want;
         for (std::size_t i = 0UZ; i < kTags; ++i) {
-            const std::size_t at = narrowIndex<std::size_t>(mapResampledOffset(i, 1ULL, kD));
+            const std::size_t at = narrowIndex<std::size_t>(mapResampledOffset(i + delay, 1ULL, kD));
             if (want.empty() || want.back() != at) {
                 want.push_back(at);
             }
@@ -525,7 +606,7 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         const std::vector<gr::Tag> early{gr::Tag{40UZ, tagKey(0)}};
         const auto                 head = run(block, x, 25UZ, std::span<const gr::Tag>(early));
         expect(eq(head.samples.size(), 200UZ));
-        expect(that % (head.offsetsOf("tag0") == std::vector<std::size_t>{5UZ}));
+        expect(that % (head.offsetsOf("tag0") == std::vector<std::size_t>{narrowIndex<std::size_t>(mapResampledOffset(40ULL + pathDelay(block), 1ULL, 8ULL))}));
         expect(eq(block.stages(), 3UZ));
         const std::uint64_t before = block.groupDelaySamples();
 
@@ -534,11 +615,11 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(eq(block.stages(), 4UZ)) << "the ladder is rebuilt, not adjusted";
         expect(block.groupDelaySamples() != before) << "and the delay changes with it";
 
-        // The new origin is input 1600 / output 200, so input 1632 is two outputs past it.
+        // The new origin is input 1600 / output 200, so input 1632 is two outputs past it before the delay.
         const std::vector<gr::Tag> late{gr::Tag{1632UZ, tagKey(1)}};
         const auto                 tail = test::runDecimating<CF>(block, std::span<const CF>(x), 16UZ * 25UZ, 16UZ, std::span<const gr::Tag>(late), 1600UZ, 200UZ);
         expect(eq(tail.samples.size(), 100UZ)) << "1600 further inputs at D = 16, from the first call after the rebuild";
-        expect(that % (tail.offsetsOf("tag1") == std::vector<std::size_t>{202UZ})) << "mapped from the new origin, not rescaled from zero";
+        expect(that % (tail.offsetsOf("tag1") == std::vector<std::size_t>{200UZ + narrowIndex<std::size_t>(mapResampledOffset(32ULL + pathDelay(block), 1ULL, 16ULL))})) << "mapped from the new origin, not rescaled from zero";
     };
 
     "a rebuild at the same rate keeps the tag in flight"_test = [] {
@@ -546,20 +627,21 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         StagedDecimator<CF>   block = makeBlock<CF>({{"decimation", static_cast<gr::Size_t>(kD)}});
         const std::vector<CF> x     = noise<CF>(2000UZ, 0x5D2DFF8A5CD78963ULL);
 
-        // input 995 maps to output 100, which is one past the last output of the run that carries it
+        // input 995 maps past output 99, the last output of the run that carries it
         const std::vector<gr::Tag> tags{gr::Tag{995UZ, tagKey(0)}};
-        const auto                 head = test::runDecimating<CF>(block, std::span<const CF>(x).first(1000UZ), kD, kD, std::span<const gr::Tag>(tags));
+        const auto                 head   = test::runDecimating<CF>(block, std::span<const CF>(x).first(1000UZ), kD, kD, std::span<const gr::Tag>(tags));
+        const std::size_t          placed = narrowIndex<std::size_t>(mapResampledOffset(995ULL + pathDelay(block), 1ULL, kD));
         expect(eq(head.samples.size(), 100UZ));
         expect(that % (head.offsetsOf("tag0") == std::vector<std::size_t>{})) << "its output is not produced yet, so it is held";
 
         const std::size_t stages = block.stages();
-        std::ignore              = block.settings().setStaged({{"ripple_db", 0.04f}}); // a rebuild key that leaves the rate, and so the tag map, alone
+        std::ignore              = block.settings().setStaged({{"ripple_db", 0.04f}}); // a rebuild key that leaves the rate, and so the tag map's origin, alone
         std::ignore              = block.settings().applyStagedParameters();
         expect(eq(block.stages(), stages));
 
         const auto tail = test::runDecimating<CF>(block, std::span<const CF>(x).subspan(1000UZ), kD, kD, {}, 1000UZ, 100UZ);
         expect(eq(tail.samples.size(), 100UZ));
-        expect(that % (tail.offsetsOf("tag0") == std::vector<std::size_t>{100UZ})) << "a design change that moves no tag keeps the held one, at the offset it already had";
+        expect(that % (tail.offsetsOf("tag0") == std::vector<std::size_t>{placed})) << "a design change that moves no tag keeps the held one, at the offset it already had";
     };
 
     "a rebuild to a ladder already built designs nothing new"_test = [] {
