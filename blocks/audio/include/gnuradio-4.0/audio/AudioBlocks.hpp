@@ -97,12 +97,12 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
     };
     IoThreadGuard _ioGuard{_ioThreadDone};
 
+    // start() throws when the device cannot be opened, so the run fails with the reason. The framework calls no stop()
+    // after a start() that throws, so the backend is shut down first.
     void start() {
         if (auto result = initialiseBackend(); !result) {
-            this->emitErrorMessage("AudioSource::start()", result.error());
             _backendImpl.shutdown();
-            _failed = true;
-            return;
+            throw gr::exception(std::format("AudioSource::start(): {}", result.error().message));
         }
         gr::atomic_ref(_ioThreadDone).store_release(false);
         gr::thread_pool::Manager::defaultIoPool()->execute([this]() { ioReadLoop(); });
@@ -536,12 +536,16 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
         }
     };
 
+    // start() throws when the device cannot be opened, so the run fails with the reason before a sample arrives. The
+    // framework calls no stop() after a start() that throws, so the backend is shut down first. A device lost to a
+    // reconfiguration during the run is reported by failUnlocked() instead.
     void start() {
         std::lock_guard deviceLock(_deviceMutex);
         gr::atomic_ref(_reconfigureRequested).store_release(false);
         if (auto result = initialiseBackendUnlocked(makeIoConfig()); !result) {
-            failUnlocked("AudioSink::start()", result.error());
-            return;
+            _backendImpl.shutdown();
+            gr::atomic_ref(_streamActive).store_release(false);
+            throw gr::exception(std::format("AudioSink::start(): {}", result.error().message));
         }
         applyNegotiatedFormat();
         // start I/O thread that drains the staging buffer into the backend
