@@ -94,6 +94,8 @@ Operating modes:
     algorithm::SampleRateEstimator _rateEstimator;
     float                          _ppmLastEmitted = 0.0f;
 
+    std::size_t _publishedSinceWork = 0UZ;
+
     struct IoThreadGuard {
         bool& done;
         explicit IoThreadGuard(bool& d) : done(d) {}
@@ -159,6 +161,7 @@ Operating modes:
         _device.close();
     }
 
+    // performed_work is the number of samples the io thread published since the previous call, 0 when it published none.
     work::Result work(std::size_t requestedWork = std::numeric_limits<std::size_t>::max()) noexcept {
         if (!lifecycle::isActive(this->state())) {
             return {requestedWork, 0UZ, work::Status::DONE};
@@ -171,7 +174,7 @@ Operating modes:
             this->requestStop();
             return {requestedWork, 0UZ, work::Status::DONE};
         }
-        return {requestedWork, 1UZ, work::Status::OK};
+        return {requestedWork, gr::atomic_ref(_publishedSinceWork).exchange(0UZ), work::Status::OK};
     }
 
     void settingsChanged(const property_map& /*oldSettings*/, property_map& newSettings, property_map& forwardSettings) {
@@ -405,6 +408,7 @@ Operating modes:
                 }
             }
 
+            gr::atomic_ref(_publishedSinceWork).fetch_add(nCopy);
             span.publish(nCopy);
             done += nCopy;
             this->progress->incrementAndGet();
