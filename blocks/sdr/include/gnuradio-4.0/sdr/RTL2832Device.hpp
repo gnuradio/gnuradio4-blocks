@@ -60,6 +60,10 @@ inline constexpr std::uint8_t  kVendorOut    = 0x40;    // USB vendor request, h
 inline constexpr std::uint8_t  kVendorIn     = 0xC0;    // USB vendor request, device→host
 inline constexpr std::size_t   kBulkReadSize = 131'072; // 128 KB per transfer
 
+// the native read queue: 16 transfers of 64 KiB hold 1 MiB, 218 ms of samples at 2.4 MS/s
+inline constexpr std::size_t kStreamTransferSize  = 65'536;
+inline constexpr std::size_t kStreamTransferCount = 16;
+
 // USB vendor command block IDs (Table 27, p. 42; wIndex encoding in Table 28, p. 43)
 inline constexpr std::uint16_t kBlockUsb = 0x0100; // USB-side registers
 inline constexpr std::uint16_t kBlockSys = 0x0200; // system / 8051 registers
@@ -731,9 +735,11 @@ struct RTL2832Device {
 
     // data transfer
 
+    // up to maxLen bytes of the sample stream, 0 when none arrived within 100 ms; natively the first read after an open
+    // queues kStreamTransferCount transfers, which keep the stream flowing while the caller converts and publishes
     std::expected<std::size_t, std::string> readBulk(std::uint8_t* dst, std::size_t maxLen) {
 #if !defined(__EMSCRIPTEN__)
-        return _usb.bulkRead(kBulkEndpoint, {dst, maxLen}, 100);
+        return _usb.queuedBulkRead(kBulkEndpoint, {dst, maxLen}, kStreamTransferCount, kStreamTransferSize, 100);
 #else
         return detail::iqQueue().pop(dst, maxLen);
 #endif
