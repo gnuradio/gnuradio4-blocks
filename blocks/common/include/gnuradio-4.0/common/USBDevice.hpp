@@ -299,7 +299,8 @@ struct USBDevice {
     // Reads a bulk IN endpoint through a queue of nTransfers transfers of transferSize bytes each, all submitted to the
     // kernel at once. The device always has a buffer to fill while the caller works on the data of an earlier one;
     // between two synchronous bulkRead calls the endpoint has none, and a device with a small FIFO loses what it
-    // samples in that gap. The first call submits the queue, and its endpoint and sizes hold until close().
+    // samples in that gap. The first call submits the queue, and its endpoint and sizes hold until close() or
+    // discardQueuedTransfers().
     //
     // Each call hands out data of the oldest completed transfer, at most dst.size() bytes, and resubmits the transfer
     // once all of its data is handed out. It returns 0 when no transfer completes within timeoutMs. A transfer that
@@ -364,6 +365,48 @@ struct USBDevice {
             }
         }
         return nCopy;
+    }
+
+    // Discards every transfer of the read queue with the data it holds, reaps them all and drops the queue. The
+    // endpoint then has no transfer pending until the next queuedBulkRead submits a new queue, and that call hands out
+    // only data the device sends after it. The rest of a transfer handed out in part is dropped too. A transfer that
+    // completed before its discard is reaped with the others. Without a queue the call does nothing.
+    [[nodiscard]] Result discardQueuedTransfers(unsigned timeoutMs = 100) {
+        if (_fd < 0) {
+            return std::unexpected(std::string("USBDevice: not open"));
+        }
+        std::size_t nInKernel = 0UZ;
+        for (std::size_t i = 0UZ; i < _queue.size(); ++i) {
+            if (i != _heldIndex) {
+                std::ignore = ::ioctl(_fd, USBDEVFS_DISCARDURB, _queue[i].urb.get());
+                ++nInKernel;
+            }
+        }
+        _heldIndex  = kNoTransfer;
+        _heldOffset = 0UZ;
+        while (nInKernel > 0UZ) {
+            usbdevfs_urb* reaped = nullptr;
+            if (::ioctl(_fd, USBDEVFS_REAPURBNDELAY, &reaped) == 0) {
+                --nInKernel;
+                continue;
+            }
+            if (errno != EAGAIN) {
+                return std::unexpected(formatTransferError("discard queued transfers", errno));
+            }
+            pollfd    ready{.fd = _fd, .events = POLLOUT, .revents = 0};
+            const int nReady = ::poll(&ready, 1, static_cast<int>(timeoutMs));
+            if (nReady < 0 && errno != EINTR) {
+                return std::unexpected(formatTransferError("discard queued transfers", errno));
+            }
+            if (nReady == 0) {
+                return std::unexpected(std::format("discard queued transfers: {} discarded transfers did not return within {} ms", nInKernel, timeoutMs));
+            }
+            if (nReady > 0 && (ready.revents & POLLOUT) == 0) {
+                return std::unexpected(std::string("discard queued transfers: device disconnected"));
+            }
+        }
+        _queue.clear();
+        return {};
     }
 
     [[nodiscard]] Result reset() {
@@ -438,6 +481,7 @@ struct USBDevice {
     [[nodiscard]] std::expected<std::size_t, std::string> bulkRead(std::uint8_t, std::span<std::uint8_t>, unsigned = 100) { return std::unexpected(std::string("USBDevice: Linux-only")); }
 
     [[nodiscard]] std::expected<std::size_t, std::string> queuedBulkRead(std::uint8_t, std::span<std::uint8_t>, std::size_t, std::size_t, unsigned = 100) { return std::unexpected(std::string("USBDevice: Linux-only")); }
+    [[nodiscard]] Result                                  discardQueuedTransfers(unsigned = 100) { return std::unexpected(std::string("USBDevice: Linux-only")); }
 
     [[nodiscard]] Result reset() { return std::unexpected(std::string("USBDevice: Linux-only")); }
     [[nodiscard]] Result clearHalt(std::uint8_t) { return std::unexpected(std::string("USBDevice: Linux-only")); }

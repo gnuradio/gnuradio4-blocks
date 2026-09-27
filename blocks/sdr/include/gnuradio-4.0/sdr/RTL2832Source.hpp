@@ -39,6 +39,14 @@ inline void convertToComplex(const std::uint8_t* raw, std::complex<float>* out, 
 
 GR_REGISTER_BLOCK("gr::blocks::sdr::RTL2832Source", gr::blocks::sdr::RTL2832Source, [T], [ uint8_t, std::complex<float> ])
 
+// reads dropped after a retune: natively the device discards its queued transfers and flushes its FIFO at the tune,
+// and the browser read queue keeps the samples WebUSB delivered before the tune
+#if defined(__EMSCRIPTEN__)
+inline constexpr std::uint8_t kPostRetuneDiscardReads = 3;
+#else
+inline constexpr std::uint8_t kPostRetuneDiscardReads = 0;
+#endif
+
 template<typename T>
 struct RTL2832Source : gr::Block<RTL2832Source<T>> {
     using Description = Doc<R"(RTL2832U SDR source for USB dongles with the R820T/R820T2/R860, R828D, and E4000 tuners.
@@ -242,7 +250,7 @@ Operating modes:
 
             if (_retuneRequested) {
                 _retuneRequested        = false;
-                _postRetuneDiscardCount = 3;
+                _postRetuneDiscardCount = kPostRetuneDiscardReads;
                 _dcFilterI.reset();
                 _dcFilterQ.reset();
                 _rateEstimator.resetPhase();
@@ -367,13 +375,14 @@ Operating modes:
         std::ignore  = clkSpan.consume(nAvailable);
     }
 
-    // an already-read USB chunk is never dropped: a gap in a continuous IQ stream is a phase
-    // discontinuity downstream. tryReserve is all-or-nothing, so each request asks for what the ring reports
+    // an already-read USB chunk is published whole: a gap in a continuous IQ stream is a phase discontinuity downstream.
+    // A retune applied while the chunk waits for room ends it early, because the rest holds samples of the old
+    // frequency. tryReserve is all-or-nothing, so each request asks for what the ring reports
     void publishSamples(auto& writer, const std::uint8_t* data, std::size_t nBytes, std::uint64_t tWallNs) {
         const std::size_t nOutputSamples = std::is_same_v<T, std::uint8_t> ? nBytes : nBytes / 2UZ;
 
         std::size_t done = 0UZ;
-        while (done < nOutputSamples && lifecycle::isActive(this->state())) {
+        while (done < nOutputSamples && !_retuneRequested && lifecycle::isActive(this->state())) {
             const std::size_t remaining = nOutputSamples - done;
             const std::size_t nRequest  = std::min(remaining, writer.available());
             if (nRequest == 0UZ) {

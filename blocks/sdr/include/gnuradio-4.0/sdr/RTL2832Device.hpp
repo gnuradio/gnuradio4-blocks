@@ -601,7 +601,19 @@ struct RTL2832Device {
         return realRate;
     }
 
+    // tunes the LO, then drops every sample taken before the tune that readBulk has not handed out
     ValueResult setCenterFrequency(double freq) {
+        auto tuned = setTunerFrequency(freq);
+        if (!tuned) {
+            return tuned;
+        }
+        if (auto r = discardStream(); !r) {
+            return std::unexpected(r.error());
+        }
+        return tuned;
+    }
+
+    ValueResult setTunerFrequency(double freq) {
         if (_tunerType == TunerType::e4000) {
             // E4000: zero-IF tuner — no IF offset, direct LO frequency
             auto pllResult = setE4kPll(freq);
@@ -736,12 +748,26 @@ struct RTL2832Device {
     // data transfer
 
     // up to maxLen bytes of the sample stream, 0 when none arrived within 100 ms; natively the first read after an open
-    // queues kStreamTransferCount transfers, which keep the stream flowing while the caller converts and publishes
+    // or a discardStream queues kStreamTransferCount transfers, which keep the stream flowing while the caller converts
+    // and publishes
     std::expected<std::size_t, std::string> readBulk(std::uint8_t* dst, std::size_t maxLen) {
 #if !defined(__EMSCRIPTEN__)
         return _usb.queuedBulkRead(kBulkEndpoint, {dst, maxLen}, kStreamTransferCount, kStreamTransferSize, 100);
 #else
         return detail::iqQueue().pop(dst, maxLen);
+#endif
+    }
+
+    // natively discards every queued transfer, then flushes the dongle's FIFO while no transfer is pending; the next
+    // readBulk queues new transfers and returns only samples taken after this call. The browser queue is left as it is
+    Result discardStream() {
+#if !defined(__EMSCRIPTEN__)
+        if (auto r = _usb.discardQueuedTransfers(); !r) {
+            return r;
+        }
+        return resetBuffer();
+#else
+        return {};
 #endif
     }
 
