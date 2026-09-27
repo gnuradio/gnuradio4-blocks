@@ -1,7 +1,9 @@
 #ifndef GNURADIO_SDR_DC_BLOCKER_HPP
 #define GNURADIO_SDR_DC_BLOCKER_HPP
 
+#include <complex>
 #include <numbers>
+#include <span>
 
 namespace gr::blocks::sdr {
 
@@ -43,6 +45,37 @@ public:
         _xPrev         = x;
         _yPrev         = y;
         return static_cast<float>(y);
+    }
+
+    // Runs inPhase over the real parts and quadrature over the imaginary parts of a block in place: the recurrence of
+    // processOne, with the state of both kept in registers for the block. The two recurrences are independent, so
+    // their latencies overlap.
+    static void processComplex(DcBlocker& inPhase, DcBlocker& quadrature, std::span<std::complex<float>> samples) noexcept {
+        if (!inPhase._blocking || !quadrature._blocking) {
+            for (std::complex<float>& sample : samples) {
+                sample = {inPhase.processOne(sample.real()), quadrature.processOne(sample.imag())};
+            }
+            return;
+        }
+        const double rI     = inPhase._r;
+        const double rQ     = quadrature._r;
+        double       xPrevI = inPhase._xPrev;
+        double       yPrevI = inPhase._yPrev;
+        double       xPrevQ = quadrature._xPrev;
+        double       yPrevQ = quadrature._yPrev;
+        for (std::complex<float>& sample : samples) {
+            const double xI = static_cast<double>(sample.real());
+            const double xQ = static_cast<double>(sample.imag());
+            yPrevI          = xI - xPrevI + rI * yPrevI;
+            yPrevQ          = xQ - xPrevQ + rQ * yPrevQ;
+            xPrevI          = xI;
+            xPrevQ          = xQ;
+            sample          = {static_cast<float>(yPrevI), static_cast<float>(yPrevQ)};
+        }
+        inPhase._xPrev    = xPrevI;
+        inPhase._yPrev    = yPrevI;
+        quadrature._xPrev = xPrevQ;
+        quadrature._yPrev = yPrevQ;
     }
 
     // forgets the past samples; the cutoff is kept

@@ -2,6 +2,7 @@
 
 #include <gnuradio-4.0/sdr/DcBlocker.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
@@ -9,6 +10,8 @@
 #include <format>
 #include <numbers>
 #include <print>
+#include <span>
+#include <vector>
 
 // The blocker is measured at the rate and the cutoff a radio uses, 10 Hz on 2 MS/s, and at a hundred times that
 // cutoff. A tone of amplitude 0.3 at 100 kHz rides on a DC term of 0.5; what the blocker must do is remove the
@@ -174,6 +177,48 @@ const boost::ut::suite<"DC blocker"> dcBlockerTests = [] {
         blocker.reset();
         // with no history, the first output of y[n] = x[n] - x[n-1] + r*y[n-1] is the input itself
         expect(eq(blocker.processOne(static_cast<float>(kDcTerm)), static_cast<float>(kDcTerm))) << "the state survived a reset";
+    };
+
+    "processComplex over blocks of any size follows processOne on each part"_test = [] {
+        const auto table = toneTable();
+        for (const float cutoffHz : {10.f, static_cast<float>(kSampleRate) / 4.f}) { // taken, and refused (pass-through)
+            DcBlocker blockI(cutoffHz, static_cast<float>(kSampleRate));
+            DcBlocker blockQ(cutoffHz, static_cast<float>(kSampleRate));
+            DcBlocker oneI(cutoffHz, static_cast<float>(kSampleRate));
+            DcBlocker oneQ(cutoffHz, static_cast<float>(kSampleRate));
+
+            std::vector<std::complex<float>> samples(40'000UZ);
+            for (std::size_t i = 0UZ; i < samples.size(); ++i) {
+                const std::complex<double> tone = table[i % kTonePeriod];
+                samples[i]                      = {static_cast<float>(kDcTerm + tone.real()), static_cast<float>(tone.imag())};
+            }
+            const std::vector<std::complex<float>> input = samples;
+
+            // uneven blocks, so the state crosses every kind of boundary, an empty block included
+            std::size_t start = 0UZ;
+            for (const std::size_t length : {1UZ, 0UZ, 999UZ, 4096UZ, 7UZ, 34'897UZ}) {
+                DcBlocker::processComplex(blockI, blockQ, std::span(samples).subspan(start, length));
+                start += length;
+            }
+            expect(fatal(eq(start, samples.size())));
+
+            double      maxError   = 0.0;
+            double      maxChange  = 0.0;
+            std::size_t nIdentical = 0UZ;
+            for (std::size_t i = 0UZ; i < input.size(); ++i) {
+                const std::complex<float> reference{oneI.processOne(input[i].real()), oneQ.processOne(input[i].imag())};
+                maxError  = std::max(maxError, static_cast<double>(std::abs(samples[i] - reference)));
+                maxChange = std::max(maxChange, static_cast<double>(std::abs(reference - input[i])));
+                nIdentical += samples[i] == reference ? 1UZ : 0UZ;
+            }
+            std::println("fc = {} Hz: processComplex against processOne, largest difference {:.3e}, {} of {} samples identical; largest change the blocker makes {:.3e}", cutoffHz, maxError, nIdentical, input.size(), maxChange);
+            expect(le(maxError, 1e-6)) << std::format("fc = {} Hz: processComplex differs from processOne by {:.3e}", cutoffHz, maxError);
+            if (cutoffHz == 10.f) {
+                expect(gt(maxChange, 0.1)) << "the taken cutoff left the DC term in place, so the comparison tested nothing";
+            } else {
+                expect(eq(maxChange, 0.0)) << "the refused cutoff changed a sample";
+            }
+        }
     };
 };
 

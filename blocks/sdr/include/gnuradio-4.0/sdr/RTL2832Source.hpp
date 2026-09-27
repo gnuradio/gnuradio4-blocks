@@ -518,13 +518,7 @@ Operating modes:
         }
     }
 
-    void applyDcBlocker(std::complex<float>* samples, std::size_t nSamples) {
-        for (std::size_t i = 0; i < nSamples; ++i) {
-            float filteredI = _dcFilterI.processOne(samples[i].real());
-            float filteredQ = _dcFilterQ.processOne(samples[i].imag());
-            samples[i]      = {filteredI, filteredQ};
-        }
-    }
+    void applyDcBlocker(std::complex<float>* samples, std::size_t nSamples) { DcBlocker::processComplex(_dcFilterI, _dcFilterQ, {samples, nSamples}); }
 };
 
 } // namespace gr::blocks::sdr
