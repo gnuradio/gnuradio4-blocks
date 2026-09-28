@@ -6,6 +6,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <numbers>
 #include <numeric>
 #include <print>
@@ -720,6 +721,12 @@ const boost::ut::suite<"polyphase resampler"> polyphaseResamplerTests = [] {
         const double copyNs   = std::max(std::chrono::duration<double, std::nano>(t1 - t0).count(), 1.0);
         const double replayNs = std::chrono::duration<double, std::nano>(t3 - t2).count();
         std::println("tap change at {} taps: primeWith {:.1f} us, shadow replay {:.1f} us over {} samples", taps.size(), copyNs / 1e3, replayNs / 1e3, history);
+
+        // With ENABLE_BENCHMARK_TESTS set and DISABLE_SENSITIVE_TESTS unset the test asserts that the replay costs more
+        // than 20 priming copies, and otherwise it prints the two figures and asserts nothing.
+        if (std::getenv("ENABLE_BENCHMARK_TESTS") != nullptr && std::getenv("DISABLE_SENSITIVE_TESTS") == nullptr) {
+            expect(gt(replayNs / copyNs, 20.0)) << std::format("the replay costs {:.0f} priming copies", replayNs / copyNs);
+        }
     };
 
     "decimation reads a phase, not a stride"_test = [] {

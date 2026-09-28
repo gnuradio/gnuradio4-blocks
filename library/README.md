@@ -68,6 +68,17 @@ Useful configuration options are:
   development dependencies
 - `USE_CCACHE` (default: `ON`): use `ccache` when it is available
 
+Two environment variables decide how a test run treats a figure measured on the
+wall clock. `DISABLE_SENSITIVE_TESTS` marks a run whose timing is not
+representative, such as continuous integration or a sanitizer build: the tests
+tagged `benchmarks` and `visual` do not run, and a test that measures a cost
+prints the figure and asserts nothing on it. `ENABLE_BENCHMARK_TESTS` marks a
+run on a machine whose CPU placement and clock speed the caller controls: the
+longer measurements run, and a cost test also asserts the bound it keeps for
+such a run. With neither variable set, a cost test asserts only a bound that
+holds on any machine, or prints its figure where it has none. When both are
+set, `DISABLE_SENSITIVE_TESTS` decides.
+
 ## Using the Library
 
 An installation exports the `gnuradio4Library` CMake package and targets in the

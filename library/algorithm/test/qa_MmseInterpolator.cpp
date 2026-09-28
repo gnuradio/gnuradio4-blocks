@@ -6,6 +6,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <numbers>
 #include <print>
 #include <random>
@@ -535,8 +536,9 @@ const boost::ut::suite<"mmse interpolator"> mmseTests = [] {
     };
 
     "the bank is regenerated from the normal equations at construction"_test = [] {
-        // The bank is solved rather than tabulated, which is what keeps its parameters free. The cost is
-        // recorded rather than asserted on: it is a setup-path figure and belongs to the machine that read it.
+        // Solving the bank rather than tabulating it keeps its parameters free. With ENABLE_BENCHMARK_TESTS set and
+        // DISABLE_SENSITIVE_TESTS unset the test asserts a build under 5000 us, and otherwise it prints the figure and
+        // asserts nothing: the cost is a setup-path figure and belongs to the machine that read it.
         double best = 1e30;
         for (int repeat = 0; repeat < 20; ++repeat) {
             const auto                 start = Clock::now();
@@ -546,6 +548,9 @@ const boost::ut::suite<"mmse interpolator"> mmseTests = [] {
             best = std::min(best, microseconds);
         }
         std::println("mmse bank: L=8, nSteps=128, with derivative, generated from the normal equations in {:.1f} us — setup path, not per sample", best);
+        if (std::getenv("ENABLE_BENCHMARK_TESTS") != nullptr && std::getenv("DISABLE_SENSITIVE_TESTS") == nullptr) {
+            expect(lt(best, 5000.0)) << std::format("the bank builds in {:.1f} us", best);
+        }
     };
 };
 
