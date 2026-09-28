@@ -1,5 +1,9 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
@@ -12,7 +16,7 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
     constexpr auto kTestTypes = std::tuple<uint8_t, int16_t, int32_t, float>();
 
     "ConstantSource->Copy->CountingSink"_test = []<typename T>(const T&) {
-        constexpr gr::Size_t                          N     = 10;
+        constexpr std::uint64_t                       N     = 10;
         constexpr typename ConstantSource<T>::value_t value = typename ConstantSource<T>::value_t(7);
 
         Graph g;
@@ -32,9 +36,9 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
     } | kTestTypes;
 
     "CountingSource->HeadBlock->CountingSink"_test = []<typename T>(const T&) {
-        constexpr gr::Size_t N_total     = 10;
-        constexpr gr::Size_t N_head      = 4;
-        constexpr T          start_value = T(5);
+        constexpr std::uint64_t N_total     = 10;
+        constexpr std::uint64_t N_head      = 4;
+        constexpr T             start_value = T(5);
 
         Graph g;
         auto& src  = g.emplaceBlock<CountingSource<T>>(property_map{{"default_value", start_value}, {"n_samples_max", N_total}});
@@ -112,6 +116,46 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
         }
         expect(eq(nSeen, 1UZ)) << std::format("the sample_rate tag did not cross the monitor, sink saw {} tags", sink._tags.size());
     };
+
+    // Tag::index is a std::size_t; a 32-bit target cannot record an index past 2^32
+    if constexpr (sizeof(std::size_t) >= 8UZ) {
+        "TagMonitor and TagSink record a tag past 2^32 at its index"_test = [] {
+            using Monitor = TagMonitor<float, ProcessFunction::USE_PROCESS_ONE>;
+            using Sink    = TagSink<float, ProcessFunction::USE_PROCESS_ONE>;
+            // both counters start six below 2^32 and the tag arrives seven samples later; a 32-bit counter records it at 1
+            constexpr std::uint64_t kStart     = 4'294'967'290U;
+            constexpr gr::Size_t    N          = 10U;
+            constexpr std::size_t   kTagOffset = 7UZ;
+            static_assert(kStart + kTagOffset > std::numeric_limits<std::uint32_t>::max());
+
+            Graph g;
+            auto& src     = g.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>(property_map{{"n_samples_max", N}, {"mark_tag", false}});
+            auto& monitor = g.emplaceBlock<Monitor>();
+            auto& sink    = g.emplaceBlock<Sink>();
+            src._tags     = {{kTagOffset, {{gr::tag::TRIGGER_NAME.shortKey(), "past"}}}};
+
+            monitor._nSamplesProduced = kStart;
+            sink._nSamplesProduced    = kStart;
+
+            expect(g.connect<"out", "in">(src, monitor).has_value());
+            expect(g.connect<"out", "in">(monitor, sink).has_value());
+
+            gr::scheduler::Simple sch;
+            if (auto ret = sch.exchange(std::move(g)); !ret) {
+                throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+            }
+            expect(sch.runAndWait().has_value());
+
+            const auto hasKey = [](const Tag& tag) { return tag.map.contains(gr::tag::TRIGGER_NAME.shortKey()); };
+            for (const auto* tags : {&monitor._tags, &sink._tags}) {
+                const auto it = std::ranges::find_if(*tags, hasKey);
+                expect(fatal(it != tags->end())) << "the tag did not arrive";
+                expect(eq(it->index, kStart + kTagOffset));
+            }
+            expect(eq(monitor._nSamplesProduced, kStart + N));
+            expect(eq(sink._nSamplesProduced, kStart + N));
+        };
+    }
 };
 
 int main() { /* not needed for UT */ }

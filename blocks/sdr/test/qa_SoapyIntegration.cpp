@@ -762,7 +762,7 @@ const boost::ut::suite<"SoapySink BurstTaper"> taperTests = [] {
         Sched sched;
         expect(sched.exchange(std::move(flow)).has_value());
         expect(runWithWatchdog(sched, std::chrono::seconds{10}).has_value());
-        expect(ge(rxSink.count, nSamples * 0.8)) << std::format("expected ~{} RX samples, got {}", nSamples, rxSink.count);
+        expect(ge(rxSink.count.value, nSamples * 4U / 5U)) << std::format("expected ~{} RX samples, got {}", nSamples, rxSink.count);
     };
 
     "taper disabled passes unmodified signal"_test = [] {
@@ -913,7 +913,7 @@ const boost::ut::suite<"SoapySink underflow"> underflowTests = [] {
             gr::Graph            flow;
 
             // every write reports an underflow and takes nothing, so the limit is reached in as many writes
-            auto& txSource = flow.emplaceBlock<gr::blocks::testing::ConstantSource<CF32>>({{"n_samples_max", gr::Size_t{2000}}});
+            auto& txSource = flow.emplaceBlock<gr::blocks::testing::ConstantSource<CF32>>({{"n_samples_max", std::uint64_t{2000}}});
             auto& txSink   = flow.emplaceBlock<SoapySink<CF32, 1UZ>>({
                 {"device", "loopback"},
                 {"device_parameter", std::string("device_mode=tx_only,underflow_every=1")},
@@ -994,7 +994,7 @@ const boost::ut::suite<"SoapySource device configuration"> configurationTests = 
             settings.insert_or_assign(key, value);
         }
         auto& source = flow.emplaceBlock<SoapySource<CF32, 1UZ>>(std::move(settings));
-        auto& sink   = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", gr::Size_t{4096}}});
+        auto& sink   = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", std::uint64_t{4096}}});
         expect(flow.connect<"out", "in">(source, sink).has_value());
 
         // a subscriber keeps a block's error report a message: a scheduler with none throws it instead
@@ -1150,7 +1150,7 @@ const boost::ut::suite<"SoapySource device configuration"> configurationTests = 
 
         gr::Graph flow;
         auto&     source = flow.emplaceBlock<SoapySource<CF32, 1UZ>>({{"device", "loopback"}, {"device_parameter", std::string("device_mode=rx_only")}, {"sample_rate", 1e6f}, {"frequency", std::vector{100e3}}, {"frequency_correction", 0.0}});
-        auto&     sink   = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", gr::Size_t{4096}}});
+        auto&     sink   = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", std::uint64_t{4096}}});
         expect(flow.connect<"out", "in">(source, sink).has_value());
 
         gr::MsgPortIn fromScheduler;

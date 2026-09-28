@@ -47,7 +47,7 @@ void destroyGraphWhileSourceRuns() {
         auto&     source   = flow.emplaceBlock<TSource>();
         source.sample_rate = 100000.f;
         source.chunk_size  = gr::Size_t{16};
-        auto& sink         = flow.emplaceBlock<gr::blocks::testing::CountingSink<float>>({{"n_samples_max", gr::Size_t{500}}});
+        auto& sink         = flow.emplaceBlock<gr::blocks::testing::CountingSink<float>>({{"n_samples_max", std::uint64_t{500}}});
         expect(flow.connect<"out", "in">(source, sink).has_value());
         expect(source.changeStateTo(gr::lifecycle::State::RUNNING).has_value());
 

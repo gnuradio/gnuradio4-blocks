@@ -11,11 +11,11 @@ const boost::ut::suite<"SimCompute"> simComputeTests = [] {
     constexpr auto kTestTypes = std::tuple<uint8_t, int16_t, int32_t, float>();
 
     "zero complexity"_test = []<typename T>(const T&) {
-        constexpr gr::Size_t N = 8;
-        Graph                g;
-        auto&                src  = g.emplaceBlock<ConstantSource<T>>(property_map{{"default_value", typename ConstantSource<T>::value_t(5)}, {"n_samples_max", N}});
-        auto&                sim  = g.emplaceBlock<SimCompute<T>>(property_map{{"complexity_order", 0.0f}, {"busy_wait", true}});
-        auto&                sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
+        constexpr std::uint64_t N = 8;
+        Graph                   g;
+        auto&                   src  = g.emplaceBlock<ConstantSource<T>>(property_map{{"default_value", typename ConstantSource<T>::value_t(5)}, {"n_samples_max", N}});
+        auto&                   sim  = g.emplaceBlock<SimCompute<T>>(property_map{{"complexity_order", 0.0f}, {"busy_wait", true}});
+        auto&                   sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
         expect(g.connect<"out", "in">(src, sim).has_value());
         expect(g.connect<"out", "in">(sim, sink).has_value());
         gr::scheduler::Simple sch;
@@ -27,11 +27,11 @@ const boost::ut::suite<"SimCompute"> simComputeTests = [] {
     } | kTestTypes;
 
     "linear complexity"_test = []<typename T>(const T&) {
-        constexpr gr::Size_t N = 8;
-        Graph                g;
-        auto&                src  = g.emplaceBlock<ConstantSource<T>>(property_map{{"default_value", typename ConstantSource<T>::value_t(5)}, {"n_samples_max", N}});
-        auto&                sim  = g.emplaceBlock<SimCompute<T>>(property_map{{"complexity_order", 1.0f}, {"busy_wait", true}});
-        auto&                sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
+        constexpr std::uint64_t N = 8;
+        Graph                   g;
+        auto&                   src  = g.emplaceBlock<ConstantSource<T>>(property_map{{"default_value", typename ConstantSource<T>::value_t(5)}, {"n_samples_max", N}});
+        auto&                   sim  = g.emplaceBlock<SimCompute<T>>(property_map{{"complexity_order", 1.0f}, {"busy_wait", true}});
+        auto&                   sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
         expect(g.connect<"out", "in">(src, sim).has_value());
         expect(g.connect<"out", "in">(sim, sink).has_value());
         gr::scheduler::Simple sch;
@@ -43,11 +43,11 @@ const boost::ut::suite<"SimCompute"> simComputeTests = [] {
     } | kTestTypes;
 
     "quadratic complexity"_test = []<typename T>(const T&) {
-        constexpr gr::Size_t N = 6;
-        Graph                g;
-        auto&                src  = g.emplaceBlock<CountingSource<T>>(property_map{{"default_value", T(0)}, {"n_samples_max", N}});
-        auto&                sim  = g.emplaceBlock<SimCompute<T>>(property_map{{"complexity_order", 2.0f}, {"busy_wait", false}});
-        auto&                sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
+        constexpr std::uint64_t N = 6;
+        Graph                   g;
+        auto&                   src  = g.emplaceBlock<CountingSource<T>>(property_map{{"default_value", T(0)}, {"n_samples_max", N}});
+        auto&                   sim  = g.emplaceBlock<SimCompute<T>>(property_map{{"complexity_order", 2.0f}, {"busy_wait", false}});
+        auto&                   sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
         expect(g.connect<"out", "in">(src, sim).has_value());
         expect(g.connect<"out", "in">(sim, sink).has_value());
         gr::scheduler::Simple sch;
