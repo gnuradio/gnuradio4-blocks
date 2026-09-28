@@ -79,6 +79,11 @@ such a run. With neither variable set, a cost test asserts only a bound that
 holds on any machine, or prints its figure where it has none. When both are
 set, `DISABLE_SENSITIVE_TESTS` decides.
 
+A cost test of a header-only algorithm builds at the build type's optimization
+level, not at `GR_QA_OPTIMIZATION_LEVEL`, so its printed figure describes the
+algorithm as the build type compiles it. A Debug build compiles it unoptimized,
+and its bound must hold there as well.
+
 ## Using the Library
 
 An installation exports the `gnuradio4Library` CMake package and targets in the
