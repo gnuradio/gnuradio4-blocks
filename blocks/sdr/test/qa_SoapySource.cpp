@@ -1,8 +1,12 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
 #include <array>
 #include <complex>
+#include <set>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include <gnuradio-4.0/common/USBDevice.hpp>
@@ -55,6 +59,36 @@ inline void resetRtlSdrUsbDevices() {
     }
 #endif
 }
+
+/// driver keys of the hardware cases; each case carries its driver key as its tag
+constexpr std::array<std::string_view, 2UZ> kHardwareCaseDrivers{"rtlsdr", "lime"};
+
+/// devices listed by one `Device::enumerate()` call, shared by every suite
+const gr::blocks::sdr::soapy::KwargsList& enumeratedDevices() {
+    static const gr::blocks::sdr::soapy::KwargsList devices = gr::blocks::sdr::soapy::Device::enumerate();
+    return devices;
+}
+
+std::set<std::string> enumeratedDrivers() {
+    std::set<std::string> drivers;
+    for (const auto& device : enumeratedDevices()) {
+        if (auto it = device.find("driver"); it != device.end()) {
+            drivers.insert(it->second);
+        }
+    }
+    return drivers;
+}
+
+/// tags of the hardware cases whose driver is in `drivers`; a case whose driver is absent is skipped
+std::vector<std::string_view> hardwareCaseTags(const std::set<std::string>& drivers) {
+    std::vector<std::string_view> tags;
+    for (std::string_view driver : kHardwareCaseDrivers) {
+        if (drivers.contains(std::string(driver))) {
+            tags.push_back(driver);
+        }
+    }
+    return tags;
+}
 } // namespace
 
 const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
@@ -78,15 +112,13 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
         }
     };
 
-    std::set<std::string> availableDeviceDriver; // alt = {"rtlsdr"};
-    "available devices"_test = [&availableDeviceDriver] {
-        KwargsList devices = Device::enumerate();
+    "available devices"_test = [] {
+        const KwargsList& devices = enumeratedDevices();
 
         std::println("Detected devices:");
         std::size_t count = 0UZ;
         for (const auto& device : devices) {
             std::println("   Found device #{}: [{}]", count++, gr::join(device, ", "));
-            availableDeviceDriver.insert(device.at("driver"));
         }
 
         if (devices.empty()) {
@@ -94,6 +126,7 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
             return;
         }
     };
+    const std::set<std::string> availableDeviceDriver = enumeratedDrivers();
     std::println("Detected available devices: [{}]", gr::join(availableDeviceDriver, ", "));
 
     "Basic API test"_test =
@@ -274,12 +307,27 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
 const boost::ut::suite<"Soapy Block API "> soapyBlockAPI = [] {
     using namespace boost::ut;
 
-    if (std::getenv("DISABLE_SENSITIVE_TESTS") == nullptr) {
-        // conditionally enable visual tests outside the CI
-        boost::ext::ut::cfg<override> = {.tag = {"rtlsdr", "lime"}};
-    }
+    "hardware case tags follow the enumerated drivers"_test = [] {
+        expect(hardwareCaseTags({}).empty());
+        expect(hardwareCaseTags({"loopback"}).empty());
+        expect(hardwareCaseTags({"loopback", "rtlsdr"}) == std::vector<std::string_view>{"rtlsdr"});
+        expect(hardwareCaseTags({"lime", "loopback", "rtlsdr"}) == std::vector<std::string_view>{"rtlsdr", "lime"});
+    };
 
-    resetRtlSdrUsbDevices();
+    // DISABLE_SENSITIVE_TESTS runs no hardware case; otherwise a hardware case runs only when enumeration lists its driver
+    if (std::getenv("DISABLE_SENSITIVE_TESTS") == nullptr) {
+        const std::vector<std::string_view> tags = hardwareCaseTags(enumeratedDrivers());
+        for (std::string_view driver : kHardwareCaseDrivers) {
+            if (!std::ranges::contains(tags, driver)) {
+                std::println("no {} device found, its case skipped", driver);
+            }
+        }
+        boost::ext::ut::cfg<override> = {.tag = tags};
+
+        if (std::ranges::contains(tags, std::string_view{"rtlsdr"})) {
+            resetRtlSdrUsbDevices();
+        }
+    }
 
     // create and return a watchdog thread and its control flag
     using TDuration = std::chrono::duration<std::chrono::steady_clock::rep, std::chrono::steady_clock::period>;
