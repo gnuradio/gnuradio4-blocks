@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <cstdint>
 #include <limits>
 
 #include <gnuradio-4.0/Block.hpp>
@@ -19,16 +20,16 @@ namespace detail {
 
 template<typename T>
 struct SampleValueConverter {
-    static constexpr T make(std::size_t value) { return static_cast<T>(value); }
+    static constexpr T make(std::uint64_t value) { return static_cast<T>(value); }
 };
 
 template<typename T>
 struct SampleValueConverter<std::complex<T>> {
-    static constexpr std::complex<T> make(std::size_t value) { return std::complex<T>{static_cast<T>(value), T{0}}; }
+    static constexpr std::complex<T> make(std::uint64_t value) { return std::complex<T>{static_cast<T>(value), T{0}}; }
 };
 
 template<typename T>
-[[nodiscard]] constexpr T make_sample_value(std::size_t value) {
+[[nodiscard]] constexpr T make_sample_value(std::uint64_t value) {
     return SampleValueConverter<T>::make(value);
 }
 
@@ -147,7 +148,7 @@ struct TagSource : Block<TagSource<T, UseProcessVariant>> {
     std::vector<Tag> _tags{};                 // It is expected that Tag.index is in ascending order
     std::size_t      _tagIndex{0};            // current index in tags array
     std::size_t      _valueIndex{0};          // current index in values array
-    gr::Size_t       _nSamplesProduced{0ULL}; // for infinite samples the counter wraps around back to 0, _tagIndex = 0, _valueIndex = 0
+    std::uint64_t    _nSamplesProduced{0ULL}; // for infinite samples the counter wraps around back to 0, _tagIndex = 0, _valueIndex = 0
 
     std::function<void(const Tag&)> _tagCallback{}; // optional tag callback
 
@@ -200,21 +201,21 @@ struct TagSource : Block<TagSource<T, UseProcessVariant>> {
 
         const auto nSamplesRemainder = getNProducedSamplesRemainder();
 
-        gr::Size_t nextTagIn = 1U;
+        std::uint64_t nextTagIn = 1U;
         if (isInfinite() && tagRepeatStarted) {
             nextTagIn = 1; // just publish last tag and then start from the beginning
         } else {
             if (_tagIndex < _tags.size()) {
-                if (static_cast<gr::Size_t>(_tags[_tagIndex].index) > nSamplesRemainder) {
-                    nextTagIn = static_cast<gr::Size_t>(_tags[_tagIndex].index) - nSamplesRemainder;
+                if (_tags[_tagIndex].index > nSamplesRemainder) {
+                    nextTagIn = _tags[_tagIndex].index - nSamplesRemainder;
                     nextTagIn = std::min(nextTagIn, n_samples_max - _nSamplesProduced);
                 }
             } else {
-                nextTagIn = isInfinite() ? static_cast<gr::Size_t>(outSpan.size()) : n_samples_max - _nSamplesProduced;
+                nextTagIn = isInfinite() ? outSpan.size() : n_samples_max - _nSamplesProduced;
             }
         }
 
-        const std::size_t nSamples = isInfinite() || _nSamplesProduced < n_samples_max ? std::min(static_cast<std::size_t>(std::max(1U, nextTagIn)), outSpan.size()) : 0UZ; // '0UZ' -> DONE, produced enough samples
+        const std::size_t nSamples = isInfinite() || _nSamplesProduced < n_samples_max ? std::min(static_cast<std::size_t>(std::max(std::uint64_t{1}, nextTagIn)), outSpan.size()) : 0UZ; // '0UZ' -> DONE, produced enough samples
 
         if (!values.empty()) {
             for (std::size_t i = 0; i < nSamples; ++i) {
@@ -240,7 +241,7 @@ struct TagSource : Block<TagSource<T, UseProcessVariant>> {
         if (isInfinite() && tagRepeatStarted) {
             _nSamplesProduced = 0U;
         } else {
-            _nSamplesProduced += static_cast<gr::Size_t>(nSamples);
+            _nSamplesProduced += nSamples;
         }
         outSpan.publish(nSamples);
         return !isInfinite() && _nSamplesProduced >= n_samples_max ? work::Status::DONE : work::Status::OK;
@@ -258,9 +259,9 @@ private:
             return result;
         }
 
-        const std::size_t targetIndex       = _tags[_tagIndex].index;
-        const gr::Size_t  nSamplesRemainder = getNProducedSamplesRemainder();
-        if (static_cast<gr::Size_t>(targetIndex) > nSamplesRemainder) {
+        const std::size_t   targetIndex       = _tags[_tagIndex].index;
+        const std::uint64_t nSamplesRemainder = getNProducedSamplesRemainder();
+        if (targetIndex > nSamplesRemainder) {
             return result;
         }
 
@@ -284,8 +285,8 @@ private:
         return result;
     }
 
-    [[nodiscard]] gr::Size_t getNProducedSamplesRemainder() const { //
-        return repeat_tags && !_tags.empty() && !isInfinite() ? _nSamplesProduced % static_cast<gr::Size_t>(_tags.back().index + 1) : _nSamplesProduced;
+    [[nodiscard]] std::uint64_t getNProducedSamplesRemainder() const { //
+        return repeat_tags && !_tags.empty() && !isInfinite() ? _nSamplesProduced % (_tags.back().index + 1) : _nSamplesProduced;
     }
 
     [[nodiscard]] bool isInfinite() const { return n_samples_max == 0U; }
@@ -314,7 +315,7 @@ struct TagMonitor : public Block<TagMonitor<T, UseProcessVariant>> {
 
     Tensor<T>        _samples;
     std::vector<Tag> _tags;
-    gr::Size_t       _nSamplesProduced{0}; // for infinite samples the counter wraps around back to 0
+    std::uint64_t    _nSamplesProduced{0}; // input samples received; a received tag is recorded at this count plus its offset
 
     std::function<void(const Tag&)> _tagCallback{}; // optional tag callback
 
@@ -373,7 +374,7 @@ struct TagMonitor : public Block<TagMonitor<T, UseProcessVariant>> {
             }
         }
 
-        _nSamplesProduced += static_cast<gr::Size_t>(input.size());
+        _nSamplesProduced += input.size();
         std::memcpy(output.data(), input.data(), input.size() * sizeof(T));
 
         return work::Status::OK;
@@ -402,7 +403,7 @@ struct TagSink : public Block<TagSink<T, UseProcessVariant>> {
 
     Tensor<T>        _samples{};
     std::vector<Tag> _tags{};
-    gr::Size_t       _nSamplesProduced{0}; // for infinite samples the counter wraps around back to 0
+    std::uint64_t    _nSamplesProduced{0}; // input samples received; a received tag is recorded at this count plus its offset
 
     std::function<void(const Tag&)> _tagCallback{};
 
@@ -467,7 +468,7 @@ struct TagSink : public Block<TagSink<T, UseProcessVariant>> {
                 _samples.push_back(value);
             }
         }
-        _nSamplesProduced += static_cast<gr::Size_t>(input.size());
+        _nSamplesProduced += input.size();
         return n_samples_expected > 0 && _nSamplesProduced >= n_samples_expected ? work::Status::DONE : work::Status::OK;
     }
 };

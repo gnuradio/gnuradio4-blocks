@@ -1,6 +1,8 @@
 #ifndef GNURADIO_NULLSOURCES_HPP
 #define GNURADIO_NULLSOURCES_HPP
 
+#include <cstdint>
+
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/DataSet.hpp>
@@ -45,9 +47,9 @@ Commonly used for testing and simulations where consistent output and finite exe
 
     gr::PortOut<T> out;
 
-    Annotated<value_t, "default value", Visible, Doc<"default value for each sample">>            default_value{};
-    Annotated<gr::Size_t, "max samples", Doc<"count>n_samples_max -> signal DONE (0: infinite)">> n_samples_max = 0U;
-    Annotated<gr::Size_t, "count", Doc<"sample count (diagnostics only)">>                        count         = 0U;
+    Annotated<value_t, "default value", Visible, Doc<"default value for each sample">>               default_value{};
+    Annotated<std::uint64_t, "max samples", Doc<"count>n_samples_max -> signal DONE (0: infinite)">> n_samples_max = 0UZ;
+    Annotated<std::uint64_t, "count", Doc<"sample count (diagnostics only)">>                        count         = 0UZ;
 
     GR_MAKE_REFLECTABLE(ConstantSource, out, default_value, n_samples_max, count);
 
@@ -103,9 +105,9 @@ Commonly used for testing and simulations where consistent output and finite exe
 
     gr::PortOut<T> out;
 
-    Annotated<T, "default value", Visible, Doc<"default value for each sample">>                  default_value{};
-    Annotated<gr::Size_t, "max samples", Doc<"count>n_samples_max -> signal DONE (0: infinite)">> n_samples_max = 0U;
-    Annotated<gr::Size_t, "count", Doc<"sample count (diagnostics only)">>                        count         = 0U;
+    Annotated<T, "default value", Visible, Doc<"default value for each sample">>                     default_value{};
+    Annotated<std::uint64_t, "max samples", Doc<"count>n_samples_max -> signal DONE (0: infinite)">> n_samples_max = 0UZ;
+    Annotated<std::uint64_t, "count", Doc<"sample count (diagnostics only)">>                        count         = 0UZ;
 
     GR_MAKE_REFLECTABLE(CountingSource, out, default_value, n_samples_max, count);
 
@@ -130,7 +132,7 @@ Commonly used for testing and simulations where consistent output and finite exe
         for (std::size_t i = 0; i < result.size(); ++i) {
             result[i] = base + static_cast<T>(count + 1 + i);
         }
-        count += static_cast<gr::Size_t>(result.size());
+        count += result.size();
         if (n_samples_max > 0 && count >= n_samples_max) {
             this->requestStop();
         }
@@ -166,8 +168,8 @@ Commonly used to control data flow in systems where precise sample counts are cr
     gr::PortIn<T>  in;
     gr::PortOut<T> out;
 
-    Annotated<gr::Size_t, "max samples", Doc<"count>n_samples_max -> signal DONE (0: infinite)">> n_samples_max = 0U;
-    Annotated<gr::Size_t, "count", Doc<"sample count (diagnostics only)">>                        count         = 0U;
+    Annotated<std::uint64_t, "max samples", Doc<"count>n_samples_max -> signal DONE (0: infinite)">> n_samples_max = 0UZ;
+    Annotated<std::uint64_t, "count", Doc<"sample count (diagnostics only)">>                        count         = 0UZ;
 
     GR_MAKE_REFLECTABLE(HeadBlock, in, out, n_samples_max, count);
 
@@ -207,18 +209,19 @@ Commonly used for testing scenarios and signal termination where output is unnec
 
     gr::PortIn<T> in;
 
-    Annotated<gr::Size_t, "max samples", Doc<"count>n_samples_max -> signal DONE (0: infinite)">> n_samples_max = 0U;
-    Annotated<gr::Size_t, "count", Doc<"sample count (diagnostics only)">>                        count         = 0U;
+    Annotated<std::uint64_t, "max samples", Doc<"count>n_samples_max -> signal DONE (0: infinite)">> n_samples_max = 0UZ;
+    Annotated<std::uint64_t, "count", Doc<"sample count (diagnostics only)">>                        count         = 0UZ;
 
     GR_MAKE_REFLECTABLE(CountingSink, in, n_samples_max, count);
 
     void reset() { count = 0U; }
 
     [[nodiscard]] gr::work::Status processBulk(InputSpanLike auto& input) noexcept {
-        const auto nAvailable = static_cast<gr::Size_t>(input.size());
+        const std::uint64_t nAvailable = input.size();
         if (n_samples_max > 0 && count + nAvailable >= n_samples_max) {
-            std::ignore = input.consume(static_cast<std::size_t>(n_samples_max - count));
-            count       = n_samples_max;
+            const std::uint64_t nRemaining = n_samples_max - count; // at most nAvailable
+            std::ignore                    = input.consume(static_cast<std::size_t>(nRemaining));
+            count                          = n_samples_max;
             return gr::work::Status::DONE;
         }
         count += nAvailable;

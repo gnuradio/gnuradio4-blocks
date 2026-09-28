@@ -1,6 +1,8 @@
 #ifndef GNURADIO_TESTING_SETTINGS_CHANGE_RECORDER_H
 #define GNURADIO_TESTING_SETTINGS_CHANGE_RECORDER_H
 
+#include <cstdint>
+
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Port.hpp>
 
@@ -68,10 +70,10 @@ struct SettingsChangeRecorder : Block<SettingsChangeRecorder<T>> {
 
     GR_MAKE_REFLECTABLE(SettingsChangeRecorder, in, out, scaling_factor, context, n_samples_max, sample_rate, vector_setting, string_vector_setting, array_setting, string_array_setting, test_enum_setting, annotated_test_enum_setting);
 
-    bool       _debug            = true;
-    int        _updateCount      = 0;
-    bool       _resetCalled      = false;
-    gr::Size_t _nSamplesConsumed = 0;
+    bool          _debug            = true;
+    int           _updateCount      = 0;
+    bool          _resetCalled      = false;
+    std::uint64_t _nSamplesConsumed = 0;
 
     void settingsChanged(const property_map& oldSettings, property_map& newSettings, property_map& fwdSettings) noexcept {
         // optional function that is called whenever settings change
