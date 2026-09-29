@@ -8,12 +8,16 @@
 #include <deque>
 #include <expected>
 #include <format>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
+#include <gnuradio-4.0/BlockRegistration.hpp>
+#include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
@@ -22,7 +26,7 @@
 
 // Cases that never open a USB device, apart from qa_RTL2832Source, which opens the first dongle attached. A device index
 // past any count a bus can hold is refused after the enumeration, which reads descriptors and opens nothing. The stream
-// cases give the source a model of the dongle in place of RTL2832Device.
+// cases give the source a model of the dongle through setDevice().
 
 namespace {
 
@@ -53,10 +57,7 @@ std::optional<std::expected<void, gr::Error>> runBounded(gr::scheduler::Simple<>
 // queued, each filled when it was queued; setCenterFrequency and discardStream drop the queue, and setSampleRate and
 // setFreqCorrection leave it. It hands out kReadsBeforeChange transfers, then none until a change arrives, then more up
 // to kReads in all.
-struct QueuedDongle {
-    using Result      = std::expected<void, std::string>;
-    using ValueResult = std::expected<double, std::string>;
-
+struct QueuedDongle : gr::blocks::sdr::RTL2832DeviceBase {
     static constexpr std::size_t kQueued            = 16UZ;
     static constexpr std::size_t kTransferBytes     = 1024UZ;
     static constexpr std::size_t kReadsBeforeChange = 40UZ;
@@ -70,38 +71,41 @@ struct QueuedDongle {
     std::size_t              _staleReads = 0UZ;
     std::atomic<std::size_t> _reads{0UZ};
 
-    [[nodiscard]] bool isOpen() const { return _opened; }
-    Result             open(std::uint32_t /*deviceIndex*/) {
+    [[nodiscard]] bool             isOpen() const override { return _opened; }
+    [[nodiscard]] std::string_view deviceName() const override { return _deviceName; }
+    Result                         open(std::uint32_t /*deviceIndex*/) override {
         _opened = true;
         return {};
     }
-    void close() {
+    void close() override {
         _opened = false;
         _queue.clear();
     }
-    ValueResult setSampleRate(float rate) {
+    ValueResult setSampleRate(float rate) override {
         change();
         return static_cast<double>(rate);
     }
-    ValueResult setCenterFrequency(double frequency) {
+    ValueResult setCenterFrequency(double frequency) override {
         change();
-        std::ignore = discardStream();
+        if (auto discarded = discardStream(); !discarded) {
+            return std::unexpected(discarded.error());
+        }
         return frequency;
     }
-    Result setGainMode(bool /*autoGain*/) { return {}; }
-    Result setAgcMode(bool /*on*/) { return {}; }
-    Result setTunerGain(float /*gainDb*/) { return {}; }
-    Result setFreqCorrection(std::int32_t /*ppm*/) {
+    Result setGainMode(bool /*autoGain*/) override { return {}; }
+    Result setAgcMode(bool /*on*/) override { return {}; }
+    Result setTunerGain(float /*gainDb*/) override { return {}; }
+    Result setFreqCorrection(std::int32_t /*ppm*/) override {
         change();
         return {};
     }
-    Result resetBuffer() { return {}; }
-    Result discardStream() {
+    Result resetBuffer() override { return {}; }
+    Result discardStream() override {
         _queue.clear();
         return {};
     }
 
-    std::expected<std::size_t, std::string> readBulk(std::uint8_t* dst, std::size_t maxLen) {
+    std::expected<std::size_t, std::string> readBulk(std::uint8_t* dst, std::size_t maxLen) override {
         const std::size_t nRead = _reads.load(std::memory_order_relaxed);
         if (nRead >= kReads || (nRead >= kReadsBeforeChange && !_changedWhileStreaming)) {
             return 0UZ;
@@ -135,16 +139,18 @@ struct StreamAroundChange {
     std::uint8_t              changes    = 0U;
 };
 
-// Runs the source on the model until it has handed out kReadsBeforeChange transfers, applies the change, and returns
-// what the sink received once the model has handed out all kReads.
+// Runs an RTL2832Source<std::uint8_t> on the model until the model has handed out kReadsBeforeChange transfers, applies
+// the change, and returns what the sink received once the model has handed out all kReads.
 std::optional<StreamAroundChange> streamAroundChange(gr::property_map change) {
-    using Source = gr::blocks::sdr::RTL2832Source<std::uint8_t, QueuedDongle>;
+    using Source = gr::blocks::sdr::RTL2832Source<std::uint8_t>;
     using Sink   = gr::blocks::testing::TagSink<std::uint8_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>;
 
-    gr::Graph graph;
-    auto&     source = graph.emplaceBlock<Source>({{"sample_rate", 2.048e6f}, {"emit_timing_tags", false}, {"polling_period", std::uint32_t{1U}}});
-    auto&     sink   = graph.emplaceBlock<Sink>({{"n_samples_expected", static_cast<gr::Size_t>(QueuedDongle::kReads * QueuedDongle::kTransferBytes)}});
-    if (!graph.connect<"out", "in">(source, sink).has_value()) {
+    auto          owned  = std::make_unique<QueuedDongle>();
+    QueuedDongle& dongle = *owned;
+    gr::Graph     graph;
+    auto&         source = graph.emplaceBlock<Source>({{"sample_rate", 2.048e6f}, {"emit_timing_tags", false}, {"polling_period", std::uint32_t{1U}}});
+    auto&         sink   = graph.emplaceBlock<Sink>({{"n_samples_expected", static_cast<gr::Size_t>(QueuedDongle::kReads * QueuedDongle::kTransferBytes)}});
+    if (!source.setDevice(std::move(owned)).has_value() || !graph.connect<"out", "in">(source, sink).has_value()) {
         return std::nullopt;
     }
 
@@ -152,9 +158,9 @@ std::optional<StreamAroundChange> streamAroundChange(gr::property_map change) {
     if (!sched.exchange(std::move(graph)).has_value()) {
         return std::nullopt;
     }
-    auto       changer = std::jthread([&source, &change](std::stop_token stoken) {
+    auto       changer = std::jthread([&source, &dongle, &change](std::stop_token stoken) {
         const auto deadline = std::chrono::steady_clock::now() + 3s;
-        while (!stoken.stop_requested() && std::chrono::steady_clock::now() < deadline && source._device._reads.load(std::memory_order_acquire) < QueuedDongle::kReadsBeforeChange) {
+        while (!stoken.stop_requested() && std::chrono::steady_clock::now() < deadline && dongle._reads.load(std::memory_order_acquire) < QueuedDongle::kReadsBeforeChange) {
             std::this_thread::sleep_for(1ms);
         }
         std::ignore = source.settings().setStaged(std::move(change));
@@ -165,7 +171,12 @@ std::optional<StreamAroundChange> streamAroundChange(gr::property_map change) {
     if (!result.has_value() || !result->has_value()) {
         return std::nullopt;
     }
-    return StreamAroundChange{.samples = std::vector<std::uint8_t>(sink._samples.begin(), sink._samples.end()), .tags = sink._tags, .staleReads = source._device._staleReads, .changes = source._device._changes};
+    return StreamAroundChange{
+        .samples    = std::vector<std::uint8_t>(sink._samples.begin(), sink._samples.end()),
+        .tags       = sink._tags,
+        .staleReads = dongle._staleReads,
+        .changes    = dongle._changes,
+    };
 }
 
 // the index of the first tag that carries key with the value, or nothing
@@ -204,6 +215,29 @@ const boost::ut::suite<"RTL2832Source start"> _rtlStartTests = [] {
         expect(fatal(result.has_value())) << "the run must end by itself, not wait for a device that is not there";
         expect(fatal(!result->has_value())) << "a source that cannot open its device must fail the run";
         expect(result->error().message.contains("open failed")) << result->error().message;
+    };
+
+    // a generated registration unit derives the registry key and the alias this way
+    "RTL2832Source<uint8_t> is registered under one key, and its default name names no device type"_test = [] {
+        using Source                                = gr::blocks::sdr::RTL2832Source<std::uint8_t>;
+        constexpr gr::BlockFactory  factory         = [](gr::property_map parameters) -> std::unique_ptr<gr::BlockModel> { return std::make_unique<gr::BlockWrapper<Source>>(std::move(parameters)); };
+        const gr::BlockRegistration registration    = gr::makeBlockRegistration<Source, "gr::blocks::sdr::RTL2832Source<uint8_t>">(factory);
+        const std::string           kRegisteredName = "gr::blocks::sdr::RTL2832Source<uint8>";
+        expect(eq(registration.name, registration.alias)) << "the type name is the alias";
+        std::ignore = gr::insertBlockFactory(gr::globalBlockRegistry(), registration); // false where the library registered it first
+
+        std::vector<std::string> keys;
+        for (const std::string& key : gr::globalBlockRegistry().keys()) {
+            if (key.contains("RTL2832Source<uint8")) {
+                keys.push_back(key);
+            }
+        }
+        expect(fatal(eq(keys.size(), 1UZ))) << "one registry key";
+        expect(eq(keys.front(), kRegisteredName));
+
+        Source source(gr::property_map{});
+        expect(eq(source.name.value, kRegisteredName));
+        expect(std::string_view(source.unique_name).starts_with(kRegisteredName + "#")) << std::string_view(source.unique_name);
     };
 };
 

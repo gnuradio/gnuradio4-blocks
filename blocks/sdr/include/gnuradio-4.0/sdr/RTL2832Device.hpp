@@ -34,6 +34,7 @@
 #include <print>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -491,10 +492,37 @@ enum class TunerType : std::uint8_t {
     e4000  // Elonics E4000 zero-IF tuner
 };
 
-struct RTL2832Device {
+// An RTL2832 dongle as a sample source: it opens by index, takes the tuner and demodulator settings, and hands out the
+// sample stream. A failed call returns the reason.
+struct RTL2832DeviceBase {
     using Result      = std::expected<void, std::string>;
     using ValueResult = std::expected<double, std::string>;
 
+    RTL2832DeviceBase()                                    = default;
+    RTL2832DeviceBase(const RTL2832DeviceBase&)            = delete;
+    RTL2832DeviceBase& operator=(const RTL2832DeviceBase&) = delete;
+    RTL2832DeviceBase(RTL2832DeviceBase&&)                 = delete;
+    RTL2832DeviceBase& operator=(RTL2832DeviceBase&&)      = delete;
+    virtual ~RTL2832DeviceBase()                           = default;
+
+    [[nodiscard]] virtual bool             isOpen() const                      = 0;
+    [[nodiscard]] virtual std::string_view deviceName() const                  = 0; // the product name the last open found
+    virtual Result                         open(std::uint32_t deviceIndex)     = 0;
+    virtual void                           close()                             = 0;
+    virtual ValueResult                    setSampleRate(float rate)           = 0; // returns the rate the device runs at
+    virtual ValueResult                    setCenterFrequency(double freq)     = 0; // drops the samples taken before the tune
+    virtual Result                         setGainMode(bool autoGain)          = 0;
+    virtual Result                         setTunerGain(float gainDb)          = 0;
+    virtual Result                         setAgcMode(bool on)                 = 0;
+    virtual Result                         setFreqCorrection(std::int32_t ppm) = 0;
+    virtual Result                         resetBuffer()                       = 0;
+    // drops every sample taken before the call that readBulk has not handed out
+    virtual Result discardStream() = 0;
+    // up to maxLen bytes of the sample stream, 0 when none arrived within the read's timeout
+    virtual std::expected<std::size_t, std::string> readBulk(std::uint8_t* dst, std::size_t maxLen) = 0;
+};
+
+struct RTL2832Device : RTL2832DeviceBase {
     struct DemodWrite {
         std::uint8_t  page;
         std::uint8_t  addr;
@@ -520,16 +548,15 @@ struct RTL2832Device {
     std::array<std::uint8_t, kNumShadowRegs> _shadowRegs{};
     std::string                              _deviceName;
 
-    RTL2832Device()                                = default;
-    RTL2832Device(const RTL2832Device&)            = delete;
-    RTL2832Device& operator=(const RTL2832Device&) = delete;
-    ~RTL2832Device() { close(); }
+    RTL2832Device() = default;
+    ~RTL2832Device() override { close(); }
 
-    [[nodiscard]] bool isOpen() const { return _open.load(std::memory_order_acquire); }
+    [[nodiscard]] bool             isOpen() const override { return _open.load(std::memory_order_acquire); }
+    [[nodiscard]] std::string_view deviceName() const override { return _deviceName; }
 
     // lifecycle
 
-    Result open([[maybe_unused]] std::uint32_t deviceIndex = 0) {
+    Result open([[maybe_unused]] std::uint32_t deviceIndex = 0) override {
 #if !defined(__EMSCRIPTEN__)
         if (_usb.isOpen()) {
             return {};
@@ -568,7 +595,7 @@ struct RTL2832Device {
 #endif
     }
 
-    void close() {
+    void close() override {
 #if !defined(__EMSCRIPTEN__)
         _usb.close();
 #else
@@ -585,7 +612,7 @@ struct RTL2832Device {
 
     // configuration
 
-    ValueResult setSampleRate(float rate) {
+    ValueResult setSampleRate(float rate) override {
         auto   ratio    = static_cast<std::uint32_t>((static_cast<double>(kXtalFreq) * (1 << 22)) / static_cast<double>(rate)) & 0x0FFFFFFCU;
         double realRate = (static_cast<double>(kXtalFreq) * (1 << 22)) / static_cast<double>(ratio);
 
@@ -602,7 +629,7 @@ struct RTL2832Device {
     }
 
     // tunes the LO, then drops every sample taken before the tune that readBulk has not handed out
-    ValueResult setCenterFrequency(double freq) {
+    ValueResult setCenterFrequency(double freq) override {
         auto tuned = setTunerFrequency(freq);
         if (!tuned) {
             return tuned;
@@ -653,7 +680,7 @@ struct RTL2832Device {
         return actualFreq;
     }
 
-    Result setGainMode(bool autoGain) {
+    Result setGainMode(bool autoGain) override {
         auto gate = i2cGate();
         if (!gate) {
             return std::unexpected(gate.error());
@@ -675,7 +702,7 @@ struct RTL2832Device {
         return {};
     }
 
-    Result setTunerGain(float gainDb) {
+    Result setTunerGain(float gainDb) override {
         if (_tunerType == TunerType::e4000) {
             // find closest LNA gain step
             auto         gainTenths = static_cast<int>(gainDb * 10.f);
@@ -720,11 +747,11 @@ struct RTL2832Device {
         });
     }
 
-    Result setAgcMode(bool on) {
+    Result setAgcMode(bool on) override {
         return setDemodReg(0, 0x19, on ? 0x25 : 0x05, 1); // sdr_ctrl: AGC enable/disable
     }
 
-    Result setFreqCorrection(std::int32_t ppm) {
+    Result setFreqCorrection(std::int32_t ppm) override {
         auto offs = static_cast<std::int32_t>(ppm * -1.0 * (1 << 24) / 1'000'000.0);
         return writeDemodBatch({
             {1, 0x3F, static_cast<std::uint32_t>(offs & 0xFF)},        // samp_corr_l
@@ -732,7 +759,7 @@ struct RTL2832Device {
         });
     }
 
-    Result resetBuffer() {
+    Result resetBuffer() override {
         if (auto r = setUsbReg(kUsbEpaCtl, kEpaCtlReset, 2); !r) {
             return r;
         }
@@ -750,7 +777,7 @@ struct RTL2832Device {
     // up to maxLen bytes of the sample stream, 0 when none arrived within 100 ms; natively the first read after an open
     // or a discardStream queues kStreamTransferCount transfers, which keep the stream flowing while the caller converts
     // and publishes
-    std::expected<std::size_t, std::string> readBulk(std::uint8_t* dst, std::size_t maxLen) {
+    std::expected<std::size_t, std::string> readBulk(std::uint8_t* dst, std::size_t maxLen) override {
 #if !defined(__EMSCRIPTEN__)
         return _usb.queuedBulkRead(kBulkEndpoint, {dst, maxLen}, kStreamTransferCount, kStreamTransferSize, 100);
 #else
@@ -760,7 +787,7 @@ struct RTL2832Device {
 
     // natively discards every queued transfer, then flushes the dongle's FIFO while no transfer is pending; the next
     // readBulk queues new transfers and returns only samples taken after this call. The browser queue is left as it is
-    Result discardStream() {
+    Result discardStream() override {
 #if !defined(__EMSCRIPTEN__)
         if (auto r = _usb.discardQueuedTransfers(); !r) {
             return r;

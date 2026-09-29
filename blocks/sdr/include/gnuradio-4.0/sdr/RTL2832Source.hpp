@@ -7,6 +7,7 @@
 #include <cstring>
 #include <expected>
 #include <format>
+#include <memory>
 #include <print>
 #include <string>
 #include <string_view>
@@ -47,10 +48,8 @@ inline constexpr std::uint8_t kPostDiscardReads = 3;
 inline constexpr std::uint8_t kPostDiscardReads = 0;
 #endif
 
-// TDevice is the driver the source opens, configures and reads: RTL2832Device, or a type with the members of it that the
-// source calls.
-template<typename T, typename TDevice = RTL2832Device>
-struct RTL2832Source : gr::Block<RTL2832Source<T, TDevice>> {
+template<typename T>
+struct RTL2832Source : gr::Block<RTL2832Source<T>> {
     using Description = Doc<R"(RTL2832U SDR source for USB dongles with the R820T/R820T2/R860, R828D, and E4000 tuners.
 Native: Linux USB ioctl (zero-dependency). WASM: WebUSB via thin JS shims.
 
@@ -85,24 +84,24 @@ Operating modes:
 
     GR_MAKE_REFLECTABLE(RTL2832Source, clk_in, out, frequency, sample_rate, gain, auto_gain, device_index, device_name, ppm_correction, polling_period, trigger_name, emit_timing_tags, emit_meta_info, tag_interval, dc_blocker_enabled, dc_blocker_cutoff, ppm_estimator_cutoff, ppm_tag_threshold);
 
-    TDevice                        _device;
-    bool                           _ioThreadDone     = true;
-    std::int64_t                   _clockOffsetNs    = 0;
-    bool                           _clockOffsetValid = false;
-    std::string                    _clockTriggerName;
-    double                         _prevFrequency  = 0.0;
-    float                          _prevSampleRate = 0.f;
-    float                          _prevGain       = 0.f;
-    bool                           _prevAutoGain   = false;
-    std::string                    _prevDeviceName;
-    bool                           _firstEmission        = true;
-    std::uint64_t                  _lastTagTimeNs        = 0UL;
-    bool                           _discardRequested     = false;
-    std::uint8_t                   _postDiscardReadCount = 0;
-    DcBlocker                      _dcFilterI;
-    DcBlocker                      _dcFilterQ;
-    algorithm::SampleRateEstimator _rateEstimator;
-    float                          _ppmLastEmitted = 0.0f;
+    std::unique_ptr<RTL2832DeviceBase> _device           = std::make_unique<RTL2832Device>();
+    bool                               _ioThreadDone     = true;
+    std::int64_t                       _clockOffsetNs    = 0;
+    bool                               _clockOffsetValid = false;
+    std::string                        _clockTriggerName;
+    double                             _prevFrequency  = 0.0;
+    float                              _prevSampleRate = 0.f;
+    float                              _prevGain       = 0.f;
+    bool                               _prevAutoGain   = false;
+    std::string                        _prevDeviceName;
+    bool                               _firstEmission        = true;
+    std::uint64_t                      _lastTagTimeNs        = 0UL;
+    bool                               _discardRequested     = false;
+    std::uint8_t                       _postDiscardReadCount = 0;
+    DcBlocker                          _dcFilterI;
+    DcBlocker                          _dcFilterQ;
+    algorithm::SampleRateEstimator     _rateEstimator;
+    float                              _ppmLastEmitted = 0.0f;
 
     std::size_t _publishedSinceWork = 0UZ;
 
@@ -116,6 +115,19 @@ Operating modes:
         ~IoThreadGuard() { gr::atomic_ref(done).wait(false); }
     };
     IoThreadGuard _ioGuard{_ioThreadDone};
+
+    // Gives the source the device it opens, configures and reads in place of the RTL2832Device it is built with. A call
+    // after start() or without a device changes nothing and returns the reason.
+    std::expected<void, std::string> setDevice(std::unique_ptr<RTL2832DeviceBase> device) {
+        if (device == nullptr) {
+            return std::unexpected(std::string("RTL2832Source::setDevice(): no device"));
+        }
+        if (const lifecycle::State state = this->state(); state != lifecycle::State::IDLE && state != lifecycle::State::INITIALISED) {
+            return std::unexpected(std::string("RTL2832Source::setDevice(): the source has started"));
+        }
+        _device = std::move(device);
+        return {};
+    }
 
     // Opens and configures the device outside the browser build, then starts the io thread. A refused open or setting
     // closes the device and throws the reason, which fails the run. The framework skips stop() after a start() that
@@ -134,12 +146,12 @@ Operating modes:
         // The browser build leaves the open to the io thread, which retries a refused open every 2 s. WebUSB grants the
         // device only after the run has started.
 #if !defined(__EMSCRIPTEN__)
-        if (auto opened = _device.open(device_index); !opened) {
+        if (auto opened = _device->open(device_index); !opened) {
             throw gr::exception(std::format("RTL2832Source::start(): open failed: {}", opened.error()));
         }
-        device_name = _device._deviceName;
+        device_name = std::string(_device->deviceName());
         if (auto configured = configureOpenDevice(); !configured) {
-            _device.close();
+            _device->close();
             throw gr::exception(std::format("RTL2832Source::start(): {}", configured.error()));
         }
 #endif
@@ -155,20 +167,20 @@ Operating modes:
             }
             return {};
         };
-        std::expected<void, std::string> configured = check(_device.setSampleRate(sample_rate), "setSampleRate");
-        configured                                  = configured.and_then([&] { return check(_device.setCenterFrequency(frequency), "setCenterFrequency"); });
-        configured                                  = configured.and_then([&] { return check(_device.setGainMode(auto_gain), "setGainMode"); });
-        configured                                  = configured.and_then([&] { return check(_device.setAgcMode(auto_gain), "setAgcMode"); });
+        std::expected<void, std::string> configured = check(_device->setSampleRate(sample_rate), "setSampleRate");
+        configured                                  = configured.and_then([&] { return check(_device->setCenterFrequency(frequency), "setCenterFrequency"); });
+        configured                                  = configured.and_then([&] { return check(_device->setGainMode(auto_gain), "setGainMode"); });
+        configured                                  = configured.and_then([&] { return check(_device->setAgcMode(auto_gain), "setAgcMode"); });
         if (!auto_gain) {
-            configured = configured.and_then([&] { return check(_device.setTunerGain(gain), "setTunerGain"); });
+            configured = configured.and_then([&] { return check(_device->setTunerGain(gain), "setTunerGain"); });
         }
-        configured = configured.and_then([&] { return check(_device.setFreqCorrection(ppm_correction), "setFreqCorrection"); });
-        return configured.and_then([&] { return check(_device.resetBuffer(), "resetBuffer"); });
+        configured = configured.and_then([&] { return check(_device->setFreqCorrection(ppm_correction), "setFreqCorrection"); });
+        return configured.and_then([&] { return check(_device->resetBuffer(), "resetBuffer"); });
     }
 
     void stop() {
         gr::atomic_ref(_ioThreadDone).wait(false);
-        _device.close();
+        _device->close();
     }
 
     // performed_work is the number of samples the io thread published since the previous call, 0 when it published none.
@@ -188,7 +200,7 @@ Operating modes:
     }
 
     void settingsChanged(const property_map& /*oldSettings*/, property_map& newSettings, property_map& forwardSettings) {
-        if (!_device.isOpen()) {
+        if (!_device->isOpen()) {
             return;
         }
         auto reportError = [this](auto&& result, std::string_view operation) {
@@ -199,7 +211,7 @@ Operating modes:
             return true;
         };
         if (newSettings.contains("frequency")) {
-            if (!reportError(_device.setCenterFrequency(frequency), "setCenterFrequency")) {
+            if (!reportError(_device->setCenterFrequency(frequency), "setCenterFrequency")) {
                 return;
             }
             _discardRequested = true;
@@ -208,27 +220,27 @@ Operating modes:
         }
         if (newSettings.contains("gain") || newSettings.contains("auto_gain")) {
             if (auto_gain) {
-                reportError(_device.setGainMode(true), "setGainMode");
+                reportError(_device->setGainMode(true), "setGainMode");
             } else {
-                if (reportError(_device.setGainMode(false), "setGainMode")) {
-                    reportError(_device.setTunerGain(gain), "setTunerGain");
+                if (reportError(_device->setGainMode(false), "setGainMode")) {
+                    reportError(_device->setTunerGain(gain), "setTunerGain");
                 }
             }
         }
         // A sample rate or correction change alters every sample taken after it, as a retune does. The source discards
         // the stream after it, as setCenterFrequency does after a tune.
         if (newSettings.contains("sample_rate")) {
-            if (!reportError(_device.setSampleRate(sample_rate), "setSampleRate")) {
+            if (!reportError(_device->setSampleRate(sample_rate), "setSampleRate")) {
                 return;
             }
-            reportError(_device.discardStream(), "discardStream");
+            reportError(_device->discardStream(), "discardStream");
             _discardRequested = true;
             rebuildDcFilter();
             rebuildRateEstimator();
             forwardSettings.insert_or_assign(std::pmr::string("sample_rate"), sample_rate.value);
         }
-        if (newSettings.contains("ppm_correction") && reportError(_device.setFreqCorrection(ppm_correction), "setFreqCorrection")) {
-            reportError(_device.discardStream(), "discardStream");
+        if (newSettings.contains("ppm_correction") && reportError(_device->setFreqCorrection(ppm_correction), "setFreqCorrection")) {
+            reportError(_device->discardStream(), "discardStream");
             _discardRequested = true;
         }
         if (newSettings.contains("dc_blocker_cutoff") || newSettings.contains("dc_blocker_enabled")) {
@@ -250,7 +262,7 @@ Operating modes:
         constexpr std::size_t                     kReadBufferSize = 64UZ * 1024UZ;
         std::array<std::uint8_t, kReadBufferSize> readBuf{};
         const auto                                minDelay = std::chrono::milliseconds(polling_period);
-        bool                                      announce = _device.isOpen(); // set by each open, cleared once streaming is announced
+        bool                                      announce = _device->isOpen(); // set by each open, cleared once streaming is announced
 
         while (lifecycle::isActive(this->state())) {
             this->applyChangedSettings();
@@ -263,17 +275,17 @@ Operating modes:
                 _rateEstimator.resetPhase();
             }
 
-            if (!_device.isOpen()) {
-                auto result = _device.open(device_index);
+            if (!_device->isOpen()) {
+                auto result = _device->open(device_index);
                 if (!result) {
                     this->emitErrorMessage("ioReadLoop()", std::format("open failed: {}", result.error()));
                     std::this_thread::sleep_for(std::chrono::seconds(2));
                     continue;
                 }
-                device_name = _device._deviceName;
+                device_name = std::string(_device->deviceName());
                 if (auto configured = configureOpenDevice(); !configured) {
                     this->emitErrorMessage("ioReadLoop()", configured.error());
-                    _device.close();
+                    _device->close();
                     std::this_thread::sleep_for(minDelay);
                     continue;
                 }
@@ -288,9 +300,9 @@ Operating modes:
                 this->emitMessage("ioReadLoop()", {{"state", "streaming"}, {"device", device_name.value}});
             }
 
-            auto result = _device.readBulk(readBuf.data(), readBuf.size());
+            auto result = _device->readBulk(readBuf.data(), readBuf.size());
             if (!result) {
-                _device.close();
+                _device->close();
                 this->emitErrorMessage("ioReadLoop()", std::format("device error: {}", result.error()));
                 std::this_thread::sleep_for(minDelay);
                 continue;
