@@ -32,6 +32,7 @@ extended (e.g. notably pmt-integration, and message handling) but should provide
 
 Each block runs its script in a module of its own. Two blocks whose scripts define the same name each keep their own.
 The interpreter lock is free between calls, and a call from any thread takes it for its duration.
+The interpreter is finalized once, at process exit. Destroying a block releases only that block's Python objects.
 
 Usage Example:
 @code

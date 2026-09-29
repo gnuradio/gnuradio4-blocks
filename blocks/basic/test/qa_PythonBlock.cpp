@@ -357,6 +357,31 @@ def process_bulk(ins, outs):
         expect(eq(sink._samples, std::vector<std::int32_t>{0, 2, 4, 6, 8})) << std::format("mismatch of vector {}", sink._samples);
         expect(block.getSettings().contains("worker")) << "process_bulk ran on the thread that ran the script";
     };
+
+    "a block made after another is destroyed"_test = [] {
+        // NumPy refuses a second import into a process whose interpreter was finalized once
+        std::string pythonScript = R"(import numpy as np
+
+def process_bulk(ins, outs):
+    for i in range(len(ins)):
+        outs[i][:] = np.multiply(ins[i], 3)
+)";
+
+        auto makeAndRun = [&pythonScript] {
+            PythonBlock<float> block({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}});
+            block.init(block.progress); // needed for unit-test only when executed outside a Scheduler/Graph
+            std::vector<float>                  in{1.f, 2.f, 3.f};
+            std::vector<float>                  out(3UZ);
+            std::vector<std::span<const float>> ins{in};
+            std::vector<std::span<float>>       outs{out};
+            expect(block.processBulk(std::span(ins), std::span(outs)) == gr::work::Status::OK);
+            return out;
+        };
+
+        expect(eq(makeAndRun(), std::vector<float>{3.f, 6.f, 9.f}));
+        expect(Py_IsInitialized() != 0) << "destroying the only block leaves the interpreter initialized";
+        expect(eq(makeAndRun(), std::vector<float>{3.f, 6.f, 9.f})) << "a block made after the first one is destroyed";
+    };
 };
 
 int main() { /* tests are statically executed */ }
