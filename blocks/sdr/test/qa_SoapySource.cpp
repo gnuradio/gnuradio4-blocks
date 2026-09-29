@@ -10,7 +10,6 @@
 #include <string_view>
 #include <vector>
 
-#include <gnuradio-4.0/common/USBDevice.hpp>
 #include <gnuradio-4.0/meta/formatter.hpp>
 
 #if defined(__clang__)
@@ -56,27 +55,6 @@ const bool kHardwareRequested = [] {
     }
     return requested;
 }();
-
-// reset RTL-SDR USB devices between test suites to avoid PLL lock failures
-// (the RTL-SDR driver segfaults in readStream if the PLL doesn't lock)
-inline void resetRtlSdrUsbDevices() {
-#if defined(__linux__)
-    auto devices = gr::blocks::common::enumerateUSBDevices(std::array{
-        gr::blocks::common::USBDeviceId{0x0BDA, 0x2832, "RTL2832U"},
-        gr::blocks::common::USBDeviceId{0x0BDA, 0x2838, "RTL2838UHIDIR"},
-        gr::blocks::common::USBDeviceId{0x0BDA, 0x2840, "RTL2840"},
-    });
-    for (const auto& dev : devices) {
-        gr::blocks::common::USBDevice usbDev;
-        if (auto r = usbDev.open(dev); r) {
-            std::ignore = usbDev.reset();
-        }
-    }
-    if (!devices.empty()) {
-        std::this_thread::sleep_for(std::chrono::seconds(3));
-    }
-#endif
-}
 
 /// driver keys of the hardware cases, each case tagged with its key
 constexpr std::array<std::string_view, 2UZ> kHardwareCaseDrivers{"rtlsdr", "lime"};
@@ -375,10 +353,6 @@ const boost::ut::suite<"Soapy Block API "> soapyBlockAPI = [] {
             }
         }
         boost::ext::ut::cfg<override> = {.tag = tags};
-
-        if (std::ranges::contains(tags, std::string_view{"rtlsdr"})) {
-            resetRtlSdrUsbDevices();
-        }
     }
 
     // create and return a watchdog thread and its control flag

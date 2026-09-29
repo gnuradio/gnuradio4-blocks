@@ -33,10 +33,10 @@ The default build contains:
 - HTTP source and sink blocks
 - common device utilities and testing, monitoring, delay, and null-source blocks
 
-Audio source/sink blocks and SDR support for RTL2832 devices and SoapySDR are
-available as opt-in block modules. The tree also contains native and Emscripten
-examples for GPS, RTL2832, and audio-related workflows where their corresponding
-modules and toolchains are enabled.
+Audio source/sink blocks and SDR support through SoapySDR are available as
+opt-in block modules. The tree also contains native and Emscripten examples for
+GPS and audio-related workflows where their corresponding modules and
+toolchains are enabled.
 
 ## Building
 
@@ -69,8 +69,8 @@ Useful configuration options are:
 - `ENABLE_TESTING` (default: `ON`): build and register tests
 - `GR4_ENABLE_AUDIO` (default: `OFF`): build audio blocks; native builds use
   libsoundio, while Emscripten builds use the Web Audio backend
-- `GR4_ENABLE_SDR` (default: `OFF`): build RTL2832 support and, when found,
-  SoapySDR source/sink support
+- `GR4_ENABLE_SDR` (default: `OFF`): build the SDR block family; its SoapySDR
+  source/sink blocks build when SoapySDR is found
 - `GR4_ENABLE_HTTP_TESTS` (default: `OFF`): enable HTTP integration tests
 - `GR4_ENABLE_PYTHON` (default: `OFF`): build the Python block and its test;
   needs Python 3.12 or later with its development files and NumPy

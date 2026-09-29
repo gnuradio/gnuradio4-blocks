@@ -30,7 +30,6 @@ if(TARGET SoapySDR)
     MAKE_SHARED_LIBRARY
     ${GR4_BLOCK_STATIC_LIBRARY}
     HEADERS
-    include/gnuradio-4.0/sdr/RTL2832Source.hpp
     include/gnuradio-4.0/sdr/SoapySink.hpp
     include/gnuradio-4.0/sdr/SoapySource.hpp
     LINK_LIBRARIES
@@ -47,8 +46,4 @@ endif()
 
 if(ENABLE_TESTING)
   add_subdirectory(test)
-endif()
-
-if(ENABLE_EXAMPLES)
-  add_subdirectory(src)
 endif()
