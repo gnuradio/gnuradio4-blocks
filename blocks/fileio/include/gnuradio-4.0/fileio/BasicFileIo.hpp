@@ -218,8 +218,8 @@ Important: this implementation assumes a host-order, CPU architecture specific b
         }
     }
 
-    // throws when there is nothing to read: the file does not open or its first read fails (a directory in its place),
-    // or in multi mode the directory cannot be listed or no file name in it holds the base name
+    // throws when there is nothing to read: the reader cannot open the file, or in multi mode the directory cannot be
+    // listed or no file name in it holds the base name
     void start() {
         _currentFileIndex = 0UZ;
         _totalBytesRead   = 0UZ;
@@ -231,9 +231,6 @@ Important: this implementation assumes a host-order, CPU architecture specific b
         switch (mode) {
         case Mode::overwrite:
         case Mode::append: {
-            if (const auto reason = detail::unreadableFileReason(filePath)) {
-                throw gr::exception(*reason);
-            }
             _filesToRead.push_back(filePath);
         } break;
         case Mode::multi: {
@@ -246,6 +243,7 @@ Important: this implementation assumes a host-order, CPU architecture specific b
         }
 
         openNextFile();
+        awaitFirstRead();
     }
 
     void stop() { closeFile(); }
@@ -370,6 +368,27 @@ private:
         _reader       = std::move(readerExp.value());
         _readerActive = true;
         _currentFileIndex++;
+    }
+
+    // waits for the reader's first message, which follows its open of the file: an error refuses the start, a chunk
+    // exceeds the maximum size of zero and stays queued for processBulk(), and the end of an empty file ends that file
+    void awaitFirstRead() {
+        std::optional<gr::Error> error;
+        bool                     finished = false;
+        _reader.poll(
+            [&](const auto& res) {
+                finished = res.isFinal;
+                if (!res.data.has_value() && !res.requiredOutputSize.has_value()) {
+                    error = res.data.error();
+                }
+            },
+            0UZ, true);
+        if (error.has_value()) {
+            throw gr::exception(error->message, error->sourceLocation);
+        }
+        if (finished) {
+            std::ignore = finishCurrentFile();
+        }
     }
 
     [[nodiscard]] work::Status finishCurrentFile() {

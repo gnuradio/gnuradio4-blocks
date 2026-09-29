@@ -5,10 +5,16 @@
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
 
+#include "FileOpenCounter.hpp"
 #include "ScopedWorkingDirectory.hpp"
 
 #include <format>
 #include <optional>
+#include <string_view>
+
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
+#include <sys/stat.h>
+#endif
 
 namespace {
 using namespace std::chrono_literals;
@@ -155,6 +161,9 @@ void runTest(const gr::blocks::fileio::Mode mode) {
 }
 
 using gr::blocks::fileio::test::ScopedWorkingDirectory;
+
+// the reason the reader gives for a path it cannot open as a regular file
+constexpr std::string_view kReaderRefusal = "file not found or not a regular file";
 
 template<typename TValue>
 std::string errorMessage(const std::expected<TValue, gr::Error>& result) {
@@ -369,22 +378,20 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
         const auto nRead = readFloatFile("missing/tone.f32", "overwrite");
         expect(!nRead.has_value());
         expect(errorMessage(nRead).contains("missing/tone.f32")) << errorMessage(nRead);
-        expect(errorMessage(nRead).contains(std::make_error_code(std::errc::no_such_file_or_directory).message())) << errorMessage(nRead);
+        expect(errorMessage(nRead).contains(kReaderRefusal)) << errorMessage(nRead);
         expect(!std::filesystem::exists(workingDirectory.directory / "missing"));
     };
 
     "BasicFileSource refuses at start a file that does not exist or is not a regular file"_test = [] {
         ScopedWorkingDirectory workingDirectory;
-        const std::string      fileName     = (workingDirectory.directory / "tone.f32").string();
-        const std::string      noSuchFile   = std::make_error_code(std::errc::no_such_file_or_directory).message();
-        const std::string      isADirectory = std::make_error_code(std::errc::is_a_directory).message();
+        const std::string      fileName = (workingDirectory.directory / "tone.f32").string();
 
         for (const std::string modeName : {"overwrite", "append"}) {
-            expectRefusedStart(runFloatSource(fileName, modeName), {fileName, noSuchFile});
+            expectRefusedStart(runFloatSource(fileName, modeName), {fileName, kReaderRefusal});
         }
 
         std::filesystem::create_directory(fileName);
-        expectRefusedStart(runFloatSource(fileName, "overwrite"), {fileName, isADirectory});
+        expectRefusedStart(runFloatSource(fileName, "overwrite"), {fileName, kReaderRefusal});
     };
 
     "BasicFileSource in multi mode refuses at start a stem that no file name holds"_test = [] {
@@ -393,6 +400,32 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
 
         expectRefusedStart(runFloatSource((workingDirectory.directory / "tone.f32").string(), "multi"), {workingDirectory.directory.string(), "tone.f32"});
     };
+
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
+    "BasicFileSource opens its file once"_test = [] {
+        using gr::blocks::fileio::test::FileOpenCounter;
+        ScopedWorkingDirectory workingDirectory;
+        constexpr gr::Size_t   nSamples = 1024U;
+        const auto             written  = writeFloatFile("tone.f32", "overwrite", nSamples);
+        expect(written.has_value()) << errorMessage(written);
+
+        const FileOpenCounter opens(workingDirectory.directory / "tone.f32");
+        const auto            nRead = readFloatFile("tone.f32", "overwrite");
+        expect(eq(nRead.value_or(0U), nSamples)) << errorMessage(nRead);
+        expect(eq(opens.count(), 1UZ));
+    };
+
+    "BasicFileSource refuses at start a FIFO without opening it"_test = [] {
+        using gr::blocks::fileio::test::FileOpenCounter;
+        ScopedWorkingDirectory workingDirectory;
+        const std::string      fileName = (workingDirectory.directory / "tone.f32").string();
+        expect((::mkfifo(fileName.c_str(), 0600) == 0) >> fatal);
+
+        const FileOpenCounter opens(fileName);
+        expectRefusedStart(runFloatSource(fileName, "overwrite"), {fileName, kReaderRefusal});
+        expect(eq(opens.count(), 0UZ));
+    };
+#endif
 };
 
 int main() { /* not needed for UT */ }
