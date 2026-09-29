@@ -5,6 +5,12 @@ include(CMakeFindDependencyMacro)
 find_dependency(gnuradio4 CONFIG)
 find_dependency(gnuradio4Library CONFIG)
 
+set(_gnuradio4Blocks_needs_Python @GR4_EXPORT_NEEDS_PYTHON@)
+if(_gnuradio4Blocks_needs_Python)
+  find_dependency(Python3 3.12 COMPONENTS Interpreter Development.Embed NumPy)
+endif()
+unset(_gnuradio4Blocks_needs_Python)
+
 set(_gnuradio4Blocks_needs_SoapySDR @GR4_EXPORT_NEEDS_SOAPYSDR@)
 if(_gnuradio4Blocks_needs_SoapySDR)
   find_dependency(SoapySDR CONFIG)

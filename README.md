@@ -72,6 +72,8 @@ Useful configuration options are:
 - `GR4_ENABLE_SDR` (default: `OFF`): build RTL2832 support and, when found,
   SoapySDR source/sink support
 - `GR4_ENABLE_HTTP_TESTS` (default: `OFF`): enable HTTP integration tests
+- `GR4_ENABLE_PYTHON` (default: `OFF`): build the Python block and its test;
+  needs Python 3.12 or later with its development files and NumPy
 - `GR_USE_FETCHCONTENT_DEPS` (default: `OFF`): allow CMake to fetch Boost.UT
 - `USE_CCACHE` (default: `ON`): use `ccache` when available
 - `GR4_PKG_VERSION` (default: `4.0.0-git`): version recorded in the installed
