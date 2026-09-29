@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <complex>
+#include <cstdlib>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -39,6 +40,23 @@ static_assert(std::is_constructible_v<SoapySimpleSource<std::complex<float>>, gr
 } // namespace gr::blocks::sdr
 
 namespace {
+/// true when GR_SDR_TEST_HARDWARE=1 asks for the host's SoapySDR modules and the radios they open
+bool hardwareRequested() {
+    const char* value = std::getenv("GR_SDR_TEST_HARDWARE");
+    return value != nullptr && std::string_view(value) == "1";
+}
+
+/// Without GR_SDR_TEST_HARDWARE=1, SOAPY_SDR_ROOT names an empty directory and SOAPY_SDR_PLUGIN_PATH the loopback
+/// module's directory. SoapySDR then loads the loopback module alone. The flag is initialized ahead of the suites below.
+const bool kHardwareRequested = [] {
+    const bool requested = hardwareRequested();
+    if (!requested) {
+        setenv("SOAPY_SDR_ROOT", GR_SDR_TEST_SOAPY_EMPTY_ROOT, 1);
+        setenv("SOAPY_SDR_PLUGIN_PATH", GR_SDR_TEST_SOAPY_MODULE_DIR, 1);
+    }
+    return requested;
+}();
+
 // reset RTL-SDR USB devices between test suites to avoid PLL lock failures
 // (the RTL-SDR driver segfaults in readStream if the PLL doesn't lock)
 inline void resetRtlSdrUsbDevices() {
@@ -320,8 +338,11 @@ const boost::ut::suite<"Soapy Block API "> soapyBlockAPI = [] {
         expect(hardwareCaseTags({"lime", "loopback", "rtlsdr"}) == std::vector<std::string_view>{"rtlsdr", "lime"});
     };
 
-    // DISABLE_SENSITIVE_TESTS runs no hardware case; otherwise a hardware case runs only when enumeration lists its driver
-    if (std::getenv("DISABLE_SENSITIVE_TESTS") == nullptr) {
+    // a hardware case runs only with GR_SDR_TEST_HARDWARE=1, without DISABLE_SENSITIVE_TESTS, and when enumeration lists
+    // its driver
+    if (!kHardwareRequested) {
+        std::println("hardware cases skipped: GR_SDR_TEST_HARDWARE=1 runs them against the host's modules and radios");
+    } else if (std::getenv("DISABLE_SENSITIVE_TESTS") == nullptr) {
         const std::vector<std::string_view> tags = hardwareCaseTags(enumeratedDrivers());
         for (std::string_view driver : kHardwareCaseDrivers) {
             if (!std::ranges::contains(tags, driver)) {
