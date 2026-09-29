@@ -48,8 +48,7 @@ public:
     }
 
     // Runs inPhase over the real parts and quadrature over the imaginary parts of a block in place: the recurrence of
-    // processOne, with the state of both kept in registers for the block. The two recurrences are independent, so
-    // their latencies overlap.
+    // processOne, one loop over the block for both, with the state of both in locals until the block ends.
     static void processComplex(DcBlocker& inPhase, DcBlocker& quadrature, std::span<std::complex<float>> samples) noexcept {
         if (!inPhase._blocking || !quadrature._blocking) {
             for (std::complex<float>& sample : samples) {

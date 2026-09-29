@@ -370,7 +370,8 @@ struct USBDevice {
     // Discards every transfer of the read queue with the data it holds, reaps them all and drops the queue. The
     // endpoint then has no transfer pending until the next queuedBulkRead submits a new queue, and that call hands out
     // only data the device sends after it. The rest of a transfer handed out in part is dropped too. A transfer that
-    // completed before its discard is reaped with the others. Without a queue the call does nothing.
+    // completed before its discard is reaped with the others. Without a queue the call does nothing. A discard that
+    // fails closes the device, which drops the transfers still pending; the caller reopens it.
     [[nodiscard]] Result discardQueuedTransfers(unsigned timeoutMs = 100) {
         if (_fd < 0) {
             return std::unexpected(std::string("USBDevice: not open"));
@@ -391,18 +392,18 @@ struct USBDevice {
                 continue;
             }
             if (errno != EAGAIN) {
-                return std::unexpected(formatTransferError("discard queued transfers", errno));
+                return closeAfterFailedDiscard(formatTransferError("discard queued transfers", errno));
             }
             pollfd    ready{.fd = _fd, .events = POLLOUT, .revents = 0};
             const int nReady = ::poll(&ready, 1, static_cast<int>(timeoutMs));
             if (nReady < 0 && errno != EINTR) {
-                return std::unexpected(formatTransferError("discard queued transfers", errno));
+                return closeAfterFailedDiscard(formatTransferError("discard queued transfers", errno));
             }
             if (nReady == 0) {
-                return std::unexpected(std::format("discard queued transfers: {} discarded transfers did not return within {} ms", nInKernel, timeoutMs));
+                return closeAfterFailedDiscard(std::format("discard queued transfers: {} discarded transfers did not return within {} ms", nInKernel, timeoutMs));
             }
             if (nReady > 0 && (ready.revents & POLLOUT) == 0) {
-                return std::unexpected(std::string("discard queued transfers: device disconnected"));
+                return closeAfterFailedDiscard("discard queued transfers: device disconnected");
             }
         }
         _queue.clear();
@@ -433,6 +434,11 @@ struct USBDevice {
     }
 
 private:
+    Result closeAfterFailedDiscard(std::string reason) {
+        close();
+        return std::unexpected(std::move(reason));
+    }
+
     [[nodiscard]] Result submit(QueuedTransfer& transfer) {
         usbdevfs_urb& urb = *transfer.urb;
         urb.type          = USBDEVFS_URB_TYPE_BULK;

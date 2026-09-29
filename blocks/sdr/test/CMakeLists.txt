@@ -10,17 +10,21 @@ target_link_libraries(
           ut)
 add_test(NAME qa_RTL2832Source COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} ${CMAKE_CURRENT_BINARY_DIR}/qa_RTL2832Source)
 
-add_executable(qa_RTL2832SourceStart qa_RTL2832SourceStart.cpp)
-target_link_libraries(
-  qa_RTL2832SourceStart
-  PRIVATE gnuradio-options
-          gnuradio-core
-          gnuradio-blocklib-core
-          gr-sdr
-          gr-testing
-          ut)
-add_test(NAME qa_RTL2832SourceStart COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
-                                            ${CMAKE_CURRENT_BINARY_DIR}/qa_RTL2832SourceStart)
+# a browser build opens the device from the io thread and retries a refused open, so the start case would run into its
+# bound there
+if(NOT EMSCRIPTEN)
+  add_executable(qa_RTL2832SourceStart qa_RTL2832SourceStart.cpp)
+  target_link_libraries(
+    qa_RTL2832SourceStart
+    PRIVATE gnuradio-options
+            gnuradio-core
+            gnuradio-blocklib-core
+            gr-sdr
+            gr-testing
+            ut)
+  add_test(NAME qa_RTL2832SourceStart COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
+                                              ${CMAKE_CURRENT_BINARY_DIR}/qa_RTL2832SourceStart)
+endif()
 
 if(TARGET SoapySDR)
   # detect ABI compatibility: tests using SoapySDR's C++ API (std::vector, std::string in ArgInfo/Kwargs) require the
