@@ -6,10 +6,12 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
 
+#include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Tag.hpp>
 
 namespace gr::blocks::filter::detail {
@@ -112,7 +114,7 @@ struct TagDelayLine {
 
     /**
      * @brief Hold the tags of the first @p processedIn samples of @p span that no earlier call took, each on the output
-     * @p place returns for its input offset. @p place may rewrite the tag it is handed.
+     * @p place returns for its input offset. @p place may rewrite the tag it is handed, and a tag it empties is dropped.
      */
     template<typename TSpan, typename TPlace>
     void take(TSpan& span, std::size_t processedIn, TPlace&& place) {
@@ -128,7 +130,9 @@ struct TagDelayLine {
             }
             property_map        tag(tagMap.get());
             const std::uint64_t output = place(at, tag);
-            holdTag(held, latest, output, std::move(tag));
+            if (!tag.empty()) {
+                holdTag(held, latest, output, std::move(tag));
+            }
         }
         takenUntil = std::max(takenUntil, first + static_cast<std::uint64_t>(processedIn));
     }
@@ -187,6 +191,149 @@ struct TagDelayLine {
             span.publishTag(tag, static_cast<std::size_t>(at > base ? at - base : 0ULL));
         }
         held = std::move(deferred);
+    }
+};
+
+/**
+ * @brief The tag placement of a synchronous block that filters sample by sample and decimates by one or more: a tag
+ * leaves on the output that carries its input sample's energy, and a tag held past the stream's last output leaves on
+ * that output.
+ *
+ * `TDerived` has the input port `in` and provides `tagDecimation()`, the input samples per output;
+ * `twiceTagDelay()`, the delay in half input samples, or no value where the framework places the tags; and
+ * `filterSamples(input, output)`, which filters whole input chunks into their outputs. Each tag passes the framework's
+ * key filter and setting substitution as it is taken in, so only its position differs from the framework's own
+ * forwarding. A tag on input `i` leaves on output `round((i + d) / M)`, a half rounding up, and keeps that output
+ * whatever delay or decimation change follows.
+ */
+template<typename TDerived, typename TIn, typename TOut>
+struct DelayedTagFilter {
+    TagDelayLine  _tags;
+    std::uint64_t _inOrigin  = 0ULL;
+    std::uint64_t _outOrigin = 0ULL;
+    bool          _reorigin  = false;
+
+    [[nodiscard]] TDerived& self() noexcept { return static_cast<TDerived&>(*this); }
+
+    /// @brief Forget every held tag and start the map at the stream's first sample.
+    void tagsStart() {
+        _tags.reset(self().in);
+        _inOrigin  = 0ULL;
+        _outOrigin = 0ULL;
+        _reorigin  = false;
+    }
+
+    /// @brief A decimation change applied between calls takes its new origin on the next call.
+    void tagsMarkReorigin() noexcept { _reorigin = true; }
+
+    /**
+     * @brief Hold each tag for its delayed output and publish those this call makes. Without a delay, the framework's
+     * own forwarding runs, and the tags still held leave on the call's outputs.
+     */
+    template<typename TInputSpans, typename TOutputSpans>
+    void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
+        const std::size_t                  decimation = self().tagDecimation();
+        const std::optional<std::uint64_t> twiceDelay = self().twiceTagDelay();
+        if (!twiceDelay.has_value()) {
+            _tags.keepBack = false;
+            if (_tags.captured) {
+                self().in.min_samples = _tags.freeMinSamples;
+            }
+            gr::for_each_writer_span(
+                [processedIn, decimation, this](auto& span) {
+                    if (span.isSync && span.isConnected) {
+                        _tags.release(span, processedIn / decimation, true);
+                    }
+                },
+                outputSpans);
+            if (processedIn >= decimation && processedIn > 0UZ) { // the epilogue's partial chunk makes no output
+                self().forwardInputTags(inputSpans, outputSpans, processedIn);
+            }
+            return;
+        }
+
+        if (_reorigin) {
+            gr::for_each_reader_span(
+                [this](auto& span) {
+                    if (span.isSync && span.isConnected) {
+                        _inOrigin = static_cast<std::uint64_t>(span.streamIndex);
+                    }
+                },
+                inputSpans);
+            gr::for_each_writer_span(
+                [this](auto& span) {
+                    if (span.isSync && span.isConnected) {
+                        _outOrigin = static_cast<std::uint64_t>(span.streamIndex);
+                    }
+                },
+                outputSpans);
+            _reorigin = false;
+        }
+
+        std::optional<property_map> cachedSettings;
+        gr::for_each_reader_span(
+            [&](auto& span) {
+                if (!span.isSync || !span.isConnected) {
+                    return;
+                }
+                _tags.take(span, processedIn, [&](std::uint64_t at, property_map& tag) {
+                    tag = self().filterAndSubstituteTag(tag, cachedSettings);
+                    return _outOrigin + mapDelayedOffset(at - _inOrigin, 1ULL, decimation, *twiceDelay);
+                });
+            },
+            inputSpans);
+
+        gr::for_each_writer_span(
+            [processedIn, decimation, this](auto& span) {
+                if (!span.isSync || !span.isConnected) {
+                    return;
+                }
+                const std::size_t made = _tags.outputsToMake(self().in, processedIn / decimation, decimation, 1UZ, static_cast<std::uint64_t>(span.streamIndex));
+                if (made > 0UZ) { // a call that makes nothing publishes nothing
+                    _tags.release(span, made, false);
+                }
+            },
+            outputSpans);
+    }
+
+    /// @brief One call's samples, less the input chunk and its output that a held tag keeps back for the stream's end.
+    template<InputSpanLike TInput, OutputSpanLike TOutput>
+    [[nodiscard]] work::Status processBulk(TInput& input, TOutput& output) {
+        if (!_tags.keepBack) {
+            return processBulk(std::span<const TIn>(input.data(), input.size()), std::span<TOut>(output.data(), output.size()));
+        }
+        const std::size_t inputs  = input.size() - self().tagDecimation();
+        const std::size_t outputs = output.size() - 1UZ;
+        if (outputs == 0UZ) {
+            return work::Status::INSUFFICIENT_INPUT_ITEMS;
+        }
+        const work::Status status = processBulk(std::span<const TIn>(input.data(), inputs), std::span<TOut>(output.data(), outputs));
+        std::ignore               = input.consume(inputs);
+        output.publish(outputs);
+        return status;
+    }
+
+    /// @brief The stream's last input chunks, the kept-back one among them, and every held tag on their last output.
+    /// Without a delay the stream's partial last chunk makes no output.
+    template<InputSpanLike TInput, OutputSpanLike TOutput>
+    [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
+        std::size_t outputs = 0UZ;
+        if (self().twiceTagDelay().has_value()) {
+            outputs = std::min(input.size() / self().tagDecimation(), output.size());
+            if (outputs > 0UZ) {
+                std::ignore = processBulk(std::span<const TIn>(input.data(), outputs * self().tagDecimation()), std::span<TOut>(output.data(), outputs));
+            }
+            _tags.release(output, outputs, true);
+        }
+        _tags.keepBack = false;
+        output.publish(outputs);
+        return work::Status::OK;
+    }
+
+    /// @brief Filter @p input, whole chunks of `tagDecimation()` samples, into one output per chunk.
+    [[nodiscard]] work::Status processBulk(std::span<const TIn> input, std::span<TOut> output) {
+        self().filterSamples(input, output);
+        return work::Status::OK;
     }
 };
 

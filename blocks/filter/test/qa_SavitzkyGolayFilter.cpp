@@ -1,9 +1,15 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <format>
 #include <numbers>
 #include <print>
 #include <random>
+#include <span>
+#include <string>
+#include <string_view>
+#include <tuple>
 #include <vector>
 
 #include <gnuradio-4.0/Graph.hpp>
@@ -13,6 +19,15 @@
 #include <gnuradio-4.0/algorithm/filter/FilterTool.hpp>
 #include <gnuradio-4.0/filter/SavitzkyGolayFilter.hpp>
 #include <gnuradio-4.0/filter/SvdDenoiser.hpp>
+#include <gnuradio-4.0/testing/TagMonitors.hpp>
+
+/// @brief One sample through the `processBulk` of @p block.
+template<typename TBlock, typename T>
+[[nodiscard]] T filterOne(TBlock& block, T input) {
+    T output{};
+    std::ignore = block.processBulk(std::span<const T>(&input, 1UZ), std::span<T>(&output, 1UZ));
+    return output;
+}
 
 const boost::ut::suite<"SavitzkyGolayFilter block"> sgFilterBlockTests = [] {
     using namespace boost::ut;
@@ -33,7 +48,7 @@ const boost::ut::suite<"SavitzkyGolayFilter block"> sgFilterBlockTests = [] {
         // Process a few samples and verify we get finite output
         std::vector<float> outputs;
         for (int i = 0; i < 20; ++i) {
-            outputs.push_back(filter.processOne(static_cast<float>(i)));
+            outputs.push_back(filterOne(filter, static_cast<float>(i)));
         }
         expect(eq(outputs.size(), 20UZ));
         expect(std::isfinite(outputs.back())) << "output should be finite";
@@ -45,7 +60,7 @@ const boost::ut::suite<"SavitzkyGolayFilter block"> sgFilterBlockTests = [] {
 
         std::vector<double> outputs;
         for (int i = 0; i < 20; ++i) {
-            outputs.push_back(filter.processOne(static_cast<double>(i)));
+            outputs.push_back(filterOne(filter, static_cast<double>(i)));
         }
         expect(eq(outputs.size(), 20UZ));
         expect(std::isfinite(outputs.back())) << "output should be finite";
@@ -71,7 +86,7 @@ const boost::ut::suite<"SavitzkyGolayFilter block"> sgFilterBlockTests = [] {
 
         std::vector<double> filtered(N);
         for (std::size_t i = 0UZ; i < N; ++i) {
-            filtered[i] = filter.processOne(noisy[i]);
+            filtered[i] = filterOne(filter, noisy[i]);
         }
 
         constexpr std::size_t delay    = 5UZ; // (window_size - 1) / 2
@@ -103,12 +118,12 @@ const boost::ut::suite<"SavitzkyGolayFilter block"> sgFilterBlockTests = [] {
         filter.start();
 
         for (int i = 0; i < 50; ++i) {
-            std::ignore = filter.processOne(static_cast<float>(i));
+            std::ignore = filterOne(filter, static_cast<float>(i));
         }
         filter.reset();
 
         // After reset, history is cleared and re-initialized
-        float output = filter.processOne(1.0f);
+        float output = filterOne(filter, 1.0f);
         expect(std::isfinite(output)) << "output finite after reset";
     };
 };
@@ -238,7 +253,7 @@ const boost::ut::suite<"SavitzkyGolayFilter edge cases"> sgFilterEdgeCaseTests =
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 50UZ; ++i) {
-                outputs.push_back(filter.processOne(static_cast<double>(i)));
+                outputs.push_back(filterOne(filter, static_cast<double>(i)));
             }
             expect(std::isfinite(outputs.back()));
         };
@@ -251,7 +266,7 @@ const boost::ut::suite<"SavitzkyGolayFilter edge cases"> sgFilterEdgeCaseTests =
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 20UZ; ++i) {
-                outputs.push_back(filter.processOne(static_cast<double>(i)));
+                outputs.push_back(filterOne(filter, static_cast<double>(i)));
             }
             // Should still produce finite output
             expect(std::isfinite(outputs.back()));
@@ -266,7 +281,7 @@ const boost::ut::suite<"SavitzkyGolayFilter edge cases"> sgFilterEdgeCaseTests =
 
         std::vector<float> outputs;
         for (int i = 0; i < 20; ++i) {
-            outputs.push_back(filter.processOne(static_cast<float>(i)));
+            outputs.push_back(filterOne(filter, static_cast<float>(i)));
         }
         expect(std::isfinite(outputs.back()));
     };
@@ -280,7 +295,7 @@ const boost::ut::suite<"SavitzkyGolayFilter edge cases"> sgFilterEdgeCaseTests =
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 30UZ; ++i) {
-                outputs.push_back(filter.processOne(std::sin(2.0 * std::numbers::pi_v<double> * static_cast<double>(i) / 10.0)));
+                outputs.push_back(filterOne(filter, std::sin(2.0 * std::numbers::pi_v<double> * static_cast<double>(i) / 10.0)));
             }
             expect(std::isfinite(outputs.back()));
         };
@@ -293,7 +308,7 @@ const boost::ut::suite<"SavitzkyGolayFilter edge cases"> sgFilterEdgeCaseTests =
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 30UZ; ++i) {
-                outputs.push_back(filter.processOne(std::sin(2.0 * std::numbers::pi_v<double> * static_cast<double>(i) / 10.0)));
+                outputs.push_back(filterOne(filter, std::sin(2.0 * std::numbers::pi_v<double> * static_cast<double>(i) / 10.0)));
             }
             expect(std::isfinite(outputs.back()));
         };
@@ -306,7 +321,7 @@ const boost::ut::suite<"SavitzkyGolayFilter edge cases"> sgFilterEdgeCaseTests =
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 30UZ; ++i) {
-                outputs.push_back(filter.processOne(static_cast<double>(i)));
+                outputs.push_back(filterOne(filter, static_cast<double>(i)));
             }
             expect(std::isfinite(outputs.back()));
         };
@@ -323,7 +338,7 @@ const boost::ut::suite<"SavitzkyGolayFilter edge cases"> sgFilterEdgeCaseTests =
         std::vector<double> outputs;
         for (std::size_t i = 0UZ; i < 50UZ; ++i) {
             double x = static_cast<double>(i) * 0.01;
-            outputs.push_back(filter.processOne(x * x)); // f(x) = x^2
+            outputs.push_back(filterOne(filter, x * x)); // f(x) = x^2
         }
         expect(std::isfinite(outputs.back()));
     };
@@ -507,7 +522,7 @@ const boost::ut::suite<"SG vs SVD comparison"> comparisonTests = [] {
 
         std::vector<double> sgFiltered(N), svdFiltered(N);
         for (std::size_t i = 0UZ; i < N; ++i) {
-            sgFiltered[i]  = sgFilter.processOne(noisy[i]);
+            sgFiltered[i]  = filterOne(sgFilter, noisy[i]);
             svdFiltered[i] = svdFilter.processOne(noisy[i]);
         }
 
@@ -555,7 +570,7 @@ const boost::ut::suite<"SG vs SVD comparison"> comparisonTests = [] {
 
         std::vector<double> sgFiltered(N), svdFiltered(N);
         for (std::size_t i = 0UZ; i < N; ++i) {
-            sgFiltered[i]  = sgFilter.processOne(noisy[i]);
+            sgFiltered[i]  = filterOne(sgFilter, noisy[i]);
             svdFiltered[i] = svdFilter.processOne(noisy[i]);
         }
 
@@ -596,7 +611,7 @@ const boost::ut::suite<"SG vs SVD comparison"> comparisonTests = [] {
 
         std::vector<double> sgFiltered(N), svdFiltered(N);
         for (std::size_t i = 0UZ; i < N; ++i) {
-            sgFiltered[i]  = sgFilter.processOne(noisy[i]);
+            sgFiltered[i]  = filterOne(sgFilter, noisy[i]);
             svdFiltered[i] = svdFilter.processOne(noisy[i]);
         }
 
@@ -650,7 +665,7 @@ const boost::ut::suite<"SG vs SVD comparison"> comparisonTests = [] {
 
         std::vector<double> sgFiltered(N), svdFiltered(N);
         for (std::size_t i = 0UZ; i < N; ++i) {
-            sgFiltered[i]  = sgFilter.processOne(noisy[i]);
+            sgFiltered[i]  = filterOne(sgFilter, noisy[i]);
             svdFiltered[i] = svdFilter.processOne(noisy[i]);
         }
 
@@ -670,6 +685,57 @@ const boost::ut::suite<"SG vs SVD comparison"> comparisonTests = [] {
 
         expect(lt(sgRms, noisyRms)) << "SG reduces noise";
         expect(lt(svdRms, noisyRms)) << "SVD reduces noise";
+    };
+};
+
+const boost::ut::suite<"SavitzkyGolayFilter tag placement"> sgTagPlacementTests = [] {
+    using namespace boost::ut;
+    using namespace gr::blocks::filter;
+    using namespace gr::blocks::testing;
+
+    "a tag leaves on the output whose fit is evaluated at its input, an even window included"_test = [] {
+        // the fit sits at index (W-1)/2 of the window, oldest first: the output lags by W-1-(W-1)/2, which is 5 for a
+        // window of 10 as for 11, and 0 in the causal alignment; the impulse the source puts under the tag peaks there
+        constexpr gr::Size_t  kSamples = 200U;
+        constexpr std::size_t kAt      = 50UZ;
+        struct Case {
+            gr::Size_t  window;
+            bool        causal;
+            std::size_t lag;
+        };
+        for (const Case& c : {Case{11U, false, 5UZ}, Case{10U, false, 5UZ}, Case{10U, true, 0UZ}}) {
+            gr::Graph graph;
+            auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", true}});
+            source._tags.emplace_back(kAt, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("impulse")}});
+            source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}});
+            gr::property_map settings{{"window_size", c.window}, {"poly_order", gr::Size_t{2}}};
+            if (c.causal) {
+                settings.insert_or_assign(gr::property_map::key_type{"alignment"}, std::string("Causal"));
+            }
+            auto& block = graph.emplaceBlock<SavitzkyGolayFilter<float>>(std::move(settings));
+            auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+            expect(graph.connect<"out", "in">(source, block).has_value());
+            expect(graph.connect<"out", "in">(block, sink).has_value());
+            gr::scheduler::Simple scheduler;
+            expect(scheduler.exchange(std::move(graph)).has_value());
+            expect(scheduler.runAndWait().has_value());
+
+            const auto offsetsOf = [&sink](std::string_view key) {
+                std::vector<std::size_t> offsets;
+                for (const gr::Tag& seen : sink._tags) {
+                    if (seen.map.contains(gr::property_map::key_type{key})) {
+                        offsets.push_back(seen.index);
+                    }
+                }
+                return offsets;
+            };
+            const std::string label = std::format("W = {} {}", c.window, c.causal ? "causal" : "centered");
+            expect(eq(sink._samples.size(), std::size_t{kSamples})) << label << ": every output, and none past the last input";
+            expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{kAt + c.lag})) << label << ": the tag on the lagged output";
+            const auto head = std::span<const float>(sink._samples).first(2UZ * kAt);
+            expect(eq(static_cast<std::size_t>(std::ranges::max_element(head) - head.begin()), kAt + c.lag)) << label << ": the impulse peaks on that output";
+            expect(that % (offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": a tag past the end on the last output";
+        }
     };
 };
 

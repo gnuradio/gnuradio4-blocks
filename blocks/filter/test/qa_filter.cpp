@@ -1,16 +1,73 @@
 #include <boost/ut.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <format>
+#include <span>
+#include <string>
+#include <string_view>
 #include <tuple>
+#include <vector>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/meta/UncertainValue.hpp>
 
+#include <gnuradio-4.0/filter/FirFilter.hpp>
+#include <gnuradio-4.0/filter/TagDelay.hpp>
 #include <gnuradio-4.0/filter/time_domain_filter.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
+#include <gnuradio-4.0/testing/TagMonitors.hpp>
+
+/// @brief One sample through the `processBulk` of @p block.
+template<typename TBlock, typename T>
+[[nodiscard]] T filterOne(TBlock& block, T input) {
+    T output{};
+    std::ignore = block.processBulk(std::span<const T>(&input, 1UZ), std::span<T>(&output, 1UZ));
+    return output;
+}
+
+/// @brief What a sink sees of a tagged stream that passed one block.
+struct TaggedRun {
+    bool                 ran     = false;
+    std::size_t          samples = 0UZ;
+    std::vector<gr::Tag> tags;
+
+    [[nodiscard]] std::vector<std::size_t> offsetsOf(std::string_view key) const {
+        std::vector<std::size_t> offsets;
+        for (const gr::Tag& tag : tags) {
+            if (tag.map.contains(gr::property_map::key_type{key})) {
+                offsets.push_back(tag.index);
+            }
+        }
+        return offsets;
+    }
+};
+
+/// @brief Run @p nSamples through a block of type @p TBlock made with @p settings: a trigger name at input @p mid, a
+/// trigger time and trigger information on the last two inputs.
+template<typename TBlock>
+[[nodiscard]] TaggedRun runTagged(gr::property_map settings, gr::Size_t nSamples, std::size_t mid) {
+    using namespace gr::blocks::testing;
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", nSamples}, {"mark_tag", false}});
+    source._tags.emplace_back(mid, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("mid")}});
+    source._tags.emplace_back(nSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_time"}, std::uint64_t{1}}});
+    source._tags.emplace_back(nSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}});
+    auto& block = graph.emplaceBlock<TBlock>(std::move(settings));
+    auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+    TaggedRun run;
+    if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
+        return run;
+    }
+    gr::scheduler::Simple scheduler;
+    run.ran     = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
+    run.samples = sink._samples.size();
+    run.tags    = sink._tags;
+    return run;
+}
 
 template<typename T, typename Range>
 requires std::floating_point<T>
@@ -71,7 +128,7 @@ const boost::ut::suite SequenceTests = [] {
         for (std::size_t i = 0UL; i < 20; ++i) {
             const double input = (i == 0) ? 0.0 : 1.0; // Step function
 
-            fir_response.push_back(fir_filter.processOne(input));
+            fir_response.push_back(filterOne(fir_filter, input));
             iir_response1.push_back(iir_filter1.processOne(input));
             iir_response2.push_back(iir_filter1.processOne(input));
         }
@@ -199,9 +256,9 @@ const boost::ut::suite<"Basic[Decimating]Filter"> BasicFilterTests = [] {
                     // generate a sine wave signal with a frequency below the cutoff
                     phase += T{2} * std::numbers::pi_v<ValueType> * static_cast<ValueType>(50) / static_cast<ValueType>(sampleRate);
                     if (i < numSamples) { // ignore initial transient
-                        std::ignore = filter.processOne(gr::math::sin(phase));
+                        std::ignore = filterOne(filter, gr::math::sin(phase));
                     } else {
-                        outputSignal.push_back(filter.processOne(gr::math::sin(phase)));
+                        outputSignal.push_back(filterOne(filter, gr::math::sin(phase)));
                     }
                 }
 
@@ -217,9 +274,9 @@ const boost::ut::suite<"Basic[Decimating]Filter"> BasicFilterTests = [] {
                     // generate a sine wave signal with a frequency below the cutoff
                     phase += T{2} * std::numbers::pi_v<ValueType> * static_cast<ValueType>(300) / static_cast<ValueType>(sampleRate);
                     if (i < numSamples) { // ignore initial transient
-                        std::ignore = filter.processOne(gr::math::sin(phase));
+                        std::ignore = filterOne(filter, gr::math::sin(phase));
                     } else {
-                        outputSignal.push_back(filter.processOne(gr::math::sin(phase)));
+                        outputSignal.push_back(filterOne(filter, gr::math::sin(phase)));
                     }
                 }
 
@@ -325,6 +382,68 @@ const boost::ut::suite<"Basic[Decimating]Filter"> BasicFilterTests = [] {
         expect(eq(decimator.input_chunk_size, decimationFactor));
 
         expect(eq(sink.count, static_cast<gr::Size_t>(10)));
+    };
+};
+
+const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
+    using namespace boost::ut;
+    using namespace gr::blocks::filter;
+
+    constexpr gr::Size_t  kSamples = 1000U;
+    constexpr std::size_t kMid     = 100UZ;
+    constexpr std::size_t kLast    = kSamples - 1UZ;
+
+    "fir_filter moves a tag by its delay as FirFilter does, and a tag past the end leaves on the last output"_test = [] {
+        // 31 equal taps delay by 15: the trigger at input 100 leaves on output 115, the tags on the last two inputs on the last output
+        const std::vector<float> taps(31UZ, 1.0f / 31.0f);
+        const TaggedRun          got = runTagged<fir_filter<float>>({{"b", taps}}, kSamples, kMid);
+        const TaggedRun          ref = runTagged<FirFilter<float>>({{"taps", taps}}, kSamples, kMid);
+        expect(got.ran && ref.ran);
+        expect(eq(got.samples, std::size_t{kSamples})) << "every output, and none past the last input";
+        expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{kMid + 15UZ})) << "the trigger on the delayed sample";
+        expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{kLast})) << "a tag past the end on the last output";
+        expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kLast})) << "the tag on the last input as well";
+        for (const std::string_view key : {"trigger_name", "trigger_time", "trigger_meta_info"}) {
+            expect(that % (got.offsetsOf(key) == ref.offsetsOf(key))) << std::format("{} where FirFilter puts it", key);
+        }
+    };
+
+    "BasicFilter and BasicDecimatingFilter in FIR mode move a tag by the design's delay as FirFilter does"_test = [] {
+        gr::filter::FilterParameters params;
+        params.order                   = 4U;
+        params.fLow                    = 100.0;
+        params.fHigh                   = 200.0;
+        params.fs                      = 1000.0;
+        const std::vector<float> taps  = gr::filter::fir::designFilter<float>(gr::filter::Type::LOWPASS, params, gr::algorithm::window::Type::Hamming).b;
+        const std::uint64_t      twice = gr::blocks::filter::detail::twiceTapDelay(std::span<const float>(taps));
+        expect(gt(twice, 4ULL)) << "the design delays the last two inputs past the last output";
+
+        const gr::property_map design{{"filter_type", std::string("FIR")}, {"filter_response", std::string("LOWPASS")}, {"filter_order", gr::Size_t{4}}, {"f_low", 100.0f}, {"f_high", 200.0f}, {"sample_rate", 1000.0f}, {"fir_design_method", std::string("Hamming")}};
+        for (const gr::Size_t decimation : {gr::Size_t{1}, gr::Size_t{5}}) {
+            gr::property_map settings = design;
+            settings.insert_or_assign(gr::property_map::key_type{"decimate"}, decimation);
+            const TaggedRun   got     = decimation == 1U ? runTagged<BasicFilter<float>>(settings, kSamples, kMid) : runTagged<BasicDecimatingFilter<float>>(settings, kSamples, kMid);
+            const TaggedRun   ref     = runTagged<FirFilter<float>>({{"taps", taps}, {"decimation", decimation}}, kSamples, kMid);
+            const std::size_t outputs = kSamples / decimation;
+            const std::size_t mid     = gr::blocks::filter::detail::mapDelayedOffset(kMid, 1ULL, decimation, twice);
+
+            expect(got.ran && ref.ran);
+            expect(eq(got.samples, outputs)) << std::format("M = {}: every output, and none past the last input", decimation);
+            expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{mid})) << std::format("M = {}: the trigger on the delayed sample", decimation);
+            expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{outputs - 1UZ})) << std::format("M = {}: a tag past the end on the last output", decimation);
+            expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{outputs - 1UZ})) << std::format("M = {}: the tag on the last input as well", decimation);
+            for (const std::string_view key : {"trigger_name", "trigger_time", "trigger_meta_info"}) {
+                expect(that % (got.offsetsOf(key) == ref.offsetsOf(key))) << std::format("M = {}: {} where FirFilter puts it", decimation, key);
+            }
+        }
+    };
+
+    "BasicFilter in IIR mode leaves a tag on its own input"_test = [] {
+        const TaggedRun got = runTagged<BasicFilter<float>>({{"filter_type", std::string("IIR")}, {"f_low", 100.0f}, {"sample_rate", 1000.0f}}, kSamples, kMid);
+        expect(got.ran);
+        expect(eq(got.samples, std::size_t{kSamples}));
+        expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{kMid})) << "the framework places the tag";
+        expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kLast}));
     };
 };
 
