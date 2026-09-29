@@ -62,8 +62,9 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *  - sample format conversion: CF32 <-> CS16 <-> CU8
  *  - optional rate-limited readStream (simulate_timing, default on for rxOnly)
  *  - pluggable channel model via setChannelModel() or Soapy writeSetting();
- *    readSetting(direction, channel, key) returns the value last written to a
- *    key getSettingInfo(direction, channel) lists, or its listed default
+ *    readSetting(direction, channel, key) returns the value written to a key
+ *    getSettingInfo(direction, channel) lists since the channel's model was
+ *    last replaced, or its listed default
  *  - built-in models: passthrough, attenuation, AWGN, delay, composable chain
  *  - max_write_samples=N caps every writeStream to N samples, so a caller sees
  *    the short writes a real device produces (0, the default, accepts the lot)
@@ -283,7 +284,10 @@ class LoopbackDevice : public SoapySDR::Device {
         std::vector<CF32>             txScratch; // pre-allocated for non-CF32 TX format conversion
         SettingValues                 settings;  // the keys channelSettingInfo() lists and their values
 
-        explicit ChannelState(std::size_t bufferSize) : rxBuffer(bufferSize), rxWriter(rxBuffer.new_writer()), rxReader(rxBuffer.new_reader()) {
+        explicit ChannelState(std::size_t bufferSize) : rxBuffer(bufferSize), rxWriter(rxBuffer.new_writer()), rxReader(rxBuffer.new_reader()) { resetSettings(); }
+
+        /// every listed key back at its listed default, as a newly set model has them
+        void resetSettings() {
             for (const auto& info : channelSettingInfo()) {
                 settings[info.key] = info.value;
             }
@@ -408,6 +412,7 @@ public:
         }
         for (auto& ch : _channels) {
             ch->model = model;
+            ch->resetSettings();
         }
     }
 
@@ -420,6 +425,7 @@ public:
         }
         if (channel < _numChannels) {
             _channels[channel]->model = std::move(model);
+            _channels[channel]->resetSettings();
         }
     }
 

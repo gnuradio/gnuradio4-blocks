@@ -1072,6 +1072,24 @@ const boost::ut::suite<"SoapySDR API completeness"> apiTests = [] {
         expect(eq(dev.readSetting(SOAPY_SDR_RX, 2, "attenuation_dB"), std::string())) << "a channel out of range holds no value";
     };
 
+    "a replaced model returns the held values to their listed defaults"_test = [] {
+        LoopbackDevice dev(SoapySDR::Kwargs{{"num_channels", "2"}});
+        dev.writeSetting(SOAPY_SDR_RX, 0, "attenuation_dB", "-6");
+        dev.writeSetting(SOAPY_SDR_RX, 0, "noise_floor_dBFS", "-40");
+        expect(eq(dev.readSetting(SOAPY_SDR_RX, 0, "attenuation_dB"), std::string("0"))) << "an unlisted key's write replaces the model";
+        expect(eq(dev.readSetting(SOAPY_SDR_RX, 0, "channel_model"), std::string("passthrough")));
+
+        dev.writeSetting(SOAPY_SDR_RX, 1, "attenuation_dB", "-6");
+        dev.setChannelModel(1UZ, ChannelModel::delay(4));
+        expect(eq(dev.readSetting(SOAPY_SDR_RX, 1, "attenuation_dB"), std::string("0"))) << "setChannelModel() on one channel";
+
+        dev.writeSetting("attenuation_dB", "-6");
+        dev.setChannelModel(ChannelModel::awgn(-40.f));
+        for (std::size_t channel = 0UZ; channel < 2UZ; ++channel) {
+            expect(eq(dev.readSetting(SOAPY_SDR_RX, channel, "attenuation_dB"), std::string("0"))) << std::format("setChannelModel() on every channel, channel {}", channel);
+        }
+    };
+
     "a device-wide channel setting reaches every channel's value"_test = [] {
         LoopbackDevice dev(SoapySDR::Kwargs{{"num_channels", "2"}});
         dev.writeSetting("attenuation_dB", "-20");
