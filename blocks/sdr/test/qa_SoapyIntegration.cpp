@@ -156,6 +156,23 @@ bool evenlySpaced(const std::vector<std::size_t>& indices, std::size_t nRead) {
     return !indices.empty();
 }
 
+// Keeps the first sample of every ten. The block takes its input in whole chunks of ten, so up to nine samples stay
+// unread in the buffer ahead of it after each call.
+struct KeepEveryTenth : gr::Block<KeepEveryTenth, gr::Resampling<>> {
+    gr::PortIn<CF32>  in;
+    gr::PortOut<CF32> out;
+
+    GR_MAKE_REFLECTABLE(KeepEveryTenth, in, out);
+
+    gr::work::Status processBulk(gr::InputSpanLike auto& input, gr::OutputSpanLike auto& output) {
+        const auto ratio = static_cast<std::size_t>(input_chunk_size.value);
+        for (std::size_t i = 0UZ; i < output.size(); ++i) {
+            output[i] = input[i * ratio];
+        }
+        return gr::work::Status::OK;
+    }
+};
+
 // A pattern of prime length, so that no chunk, read or write size is a multiple of it. The imaginary parts are
 // distinct and within full scale, so each sample shows its place in the pattern; every seventh real part lies beyond
 // full scale, on alternating sides.
@@ -510,7 +527,8 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
     struct Received {
         std::vector<CF32>    samples;
         std::vector<gr::Tag> tags;
-        std::size_t          maxChunkSize = 0UZ;
+        std::size_t          maxChunkSize   = 0UZ;
+        std::size_t          outputCapacity = 0UZ;
     };
 
     // Without its rate limit the receive-only loopback hands over a read as soon as it is asked for one, so the
@@ -528,7 +546,7 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
         Sched sched;
         expect(sched.exchange(std::move(flow)).has_value());
         expect(runWithWatchdog(sched).has_value());
-        return Received{.samples = std::vector<CF32>(sink._samples.begin(), sink._samples.end()), .tags = sink._tags, .maxChunkSize = source.max_chunk_size};
+        return Received{.samples = std::vector<CF32>(sink._samples.begin(), sink._samples.end()), .tags = sink._tags, .maxChunkSize = source.max_chunk_size, .outputCapacity = source.out.bufferSize()};
     };
 
     "every sample arrives once and in order, and a read's tags mark its first sample"_test = [&receive] {
@@ -567,6 +585,42 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
         expect(!firstPhaseBreak(received.samples, kFrequency, static_cast<double>(kRate)).has_value());
         const std::size_t nRead = received.maxChunkSize - received.maxChunkSize % kMtu;
         expect(evenlySpaced(tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey()), nRead)) << std::format("{} samples per read", nRead);
+    };
+
+    "a read is at most half the output buffer"_test = [&receive] {
+        // the loopback's MTU is its buffer size, larger than half the output buffer, so a read is half the output buffer
+        const auto received = receive("device_mode=rx_only", {{"max_chunk_size", std::uint32_t{1U << 20U}}}, 200'000U);
+        expect(!firstPhaseBreak(received.samples, kFrequency, static_cast<double>(kRate)).has_value());
+        const std::size_t nRead = received.outputCapacity / 2UZ;
+        expect(evenlySpaced(tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey()), nRead)) << std::format("{} samples per read", nRead);
+    };
+
+    // A decimator by ten leaves up to nine samples unread in the source's output buffer. A read of the whole buffer
+    // would wait for those samples, which the decimator takes only with the next read's.
+    "a consumer that leaves part of its input chunk unread does not stop a read of max_chunk_size 65536"_test = [] {
+        static constexpr gr::Size_t kDecimated = 50'000U;
+
+        gr::Graph flow;
+        auto&     source    = flow.emplaceBlock<SoapySource<CF32, 1UZ>>({
+            {"device", "loopback"},
+            {"device_parameter", std::string("device_mode=rx_only")},
+            {"device_settings", std::string("simulate_timing=false")},
+            {"sample_rate", kRate},
+            {"frequency", std::vector{kFrequency}},
+            {"max_chunk_size", std::uint32_t{65536U}},
+            {"emit_timing_tags", false},
+        });
+        auto&     decimator = flow.emplaceBlock<KeepEveryTenth>({{"input_chunk_size", gr::Size_t{10U}}, {"output_chunk_size", gr::Size_t{1U}}});
+        auto&     sink      = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", kDecimated}});
+        expect(flow.connect<"out", "in">(source, decimator).has_value());
+        expect(flow.connect<"out", "in">(decimator, sink).has_value());
+
+        withinBound(std::chrono::seconds{5}, "a source feeding a decimator by ten", [&flow, &sink] {
+            Sched sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            expect(sched.runAndWait().has_value());
+            expect(eq(sink.count.value, kDecimated));
+        });
     };
 
     "both channels of a two-channel read arrive whole, in order and marked together"_test = [] {
