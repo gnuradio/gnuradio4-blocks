@@ -48,7 +48,7 @@ struct TaggedRun {
 };
 
 /// @brief Run @p nSamples through a block of type @p TBlock made with @p settings: a trigger name at input @p mid, a
-/// trigger time and trigger information on the last two inputs.
+/// trigger time on the next-to-last input, and trigger information with a burst end on the last.
 template<typename TBlock>
 [[nodiscard]] TaggedRun runTagged(gr::property_map settings, gr::Size_t nSamples, std::size_t mid) {
     using namespace gr::blocks::testing;
@@ -56,7 +56,7 @@ template<typename TBlock>
     auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", nSamples}, {"mark_tag", false}});
     source._tags.emplace_back(mid, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("mid")}});
     source._tags.emplace_back(nSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_time"}, std::uint64_t{1}}});
-    source._tags.emplace_back(nSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}});
+    source._tags.emplace_back(nSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}, {gr::property_map::key_type{"tx_eob"}, true}});
     auto& block = graph.emplaceBlock<TBlock>(std::move(settings));
     auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
 
@@ -405,7 +405,8 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
         expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{kMid + 15UZ})) << "the trigger on the delayed sample";
         expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{kLast})) << "a tag past the end on the last output";
         expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kLast})) << "the tag on the last input as well";
-        for (const std::string_view key : {"trigger_name", "trigger_time", "trigger_meta_info"}) {
+        expect(that % (got.offsetsOf("tx_eob") == std::vector<std::size_t>{kLast})) << "the burst end with it, a key the framework would drop";
+        for (const std::string_view key : {"trigger_name", "trigger_time", "trigger_meta_info", "tx_eob"}) {
             expect(that % (got.offsetsOf(key) == ref.offsetsOf(key))) << std::format("{} where FirFilter puts it", key);
         }
     };
@@ -437,7 +438,8 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
                 expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{mid})) << label << ": the trigger on the delayed sample";
                 expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{outputs - 1UZ})) << label << ": a tag past the end on the last output";
                 expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{outputs - 1UZ})) << label << ": the tag on the last input as well";
-                for (const std::string_view key : {"trigger_name", "trigger_time", "trigger_meta_info"}) {
+                expect(that % (got.offsetsOf("tx_eob") == std::vector<std::size_t>{outputs - 1UZ})) << label << ": the burst end with it, a key the framework would drop";
+                for (const std::string_view key : {"trigger_name", "trigger_time", "trigger_meta_info", "tx_eob"}) {
                     expect(that % (got.offsetsOf(key) == ref.offsetsOf(key))) << label << ": " << key << " where FirFilter puts it";
                 }
             }
