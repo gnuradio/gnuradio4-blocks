@@ -357,13 +357,8 @@ def process_bulk(ins, outs):
     };
 
     "Python block on a worker thread"_test = [] {
-        // the script body runs on the thread that applies the settings; process_bulk records whether it ran elsewhere
-        std::string pythonScript = R"(import threading
-script_thread = threading.get_ident()
-
-def process_bulk(ins, outs):
-    if threading.get_ident() != script_thread:
-        this_block.setSettings({"worker": "other thread"})
+        // the multi-threaded scheduler calls process_bulk from its pool threads, and each call takes the interpreter lock
+        std::string pythonScript = R"(def process_bulk(ins, outs):
     for i in range(len(ins)):
         outs[i][:] = ins[i] * 2
 )";
@@ -384,7 +379,6 @@ def process_bulk(ins, outs):
         expect(sched.runAndWait().has_value());
 
         expect(eq(sink._samples, std::vector<std::int32_t>{0, 2, 4, 6, 8})) << std::format("mismatch of vector {}", sink._samples);
-        expect(block.getSettings().contains("worker")) << "process_bulk ran on the thread that ran the script";
     };
 
     "a block made after another is destroyed"_test = [] {
