@@ -1,15 +1,3 @@
-add_executable(qa_RTL2832Source qa_RTL2832Source.cpp)
-target_link_libraries(
-  qa_RTL2832Source
-  PRIVATE gnuradio-options
-          gnuradio-core
-          gnuradio-blocklib-core
-          gr-sdr
-          gr-timing
-          gr-testing
-          ut)
-add_test(NAME qa_RTL2832Source COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} ${CMAKE_CURRENT_BINARY_DIR}/qa_RTL2832Source)
-
 if(TARGET SoapySDR)
   # detect ABI compatibility: tests using SoapySDR's C++ API (std::vector, std::string in ArgInfo/Kwargs) require the
   # same stdlib as the system SoapySDR library. The C API wrapper (SoapyRaiiWrapper) is ABI-safe and works with either

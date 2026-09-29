@@ -13,7 +13,6 @@
 
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/basic/ClockSource.hpp>
-#include <gnuradio-4.0/common/USBDevice.hpp>
 #include <gnuradio-4.0/sdr/LoopbackDevice.hpp>
 #include <gnuradio-4.0/sdr/SoapySink.hpp>
 #include <gnuradio-4.0/sdr/SoapySource.hpp>
@@ -521,29 +520,11 @@ const boost::ut::suite<"LimeSDR hardware"> limeTests = [] {
         return !devices.empty();
     };
 
-    auto resetLimeUsb = [] {
-#if defined(__linux__)
-        auto devices = gr::blocks::common::enumerateUSBDevices(std::array{
-            gr::blocks::common::USBDeviceId{0x1D50, 0x6108, "LimeSDR-USB"},
-        });
-        for (const auto& dev : devices) {
-            gr::blocks::common::USBDevice usbDev;
-            if (auto r = usbDev.open(dev); r) {
-                std::ignore = usbDev.reset();
-            }
-        }
-        if (!devices.empty()) {
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-        }
-#endif
-    };
-
     "full-duplex TX+RX on shared LimeSDR device"_test = [&] {
         if (!limeAvailable()) {
             std::println(stderr, "[SKIP] no LimeSDR device found");
             return;
         }
-        resetLimeUsb();
 
         gr::Graph            flow;
         constexpr float      rate     = 1e6f;
@@ -593,7 +574,6 @@ const boost::ut::suite<"LimeSDR hardware"> limeTests = [] {
             std::println(stderr, "[SKIP] no LimeSDR device found");
             return;
         }
-        resetLimeUsb();
 
         gr::Graph            flow;
         constexpr float      rate     = 1e6f;
