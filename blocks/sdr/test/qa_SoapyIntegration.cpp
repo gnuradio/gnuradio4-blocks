@@ -27,6 +27,23 @@
 using namespace boost::ut;
 using CF32 = std::complex<float>;
 
+// Keeps the first sample of each input chunk. The block takes its input in whole chunks only. Up to one chunk less one
+// sample stays unread in the buffer ahead of it after each call.
+struct KeepFirstOfChunk : gr::Block<KeepFirstOfChunk, gr::Resampling<>> {
+    gr::PortIn<CF32>  in;
+    gr::PortOut<CF32> out;
+
+    GR_MAKE_REFLECTABLE(KeepFirstOfChunk, in, out);
+
+    gr::work::Status processBulk(gr::InputSpanLike auto& input, gr::OutputSpanLike auto& output) {
+        const auto ratio = static_cast<std::size_t>(input_chunk_size.value);
+        for (std::size_t i = 0UZ; i < output.size(); ++i) {
+            output[i] = input[i * ratio];
+        }
+        return gr::work::Status::OK;
+    }
+};
+
 namespace {
 
 namespace soapy = gr::blocks::sdr::soapy;
@@ -155,23 +172,6 @@ bool evenlySpaced(const std::vector<std::size_t>& indices, std::size_t nRead) {
     }
     return !indices.empty();
 }
-
-// Keeps the first sample of every ten. The block takes its input in whole chunks of ten, so up to nine samples stay
-// unread in the buffer ahead of it after each call.
-struct KeepEveryTenth : gr::Block<KeepEveryTenth, gr::Resampling<>> {
-    gr::PortIn<CF32>  in;
-    gr::PortOut<CF32> out;
-
-    GR_MAKE_REFLECTABLE(KeepEveryTenth, in, out);
-
-    gr::work::Status processBulk(gr::InputSpanLike auto& input, gr::OutputSpanLike auto& output) {
-        const auto ratio = static_cast<std::size_t>(input_chunk_size.value);
-        for (std::size_t i = 0UZ; i < output.size(); ++i) {
-            output[i] = input[i * ratio];
-        }
-        return gr::work::Status::OK;
-    }
-};
 
 // A pattern of prime length, so that no chunk, read or write size is a multiple of it. The imaginary parts are
 // distinct and within full scale, so each sample shows its place in the pattern; every seventh real part lies beyond
@@ -610,7 +610,7 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
             {"max_chunk_size", std::uint32_t{65536U}},
             {"emit_timing_tags", false},
         });
-        auto&     decimator = flow.emplaceBlock<KeepEveryTenth>({{"input_chunk_size", gr::Size_t{10U}}, {"output_chunk_size", gr::Size_t{1U}}});
+        auto&     decimator = flow.emplaceBlock<KeepFirstOfChunk>({{"input_chunk_size", gr::Size_t{10U}}, {"output_chunk_size", gr::Size_t{1U}}});
         auto&     sink      = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", kDecimated}});
         expect(flow.connect<"out", "in">(source, decimator).has_value());
         expect(flow.connect<"out", "in">(decimator, sink).has_value());
