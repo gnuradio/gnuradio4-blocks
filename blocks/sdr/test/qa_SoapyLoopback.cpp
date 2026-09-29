@@ -1043,6 +1043,57 @@ const boost::ut::suite<"SoapySDR API completeness"> apiTests = [] {
         expect(ge(infos.size(), 2UZ));
     };
 
+    "per-channel readSetting returns the listed default, then the value written"_test = [] {
+        LoopbackDevice dev(SoapySDR::Kwargs{{"num_channels", "2"}});
+        auto           infos = dev.getSettingInfo(SOAPY_SDR_RX, 0);
+        expect(std::ranges::contains(infos, std::string("channel_model"), &SoapySDR::ArgInfo::key));
+        expect(std::ranges::contains(infos, std::string("attenuation_dB"), &SoapySDR::ArgInfo::key));
+        for (const auto& info : infos) {
+            expect(eq(dev.readSetting(SOAPY_SDR_RX, 0, info.key), info.value)) << info.key;
+        }
+
+        dev.writeSetting(SOAPY_SDR_RX, 1, "attenuation_dB", "-6");
+        expect(eq(dev.readSetting(SOAPY_SDR_RX, 1, "attenuation_dB"), std::string("-6")));
+        expect(eq(dev.readSetting(SOAPY_SDR_RX, 0, "attenuation_dB"), std::string("0"))) << "the other channel keeps its value";
+        dev.writeSetting(SOAPY_SDR_RX, 0, "channel_model", "passthrough");
+        expect(eq(dev.readSetting(SOAPY_SDR_RX, 0, "channel_model"), std::string("passthrough")));
+
+        dev.writeSetting(SOAPY_SDR_RX, 0, "noise_floor_dBFS", "-40");
+        expect(eq(dev.readSetting(SOAPY_SDR_RX, 0, "noise_floor_dBFS"), std::string())) << "an unlisted key holds no value";
+        expect(eq(dev.readSetting(SOAPY_SDR_RX, 2, "attenuation_dB"), std::string())) << "a channel out of range holds no value";
+    };
+
+    "a device-wide channel setting reaches every channel's value"_test = [] {
+        LoopbackDevice dev(SoapySDR::Kwargs{{"num_channels", "2"}});
+        dev.writeSetting("attenuation_dB", "-20");
+        expect(eq(dev.readSetting(SOAPY_SDR_RX, 0, "attenuation_dB"), std::string("-20")));
+        expect(eq(dev.readSetting(SOAPY_SDR_RX, 1, "attenuation_dB"), std::string("-20")));
+    };
+
+    "a channel setting written while TX is active is not taken"_test = [] {
+        LoopbackDevice dev(SoapySDR::Kwargs{});
+        auto*          rxStream = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32, {0});
+        auto*          txStream = dev.setupStream(SOAPY_SDR_TX, SOAPY_SDR_CF32, {0});
+        dev.activateStream(rxStream);
+        dev.activateStream(txStream);
+
+        dev.writeSetting(SOAPY_SDR_TX, 0, "attenuation_dB", "-20");
+        expect(eq(dev.readSetting(SOAPY_SDR_TX, 0, "attenuation_dB"), std::string("0")));
+
+        std::vector<CF32> tx(16UZ, CF32{1.f, 0.f});
+        std::vector<CF32> rx(16UZ);
+        int               flags    = 0;
+        long long         timeNs   = 0;
+        const void*       txBufs[] = {tx.data()};
+        void*             rxBufs[] = {rx.data()};
+        dev.writeStream(txStream, txBufs, tx.size(), flags, timeNs);
+        expect(eq(dev.readStream(rxStream, rxBufs, rx.size(), flags, timeNs), static_cast<int>(rx.size())));
+        expect(approx(rx[0].real(), 1.f, 1e-4f)) << "the model stays passthrough, as the held value says";
+
+        dev.deactivateStream(rxStream);
+        dev.deactivateStream(txStream);
+    };
+
     "readSetting round-trip"_test = [] {
         LoopbackDevice dev(SoapySDR::Kwargs{});
         expect(eq(dev.readSetting("simulate_timing"), std::string("false")));
