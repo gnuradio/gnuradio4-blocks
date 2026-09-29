@@ -107,11 +107,10 @@ struct FirFilterCore {
     void coreMarkReorigin() noexcept { _reorigin = true; }
 
     /**
-     * @brief Place every input tag that marks a time position on the output sample that carries its input sample's
-     * energy, from the current phase origin.
+     * @brief Place every input tag, all its keys together, on the output sample that carries its input sample's energy,
+     * from the current phase origin.
      *
-     * Input `i` maps to output `round((i + d) / M)`, `d` being the taps' delay and a half rounding up. The keys that state
-     * a property of the stream (`detail::kStreamPropertyKeys`) go to output `round(i / M)` instead. A tag whose
+     * Input `i` maps to output `round((i + d) / M)`, `d` being the taps' delay and a half rounding up. A tag whose
      * output is not in this call is held and published by the call that produces that output. A tag is placed once,
      * when it crosses, under the delay and the decimation in force then. A taps or decimation change moves no held
      * tag, and a tag that crosses after one is never placed ahead of a tag held from before it. Tags therefore leave
@@ -155,7 +154,7 @@ struct FirFilterCore {
                     const std::uint64_t at = static_cast<std::uint64_t>(span.streamIndex) + static_cast<std::uint64_t>(relIndex);
                     property_map        forwarded(tagMap.get());
                     self().scaleSampleRateByChunkRatio(forwarded); // the rate in force where the tag crossed, not where it is published
-                    holdTag(_pendingTags, latest, _outOrigin + mapDelayedOffset(at - _inOrigin, 1ULL, _decimation, 0ULL), _outOrigin + mapDelayedOffset(at - _inOrigin, 1ULL, _decimation, _twiceDelay), std::move(forwarded));
+                    holdTag(_pendingTags, latest, _outOrigin + mapDelayedOffset(at - _inOrigin, 1ULL, _decimation, _twiceDelay), std::move(forwarded));
                 }
             },
             inputSpans);
@@ -232,14 +231,13 @@ combinations exist. There is no design path - taps come from `gr::filter::fir::d
 than becoming a pass-through; a pass-through is `taps = {1}`.
 
 A taps change preserves the input/output alignment exactly; changing `decimation` moves the phase origin. Every
-forwarded tag that marks a time position, such as a trigger, a burst edge or a time stamp, moves by the filter's delay
-`d`: a tag on input `i` leaves on output `round((i + d) / decimation)`, the sample that carries the energy of input `i`.
-A tag that states a property of the stream, such as `sample_rate`, `signal_name` or `context`, crosses unmoved, to the
-output of input `i` itself. A symmetric or antisymmetric tap set delays by `(N-1)/2`. An asymmetric set moves its tags
-by the centroid of its energy, rounded to the whole input sample. A tag keeps the output it was given when it crossed,
-whatever taps or decimation change follows, and a tag whose output lies past the end of the stream is not published. A
-forwarded `sample_rate` tag is divided by the decimation, so downstream reads the rate of the stream this block hands
-it. )"">;
+forwarded tag moves whole by the filter's delay `d`, its `sample_rate`, `frequency` or `context` keys as much as a
+trigger, a burst edge or a time stamp, because a tag describes the sample it sits on: a tag on input `i` leaves on
+output `round((i + d) / decimation)`, the sample that carries the energy of input `i`. A symmetric or antisymmetric tap
+set delays by `(N-1)/2`. An asymmetric set moves its tags by the centroid of its energy, rounded to the whole input
+sample. A tag keeps the output it was given when it crossed, whatever taps or decimation change follows, and a tag whose
+output lies past the end of the stream is not published. A forwarded `sample_rate` tag is divided by the decimation, so
+downstream reads the rate of the stream this block hands it. )"">;
 
     PortIn<TSample> in;
     PortOut<TOut>   out;

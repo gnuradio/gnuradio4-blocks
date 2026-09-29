@@ -501,14 +501,14 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         expect(that % (got == want)) << std::format("held past the change the tag lands at [{}], first seen after it at [{}]", join(got), join(want));
 
         const std::vector<float> rate{static_cast<float>(kAfter * static_cast<double>(kRateIn))};
-        // the rate crosses as its own tag, unmoved, since it states a property of the stream and tag0 marks a position
+        // the rate crosses with the tag it arrived in, scaled by the rate in force where its sample is consumed
         expect(that % (ratesOf(controlRun.result.tags, "sample_rate") == rate));
         expect(that % (ratesOf(probeRun.result.tags, "sample_rate") == rate)) << "and the rate is the one of the stream the block hands on where it is published";
     };
 
-    "a tag that states a property of the stream crosses unmoved, and a trigger moves by the delay"_test = [] {
-        // the rate describes output 0 as it describes input 0; the trigger leaves on the output nearest the prototype's
-        // delay at the interpolated rate
+    "a tag moves whole by the delay, its rate with its trigger, and a retune arrives on the delayed sample"_test = [] {
+        // a tag describes the sample it sits on: the opening tag leaves whole on the output nearest the prototype's delay
+        // at the interpolated rate, and a retune at input 100 on the output nearest 100*L plus the delay
         constexpr std::size_t    kBank     = 32UZ;
         const std::vector<float> prototype = prototypeFor(kBank, 0.5);
         for (const double rate : {0.5, 1.7}) {
@@ -516,12 +516,19 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
             gr::property_map              opening; // a source's opening tag: the stream's rate and the trigger of its first sample
             opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
             opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
-            const std::vector<gr::Tag> tags{gr::Tag{0UZ, opening}};
+            gr::property_map retune; // a mid-stream retune
+            retune.insert_or_assign(gr::property_map::key_type{"frequency"}, 1.0e8);
+            const std::vector<gr::Tag> tags{gr::Tag{0UZ, opening}, gr::Tag{100UZ, retune}};
             const std::vector<float>   x(400UZ, 0.0f);
             const auto                 got = test::runAsync<float>(block, std::span<const float>(x), 8UZ, 4UZ, std::span<const gr::Tag>(tags));
 
-            expect(that % (got.offsetsOf("sample_rate") == std::vector<std::size_t>{0UZ})) << std::format("r = {}: the rate stays on output 0", rate);
-            expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{narrowIndex<std::size_t>(mapArbitraryOffset(0ULL, kBank, stepFor(kBank, rate), delayedPhase(prototype)))})) << std::format("r = {}: the trigger moves by the delay", rate);
+            const std::size_t first  = narrowIndex<std::size_t>(mapArbitraryOffset(0ULL, kBank, stepFor(kBank, rate), delayedPhase(prototype)));
+            const bool        oneTag = std::ranges::any_of(got.tags, [](const gr::Tag& t) { return t.map.contains(gr::property_map::key_type{"sample_rate"}) && t.map.contains(gr::property_map::key_type{"trigger_time"}); });
+
+            expect(that % (got.offsetsOf("sample_rate") == std::vector<std::size_t>{first})) << std::format("r = {}: the rate moves by the delay", rate);
+            expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{first})) << std::format("r = {}: the trigger moves by the delay", rate);
+            expect(oneTag) << std::format("r = {}: the rate and the trigger leave as one tag", rate);
+            expect(that % (got.offsetsOf("frequency") == std::vector<std::size_t>{narrowIndex<std::size_t>(mapArbitraryOffset(100ULL, kBank, stepFor(kBank, rate), delayedPhase(prototype)))})) << std::format("r = {}: the retune arrives on the delayed sample", rate);
         }
     };
 

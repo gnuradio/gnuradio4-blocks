@@ -45,13 +45,13 @@ this block hands it. `D = 1` designs no taps and is a bit-exact pass-through. Ch
 rebuilds the ladder, with a discontinuity at the seam; only a `decimation` change moves the tag map's origin, a
 redesign at the same rate leaving the alignment alone.
 
-Every forwarded tag that marks a time position, such as a trigger, a burst edge or a time stamp, moves by the ladder's
-delay `d`: a tag on input `i` leaves on output `round((i + d) / D)`, the sample that carries the energy of input `i`. A
-tag that states a property of the stream, such as `sample_rate`, `signal_name` or `context`, crosses unmoved, to the
-output of input `i` itself. Over real samples `d` is `groupDelaySamples()`. Over complex samples the halving stages run
-as a halfband cascade, which samples each halving's output one sample of that stage's input rate early; there `d` is
-`groupDelaySamples()` less `2^k - 1` for `k` halvings. A tag keeps the output it was given when it crossed, whatever
-rebuild follows, and a tag whose output lies past the end of the stream is not published. )"">;
+Every forwarded tag moves whole by the ladder's delay `d`, its `sample_rate`, `frequency` or `context` keys as much as a
+trigger, a burst edge or a time stamp, because a tag describes the sample it sits on: a tag on input `i` leaves on
+output `round((i + d) / D)`, the sample that carries the energy of input `i`. Over real samples `d` is
+`groupDelaySamples()`. Over complex samples the halving stages run as a halfband cascade, which samples each halving's
+output one sample of that stage's input rate early; there `d` is `groupDelaySamples()` less `2^k - 1` for `k` halvings.
+A tag keeps the output it was given when it crossed, whatever rebuild follows, and a tag whose output lies past the end
+of the stream is not published. )"">;
 
     PortIn<T>  in;
     PortOut<T> out;
@@ -174,12 +174,11 @@ rebuild follows, and a tag whose output lies past the end of the stream is not p
     }
 
     /**
-     * @brief Place every input tag that marks a time position on the output sample that carries its input sample's
-     * energy, from the current phase origin.
+     * @brief Place every input tag, all its keys together, on the output sample that carries its input sample's energy,
+     * from the current phase origin.
      *
      * Input `i` maps to output `round((i + d) / D)`, `d` being the path's delay and a half rounding up, from the total
-     * decimation and never stage by stage. The keys that state a property of the stream (`detail::kStreamPropertyKeys`)
-     * go to output `round(i / D)` instead. A tag whose output is not in this call is held and published by the call
+     * decimation and never stage by stage. A tag whose output is not in this call is held and published by the call
      * that produces that output. A tag is placed once, when it crosses, under the delay and the decimation in force
      * then. A rebuild moves no held tag, and a tag that crosses after one is never placed ahead of a tag held from
      * before it. Tags therefore leave in the order they arrived. A held tag whose output the stream ends before is
@@ -223,7 +222,7 @@ rebuild follows, and a tag whose output lies past the end of the stream is not p
                     const std::uint64_t at = static_cast<std::uint64_t>(span.streamIndex) + static_cast<std::uint64_t>(relIndex);
                     property_map        forwarded(tagMap.get());
                     this->scaleSampleRateByChunkRatio(forwarded); // the rate in force where the tag crossed, not where it is published
-                    detail::holdTag(_pendingTags, latest, _outOrigin + detail::mapDelayedOffset(at - _inOrigin, 1ULL, _decimation, 0ULL), _outOrigin + detail::mapDelayedOffset(at - _inOrigin, 1ULL, _decimation, _twiceDelay), std::move(forwarded));
+                    detail::holdTag(_pendingTags, latest, _outOrigin + detail::mapDelayedOffset(at - _inOrigin, 1ULL, _decimation, _twiceDelay), std::move(forwarded));
                 }
             },
             inputSpans);

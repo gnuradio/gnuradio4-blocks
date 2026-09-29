@@ -43,13 +43,13 @@ Single-stage only: 48 kHz to 44.1 kHz is `147/160` after reduction and costs 588
 ratio change also moves the tag map's origin, everything else leaving the alignment alone. A forwarded `sample_rate`
 tag is multiplied by `L/M`, so downstream reads the rate of the stream this block hands it.
 
-Every forwarded tag that marks a time position, such as a trigger, a burst edge or a time stamp, moves by the filter's
-delay `d`, in samples of the interpolated rate: a tag on input `i` leaves on output `round((i*L + d) / M)`, the sample
-that carries the energy of input `i`. A tag that states a property of the stream, such as `sample_rate`, `signal_name`
-or `context`, crosses unmoved, to the output of input `i` itself. A designed or other symmetric prototype of `N` taps
-delays by `(N-1)/2`. An asymmetric supplied prototype moves its tags by the centroid of its energy, rounded to the whole
-interpolated sample. A tag keeps the output it was given when it crossed, whatever rebuild follows, and a tag whose
-output lies past the end of the stream is not published. )"">;
+Every forwarded tag moves whole by the filter's delay `d`, its `sample_rate`, `frequency` or `context` keys as much as a
+trigger, a burst edge or a time stamp, because a tag describes the sample it sits on. `d` is in samples of the
+interpolated rate: a tag on input `i` leaves on output `round((i*L + d) / M)`, the sample that carries the energy of
+input `i`. A designed or other symmetric prototype of `N` taps delays by `(N-1)/2`. An asymmetric supplied prototype
+moves its tags by the centroid of its energy, rounded to the whole interpolated sample. A tag keeps the output it was
+given when it crossed, whatever rebuild follows, and a tag whose output lies past the end of the stream is not
+published. )"">;
 
     PortIn<T>  in;
     PortOut<T> out;
@@ -130,12 +130,11 @@ output lies past the end of the stream is not published. )"">;
     }
 
     /**
-     * @brief Place every input tag that marks a time position on the output sample that carries its input sample's
-     * energy, from the current phase origin.
+     * @brief Place every input tag, all its keys together, on the output sample that carries its input sample's energy,
+     * from the current phase origin.
      *
      * Input `i` maps to output `round((i*L + d) / M)`, `d` being the prototype's delay at the interpolated rate and a
-     * half rounding up. The keys that state a property of the stream (`detail::kStreamPropertyKeys`) go to output
-     * `round(i*L / M)` instead. A tag whose output is not in this call is held and published by the call that produces that
+     * half rounding up. A tag whose output is not in this call is held and published by the call that produces that
      * output. A tag is placed once, when it crosses, under the delay and the ratio in force then. A rebuild moves no
      * held tag, and a tag that crosses after one is never placed ahead of a tag held from before it. Tags therefore
      * leave in the order they arrived. A held tag whose output the stream ends before is never published.
@@ -182,7 +181,7 @@ output lies past the end of the stream is not published. )"">;
                     const std::uint64_t at = static_cast<std::uint64_t>(span.streamIndex) + static_cast<std::uint64_t>(relIndex);
                     property_map        forwarded(tagMap.get());
                     this->scaleSampleRateByChunkRatio(forwarded); // the ratio in force where the tag crossed, not where it is published
-                    detail::holdTag(_pendingTags, latest, _outOrigin + detail::mapDelayedOffset(at - _inOrigin, _interpolation, _decimation, 0ULL), _outOrigin + detail::mapDelayedOffset(at - _inOrigin, _interpolation, _decimation, _twiceDelay), std::move(forwarded));
+                    detail::holdTag(_pendingTags, latest, _outOrigin + detail::mapDelayedOffset(at - _inOrigin, _interpolation, _decimation, _twiceDelay), std::move(forwarded));
                 }
             },
             inputSpans);
