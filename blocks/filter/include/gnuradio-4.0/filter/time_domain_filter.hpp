@@ -7,6 +7,8 @@
 #include <functional>
 #include <limits>
 #include <numeric>
+#include <optional>
+#include <span>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
@@ -17,6 +19,7 @@
 #include <magic_enum.hpp>
 
 #include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
+#include <gnuradio-4.0/filter/TagDelay.hpp>
 
 namespace gr::blocks::filter {
 
@@ -35,11 +38,16 @@ GR_REGISTER_BLOCK(gr::blocks::filter::fir_filter, [T], [float])
 
 template<typename T>
 requires std::floating_point<T>
-struct fir_filter : Block<fir_filter<T>> {
+struct fir_filter : Block<fir_filter<T>>, detail::DelayedTagFilter<fir_filter<T>, T, T> {
     using Description = Doc<R""(@brief Finite Impulse Response (FIR) filter class
 
 The transfer function of an FIR filter is given by:
 H(z) = b[0] + b[1]*z^-1 + b[2]*z^-2 + ... + b[N]*z^-N
+
+Every forwarded tag moves by the filter's delay `d`: a tag on input `i` leaves on output `i + d`, a half rounding up,
+the sample that carries the energy of input `i`. A symmetric or antisymmetric set of `N+1` coefficients delays by
+`N/2`. An asymmetric set moves its tags by the centroid of its energy, rounded to the whole sample. A tag whose output
+lies past the end of the stream leaves on the stream's last output.
 )"">;
     PortIn<T>  in;
     PortOut<T> out;
@@ -55,9 +63,18 @@ H(z) = b[0] + b[1]*z^-1 + b[2]*z^-2 + ... + b[N]*z^-N
         }
     }
 
-    constexpr T processOne(T input) noexcept {
-        inputHistory.push_front(input);
-        return std::transform_reduce(std::execution::unseq, b.cbegin(), b.cend(), inputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{});
+    void start() { this->tagsStart(); }
+
+    [[nodiscard]] std::size_t tagDecimation() const noexcept { return 1UZ; }
+
+    /// @brief The delay every forwarded tag moves by, in half samples: `N` for a symmetric set of `N+1` coefficients.
+    [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept { return detail::twiceTapDelay(std::span<const T>(b.data(), b.size())); }
+
+    void filterSamples(std::span<const T> input, std::span<T> output) noexcept {
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            inputHistory.push_front(input[i]);
+            output[i] = std::transform_reduce(std::execution::unseq, b.cbegin(), b.cend(), inputHistory.cbegin(), T{0}, std::plus<>{}, std::multiplies<>{});
+        }
     }
 };
 
@@ -157,12 +174,17 @@ enum class FilterType { FIR, IIR };
 
 template<typename T, typename... Args>
 requires(std::floating_point<T> or std::is_arithmetic_v<meta::fundamental_base_value_type_t<T>>)
-struct BasicFilterProto : Block<BasicFilterProto<T, Args...>, Args...> {
+struct BasicFilterProto : Block<BasicFilterProto<T, Args...>, Args...>, detail::DelayedTagFilter<BasicFilterProto<T, Args...>, T, T> {
     using TParent     = Block<BasicFilterProto<T, Args...>, Args...>;
     using Description = Doc<R""(@brief Basic Digital Filter class supporting FIR and IIR filters
 
 This block implements a digital filter which can be configured as either FIR or IIR,
 with selectable filter type (low-pass, high-pass, band-pass, band-stop), and supports resampling.
+
+In FIR mode every forwarded tag moves by the designed filter's delay `d`, `(N-1)/2` for its `N` coefficients: a tag on
+input `i` leaves on output `round((i + d) / M)`, the sample that carries the energy of input `i`. `M` is the decimation
+of `BasicDecimatingFilter` and 1 for `BasicFilter`. A tag whose output lies past the end of the stream leaves on the
+stream's last output. In IIR mode the framework places the tags: an IIR response has no single delay.
 )"">;
     using ValueType   = meta::fundamental_base_value_type_t<T>;
 
@@ -171,7 +193,8 @@ with selectable filter type (low-pass, high-pass, band-pass, band-stop), and sup
 
     using FilterImpl = std::conditional_t<UncertainValueLike<T>, gr::filter::ErrorPropagatingFilter<T>, gr::filter::Filter<T>>;
 
-    FilterImpl _filter;
+    FilterImpl    _filter;
+    std::uint64_t _twiceFirDelay = 0ULL; /// the FIR design's delay in half input samples, `twiceTapDelay`
 
     // Public settings
     Annotated<FilterType, "filter_type", Doc<"Filter type ('FIR' or 'IIR')">, Visible>                                                             filter_type     = FilterType::IIR;
@@ -188,13 +211,19 @@ with selectable filter type (low-pass, high-pass, band-pass, band-stop), and sup
     GR_MAKE_REFLECTABLE(BasicFilterProto, in, out, filter_type, filter_response, filter_order, f_low, f_high, sample_rate, decimate, iir_design_method, fir_design_method);
 
     // `settingsChanged` is not reached by a batch that moves no value, so the filter is also designed at start.
-    void start() { designFilter(); }
+    void start() {
+        designFilter();
+        this->tagsStart();
+    }
 
     // re-designing resets the filter history, so only the keys the design depends on may trigger it
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         static constexpr std::array kDesignKeys{"filter_type", "filter_response", "filter_order", "f_low", "f_high", "sample_rate", "decimate", "iir_design_method", "fir_design_method"};
         if (std::ranges::any_of(kDesignKeys, [&newSettings](std::string_view key) { return newSettings.contains(key); })) {
             designFilter();
+        }
+        if (newSettings.contains("decimate")) {
+            this->tagsMarkReorigin();
         }
     }
 
@@ -213,32 +242,43 @@ with selectable filter type (low-pass, high-pass, band-pass, band-stop), and sup
         params.fs    = static_cast<double>(sample_rate);
 
         if (filter_type == FilterType::FIR) { // design FIR filter
-            _filter = FilterImpl(fir::designFilter<ValueType>(filter_response, params, fir_design_method));
+            const FilterCoefficients<ValueType> coefficients = fir::designFilter<ValueType>(filter_response, params, fir_design_method);
+            _twiceFirDelay                                   = detail::twiceTapDelay(std::span<const ValueType>(coefficients.b));
+            _filter                                          = FilterImpl(coefficients);
         } else if (filter_type == FilterType::IIR) { // design IIR filter
             _filter = FilterImpl(iir::designFilter<ValueType>(filter_response, params, iir_design_method));
         }
     }
 
-    [[nodiscard]] T processOne(T input) noexcept
-    requires(TParent::ResamplingControl::kIsConst)
-    {
-        return _filter.processOne(input);
+    /// @brief Input samples per output: `decimate` where the block resamples, 1 otherwise.
+    [[nodiscard]] std::size_t tagDecimation() const noexcept {
+        if constexpr (TParent::ResamplingControl::kIsConst) {
+            return 1UZ;
+        } else {
+            return static_cast<std::size_t>(decimate);
+        }
     }
 
-    [[nodiscard]] work::Status processBulk(std::span<const T> input, std::span<T> output) noexcept
-    requires(not TParent::ResamplingControl::kIsConst)
-    {
-        assert(output.size() >= input.size() / decimate);
+    /// @brief The FIR design's delay in half input samples; an IIR design has none.
+    [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept {
+        if (filter_type == FilterType::FIR) {
+            return _twiceFirDelay;
+        }
+        return std::nullopt;
+    }
+
+    void filterSamples(std::span<const T> input, std::span<T> output) noexcept {
+        const std::size_t decimation = tagDecimation();
+        assert(output.size() >= input.size() / decimation);
 
         std::size_t out_sample_idx = 0;
         for (std::size_t i = 0; i < input.size(); ++i) {
             T output_sample = _filter.processOne(input[i]);
 
-            if (i % decimate == 0) {
+            if (i % decimation == 0) {
                 output[out_sample_idx++] = output_sample;
             }
         }
-        return work::Status::OK;
     }
 };
 

@@ -1,6 +1,10 @@
 #ifndef GNURADIO_SAVITZKY_GOLAY_FILTER_HPP
 #define GNURADIO_SAVITZKY_GOLAY_FILTER_HPP
 
+#include <cstdint>
+#include <optional>
+#include <span>
+
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/DataSet.hpp>
@@ -8,6 +12,7 @@
 #include <gnuradio-4.0/algorithm/filter/SavitzkyGolay.hpp>
 
 #include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
+#include <gnuradio-4.0/filter/TagDelay.hpp>
 
 namespace gr::blocks::filter {
 
@@ -20,7 +25,7 @@ using namespace gr;
 GR_REGISTER_BLOCK(gr::blocks::filter::SavitzkyGolayFilter, [T], [float])
 
 template<typename T>
-struct SavitzkyGolayFilter : Block<SavitzkyGolayFilter<T>> {
+struct SavitzkyGolayFilter : Block<SavitzkyGolayFilter<T>>, detail::DelayedTagFilter<SavitzkyGolayFilter<T>, T, T> {
     using Block<SavitzkyGolayFilter<T>>::Block;
     static_assert(std::floating_point<T>, "T must be floating_point");
 
@@ -30,8 +35,13 @@ Applies local polynomial smoothing/differentiation to streaming scalar data.
 Filter coefficients are computed using SVD-based least-squares fitting.
 
 Alignment modes:
-- Centred: symmetric window, linear-phase, group delay = (window_size-1)/2 samples
+- centered, the default: the fit is evaluated at the middle of the window, at the older of the two middle samples for
+  an even window, and the output lags the input by ceil((window_size-1)/2) samples; linear-phase for an odd window
 - Causal: past-only window, minimal latency, non-linear phase
+
+Every forwarded tag moves by that lag, 0 in the Causal alignment: a tag on input `i` leaves on output `i + lag`, the
+sample whose fit is evaluated at input `i`. A tag whose output lies past the end of the stream leaves on the stream's
+last output.
 )"">; // clang-format off
 
     PortIn<T>  in;
@@ -65,6 +75,7 @@ public:
             static_cast<std::size_t>(window_size),
             static_cast<std::size_t>(poly_order),
             buildConfig());
+        this->tagsStart();
     }
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
@@ -80,7 +91,23 @@ public:
 
     void reset() { _state.reset(); }
 
-    [[nodiscard]] constexpr T processOne(T input) noexcept { return _state.processOne(input); }
+    [[nodiscard]] std::size_t tagDecimation() const noexcept { return 1UZ; }
+
+    /// @brief The lag in half samples. The centered fit is evaluated at index `(W-1)/2` of the window, oldest first,
+    /// `W-1-(W-1)/2` samples behind the newest.
+    [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept {
+        if (_state.alignment() == algorithm::savitzky_golay::Alignment::Causal) {
+            return 0ULL;
+        }
+        const std::uint64_t window = _state.windowSize();
+        return 2ULL * (window - 1ULL - (window - 1ULL) / 2ULL);
+    }
+
+    void filterSamples(std::span<const T> input, std::span<T> output) noexcept {
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            output[i] = _state.processOne(input[i]);
+        }
+    }
 };
 
 // ============================================================================
