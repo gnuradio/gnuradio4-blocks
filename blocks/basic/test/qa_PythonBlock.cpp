@@ -279,6 +279,53 @@ def process_bulk(ins, outs):
         expect(eq(sink._nSamplesProduced, 5U)) << "sinkOne did not consume enough input samples";
         expect(eq(sink._samples, std::vector<float>{0.f, 2.f, 4.f, 6.f, 8.f})) << std::format("mismatch of vector {}", sink._samples);
     };
+
+    "two blocks keep their own script names"_test = [] {
+        // both scripts define 'process', 'process_bulk' and the same global; each block must call its own
+        std::string doubling = R"(tag = "doubling"
+def process(x):
+    return x * 2
+
+def process_bulk(ins, outs):
+    this_block.setSettings({"ran": tag})
+    for i in range(len(ins)):
+        outs[i][:] = process(ins[i])
+)";
+        std::string offset   = R"(tag = "offset"
+def process(x):
+    return x + 100
+
+def process_bulk(ins, outs):
+    this_block.setSettings({"ran": tag})
+    for i in range(len(ins)):
+        outs[i][:] = process(ins[i])
+)";
+
+        using namespace gr::blocks::testing;
+        Graph graph;
+        auto& srcA   = graph.emplaceBlock<TagSource<int32_t>>({{"n_samples_max", 5U}, {"mark_tag", false}});
+        auto& blockA = graph.emplaceBlock<PythonBlock<int32_t>>({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", doubling}});
+        auto& sinkA  = graph.emplaceBlock<TagSink<int32_t, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_expected", 5U}});
+        auto& srcB   = graph.emplaceBlock<TagSource<int32_t>>({{"n_samples_max", 5U}, {"mark_tag", false}});
+        auto& blockB = graph.emplaceBlock<PythonBlock<int32_t>>({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", offset}});
+        auto& sinkB  = graph.emplaceBlock<TagSink<int32_t, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_expected", 5U}});
+
+        expect(graph.connect(srcA, "out", blockA, "inputs#0").has_value());
+        expect(graph.connect(blockA, "outputs#0", sinkA, "in").has_value());
+        expect(graph.connect(srcB, "out", blockB, "inputs#0").has_value());
+        expect(graph.connect(blockB, "outputs#0", sinkB, "in").has_value());
+
+        gr::scheduler::Simple sched;
+        if (auto ret = sched.exchange(std::move(graph)); !ret) {
+            throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+        }
+        expect(sched.runAndWait().has_value());
+
+        expect(eq(sinkA._samples, std::vector<std::int32_t>{0, 2, 4, 6, 8})) << std::format("first block: {}", sinkA._samples);
+        expect(eq(sinkB._samples, std::vector<std::int32_t>{100, 101, 102, 103, 104})) << std::format("second block: {}", sinkB._samples);
+        expect(eq(blockA.getSettings().at("ran"), "doubling"s)) << "the first script's 'this_block' names the first block";
+        expect(eq(blockB.getSettings().at("ran"), "offset"s)) << "the second script's 'this_block' names the second block";
+    };
 };
 
 int main() { /* tests are statically executed */ }
