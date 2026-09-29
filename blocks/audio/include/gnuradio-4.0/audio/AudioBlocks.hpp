@@ -299,7 +299,7 @@ private:
     }
 
     // the capture time of the chunk that starts at ring frame firstFrame, on the wallClockNs() clock:
-    // the backend's measurement where it records one, otherwise the present time less the duration
+    // the backend's measurement where one exists for that frame, otherwise the present time less the duration
     // of the chunk and of the frames stored behind it, all of which were captured by now
     [[nodiscard]] std::int64_t captureTimeNs(std::size_t firstFrame, std::size_t nFrames, std::size_t channelCount) const {
         const double rate = static_cast<double>(sample_rate.value);
