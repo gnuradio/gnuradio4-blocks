@@ -23,11 +23,13 @@
 #include <cctype>
 #include <complex>
 #include <cstdint>
+#include <exception>
 #include <regex>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 #include <gnuradio-4.0/Message.hpp>
 
@@ -270,7 +272,6 @@ class Interpreter {
     static std::atomic<std::size_t> _nInterpreters;
     static std::atomic<std::size_t> _nNumPyInit;
     static std::atomic<std::size_t> _nModules;
-    static PyThreadState*           _interpreterThreadState;
     PyModuleDef*                    _moduleDefinitions;
     PyObject*                       _pModule = nullptr; // owned reference, released under the interpreter lock
     PyObject*                       _pDict   = nullptr; // borrowed from _pModule
@@ -279,23 +280,39 @@ public:
     template<typename T>
     explicit(false) Interpreter(T* classReference, PyModuleDef* moduleDefinitions = nullptr, std::source_location location = std::source_location::current()) : _moduleDefinitions(moduleDefinitions) {
         if (_nInterpreters.fetch_add(1UZ, std::memory_order_relaxed) == 0UZ) {
-            Py_Initialize();
-            if (PyErr_Occurred()) {
-                PyErr_Print();
+            const bool ownsInterpreter = Py_IsInitialized() == 0;
+            if (ownsInterpreter) {
+                Py_Initialize();
+                if (PyErr_Occurred()) {
+                    PyErr_Print();
+                }
             }
 
-            python::PyGILGuard guard;
-            _interpreterThreadState = PyThreadState_Get();
-            assert(_interpreterThreadState && "internal thread state is a nullptr");
-            if (_nNumPyInit.fetch_add(1UZ, std::memory_order_relaxed) == 0UZ && _import_array() < 0) {
-                // NumPy keeps internal state and does not allow to be re-initialised after 'Py_Finalize()' has been called.
+            std::exception_ptr numpyError;
+            {
+                python::PyGILGuard guard;
+                if (_nNumPyInit.fetch_add(1UZ, std::memory_order_relaxed) == 0UZ && _import_array() < 0) {
+                    // NumPy keeps internal state and does not allow to be re-initialised after 'Py_Finalize()' has been called.
 
-                // initialise NumPy -- N.B. NumPy does not support sub-interpreters (as of Python 3.12):
-                // "sys:1: UserWarning: NumPy was imported from a Python sub-interpreter but NumPy does not properly support sub-interpreters.
-                // This will likely work for most users but might cause hard to track down issues or subtle bugs.
-                // A common user of the rare sub-interpreter feature is wsgi which also allows single-interpreter mode.
-                // Improvements in the case of bugs are welcome, but is not on the NumPy roadmap, and full support may require significant effort to achieve."
-                python::throwCurrentPythonError("failed to initialize NumPy", location);
+                    // initialize NumPy -- N.B. NumPy does not support sub-interpreters (as of Python 3.12):
+                    // "sys:1: UserWarning: NumPy was imported from a Python sub-interpreter but NumPy does not properly support sub-interpreters.
+                    // This will likely work for most users but might cause hard to track down issues or subtle bugs.
+                    // A common user of the rare sub-interpreter feature is wsgi which also allows single-interpreter mode.
+                    // Improvements in the case of bugs are welcome, but is not on the NumPy roadmap, and full support may require significant effort to achieve."
+                    try {
+                        python::throwCurrentPythonError("failed to initialize NumPy", location);
+                    } catch (...) {
+                        numpyError = std::current_exception();
+                    }
+                }
+            }
+            // 'Py_Initialize()' leaves the interpreter lock with this thread. Saving the thread's state releases it, and
+            // every later call takes it through 'PyGILGuard' on whichever thread makes the call.
+            if (ownsInterpreter) {
+                std::ignore = PyEval_SaveThread();
+            }
+            if (numpyError) {
+                std::rethrow_exception(numpyError);
             }
         }
         assert(Py_IsInitialized() && "Python isn't properly initialised");
@@ -353,6 +370,7 @@ public:
             python::PyDecRef(_pModule);
         }
         if (_nInterpreters.fetch_sub(1UZ, std::memory_order_acq_rel) == 1UZ && Py_IsInitialized()) {
+            std::ignore = PyGILState_Ensure();
             Py_Finalize();
         }
     }
@@ -371,7 +389,7 @@ public:
     void invoke(Func func, std::string_view pythonCode = "", std::source_location location = std::source_location::current()) {
         assert(Py_IsInitialized());
         PyGILGuard localGuard;
-        if (_interpreterThreadState != PyThreadState_Get()) {
+        if (PyInterpreterState_Get() != PyInterpreterState_Main()) {
             python::throwCurrentPythonError("detected sub-interpreter change which is not supported by NumPy", location, pythonCode);
         }
         if (PyErr_Occurred()) {
@@ -406,7 +424,6 @@ public:
 inline std::atomic<std::size_t> Interpreter::_nInterpreters{0UZ};
 inline std::atomic<std::size_t> Interpreter::_nNumPyInit{0UZ};
 inline std::atomic<std::size_t> Interpreter::_nModules{0UZ};
-inline PyThreadState*           Interpreter::_interpreterThreadState = nullptr;
 
 } // namespace gr::python
 
