@@ -194,7 +194,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         if (newSettings.contains("dc_blocker_cutoff") || newSettings.contains("dc_blocker_enabled")) {
             _dcFilterDirty.store(true, std::memory_order_release);
         }
-        if (newSettings.contains("ppm_estimator_cutoff")) {
+        if (newSettings.contains("ppm_estimator_cutoff") || newSettings.contains("max_chunk_size")) {
             _rateEstimatorDirty.store(true, std::memory_order_release);
         }
     }
@@ -220,8 +220,8 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         _rateEstimatorDirty.store(false, std::memory_order_relaxed);
         _activationFailed.store(false, std::memory_order_relaxed);
         rebuildDcFilter();
-        rebuildRateEstimator();
         reinitDevice();
+        rebuildRateEstimator();
         _activation.activate([this] {
             if (auto r = _rxStream.activate(); !r) {
                 _activationError = r.error();
@@ -920,8 +920,10 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
 
     void rebuildRateEstimator() {
         if (ppm_estimator_cutoff > 0.f) {
-            double nomRate                  = static_cast<double>(sample_rate.value);
-            double updateHz                 = (nomRate > 0.0) ? (nomRate / (static_cast<double>(max_chunk_size.value))) : 250.0;
+            // one update per read, each read of the size it has while every output has room for it
+            const std::size_t nRead         = readSize(max_chunk_size, outputCapacity(), outputCapacity(), _rxStream.mtu());
+            double            nomRate       = static_cast<double>(sample_rate.value);
+            double            updateHz      = (nomRate > 0.0) ? (nomRate / static_cast<double>(nRead)) : 250.0;
             _rateEstimator.filter_cutoff_hz = ppm_estimator_cutoff;
             _rateEstimator.reset(nomRate, updateHz);
         }
