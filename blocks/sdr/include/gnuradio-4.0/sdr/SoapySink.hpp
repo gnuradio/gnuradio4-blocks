@@ -3,8 +3,12 @@
 
 #include <cstdint>
 #include <deque>
+#include <format>
 #include <mutex>
 #include <optional>
+#include <string_view>
+#include <type_traits>
+#include <utility>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
@@ -39,11 +43,13 @@ runs is given by that change. tx_gain_elements names the driver's gain elements 
 the order the driver lists them, after the AGC state.
 
 Transmit bursts: a write ends at a sample tagged tx_eob (true) and goes to the device with SOAPY_SDR_END_BURST, and a
-write starts at a sample tagged tx_time (std::uint64_t, UTC ns) and goes with SOAPY_SDR_HAS_TIME and that time. A write
-the device takes only part of is completed with the same flag, and the time goes with the first sample alone. tx_sob
-asks nothing of the device: SoapySDR begins a burst with the first write after an end of burst. A tag on any input
-applies to every channel at that sample. The burst taper ramps up the stream's first samples and ramps down after
-its last, and does not shape the bursts in between; no ramp-down follows a stream whose last sample ended a burst.)">;
+write starts at a sample tagged tx_time (UTC ns, an integer of any width) and goes with SOAPY_SDR_HAS_TIME and that
+time. A write the device takes only part of is completed with the same flag, and the time goes with the first sample
+alone. tx_sob asks nothing of the device: SoapySDR begins a burst with the first write after an end of burst. A tag on
+any input applies to every channel at that sample. A tx_eob that is not a bool and a tx_time that is not an integer of
+at least 0 are ignored, and the block reports the first such tag of a run on its message port. The burst taper ramps
+up the stream's first samples and ramps down after its last, and does not shape the bursts in between; no ramp-down
+follows a stream whose last sample ended a burst.)">;
 
     using TSizeChecker  = Limits<std::uint32_t{1}, std::numeric_limits<std::uint32_t>::max(), [](std::uint32_t x) { return std::has_single_bit(x); }>;
     using TBasePort     = PortIn<T>;
@@ -130,19 +136,21 @@ its last, and does not shape the bursts in between; no ramp-down follows a strea
         long long   timeNs   = 0LL;
     };
     std::mutex            _burstMarkMutex;
-    std::deque<BurstMark> _burstMarks;             // ordered by position; processBulk adds, the io thread retires
-    std::uint64_t         _samplesStaged  = 0U;    // scheduler thread only
-    std::uint64_t         _samplesWritten = 0U;    // io thread only
-    bool                  _burstEnded     = false; // io thread only: the last sample the device took ended a burst
+    std::deque<BurstMark> _burstMarks;               // ordered by position; processBulk adds, the io thread retires
+    std::uint64_t         _samplesStaged    = 0U;    // scheduler thread only
+    std::uint64_t         _samplesWritten   = 0U;    // io thread only
+    bool                  _burstEnded       = false; // io thread only: the last sample the device took ended a burst
+    bool                  _burstTagReported = false; // scheduler thread only: a mistyped burst tag was reported this run
 
     void start() {
         _underflowCount.store(0U, std::memory_order_relaxed);
         _stalledWrites.store(0UZ, std::memory_order_relaxed);
         _rampAbandoned.store(false, std::memory_order_relaxed);
         _ioThreadStarted.store(false, std::memory_order_relaxed);
-        _samplesStaged  = 0U;
-        _samplesWritten = 0U;
-        _burstEnded     = false;
+        _samplesStaged    = 0U;
+        _samplesWritten   = 0U;
+        _burstEnded       = false;
+        _burstTagReported = false;
         {
             std::lock_guard lock(_burstMarkMutex);
             _burstMarks.clear();
@@ -302,14 +310,18 @@ its last, and does not shape the bursts in between; no ramp-down follows a strea
     }
 
     void addBurstMark(std::uint64_t position, const property_map& tagMap) {
-        BurstMark mark{.position = position};
+        BurstMark mark{.position = position, .endsBurst = false, .timeNs = std::nullopt};
         if (const auto it = tagMap.find(std::string_view(gr::tag::TX_EOB.shortKey())); it != tagMap.end()) {
-            const bool* endsBurst = it->second.template get_if<bool>();
-            mark.endsBurst        = endsBurst != nullptr && *endsBurst;
+            if (const bool* endsBurst = it->second.template get_if<bool>(); endsBurst != nullptr) {
+                mark.endsBurst = *endsBurst;
+            } else {
+                reportIgnoredBurstTag(gr::tag::TX_EOB.shortKey(), position, "a bool");
+            }
         }
         if (const auto it = tagMap.find(std::string_view(gr::tag::TX_TIME.shortKey())); it != tagMap.end()) {
-            if (const std::uint64_t* timeNs = it->second.template get_if<std::uint64_t>(); timeNs != nullptr) {
-                mark.timeNs = *timeNs;
+            mark.timeNs = nonNegativeInteger<std::uint64_t, std::uint32_t, std::uint16_t, std::uint8_t, std::int64_t, std::int32_t, std::int16_t, std::int8_t>(it->second);
+            if (!mark.timeNs.has_value()) {
+                reportIgnoredBurstTag(gr::tag::TX_TIME.shortKey(), position, "an integer of at least 0");
             }
         }
         if (!mark.endsBurst && !mark.timeNs.has_value()) {
@@ -328,10 +340,36 @@ its last, and does not shape the bursts in between; no ramp-down follows a strea
         }
     }
 
+    // the value as a std::uint64_t when it holds one of the integer types TInts and is not negative
+    template<typename... TInts>
+    [[nodiscard]] static std::optional<std::uint64_t> nonNegativeInteger(const auto& value) {
+        std::optional<std::uint64_t> result;
+        (
+            [&value, &result] {
+                if (const TInts* held = value.template get_if<TInts>(); held != nullptr && std::cmp_greater_equal(*held, 0)) {
+                    if constexpr (std::is_same_v<TInts, std::uint64_t>) {
+                        result = *held;
+                    } else {
+                        result = static_cast<std::uint64_t>(*held);
+                    }
+                }
+            }(),
+            ...);
+        return result;
+    }
+
+    void reportIgnoredBurstTag(std::string_view key, std::uint64_t position, std::string_view expected) {
+        if (_burstTagReported) {
+            return;
+        }
+        _burstTagReported = true;
+        this->emitMessage("processBulk()", {{"error", std::format("{} at sample {} is not {} and is ignored", key, position, expected)}});
+    }
+
     // The next write takes at most nAvailable samples. It ends at a burst's last sample, with END_BURST, and before a
     // timed sample, which starts the following write with HAS_TIME and its time.
     [[nodiscard]] BurstWrite nextBurstWrite(std::size_t nAvailable) {
-        BurstWrite      write{.nSamples = nAvailable};
+        BurstWrite      write{.nSamples = nAvailable, .flags = 0, .timeNs = 0LL};
         std::lock_guard lock(_burstMarkMutex);
         for (const BurstMark& mark : _burstMarks) {
             const std::uint64_t offset = mark.position - _samplesWritten;
