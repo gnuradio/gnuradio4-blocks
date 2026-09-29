@@ -516,7 +516,7 @@ struct RTL2832DeviceBase {
     virtual Result                         setAgcMode(bool on)                 = 0;
     virtual Result                         setFreqCorrection(std::int32_t ppm) = 0;
     virtual Result                         resetBuffer()                       = 0;
-    // drops every sample taken before the call that readBulk has not handed out
+    // drops every sample taken before the call that readBulk has not handed out; a failure leaves the device closed
     virtual Result discardStream() = 0;
     // up to maxLen bytes of the sample stream, 0 when none arrived within the read's timeout
     virtual std::expected<std::size_t, std::string> readBulk(std::uint8_t* dst, std::size_t maxLen) = 0;
@@ -786,13 +786,15 @@ struct RTL2832Device : RTL2832DeviceBase {
     }
 
     // natively discards every queued transfer, then flushes the dongle's FIFO while no transfer is pending; the next
-    // readBulk queues new transfers and returns only samples taken after this call. The browser queue is left as it is
+    // readBulk queues new transfers and returns only samples taken after this call. A discard that fails closes the
+    // device. The browser queue is left as it is.
     Result discardStream() override {
 #if !defined(__EMSCRIPTEN__)
-        if (auto r = _usb.discardQueuedTransfers(); !r) {
-            return r;
+        Result discarded = _usb.discardQueuedTransfers().and_then([this] { return resetBuffer(); });
+        if (!discarded) {
+            close();
         }
-        return resetBuffer();
+        return discarded;
 #else
         return {};
 #endif

@@ -56,7 +56,8 @@ std::optional<std::expected<void, gr::Error>> runBounded(gr::scheduler::Simple<>
 // a sample rate or a correction) made before the sample was taken. As RTL2832Device does, it keeps kQueued transfers
 // queued, each filled when it was queued; setCenterFrequency and discardStream drop the queue, and setSampleRate and
 // setFreqCorrection leave it. It hands out kReadsBeforeChange transfers, then none until a change arrives, then more up
-// to kReads in all.
+// to kReads in all. A discard asked to fail closes the model and returns an error, as RTL2832Device does. The model
+// counts its opens and every call that reaches it while it is closed.
 struct QueuedDongle : gr::blocks::sdr::RTL2832DeviceBase {
     static constexpr std::size_t kQueued            = 16UZ;
     static constexpr std::size_t kTransferBytes     = 1024UZ;
@@ -70,11 +71,15 @@ struct QueuedDongle : gr::blocks::sdr::RTL2832DeviceBase {
     std::deque<std::uint8_t> _queue; // what each queued transfer holds
     std::size_t              _staleReads = 0UZ;
     std::atomic<std::size_t> _reads{0UZ};
+    std::atomic<bool>        _failNextDiscard{false};
+    std::size_t              _opens            = 0UZ;
+    std::size_t              _callsWhileClosed = 0UZ;
 
     [[nodiscard]] bool             isOpen() const override { return _opened; }
     [[nodiscard]] std::string_view deviceName() const override { return _deviceName; }
     Result                         open(std::uint32_t /*deviceIndex*/) override {
         _opened = true;
+        ++_opens;
         return {};
     }
     void close() override {
@@ -82,30 +87,54 @@ struct QueuedDongle : gr::blocks::sdr::RTL2832DeviceBase {
         _queue.clear();
     }
     ValueResult setSampleRate(float rate) override {
+        reach();
         change();
         return static_cast<double>(rate);
     }
     ValueResult setCenterFrequency(double frequency) override {
+        reach();
         change();
         if (auto discarded = discardStream(); !discarded) {
             return std::unexpected(discarded.error());
         }
         return frequency;
     }
-    Result setGainMode(bool /*autoGain*/) override { return {}; }
-    Result setAgcMode(bool /*on*/) override { return {}; }
-    Result setTunerGain(float /*gainDb*/) override { return {}; }
+    Result setGainMode(bool /*autoGain*/) override {
+        reach();
+        return {};
+    }
+    Result setAgcMode(bool /*on*/) override {
+        reach();
+        return {};
+    }
+    Result setTunerGain(float /*gainDb*/) override {
+        reach();
+        return {};
+    }
     Result setFreqCorrection(std::int32_t /*ppm*/) override {
+        reach();
         change();
         return {};
     }
-    Result resetBuffer() override { return {}; }
+    Result resetBuffer() override {
+        reach();
+        return {};
+    }
     Result discardStream() override {
+        reach();
+        if (_failNextDiscard.exchange(false)) {
+            close();
+            return std::unexpected(std::string("discard failed"));
+        }
         _queue.clear();
         return {};
     }
 
     std::expected<std::size_t, std::string> readBulk(std::uint8_t* dst, std::size_t maxLen) override {
+        if (!_opened) {
+            ++_callsWhileClosed;
+            return std::unexpected(std::string("not open"));
+        }
         const std::size_t nRead = _reads.load(std::memory_order_relaxed);
         if (nRead >= kReads || (nRead >= kReadsBeforeChange && !_changedWhileStreaming)) {
             return 0UZ;
@@ -126,6 +155,11 @@ struct QueuedDongle : gr::blocks::sdr::RTL2832DeviceBase {
     }
 
 private:
+    void reach() {
+        if (!_opened) {
+            ++_callsWhileClosed;
+        }
+    }
     void change() {
         ++_changes;
         _changedWhileStreaming = _changedWhileStreaming || _reads.load(std::memory_order_relaxed) > 0UZ;
@@ -135,13 +169,30 @@ private:
 struct StreamAroundChange {
     std::vector<std::uint8_t> samples;
     std::vector<gr::Tag>      tags;
-    std::size_t               staleReads = 0UZ;
-    std::uint8_t              changes    = 0U;
+    std::size_t               staleReads       = 0UZ;
+    std::uint8_t              changes          = 0U;
+    std::size_t               opens            = 0UZ;
+    std::size_t               callsWhileClosed = 0UZ;
+    std::vector<std::string>  errors;
 };
 
+// the text of every error message on the port
+std::vector<std::string> errorMessages(gr::MsgPortIn& port) {
+    std::vector<std::string> errors;
+    auto&                    reader   = port.streamReader();
+    auto                     messages = reader.get<gr::SpanReleasePolicy::ProcessAll>(reader.available());
+    for (const gr::Message& message : messages) {
+        if (!message.data.has_value()) {
+            errors.push_back(message.data.error().message);
+        }
+    }
+    return errors;
+}
+
 // Runs an RTL2832Source<std::uint8_t> on the model until the model has handed out kReadsBeforeChange transfers, applies
-// the change, and returns what the sink received once the model has handed out all kReads.
-std::optional<StreamAroundChange> streamAroundChange(gr::property_map change) {
+// the change, and returns what the sink received once the model has handed out all kReads. The scheduler's messages
+// have a reader, so an error the source reports does not end the run.
+std::optional<StreamAroundChange> streamAroundChange(gr::property_map change, bool failDiscard = false) {
     using Source = gr::blocks::sdr::RTL2832Source<std::uint8_t>;
     using Sink   = gr::blocks::testing::TagSink<std::uint8_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>;
 
@@ -154,15 +205,17 @@ std::optional<StreamAroundChange> streamAroundChange(gr::property_map change) {
         return std::nullopt;
     }
 
+    gr::MsgPortIn           fromScheduler;
     gr::scheduler::Simple<> sched;
-    if (!sched.exchange(std::move(graph)).has_value()) {
+    if (!sched.exchange(std::move(graph)).has_value() || !sched.msgOut.connect(fromScheduler).has_value()) {
         return std::nullopt;
     }
-    auto       changer = std::jthread([&source, &dongle, &change](std::stop_token stoken) {
+    auto       changer = std::jthread([&source, &dongle, &change, failDiscard](std::stop_token stoken) {
         const auto deadline = std::chrono::steady_clock::now() + 3s;
         while (!stoken.stop_requested() && std::chrono::steady_clock::now() < deadline && dongle._reads.load(std::memory_order_acquire) < QueuedDongle::kReadsBeforeChange) {
             std::this_thread::sleep_for(1ms);
         }
+        dongle._failNextDiscard.store(failDiscard);
         std::ignore = source.settings().setStaged(std::move(change));
     });
     const auto result  = runBounded(sched, 5s);
@@ -172,10 +225,13 @@ std::optional<StreamAroundChange> streamAroundChange(gr::property_map change) {
         return std::nullopt;
     }
     return StreamAroundChange{
-        .samples    = std::vector<std::uint8_t>(sink._samples.begin(), sink._samples.end()),
-        .tags       = sink._tags,
-        .staleReads = dongle._staleReads,
-        .changes    = dongle._changes,
+        .samples          = std::vector<std::uint8_t>(sink._samples.begin(), sink._samples.end()),
+        .tags             = sink._tags,
+        .staleReads       = dongle._staleReads,
+        .changes          = dongle._changes,
+        .opens            = dongle._opens,
+        .callsWhileClosed = dongle._callsWhileClosed,
+        .errors           = errorMessages(fromScheduler),
     };
 }
 
@@ -275,6 +331,18 @@ const boost::ut::suite<"RTL2832Source stream around a change"> _rtlChangeTests =
         expect(fatal(stream.has_value())) << "the run ends by itself";
         expect(eq(stream->staleReads, 0UZ)) << "no read after the correction change hands out a transfer queued before it";
         expect(std::ranges::contains(stream->samples, stream->changes)) << "samples taken after the change arrive";
+    };
+
+    "a failed discard leaves the device closed, and the source reopens it and streams on"_test = [&expectNothingStaleAfter] {
+        const auto stream = streamAroundChange({{"sample_rate", 1.024e6f}}, true);
+        expect(fatal(stream.has_value())) << "the run ends by itself";
+        expect(eq(stream->opens, 2UZ)) << "the source reopens the device once";
+        expect(eq(stream->callsWhileClosed, 0UZ)) << "no call reaches the closed device";
+        expect(fatal(eq(stream->errors.size(), 1UZ))) << "one error";
+        expect(stream->errors.front().contains("discardStream")) << stream->errors.front();
+        const auto tagIndex = taggedAt(stream->tags, "sample_rate", 1.024e6f);
+        expect(fatal(tagIndex.has_value())) << "the rate change is tagged";
+        expectNothingStaleAfter("failed discard", *stream, *tagIndex);
     };
 };
 

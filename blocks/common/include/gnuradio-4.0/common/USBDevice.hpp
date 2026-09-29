@@ -371,7 +371,7 @@ struct USBDevice {
     // endpoint then has no transfer pending until the next queuedBulkRead submits a new queue, and that call hands out
     // only data the device sends after it. The rest of a transfer handed out in part is dropped too. A transfer that
     // completed before its discard is reaped with the others. Without a queue the call does nothing. A discard that
-    // fails closes the device, which drops the transfers still pending; the caller reopens it.
+    // fails returns the error with the device closed. The close drops the transfers still pending.
     [[nodiscard]] Result discardQueuedTransfers(unsigned timeoutMs = 100) {
         if (_fd < 0) {
             return std::unexpected(std::string("USBDevice: not open"));
