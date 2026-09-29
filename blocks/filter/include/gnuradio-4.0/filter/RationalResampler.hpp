@@ -191,13 +191,14 @@ end-of-stream index, one past that output. )"">;
     }
 
     /// @brief The stream's last whole input chunks, and every held tag: a tag past their outputs leaves at the
-    /// end-of-stream index.
+    /// end-of-stream index, with the tags the input holds past its last sample.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
         const std::size_t chunks = std::min(input.size() / static_cast<std::size_t>(_decimation), output.size() / static_cast<std::size_t>(_interpolation));
         if (chunks > 0UZ) {
             std::ignore = processBulk(std::span<const T>(input.data(), chunks * static_cast<std::size_t>(_decimation)), std::span<T>(output.data(), chunks * static_cast<std::size_t>(_interpolation)));
         }
+        _tags.takeRemainder(this->in, static_cast<std::uint64_t>(input.streamIndex) + static_cast<std::uint64_t>(input.size()), [this](property_map& tag) { this->scaleSampleRateByChunkRatio(tag); });
         _tags.release(output, chunks * static_cast<std::size_t>(_interpolation), true);
         output.publish(chunks * static_cast<std::size_t>(_interpolation));
         return work::Status::OK;

@@ -19,6 +19,7 @@
 
 #include <gnuradio-4.0/algorithm/filter/FilterDesign.hpp>
 #include <gnuradio-4.0/filter/ArbitraryRateResampler.hpp>
+#include <gnuradio-4.0/filter/FirFilter.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 #include <gnuradio-4.0/testing/TestSpans.hpp>
@@ -591,6 +592,18 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         filter_test::expectAtStreamEnd(*sinks, outputs, {"tx_eob"}, "r = 0.5, 1001 inputs"); // the count of a stream without tags
         expect(eq(sinks->end.offsetsOf("trigger_meta_info").size(), 1UZ)) << "the tag inside the stream on one output";
         expect(that % (filter_test::offsetsOf(sinks->samples._tags, "trigger_meta_info") == sinks->end.offsetsOf("trigger_meta_info"))) << "a sample-by-sample consumer sees a tag on its sample";
+    };
+
+    "tags an upstream block leaves at its end-of-stream index pass to this block's end-of-stream index"_test = [] {
+        // a FirFilter at M = 4 publishes the trigger and the burst end on the last inputs at index 250, where no sample
+        // is; the resampler at a rate of 0.5 passes them to its own end-of-stream index
+        constexpr std::size_t      kBank = 32UZ;
+        const gr::property_map     settings{{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, 0.5)}};
+        const std::size_t          outputs = makeResampler<float>(settings).outputsFor(250UZ);
+        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
+        const auto                 run = filter_test::runChained<gr::blocks::filter::FirFilter<float, float>, ArbitraryRateResampler<float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}}, settings, 1000U, tags);
+        filter_test::expectAtStreamEnd(run, outputs, {"trigger_name", "tx_eob"}, "M = 4, then r = 0.5");
+        expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
     };
 
     "a tag leaves on the output that carries its sample's energy"_test = [] {

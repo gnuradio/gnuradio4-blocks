@@ -16,6 +16,7 @@
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/meta/UncertainValue.hpp>
 
+#include <gnuradio-4.0/algorithm/filter/FilterDesign.hpp>
 #include <gnuradio-4.0/filter/FirFilter.hpp>
 #include <gnuradio-4.0/filter/TagDelay.hpp>
 #include <gnuradio-4.0/filter/time_domain_filter.hpp>
@@ -461,6 +462,38 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
         expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{kMid})) << "the framework places the tag";
         expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kLast}));
         expect(that % (got.sampleOffsetsOf("trigger_meta_info") == std::vector<std::size_t>{kLast})) << "on the sample a sample-by-sample consumer sees";
+    };
+
+    "tags an upstream block leaves at its end-of-stream index pass to fir_filter's and BasicFilter's end-of-stream index"_test = [] {
+        // a FirFilter at M = 4 publishes the tags on the last inputs at index 250, where no sample is; fir_filter, and
+        // BasicFilter in IIR mode through the framework's key filter, pass them to their own end-of-stream index
+        namespace filter_test = gr::blocks::filter::testing;
+        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
+        const gr::property_map     upstream{{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}};
+
+        const auto fir = filter_test::runChained<FirFilter<float>, fir_filter<float>>(upstream, {{"b", std::vector<float>(31UZ, 1.0f / 31.0f)}}, 1000U, tags);
+        filter_test::expectAtStreamEnd(fir, 250UZ, {"trigger_name", "tx_eob"}, "fir_filter");
+        expect(eq(fir.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "fir_filter: a tag inside the stream reaches a sample";
+
+        const auto iir = filter_test::runChained<FirFilter<float>, BasicFilter<float>>(upstream, {{"filter_type", std::string("IIR")}, {"f_low", 100.0f}, {"sample_rate", 1000.0f}}, 1000U, tags);
+        filter_test::expectAtStreamEnd(iir, 250UZ, {"trigger_name"}, "BasicFilter, IIR");
+        expect(that % iir.offsetsOf("tx_eob").empty()) << "BasicFilter, IIR: the framework's key filter drops a key it does not forward";
+    };
+
+    "BasicDecimatingFilter in IIR mode publishes the tags of its partial last chunk at the end-of-stream index"_test = [] {
+        // at M = 5 a stream of 1003 ends in a partial chunk of 3 inputs, which holds both end tags; the framework
+        // forwards them from no call, and they leave through its key filter one past the 200 outputs
+        gr::property_map settings{{"filter_type", std::string("IIR")}, {"f_low", 100.0f}, {"sample_rate", 1000.0f}};
+        settings.insert_or_assign(gr::property_map::key_type{"decimate"}, gr::Size_t{5});
+        const TaggedRun got = runTagged<BasicDecimatingFilter<float>>(settings, kSamples + 3U, kMid);
+        expect(got.ran);
+        expect(eq(got.samples, 200UZ)) << "the whole chunks' outputs";
+        expect(that % (got.endIndex == std::optional<std::size_t>{200UZ})) << "the stream ends one past the last output";
+        for (const std::string_view key : {"trigger_time", "trigger_meta_info"}) {
+            expect(that % (got.offsetsOf(key) == std::vector<std::size_t>{200UZ})) << std::format("{} at the end-of-stream index", key);
+            expect(that % got.sampleOffsetsOf(key).empty()) << std::format("{} on no sample", key);
+        }
+        expect(that % got.offsetsOf("tx_eob").empty()) << "the framework's key filter drops a key it does not forward";
     };
 
     "a switch from FIR to IIR publishes the held tag ahead of the next call's tags"_test = [] {
