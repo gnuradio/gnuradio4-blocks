@@ -31,6 +31,7 @@ extended (e.g. notably pmt-integration, and message handling) but should provide
 'processBulk(...)' based signal processing using Python.
 
 Each block runs its script in a module of its own. Two blocks whose scripts define the same name each keep their own.
+The interpreter lock is free between calls, and a call from any thread takes it for its duration.
 
 Usage Example:
 @code
@@ -214,14 +215,20 @@ this_block = PythonBlockWrapper(capsule))p",
 
     // block life-cycle methods
     // clang-format off
-    void start()  { _interpreter.invokeFunction<python::EnforceFunction::OPTIONAL>("start"); }
-    void stop()   { _interpreter.invokeFunction<python::EnforceFunction::OPTIONAL>("stop"); }
-    void pause()  { _interpreter.invokeFunction<python::EnforceFunction::OPTIONAL>("pause"); }
-    void resume() { _interpreter.invokeFunction<python::EnforceFunction::OPTIONAL>("resume"); }
-    void reset()  { _interpreter.invokeFunction<python::EnforceFunction::OPTIONAL>("reset"); }
+    void start()  { callOptionalFunction("start"); }
+    void stop()   { callOptionalFunction("stop"); }
+    void pause()  { callOptionalFunction("pause"); }
+    void resume() { callOptionalFunction("resume"); }
+    void reset()  { callOptionalFunction("reset"); }
     // clang-format on
 
 private:
+    /// Calls the script's function if it defines one. The lock is held until the function's result is released.
+    void callOptionalFunction(std::string_view functionName) {
+        python::PyGILGuard lock;
+        std::ignore = _interpreter.invokeFunction<python::EnforceFunction::OPTIONAL>(functionName);
+    }
+
     template<typename TInputSpan, typename TOutputSpan>
     void callPythonFunction(std::span<TInputSpan> ins, std::span<TOutputSpan> outs) {
         PyObject* pIns = PyList_New(static_cast<Py_ssize_t>(ins.size()));

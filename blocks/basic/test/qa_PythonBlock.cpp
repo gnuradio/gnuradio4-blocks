@@ -326,6 +326,37 @@ def process_bulk(ins, outs):
         expect(eq(blockA.getSettings().at("ran"), "doubling"s)) << "the first script's 'this_block' names the first block";
         expect(eq(blockB.getSettings().at("ran"), "offset"s)) << "the second script's 'this_block' names the second block";
     };
+
+    "Python block on a worker thread"_test = [] {
+        // the script body runs on the thread that applies the settings; process_bulk records whether it ran elsewhere
+        std::string pythonScript = R"(import threading
+script_thread = threading.get_ident()
+
+def process_bulk(ins, outs):
+    if threading.get_ident() != script_thread:
+        this_block.setSettings({"worker": "other thread"})
+    for i in range(len(ins)):
+        outs[i][:] = ins[i] * 2
+)";
+
+        using namespace gr::blocks::testing;
+        Graph graph;
+        auto& src   = graph.emplaceBlock<TagSource<int32_t>>({{"n_samples_max", 5U}, {"mark_tag", false}});
+        auto& block = graph.emplaceBlock<PythonBlock<int32_t>>({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}});
+        auto& sink  = graph.emplaceBlock<TagSink<int32_t, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_expected", 5U}});
+
+        expect(graph.connect(src, "out", block, "inputs#0").has_value());
+        expect(graph.connect(block, "outputs#0", sink, "in").has_value());
+
+        gr::scheduler::Simple<gr::scheduler::ExecutionPolicy::multiThreaded> sched;
+        if (auto ret = sched.exchange(std::move(graph)); !ret) {
+            throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+        }
+        expect(sched.runAndWait().has_value());
+
+        expect(eq(sink._samples, std::vector<std::int32_t>{0, 2, 4, 6, 8})) << std::format("mismatch of vector {}", sink._samples);
+        expect(block.getSettings().contains("worker")) << "process_bulk ran on the thread that ran the script";
+    };
 };
 
 int main() { /* tests are statically executed */ }
