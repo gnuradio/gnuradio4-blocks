@@ -17,7 +17,6 @@ add_subdirectory(fourier)
 add_subdirectory(http)
 add_subdirectory(math)
 add_subdirectory(sync)
-add_subdirectory(timing)
 
 # Optional families go before libs: the registry audit there links the shared library a family's target provides, so a
 # family added after it is detected by the audit but not linked.
