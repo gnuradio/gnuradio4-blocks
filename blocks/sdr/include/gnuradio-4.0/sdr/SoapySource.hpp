@@ -52,6 +52,8 @@ names the elements directly (IFGR: 20) and is applied in the order the driver li
 state, because a driver may refuse a gain write while its AGC is on. Where both are given, the elements
 are applied last and take precedence.
 
+Reads: a max_chunk_size above half the output buffer reads half the output buffer.
+
 Tested with RTL-SDR and LimeSDR drivers.)">;
 
     using TSizeChecker = Limits<std::uint32_t{1}, std::numeric_limits<std::uint32_t>::max(), [](std::uint32_t x) { return std::has_single_bit(x); }>;
@@ -274,14 +276,27 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     // finished io thread the stop, on the scheduler thread.
     [[nodiscard]] bool ioActive() const noexcept { return lifecycle::isActive(this->state()) && !_ioStopRequested.load(std::memory_order_acquire); }
 
-    // The device writes each read straight into the reserved output spans. A read waits until every output has room
-    // for all of it; until then the device's own buffer holds the samples, and the device reports an overflow once
-    // that buffer is full. A read is max_chunk_size samples or half the output buffer, whichever is smaller, rounded
-    // down to whole MTUs where it holds one. The half bounds the wait: the source waits only while more than half the
-    // buffer is unread, and a consumer whose input chunk is at most half the buffer can take a chunk from that.
-    [[nodiscard]] static std::size_t readSize(std::size_t maxChunkSize, std::size_t outputCapacity, std::size_t mtu) noexcept {
-        const std::size_t nRead = std::min(maxChunkSize, std::max(outputCapacity / 2UZ, 1UZ));
+    // The device writes each read straight into the reserved output spans. A read is the smallest of max_chunk_size,
+    // half the output buffer and the room every output has, rounded down to whole MTUs where it holds one. The source
+    // waits only while an output is full. A consumer waits only while its input chunk exceeds the unread samples, and
+    // the output then has room. Until a read finds room, the device's own buffer holds the samples, and the device
+    // reports an overflow once that buffer is full.
+    [[nodiscard]] static std::size_t readSize(std::size_t maxChunkSize, std::size_t outputCapacity, std::size_t room, std::size_t mtu) noexcept {
+        const std::size_t nRead = std::min({maxChunkSize, std::max(outputCapacity / 2UZ, 1UZ), room});
         return (mtu > 0UZ && nRead >= mtu) ? nRead - nRead % mtu : nRead;
+    }
+
+    // the size of the smallest output buffer
+    [[nodiscard]] std::size_t outputCapacity() {
+        if constexpr (nPorts == 1U) {
+            return out.streamWriter().buffer().size();
+        } else {
+            std::size_t capacity = std::numeric_limits<std::size_t>::max();
+            for (std::size_t ch = 0UZ; ch < static_cast<std::size_t>(num_channels.value) && ch < out.size(); ++ch) {
+                capacity = std::min(capacity, out[ch].streamWriter().buffer().size());
+            }
+            return capacity;
+        }
     }
 
     void ioReadLoop() {
@@ -295,14 +310,14 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
 
         if constexpr (nPorts == 1U) {
             auto&             outWriter = out.streamWriter();
-            const std::size_t capacity  = outWriter.buffer().size();
+            const std::size_t capacity  = outputCapacity();
 
             while (ioActive()) {
                 this->applyChangedSettings();
                 applyDirtyFlags();
 
-                const std::size_t nRead = readSize(max_chunk_size, capacity, mtu);
-                if (outWriter.available() < nRead) {
+                const std::size_t nRead = readSize(max_chunk_size, capacity, outWriter.available(), mtu);
+                if (nRead == 0UZ) {
                     std::this_thread::sleep_for(std::chrono::microseconds(200));
                     continue;
                 }
@@ -360,18 +375,21 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         } else {
             using WriterType = std::remove_reference_t<decltype(out[0].streamWriter())>;
             std::vector<std::reference_wrapper<WriterType>> outWriters;
-            std::size_t                                     capacity = std::numeric_limits<std::size_t>::max();
+            const std::size_t                               capacity = outputCapacity();
             for (std::size_t ch = 0UZ; ch < nCh && ch < out.size(); ++ch) {
                 outWriters.push_back(std::ref(out[ch].streamWriter()));
-                capacity = std::min(capacity, outWriters.back().get().buffer().size());
             }
 
             while (ioActive()) {
                 this->applyChangedSettings();
                 applyDirtyFlags();
 
-                const std::size_t nRead = readSize(max_chunk_size, capacity, mtu);
-                if (!std::ranges::all_of(outWriters, [nRead](auto& w) { return w.get().available() >= nRead; })) {
+                std::size_t room = std::numeric_limits<std::size_t>::max();
+                for (auto& w : outWriters) {
+                    room = std::min(room, w.get().available());
+                }
+                const std::size_t nRead = readSize(max_chunk_size, capacity, room, mtu);
+                if (nRead == 0UZ) {
                     std::this_thread::sleep_for(std::chrono::microseconds(200));
                     continue;
                 }

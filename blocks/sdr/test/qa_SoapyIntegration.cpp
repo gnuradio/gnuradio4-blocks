@@ -558,7 +558,7 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
         const auto brokenAt = firstPhaseBreak(received.samples, kFrequency, static_cast<double>(kRate));
         expect(!brokenAt.has_value()) << std::format("the tone breaks at sample {}", brokenAt.value_or(0UZ));
 
-        // the loopback's MTU is its buffer size, which is larger than max_chunk_size, so a read is max_chunk_size
+        // The loopback's MTU is its buffer size, larger than max_chunk_size. A read is max_chunk_size.
         const std::size_t nRead  = received.maxChunkSize;
         const auto        timing = tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey());
         expect(evenlySpaced(timing, nRead)) << std::format("{} timing tags, {} samples per read", timing.size(), nRead);
@@ -579,16 +579,25 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
         expect(evenlySpaced(tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey()), kMaxChunkSize));
     };
 
+    // The output buffer is no whole number of these reads. A read that finds less room than a full read is shorter,
+    // and still a whole number of MTUs where the room holds one.
     "a read is a whole number of MTUs where max_chunk_size holds one"_test = [&receive] {
         constexpr std::size_t kMtu     = 3000UZ; // the loopback reports its buffer size as its MTU
         const auto            received = receive(std::format("device_mode=rx_only,buffer_size={}", kMtu), {}, 60'000U);
         expect(!firstPhaseBreak(received.samples, kFrequency, static_cast<double>(kRate)).has_value());
-        const std::size_t nRead = received.maxChunkSize - received.maxChunkSize % kMtu;
-        expect(evenlySpaced(tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey()), nRead)) << std::format("{} samples per read", nRead);
+        const std::size_t nRead  = received.maxChunkSize - received.maxChunkSize % kMtu;
+        const auto        timing = tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey());
+        expect(fatal(ge(timing.size(), 2UZ)));
+        expect(eq(timing[0], 0UZ));
+        expect(eq(timing[1], nRead)) << "the first read finds the whole buffer free";
+        for (std::size_t i = 1UZ; i < timing.size(); ++i) {
+            const std::size_t length = timing[i] - timing[i - 1UZ];
+            expect(le(length, nRead) and (length % kMtu == 0UZ or length < kMtu)) << std::format("read {} of {} samples", i - 1UZ, length);
+        }
     };
 
     "a read is at most half the output buffer"_test = [&receive] {
-        // the loopback's MTU is its buffer size, larger than half the output buffer, so a read is half the output buffer
+        // The loopback's MTU is its buffer size, larger than half the output buffer. A read is half the output buffer.
         const auto received = receive("device_mode=rx_only", {{"max_chunk_size", std::uint32_t{1U << 20U}}}, 200'000U);
         expect(!firstPhaseBreak(received.samples, kFrequency, static_cast<double>(kRate)).has_value());
         const std::size_t nRead = received.outputCapacity / 2UZ;
@@ -620,6 +629,37 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
             expect(sched.exchange(std::move(flow)).has_value());
             expect(sched.runAndWait().has_value());
             expect(eq(sink.count.value, kDecimated));
+        });
+    };
+
+    // A consumer whose input chunk exceeds half the output buffer waits while fewer samples than its chunk are unread.
+    // The output then has room, and a read fills it.
+    "a consumer whose input chunk exceeds half the output buffer does not stop a read of max_chunk_size 65536"_test = [] {
+        static constexpr gr::Size_t kChunk   = 40'000U;
+        static constexpr gr::Size_t kOutputs = 100U;
+
+        gr::Graph flow;
+        auto&     source  = flow.emplaceBlock<SoapySource<CF32, 1UZ>>({
+            {"device", "loopback"},
+            {"device_parameter", std::string("device_mode=rx_only")},
+            {"device_settings", std::string("simulate_timing=false")},
+            {"sample_rate", kRate},
+            {"frequency", std::vector{kFrequency}},
+            {"max_chunk_size", std::uint32_t{65536U}},
+            {"emit_timing_tags", false},
+        });
+        auto&     reducer = flow.emplaceBlock<KeepFirstOfChunk>({{"input_chunk_size", kChunk}, {"output_chunk_size", gr::Size_t{1U}}});
+        auto&     sink    = flow.emplaceBlock<CountingSink<CF32>>({{"n_samples_max", kOutputs}});
+        expect(flow.connect<"out", "in">(source, reducer).has_value());
+        expect(flow.connect<"out", "in">(reducer, sink).has_value());
+
+        withinBound(std::chrono::seconds{5}, "a source feeding a consumer of 40000-sample chunks", [&flow, &source, &sink] {
+            Sched sched;
+            expect(sched.exchange(std::move(flow)).has_value());
+            expect(sched.runAndWait().has_value());
+            expect(eq(sink.count.value, kOutputs));
+            const std::size_t capacity = source.out.bufferSize();
+            expect(lt(capacity / 2UZ, std::size_t{kChunk}) and le(std::size_t{kChunk}, capacity)) << std::format("the chunk lies between half the output buffer of {} samples and all of it", capacity);
         });
     };
 
