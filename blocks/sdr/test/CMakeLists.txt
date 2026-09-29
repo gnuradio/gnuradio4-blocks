@@ -10,8 +10,8 @@ target_link_libraries(
           ut)
 add_test(NAME qa_RTL2832Source COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} ${CMAKE_CURRENT_BINARY_DIR}/qa_RTL2832Source)
 
-# a browser build opens the device from the io thread and retries a refused open, so the start case would run into its
-# bound there
+# A browser build opens the device from the io thread and retries a refused open. The start case would run into its
+# bound there.
 if(NOT EMSCRIPTEN)
   add_executable(qa_RTL2832SourceStart qa_RTL2832SourceStart.cpp)
   target_link_libraries(

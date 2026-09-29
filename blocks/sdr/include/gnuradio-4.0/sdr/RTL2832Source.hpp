@@ -397,7 +397,7 @@ Operating modes:
     // An already-read USB chunk is published whole unless a change that discards the stream ends it: a gap in a
     // continuous IQ stream is a phase discontinuity downstream. A retune, sample rate change or correction change applied
     // while the chunk waits for room ends it early, because the rest holds samples taken before the change. tryReserve is
-    // all-or-nothing, so each request asks for what the ring reports
+    // all-or-nothing. Each request asks for what the ring reports.
     void publishSamples(auto& writer, const std::uint8_t* data, std::size_t nBytes, std::uint64_t tWallNs) {
         const std::size_t nOutputSamples = std::is_same_v<T, std::uint8_t> ? nBytes : nBytes / 2UZ;
 
