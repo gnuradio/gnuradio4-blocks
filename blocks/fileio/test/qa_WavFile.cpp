@@ -525,7 +525,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
 
         std::size_t rotatedFiles = 0UZ;
         for (const auto& entry : std::filesystem::directory_iterator(outputStem.parent_path())) {
-            if (entry.is_regular_file() && entry.path().string().find(outputStem.filename().string()) != std::string::npos) {
+            if (entry.is_regular_file() && entry.path().filename().string().contains(outputStem.filename().string())) {
                 ++rotatedFiles;
                 std::error_code ec;
                 std::filesystem::remove(entry.path(), ec);
@@ -608,7 +608,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         expect(eq(std::filesystem::file_size(workingDirectory.directory / "missing/sub/tone.wav", ec), gr::blocks::fileio::WavSink<std::int16_t>::kHeaderSize + reference.size() * sizeof(std::int16_t))) << ec.message();
     };
 
-    "WavSource in multi mode refuses at start a stem that no file name holds"_test = [] {
+    "WavSource in multi mode refuses at start a base name that no file name holds"_test = [] {
         ScopedWorkingDirectory workingDirectory;
         std::ofstream(workingDirectory.directory / "noise.wav", std::ios::binary) << "RIFF";
 
@@ -645,7 +645,7 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         ScopedWorkingDirectory          workingDirectory;
 
         expectRefusedStart(runWavSink("", "overwrite", reference), {"uri is empty"});
-        expectRefusedStart(runWavSink(workingDirectory.directory.string(), "overwrite", reference), {workingDirectory.directory.string(), "cannot open"});
+        expectRefusedStart(runWavSink(workingDirectory.directory.string(), "overwrite", reference), {workingDirectory.directory.string(), "cannot open", std::make_error_code(std::errc::is_a_directory).message()});
     };
 
 #if GR4_ENABLE_HTTP_TESTS && !defined(__EMSCRIPTEN__)

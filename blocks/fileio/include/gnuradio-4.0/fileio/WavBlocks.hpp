@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <concepts>
@@ -27,6 +28,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -808,9 +810,11 @@ private:
             detail::ensureDirectoryExists(actualPath);
         }
 
+        errno = 0;
         _file.open(actualPath, std::ios::binary | std::ios::trunc);
         if (!_file.is_open()) {
-            return std::unexpected(gr::Error(std::format("cannot open '{}' for writing", actualPath)));
+            const std::error_code reason(errno, std::generic_category());
+            return std::unexpected(gr::Error(reason ? std::format("cannot open '{}' for writing: {}", actualPath, reason.message()) : std::format("cannot open '{}' for writing", actualPath)));
         }
         return {};
     }
