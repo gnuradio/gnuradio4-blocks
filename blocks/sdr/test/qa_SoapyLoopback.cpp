@@ -890,6 +890,15 @@ const boost::ut::suite<"SoapySDR API completeness"> apiTests = [] {
         expect(approx(range[0].minimum(), 200e3, 1.0));
     };
 
+    "every channel starts at a listed bandwidth"_test = [] {
+        LoopbackDevice dev(SoapySDR::Kwargs{{"num_channels", "2"}});
+        for (int direction : {SOAPY_SDR_RX, SOAPY_SDR_TX}) {
+            for (std::size_t channel = 0UZ; channel < 2UZ; ++channel) {
+                expect(std::ranges::contains(dev.listBandwidths(direction, channel), dev.getBandwidth(direction, channel))) << std::format("direction {} channel {}", direction, channel);
+            }
+        }
+    };
+
     "native stream format"_test = [] {
         LoopbackDevice dev(SoapySDR::Kwargs{});
         double         fullScale = 0.0;
