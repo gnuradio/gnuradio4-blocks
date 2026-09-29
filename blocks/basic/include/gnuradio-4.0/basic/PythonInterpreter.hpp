@@ -30,6 +30,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 
 #include <gnuradio-4.0/Message.hpp>
 
@@ -99,6 +100,9 @@ public:
     operator PyObject*() const { return _ptr; }
 
     PyObject* get() const { return _ptr; }
+
+    /// hands the reference to the caller and leaves the guard empty
+    [[nodiscard]] PyObject* release() noexcept { return std::exchange(_ptr, nullptr); }
 };
 
 class PyGILGuard {
@@ -320,15 +324,16 @@ public:
         python::PyGILGuard localGuard;
 
         const std::string moduleName = std::format("{}_{}", moduleDefinitions != nullptr ? moduleDefinitions->m_name : "gr_python", _nModules.fetch_add(1UZ, std::memory_order_relaxed));
-        _pModule                     = PyModule_New(moduleName.c_str());
-        if (_pModule == nullptr) {
+        PyObjectGuard     module(PyModule_New(moduleName.c_str())); // moves into '_pModule' once the constructor succeeds
+        if (!module) {
             python::throwCurrentPythonError(std::format("failed to create the module {}", moduleName), location);
         }
-        _pDict = PyModule_GetDict(_pModule);
+        _pDict = PyModule_GetDict(module);
         if (PyDict_SetItemString(_pDict, "__builtins__", PyEval_GetBuiltins()) != 0) {
             python::throwCurrentPythonError(std::format("failed to add the builtins to the module {}", moduleName), location);
         }
         if (classReference == nullptr || moduleDefinitions == nullptr) {
+            _pModule = module.release();
             return;
         }
         PyObjectGuard capsule(PyCapsule_New(static_cast<void*>(classReference), _moduleDefinitions->m_name, nullptr));
@@ -362,6 +367,7 @@ public:
         } else {
             python::throwCurrentPythonError(std::format("Manual import of {} failed.", _moduleDefinitions->m_name), location);
         }
+        _pModule = module.release();
     }
 
     ~Interpreter() {
