@@ -606,6 +606,32 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
     };
 
+    "a stop request publishes no held tag and makes no output"_test = [] {
+        // the prototype delays by more than two inputs: the trigger on the last of 100 inputs lies past the outputs of
+        // its call, and the epilogue under a stop request over 20 more inputs makes nothing
+        constexpr std::size_t         kBank = 32UZ;
+        ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, 0.5)}});
+        const std::vector<float>      input(120UZ, 1.0f);
+        const std::vector<gr::Tag>    tags{{99UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("last")}}}};
+        std::vector<float>            output(64UZ);
+        test::Capture<float>          beforeStop;
+        test::Capture<float>          atStop;
+        expect(gt(block.groupDelaySamples(), 2.0));
+        {
+            test::InputSpan<float>  inSpan(std::span<const float>(input).first(100UZ), 0UZ, tags, false);
+            test::OutputSpan<float> outSpan(std::span<float>(output), 0UZ, &beforeStop.tags, true, false);
+            std::ignore = block.processBulk(inSpan, outSpan);
+            expect(eq(inSpan.consumed, 100UZ)) << "the call takes every input";
+            expect(that % beforeStop.tags.empty()) << "and holds the trigger past its outputs";
+        }
+        block.requestStop();
+        test::InputSpan<float>  inSpan(std::span<const float>(input).subspan(100UZ), 100UZ, {}, false);
+        test::OutputSpan<float> outSpan(std::span<float>(output), 50UZ, &atStop.tags, true, false);
+        std::ignore = block.processEpilogue(inSpan, outSpan);
+        expect(eq(outSpan.count, 0UZ)) << "the epilogue under the stop request makes no output";
+        expect(that % atStop.tags.empty()) << std::format("and publishes no held tag: {}", filter_test::describe(atStop.tags));
+    };
+
     "a tag leaves on the output that carries its sample's energy"_test = [] {
         constexpr std::size_t kBank = 32UZ;
 

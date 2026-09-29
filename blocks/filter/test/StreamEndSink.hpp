@@ -3,13 +3,16 @@
 
 #include <boost/ut.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <format>
 #include <initializer_list>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include <gnuradio-4.0/Block.hpp>
@@ -17,6 +20,7 @@
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
+#include <gnuradio-4.0/testing/TestSpans.hpp>
 
 namespace gr::blocks::filter::testing {
 
@@ -179,6 +183,43 @@ inline void expectAtStreamEnd(const EndRun& run, std::size_t outputs, std::initi
         expect(that % (run.offsetsOf(key) == std::vector<std::size_t>{outputs})) << std::format("{}: {} at the end-of-stream index", label, key);
         expect(that % run.sampleOffsetsOf(key).empty()) << std::format("{}: {} on no sample of a sample-by-sample consumer", label, key);
     }
+}
+
+/// @brief What a synchronous block published over one call, and over an epilogue under a stop request after it.
+struct StopRun {
+    std::vector<gr::Tag> beforeStop;        ///< the tags the call published
+    std::vector<gr::Tag> atStop;            ///< the tags the epilogue published
+    std::size_t          stopOutputs = 0UZ; ///< the outputs the epilogue made
+};
+
+/**
+ * @brief Hand @p block one call over @p head, which carries @p tags, then a stop request, then the epilogue over
+ * @p tail that the framework runs when the stop arrives with input still queued. The block makes @p outChunk outputs
+ * for every @p inChunk inputs, and both spans hold whole chunks.
+ */
+template<typename TBlock>
+[[nodiscard]] StopRun runIntoStop(TBlock& block, std::span<const float> head, std::span<const float> tail, std::span<const gr::Tag> tags, std::size_t inChunk, std::size_t outChunk) {
+    namespace harness = gr::blocks::testing::span;
+    StopRun            run;
+    const std::size_t  headOutputs = head.size() / inChunk * outChunk;
+    std::vector<float> output(std::max(head.size(), tail.size()) / inChunk * outChunk);
+    {
+        harness::InputSpan<float>  inSpan(head, 0UZ, tags);
+        harness::OutputSpan<float> outSpan(std::span<float>(output).first(headOutputs), 0UZ, &run.beforeStop);
+        auto                       inputs  = std::tie(inSpan);
+        auto                       outputs = std::tie(outSpan);
+        block.forwardTags(inputs, outputs, head.size());
+        std::ignore = block.processBulk(std::span<const float>(inSpan), std::span<float>(outSpan));
+    }
+    block.requestStop();
+    harness::InputSpan<float>  inSpan(tail, head.size());
+    harness::OutputSpan<float> outSpan(std::span<float>(output).first(tail.size() / inChunk * outChunk), headOutputs, &run.atStop);
+    auto                       inputs  = std::tie(inSpan);
+    auto                       outputs = std::tie(outSpan);
+    block.forwardTags(inputs, outputs, tail.size());
+    std::ignore     = block.processEpilogue(inSpan, outSpan);
+    run.stopOutputs = outSpan.count;
+    return run;
 }
 
 } // namespace gr::blocks::filter::testing

@@ -91,7 +91,8 @@ inline void holdTag(HeldTags& held, std::uint64_t& latest, std::uint64_t delayed
  * block's epilogue alone, and they make no output. When the stream ends, every tag still held leaves at the
  * end-of-stream index, one past the last output, where the framework publishes its `end_of_stream` tag. The tags the
  * framework leaves on the input past the last sample the block consumed leave there too. No tag moves onto an earlier
- * output, and the block keeps no input back to make an output for it.
+ * output, and the block keeps no input back to make an output for it. A stop request ends no stream: the block drops
+ * the tags it holds with the samples they ride on, and publishes none of them.
  */
 struct TagDelayLine {
     static constexpr std::uint64_t kStreamEnd = std::numeric_limits<std::uint64_t>::max(); ///< the output of a tag held for the end-of-stream index
@@ -161,8 +162,8 @@ struct TagDelayLine {
 
     /**
      * @brief Publish on @p span the held tags whose output lies among its first @p made outputs, and hold the rest.
-     * With @p streamEnds every held tag leaves, and a tag whose output lies past those outputs leaves at the index after
-     * them, the end-of-stream index.
+     * With @p streamEnds every held tag leaves, and a tag whose output lies past those outputs leaves at the index
+     * after them, the end-of-stream index.
      */
     template<typename TSpan>
     void release(TSpan& span, std::size_t made, bool streamEnds) {
@@ -183,6 +184,12 @@ struct TagDelayLine {
         held = std::move(deferred);
     }
 };
+
+/// @brief Whether @p block runs under a stop request, where it forwards and publishes no tag.
+template<typename TBlock>
+[[nodiscard]] bool stopRequested(const TBlock& block) noexcept {
+    return lifecycle::isShuttingDown(block.state());
+}
 
 /**
  * @brief The tag placement of a synchronous block that filters sample by sample and decimates by one or more: a tag
@@ -218,10 +225,13 @@ struct DelayedTagFilter {
     /**
      * @brief Hold each tag for its delayed output and publish those this call makes. Without a delay, the framework's
      * own forwarding runs. The tags still held from a delay in force before leave on the call's first output, ahead of
-     * every tag the framework forwards.
+     * every tag the framework forwards. Under a stop request no tag moves.
      */
     template<typename TInputSpans, typename TOutputSpans>
     void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
+        if (stopRequested(self())) {
+            return;
+        }
         const std::size_t                  decimation = self().tagDecimation();
         const std::optional<std::uint64_t> twiceDelay = self().twiceTagDelay();
         if (!twiceDelay.has_value()) {
@@ -285,10 +295,16 @@ struct DelayedTagFilter {
      * @brief The stream's last whole input chunks, and every held tag: a tag past their outputs leaves at the
      * end-of-stream index, with the tags the input holds past its last sample. Without a delay the epilogue makes no
      * output, and the tags the framework forwards from no call, those of a partial last chunk among them, leave at the
-     * end-of-stream index through the framework's key filter.
+     * end-of-stream index through the framework's key filter. Under a stop request the epilogue makes no output and
+     * drops every held tag.
      */
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
+        if (stopRequested(self())) {
+            _tags.reset();
+            output.publish(0UZ);
+            return work::Status::OK;
+        }
         const std::uint64_t past    = static_cast<std::uint64_t>(input.streamIndex) + static_cast<std::uint64_t>(input.size());
         std::size_t         outputs = 0UZ;
         if (self().twiceTagDelay().has_value()) {
