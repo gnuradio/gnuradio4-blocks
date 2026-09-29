@@ -23,11 +23,14 @@
 
 #include <gnuradio-4.0/testing/TestSpans.hpp>
 
+#include "StreamEndSink.hpp"
+
 namespace {
 
 using gr::blocks::filter::ArbitraryRateResampler;
-using CF       = std::complex<float>;
-namespace test = gr::blocks::testing::span;
+using CF              = std::complex<float>;
+namespace test        = gr::blocks::testing::span;
+namespace filter_test = gr::blocks::filter::testing;
 
 /// A 64-bit stream offset narrowed to an index; a template, so the cast stands where `std::size_t` is 32 bits and is
 /// not a useless cast where the two are the same 64-bit type.
@@ -534,9 +537,9 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         }
     };
 
-    "a tag whose delayed output lies past the end of the stream leaves on the stream's last output"_test = [] {
+    "a tag whose delayed output lies past the end of the stream leaves at the end-of-stream index"_test = [] {
         // the prototype delays by more than two inputs: a trigger and a burst end on the last two inputs lie past the last
-        // output, which carries them both, below unity and above it
+        // output, and both leave at the end-of-stream index, one past it, below unity and above it
         constexpr std::size_t kBank    = 32UZ;
         constexpr gr::Size_t  kSamples = 1000U;
         for (const double rate : {0.5, 1.7}) {
@@ -549,31 +552,20 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
             source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
             source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
             auto& block = graph.emplaceBlock<ArbitraryRateResampler<float>>(settings);
-            auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+            auto  sinks = filter_test::connectEndSinks<float>(graph, block);
 
             expect(graph.connect<"out", "in">(source, block).has_value());
-            expect(graph.connect<"out", "in">(block, sink).has_value());
+            expect(fatal(sinks.has_value()));
             expect(gt(block.groupDelaySamples(), 2.0)) << std::format("r = {}: the prototype delays the last two inputs past the last output", rate);
             gr::scheduler::Simple scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
 
-            const auto offsetsOf = [&sink](std::string_view key) {
-                std::vector<std::size_t> offsets;
-                for (const gr::Tag& seen : sink._tags) {
-                    if (seen.map.contains(gr::property_map::key_type{key})) {
-                        offsets.push_back(seen.index);
-                    }
-                }
-                return offsets;
-            };
-            expect(eq(sink._samples.size(), outputs)) << std::format("r = {}: every output, and none past the last input", rate);
-            expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{outputs - 1UZ})) << std::format("r = {}: the trigger on the last output", rate);
-            expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{outputs - 1UZ})) << std::format("r = {}: the burst end on the last output", rate);
+            filter_test::expectAtStreamEnd(*sinks, outputs, {"trigger_name", "tx_eob"}, std::format("r = {}", rate));
         }
     };
 
-    "a tag on an input whose call makes no output leaves on the stream's last output"_test = [] {
+    "a tag on an input whose call makes no output leaves at the end-of-stream index"_test = [] {
         // at a rate of 0.5 the last of 1001 inputs completes no output: the source hands it over alone with its burst
         // end, and the call that takes it makes nothing
         constexpr std::size_t    kBank     = 32UZ;
@@ -585,24 +577,20 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
 
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        source._tags.emplace_back(500UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}});
         source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
         auto& block = graph.emplaceBlock<ArbitraryRateResampler<float>>(settings);
-        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+        auto  sinks = filter_test::connectEndSinks<float>(graph, block);
 
         expect(graph.connect<"out", "in">(source, block).has_value());
-        expect(graph.connect<"out", "in">(block, sink).has_value());
+        expect(fatal(sinks.has_value()));
         gr::scheduler::Simple scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
-        std::vector<std::size_t> offsets;
-        for (const gr::Tag& seen : sink._tags) {
-            if (seen.map.contains(gr::property_map::key_type{"tx_eob"})) {
-                offsets.push_back(seen.index);
-            }
-        }
-        expect(eq(sink._samples.size(), outputs)) << "every output, and none past the last input";
-        expect(that % (offsets == std::vector<std::size_t>{outputs - 1UZ})) << "the burst end on the last output";
+        filter_test::expectAtStreamEnd(*sinks, outputs, {"tx_eob"}, "r = 0.5, 1001 inputs"); // the count of a stream without tags
+        expect(eq(sinks->end.offsetsOf("trigger_meta_info").size(), 1UZ)) << "the tag inside the stream on one output";
+        expect(that % (filter_test::offsetsOf(sinks->samples._tags, "trigger_meta_info") == sinks->end.offsetsOf("trigger_meta_info"))) << "a sample-by-sample consumer sees a tag on its sample";
     };
 
     "a tag leaves on the output that carries its sample's energy"_test = [] {

@@ -38,7 +38,8 @@ Singular values are kept if ALL criteria are satisfied:
 
 The output lags the input by `max((window_size-1)/2, hop-1)` samples, `hop` being the SVD recomputation interval in
 samples. Every tag moves whole, every key with it, by that lag: a tag on input `i` leaves on output `i + lag`, the
-output that estimates input `i`. A tag whose output lies past the end of the stream leaves on the stream's last output.
+output that estimates input `i`. A tag whose output lies past the stream's last output leaves at the end-of-stream
+index, one past that output.
 )"">; // clang-format off
 
     using RealT = gr::meta::fundamental_base_value_type_t<T>;

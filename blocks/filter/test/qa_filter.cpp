@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -22,6 +23,8 @@
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 #include <gnuradio-4.0/testing/TestSpans.hpp>
 
+#include "StreamEndSink.hpp"
+
 /// @brief One sample through the `processBulk` of @p block.
 template<typename TBlock, typename T>
 [[nodiscard]] T filterOne(TBlock& block, T input) {
@@ -30,21 +33,16 @@ template<typename TBlock, typename T>
     return output;
 }
 
-/// @brief What a sink sees of a tagged stream that passed one block.
+/// @brief What two sinks see of a tagged stream that passed one block: every tag, and the tags on samples alone.
 struct TaggedRun {
-    bool                 ran     = false;
-    std::size_t          samples = 0UZ;
-    std::vector<gr::Tag> tags;
+    bool                       ran     = false;
+    std::size_t                samples = 0UZ;
+    std::optional<std::size_t> endIndex;   ///< the index of the `end_of_stream` tag
+    std::vector<gr::Tag>       tags;       ///< every tag, those at the end-of-stream index included
+    std::vector<gr::Tag>       sampleTags; ///< the tags a sample-by-sample consumer sees
 
-    [[nodiscard]] std::vector<std::size_t> offsetsOf(std::string_view key) const {
-        std::vector<std::size_t> offsets;
-        for (const gr::Tag& tag : tags) {
-            if (tag.map.contains(gr::property_map::key_type{key})) {
-                offsets.push_back(tag.index);
-            }
-        }
-        return offsets;
-    }
+    [[nodiscard]] std::vector<std::size_t> offsetsOf(std::string_view key) const { return gr::blocks::filter::testing::offsetsOf(tags, key); }
+    [[nodiscard]] std::vector<std::size_t> sampleOffsetsOf(std::string_view key) const { return gr::blocks::filter::testing::offsetsOf(sampleTags, key); }
 };
 
 /// @brief Run @p nSamples through a block of type @p TBlock made with @p settings: a trigger name at input @p mid, a
@@ -58,16 +56,19 @@ template<typename TBlock>
     source._tags.emplace_back(nSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_time"}, std::uint64_t{1}}});
     source._tags.emplace_back(nSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}, {gr::property_map::key_type{"tx_eob"}, true}});
     auto& block = graph.emplaceBlock<TBlock>(std::move(settings));
-    auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+    auto  sinks = gr::blocks::filter::testing::connectEndSinks<float>(graph, block);
 
     TaggedRun run;
-    if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
+    if (!graph.connect<"out", "in">(source, block).has_value() || !sinks.has_value()) {
         return run;
     }
     gr::scheduler::Simple scheduler;
-    run.ran     = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
-    run.samples = sink._samples.size();
-    run.tags    = sink._tags;
+    run.ran        = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
+    run.samples    = sinks->end._samples.size();
+    run.endIndex   = sinks->end.endIndex();
+    run.tags       = sinks->end._tags;
+    run.sampleTags = sinks->samples._tags;
+    run.ran        = run.ran && sinks->samples._samples.size() == run.samples;
     return run;
 }
 
@@ -395,17 +396,21 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
     constexpr std::size_t kMid     = 100UZ;
     constexpr std::size_t kLast    = kSamples - 1UZ;
 
-    "fir_filter moves a tag by its delay as FirFilter does, and a tag past the end leaves on the last output"_test = [] {
-        // 31 equal taps delay by 15: the trigger at input 100 leaves on output 115, the tags on the last two inputs on the last output
+    "fir_filter moves a tag by its delay as FirFilter does, and a tag past the end leaves at the end-of-stream index"_test = [] {
+        // 31 equal taps delay by 15: the trigger at input 100 leaves on output 115, the tags on the last two inputs one
+        // past the last output
         const std::vector<float> taps(31UZ, 1.0f / 31.0f);
         const TaggedRun          got = runTagged<fir_filter<float>>({{"b", taps}}, kSamples, kMid);
         const TaggedRun          ref = runTagged<FirFilter<float>>({{"taps", taps}}, kSamples, kMid);
         expect(got.ran && ref.ran);
         expect(eq(got.samples, std::size_t{kSamples})) << "every output, and none past the last input";
+        expect(that % (got.endIndex == std::optional<std::size_t>{std::size_t{kSamples}})) << "the stream ends one past the last output";
         expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{kMid + 15UZ})) << "the trigger on the delayed sample";
-        expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{kLast})) << "a tag past the end on the last output";
-        expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kLast})) << "the tag on the last input as well";
-        expect(that % (got.offsetsOf("tx_eob") == std::vector<std::size_t>{kLast})) << "the burst end with it, a key the framework would drop";
+        expect(that % (got.sampleOffsetsOf("trigger_name") == std::vector<std::size_t>{kMid + 15UZ})) << "where a sample-by-sample consumer sees it";
+        for (const std::string_view key : {"trigger_time", "trigger_meta_info", "tx_eob"}) {
+            expect(that % (got.offsetsOf(key) == std::vector<std::size_t>{std::size_t{kSamples}})) << std::format("{} past the end at the end-of-stream index", key);
+            expect(that % got.sampleOffsetsOf(key).empty()) << std::format("{} on no sample", key);
+        }
         for (const std::string_view key : {"trigger_name", "trigger_time", "trigger_meta_info", "tx_eob"}) {
             expect(that % (got.offsetsOf(key) == ref.offsetsOf(key))) << std::format("{} where FirFilter puts it", key);
         }
@@ -435,10 +440,13 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
 
                 expect(got.ran && ref.ran);
                 expect(eq(got.samples, outputs)) << label << ": every output, and none past the last input";
+                expect(that % (got.endIndex == std::optional<std::size_t>{outputs})) << label << ": the stream ends one past the last output";
                 expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{mid})) << label << ": the trigger on the delayed sample";
-                expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{outputs - 1UZ})) << label << ": a tag past the end on the last output";
-                expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{outputs - 1UZ})) << label << ": the tag on the last input as well";
-                expect(that % (got.offsetsOf("tx_eob") == std::vector<std::size_t>{outputs - 1UZ})) << label << ": the burst end with it, a key the framework would drop";
+                expect(that % (got.sampleOffsetsOf("trigger_name") == std::vector<std::size_t>{mid})) << label << ": where a sample-by-sample consumer sees it";
+                for (const std::string_view key : {"trigger_time", "trigger_meta_info", "tx_eob"}) {
+                    expect(that % (got.offsetsOf(key) == std::vector<std::size_t>{outputs})) << label << ": " << key << " past the end at the end-of-stream index";
+                    expect(that % got.sampleOffsetsOf(key).empty()) << label << ": " << key << " on no sample";
+                }
                 for (const std::string_view key : {"trigger_name", "trigger_time", "trigger_meta_info", "tx_eob"}) {
                     expect(that % (got.offsetsOf(key) == ref.offsetsOf(key))) << label << ": " << key << " where FirFilter puts it";
                 }
@@ -452,6 +460,7 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
         expect(eq(got.samples, std::size_t{kSamples}));
         expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{kMid})) << "the framework places the tag";
         expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kLast}));
+        expect(that % (got.sampleOffsetsOf("trigger_meta_info") == std::vector<std::size_t>{kLast})) << "on the sample a sample-by-sample consumer sees";
     };
 
     "a switch from FIR to IIR publishes the held tag ahead of the next call's tags"_test = [] {

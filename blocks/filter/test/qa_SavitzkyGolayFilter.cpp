@@ -21,6 +21,8 @@
 #include <gnuradio-4.0/filter/SvdDenoiser.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
+#include "StreamEndSink.hpp"
+
 /// @brief One sample through the `processBulk` of @p block.
 template<typename TBlock, typename T>
 [[nodiscard]] T filterOne(TBlock& block, T input) {
@@ -713,29 +715,24 @@ const boost::ut::suite<"SavitzkyGolayFilter tag placement"> sgTagPlacementTests 
                 settings.insert_or_assign(gr::property_map::key_type{"alignment"}, std::string("Causal"));
             }
             auto& block = graph.emplaceBlock<SavitzkyGolayFilter<float>>(std::move(settings));
-            auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+            auto  sinks = gr::blocks::filter::testing::connectEndSinks<float>(graph, block);
             expect(graph.connect<"out", "in">(source, block).has_value());
-            expect(graph.connect<"out", "in">(block, sink).has_value());
+            expect(fatal(sinks.has_value()));
             gr::scheduler::Simple scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
 
-            const auto offsetsOf = [&sink](std::string_view key) {
-                std::vector<std::size_t> offsets;
-                for (const gr::Tag& seen : sink._tags) {
-                    if (seen.map.contains(gr::property_map::key_type{key})) {
-                        offsets.push_back(seen.index);
-                    }
-                }
-                return offsets;
-            };
             const std::string label = std::format("W = {} {}", c.window, c.causal ? "causal" : "centered");
-            expect(eq(sink._samples.size(), std::size_t{kSamples})) << label << ": every output, and none past the last input";
-            expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{kAt + c.lag})) << label << ": the tag on the lagged output";
-            const auto head = std::span<const float>(sink._samples).first(2UZ * kAt);
+            expect(that % (sinks->end.offsetsOf("trigger_name") == std::vector<std::size_t>{kAt + c.lag})) << label << ": the tag on the lagged output";
+            const auto head = std::span<const float>(sinks->end._samples).first(2UZ * kAt);
             expect(eq(static_cast<std::size_t>(std::ranges::max_element(head) - head.begin()), kAt + c.lag)) << label << ": the impulse peaks on that output";
-            expect(that % (offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": a tag past the end on the last output";
-            expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": the burst end with it, a key the framework would drop";
+            if (c.lag == 0UZ) { // the causal fit makes an output for the last input, which carries its tags
+                expect(eq(sinks->end._samples.size(), std::size_t{kSamples})) << label << ": every output, and none past the last input";
+                expect(that % (sinks->end.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": the tag on the last input on the last output";
+                expect(that % (gr::blocks::filter::testing::offsetsOf(sinks->samples._tags, "tx_eob") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": the burst end with it, a key the framework would drop";
+            } else {
+                gr::blocks::filter::testing::expectAtStreamEnd(*sinks, kSamples, {"trigger_meta_info", "tx_eob"}, label);
+            }
         }
     };
 };

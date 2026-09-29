@@ -21,10 +21,13 @@
 
 #include <gnuradio-4.0/testing/TestSpans.hpp>
 
+#include "StreamEndSink.hpp"
+
 namespace {
 
 using gr::blocks::filter::RationalResampler;
-namespace test = gr::blocks::testing::span;
+namespace test        = gr::blocks::testing::span;
+namespace filter_test = gr::blocks::filter::testing;
 
 /// A 64-bit stream offset narrowed to an index; a template, so the cast stands where `std::size_t` is 32 bits and is
 /// not a useless cast where the two are the same 64-bit type.
@@ -477,70 +480,52 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
         }
     };
 
-    "a tag whose delayed output lies past the end of the stream leaves on the stream's last output"_test = [] {
-        // the designed 3/2 prototype delays by more than two inputs: a trigger and a burst end on the last two inputs lie past the last output, which carries them both
-        constexpr gr::Size_t kSamples = 1000U;
-        gr::Graph            graph;
-        auto&                source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+    "a tag whose delayed output lies past the end of the stream leaves at the end-of-stream index"_test = [] {
+        // the designed 3/2 prototype delays by more than two inputs: a trigger and a burst end on the last two inputs lie
+        // past the last output, and both leave at the end-of-stream index, one past it
+        constexpr gr::Size_t  kSamples = 1000U;
+        constexpr std::size_t kOutputs = 1500UZ; // 1000 inputs at 3/2
+        gr::Graph             graph;
+        auto&                 source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
         source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
         source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
         auto& block = graph.emplaceBlock<RationalResampler<float>>({{"interpolation", 3U}, {"decimation", 2U}});
-        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+        auto  sinks = filter_test::connectEndSinks<float>(graph, block);
 
         expect(graph.connect<"out", "in">(source, block).has_value());
-        expect(graph.connect<"out", "in">(block, sink).has_value());
-        constexpr std::size_t kOutputs = 1500UZ; // 1000 inputs at 3/2
+        expect(fatal(sinks.has_value()));
         expect(gt(block.groupDelaySamples(), 2.0)) << "the designed prototype delays the last two inputs past the last output";
         gr::scheduler::Simple scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
-        const auto offsetsOf = [&sink](std::string_view key) {
-            std::vector<std::size_t> offsets;
-            for (const gr::Tag& seen : sink._tags) {
-                if (seen.map.contains(gr::property_map::key_type{key})) {
-                    offsets.push_back(seen.index);
-                }
-            }
-            return offsets;
-        };
-        expect(eq(sink._samples.size(), kOutputs)) << "every output, and none past the last input";
-        expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the trigger on the last output";
-        expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the burst end on the last output";
+        filter_test::expectAtStreamEnd(*sinks, kOutputs, {"trigger_name", "tx_eob"}, "3/2");
     };
 
-    "a tag on the partial last chunk leaves on the stream's last output"_test = [] {
-        // at 147/160 the last 50 of 16050 inputs are no whole chunk and make no output: a trigger and a burst end on
-        // them leave on the last output the 100 whole chunks make
+    "a tag on the partial last chunk leaves at the end-of-stream index"_test = [] {
+        // at 147/160 the last 50 of 16050 inputs are no whole chunk and make no output, as they make none on a stream
+        // without tags: a trigger and a burst end on them leave one past the last output the 100 whole chunks make
         constexpr gr::Size_t  kSamples = 16050U;
         constexpr std::size_t kOutputs = 14700UZ;
         static_assert(kSamples % 160U != 0U && kSamples / 160U * 147U == kOutputs);
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        source._tags.emplace_back(kSamples / 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}});
         source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
         source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
         auto& block = graph.emplaceBlock<RationalResampler<float>>({{"interpolation", 147U}, {"decimation", 160U}});
-        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+        auto  sinks = filter_test::connectEndSinks<float>(graph, block);
 
         expect(graph.connect<"out", "in">(source, block).has_value());
-        expect(graph.connect<"out", "in">(block, sink).has_value());
+        expect(fatal(sinks.has_value()));
         expect(eq(block.input_chunk_size.value, 160U)) << "the ratio does not reduce";
         gr::scheduler::Simple scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
-        const auto offsetsOf = [&sink](std::string_view key) {
-            std::vector<std::size_t> offsets;
-            for (const gr::Tag& seen : sink._tags) {
-                if (seen.map.contains(gr::property_map::key_type{key})) {
-                    offsets.push_back(seen.index);
-                }
-            }
-            return offsets;
-        };
-        expect(eq(sink._samples.size(), kOutputs)) << "the whole chunks' outputs, and none from the partial chunk";
-        expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the trigger on the last output";
-        expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the burst end on the last output";
+        filter_test::expectAtStreamEnd(*sinks, kOutputs, {"trigger_name", "tx_eob"}, "147/160"); // the whole chunks' outputs, the count of a stream without tags
+        expect(eq(sinks->end.offsetsOf("trigger_meta_info").size(), 1UZ)) << "the tag inside the stream on one output";
+        expect(that % (filter_test::offsetsOf(sinks->samples._tags, "trigger_meta_info") == sinks->end.offsetsOf("trigger_meta_info"))) << "a sample-by-sample consumer sees a tag on its sample";
     };
 
     "the L=3 M=2 offsets are the table"_test = [] {
