@@ -33,15 +33,21 @@
 
 #include <gnuradio-4.0/Message.hpp>
 
+// One NumPy API table serves every unit of a linked module. The unit that defines 'GR_PYTHON_RUNTIME_OWNER' before this
+// include holds the table and the runtime that imports it, and every other unit of the module uses them.
 #include <numpy/numpyconfig.h>
-#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+#define NPY_NO_DEPRECATED_API  NPY_1_7_API_VERSION
+#define PY_ARRAY_UNIQUE_SYMBOL gr_python_PyArray_API
+#ifndef GR_PYTHON_RUNTIME_OWNER
+#define NO_IMPORT_ARRAY
+#endif
 #include <numpy/arrayobject.h>
 
 namespace gr::python {
 
-inline static PyObject* TrueObj  = Py_True;
-inline static PyObject* FalseObj = Py_False;
-inline static PyObject* NoneObj  = Py_None;
+inline PyObject* TrueObj  = Py_True;
+inline PyObject* FalseObj = Py_False;
+inline PyObject* NoneObj  = Py_None;
 
 constexpr inline bool isPyDict(const PyObject* obj) { return PyDict_Check(obj); }
 
@@ -269,46 +275,16 @@ enum class EnforceFunction { MANDATORY, OPTIONAL };
 /// life. The module's dictionary holds the block's capsule and every name the block's script defines, and two instances
 /// whose scripts define the same name each keep their own.
 class Interpreter {
-    /// Owns the process's embedded interpreter. The first 'Interpreter' constructs the only instance. Its destructor runs
-    /// at process exit and finalizes the interpreter once. An interpreter that the host process initialized is left for
-    /// the host to finalize.
+    /// Imports the linked module's NumPy table and initializes the embedded interpreter if it is not yet initialized. Each
+    /// linked module holds one instance, which the module's first 'Interpreter' constructs. The instance that initialized
+    /// the interpreter finalizes it at process exit. An interpreter that the host process initialized is left for the host
+    /// to finalize.
     class Runtime {
         bool               _ownsInterpreter = Py_IsInitialized() == 0;
         std::exception_ptr _numpyError;
 
     public:
-        Runtime() {
-            if (_ownsInterpreter) {
-                Py_Initialize();
-                if (PyErr_Occurred()) {
-                    PyErr_Print();
-                }
-            }
-
-            {
-                python::PyGILGuard guard;
-                if (_import_array() < 0) {
-                    // NumPy cannot be imported again into a process after 'Py_Finalize()', so the interpreter lives until
-                    // the process exits and a block's destruction releases only the block's own objects.
-
-                    // initialize NumPy -- N.B. NumPy does not support sub-interpreters (as of Python 3.12):
-                    // "sys:1: UserWarning: NumPy was imported from a Python sub-interpreter but NumPy does not properly support sub-interpreters.
-                    // This will likely work for most users but might cause hard to track down issues or subtle bugs.
-                    // A common user of the rare sub-interpreter feature is wsgi which also allows single-interpreter mode.
-                    // Improvements in the case of bugs are welcome, but is not on the NumPy roadmap, and full support may require significant effort to achieve."
-                    try {
-                        python::throwCurrentPythonError("failed to initialize NumPy");
-                    } catch (...) {
-                        _numpyError = std::current_exception();
-                    }
-                }
-            }
-            // 'Py_Initialize()' leaves the interpreter lock with this thread. Saving the thread's state releases it, and
-            // every later call takes it through 'PyGILGuard' on whichever thread makes the call.
-            if (_ownsInterpreter) {
-                std::ignore = PyEval_SaveThread();
-            }
-        }
+        Runtime(); // defined in the unit that holds the module's table
 
         ~Runtime() {
             if (_ownsInterpreter && Py_IsInitialized()) {
@@ -327,10 +303,8 @@ class Interpreter {
         }
     };
 
-    static Runtime& runtime() {
-        static Runtime instance;
-        return instance;
-    }
+    // the hidden visibility keeps one instance per linked module, beside the module's own table
+    [[gnu::visibility("hidden")]] static Runtime& runtime();
 
     static std::atomic<std::size_t> _nModules;
     PyModuleDef*                    _moduleDefinitions;
@@ -444,6 +418,46 @@ public:
 };
 
 inline std::atomic<std::size_t> Interpreter::_nModules{0UZ};
+
+#ifdef GR_PYTHON_RUNTIME_OWNER
+Interpreter::Runtime::Runtime() {
+    if (_ownsInterpreter) {
+        Py_Initialize();
+        if (PyErr_Occurred()) {
+            PyErr_Print();
+        }
+    }
+
+    {
+        python::PyGILGuard guard;
+        if (_import_array() < 0) {
+            // NumPy cannot be imported again into a process after 'Py_Finalize()', so the interpreter lives until
+            // the process exits and a block's destruction releases only the block's own objects.
+
+            // initialize NumPy -- N.B. NumPy does not support sub-interpreters (as of Python 3.12):
+            // "sys:1: UserWarning: NumPy was imported from a Python sub-interpreter but NumPy does not properly support sub-interpreters.
+            // This will likely work for most users but might cause hard to track down issues or subtle bugs.
+            // A common user of the rare sub-interpreter feature is wsgi which also allows single-interpreter mode.
+            // Improvements in the case of bugs are welcome, but is not on the NumPy roadmap, and full support may require significant effort to achieve."
+            try {
+                python::throwCurrentPythonError("failed to initialize NumPy");
+            } catch (...) {
+                _numpyError = std::current_exception();
+            }
+        }
+    }
+    // 'Py_Initialize()' leaves the interpreter lock with this thread. Saving the thread's state releases it, and
+    // every later call takes it through 'PyGILGuard' on whichever thread makes the call.
+    if (_ownsInterpreter) {
+        std::ignore = PyEval_SaveThread();
+    }
+}
+
+Interpreter::Runtime& Interpreter::runtime() {
+    static Runtime instance;
+    return instance;
+}
+#endif
 
 } // namespace gr::python
 

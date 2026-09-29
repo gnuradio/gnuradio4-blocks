@@ -27,6 +27,10 @@ if(PYTHON_AVAILABLE)
     GrBasicBlocks_LIBS
     Python3::Python
     Python3::NumPy)
+  # the unit that holds the library's NumPy API table defines its macro before the header's first include. It skips the
+  # precompiled header, which includes the header.
+  set(GrBasicBlocks_SRCS src/PythonRuntime.cpp)
+  set_source_files_properties(src/PythonRuntime.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 else()
   # the header registers a block that only builds with Python; naming it keeps the registration check on for the rest of
   # the module. Only a core whose block-library macro declares the check takes the keyword.
@@ -50,6 +54,8 @@ gr_add_block_library(
   MAKE_STATIC_LIBRARY
   HEADERS
   ${GrBasicBlocks_HDRS}
+  SOURCES
+  ${GrBasicBlocks_SRCS}
   ${GrBasicBlocks_UNREGISTERED_ARGS}
   LINK_LIBRARIES
   ${GrBasicBlocks_LIBS})
