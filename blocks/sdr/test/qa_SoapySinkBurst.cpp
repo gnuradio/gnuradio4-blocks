@@ -62,7 +62,7 @@ std::vector<Write> writeLog(const soapy::Device& device) {
     std::size_t        pos   = 0UZ;
     while (pos < log.size()) {
         const std::size_t end = std::min(log.find(';', pos), log.size());
-        Write             write{.first = first};
+        Write             write{.first = first, .requested = 0UZ, .taken = 0UZ, .flags = 0, .timeNs = 0LL};
         const char*       cursor = log.data() + pos;
         const char*       last   = log.data() + end;
         cursor                   = std::from_chars(cursor, last, write.requested).ptr + 1;
@@ -79,6 +79,24 @@ std::vector<Write> writeLog(const soapy::Device& device) {
 gr::Tag burstStart(std::size_t index) { return {index, {{gr::tag::TX_SOB.shortKey(), true}}}; }
 gr::Tag timedBurstStart(std::size_t index, std::uint64_t timeNs) { return {index, {{gr::tag::TX_SOB.shortKey(), true}, {gr::tag::TX_TIME.shortKey(), timeNs}}}; }
 gr::Tag burstEnd(std::size_t index) { return {index, {{gr::tag::TX_EOB.shortKey(), true}}}; }
+
+// the text of every message on the port that reports an ignored burst tag
+std::vector<std::string> burstTagReports(gr::MsgPortIn& port) {
+    std::vector<std::string> reports;
+    auto&                    reader   = port.streamReader();
+    auto                     messages = reader.get<gr::SpanReleasePolicy::ProcessAll>(reader.available());
+    for (const gr::Message& message : messages) {
+        if (!message.data.has_value()) {
+            continue;
+        }
+        if (const auto it = message.data->find(std::string_view("error")); it != message.data->end()) {
+            if (auto text = it->second.value_or(std::string()); text.contains("tx_")) {
+                reports.push_back(std::move(text));
+            }
+        }
+    }
+    return reports;
+}
 
 // The source ends the stream, so the run ends by itself; the watchdog only bounds a sink that fails to stop.
 bool runToEnd(gr::scheduler::Simple<>& sched) {
@@ -100,7 +118,8 @@ bool runToEnd(gr::scheduler::Simple<>& sched) {
 }
 
 // Streams nSamples through a one-port sink to a transmit-only loopback device and returns the writes it received.
-std::vector<Write> transmit(std::string parameters, std::size_t nSamples, std::vector<gr::Tag> tags, gr::property_map extraSettings = {}) {
+// With reports, it also collects the messages that report an ignored burst tag.
+std::vector<Write> transmit(std::string parameters, std::size_t nSamples, std::vector<gr::Tag> tags, gr::property_map extraSettings = {}, std::vector<std::string>* reports = nullptr) {
     parameters = "device_mode=tx_only" + (parameters.empty() ? std::string() : "," + parameters);
     soapy::Kwargs kwargs{{"driver", "loopback"}};
     kwargs.merge(soapy::parseKwargsString(parameters));
@@ -120,8 +139,15 @@ std::vector<Write> transmit(std::string parameters, std::size_t nSamples, std::v
     expect(fatal(flow.connect<"out", "in">(source, sink).has_value()));
 
     gr::scheduler::Simple<> sched;
+    gr::MsgPortIn           fromScheduler;
     expect(fatal(sched.exchange(std::move(flow)).has_value()));
+    if (reports != nullptr) {
+        expect(fatal(sched.msgOut.connect(fromScheduler).has_value()));
+    }
     expect(runToEnd(sched)) << "the stream ends and the sink stops by itself";
+    if (reports != nullptr) {
+        *reports = burstTagReports(fromScheduler);
+    }
     return writeLog(*probe);
 }
 
@@ -201,6 +227,23 @@ const boost::ut::suite<"SoapySink transmit bursts"> burstTests = [] {
         constexpr std::size_t kSamples = 1500UZ;
         const auto            writes   = transmit("", kSamples, {timedBurstStart(300UZ, kFirstBurstTimeNs), burstEnd(899UZ), timedBurstStart(900UZ, kSecondBurstTimeNs), burstEnd(1499UZ)});
         expectBurstWrites("timed bursts", writes, kSamples, {899UZ, 1499UZ}, {{300UZ, kFirstBurstTimeNs}, {900UZ, kSecondBurstTimeNs}});
+    };
+
+    "a tx_time of a signed or narrower integer type times the burst"_test = [] {
+        constexpr std::size_t   kSamples = 1200UZ;
+        constexpr std::int64_t  kSigned  = 1'720'000'000'000'000'000LL;
+        constexpr std::uint32_t kNarrow  = 4'000'000'000U;
+        const auto              writes   = transmit("", kSamples, {{300UZ, {{gr::tag::TX_TIME.shortKey(), kSigned}}}, burstEnd(599UZ), {600UZ, {{gr::tag::TX_TIME.shortKey(), kNarrow}}}, burstEnd(1199UZ)});
+        expectBurstWrites("integer times", writes, kSamples, {599UZ, 1199UZ}, {{300UZ, static_cast<std::uint64_t>(kSigned)}, {600UZ, std::uint64_t{kNarrow}}});
+    };
+
+    "a burst tag of another type is ignored and reported once"_test = [] {
+        constexpr std::size_t    kSamples = 1000UZ;
+        std::vector<std::string> reports;
+        const auto               writes = transmit("", kSamples, {{100UZ, {{gr::tag::TX_EOB.shortKey(), std::int32_t{1}}}}, {300UZ, {{gr::tag::TX_TIME.shortKey(), 1.5}}}, {500UZ, {{gr::tag::TX_TIME.shortKey(), std::int64_t{-1}}}}}, {}, &reports);
+        expectBurstWrites("mistyped tags", writes, kSamples, {}, {});
+        expect(fatal(eq(reports.size(), 1UZ))) << "one report for the run";
+        expect(reports.front().contains("tx_eob") && reports.front().contains("100")) << reports.front();
     };
 
     "a device that takes part of a write still ends the burst at its last sample"_test = [] {
