@@ -90,6 +90,8 @@ if(TARGET SoapySDR)
       COMMAND ${CMAKE_COMMAND} -E make_directory ${SOAPY_MODULE_DIR}
       COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:gr-sdr-loopback> ${SOAPY_MODULE_DIR}/
       COMMENT "Copying gr-sdr-loopback.so for the SoapySource test")
+  else()
+    message(STATUS "qa_SoapySource: the loopback module is absent (SoapySDR ABI mismatch). Its device cases skip.")
   endif()
   # skip LSAN: 168-byte leak inside SoapySDR's dynamically loaded driver modules (not our code)
   set_tests_properties(
