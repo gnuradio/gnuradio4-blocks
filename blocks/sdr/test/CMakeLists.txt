@@ -74,8 +74,29 @@ if(TARGET SoapySDR)
             gr-testing
             ut)
   add_test(NAME qa_SoapySource COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} ${CMAKE_CURRENT_BINARY_DIR}/qa_SoapySource)
+  # SoapySDR loads the loopback module alone. SOAPY_SDR_ROOT names an empty directory in place of the host's module
+  # folders, and SOAPY_SDR_PLUGIN_PATH names the loopback module's directory. The program sets both itself unless
+  # GR_SDR_TEST_HARDWARE=1 asks for the host's modules and radios.
+  set(SOAPY_MODULE_DIR ${CMAKE_CURRENT_BINARY_DIR}/soapy_modules)
+  set(SOAPY_EMPTY_ROOT ${CMAKE_CURRENT_BINARY_DIR}/soapy_empty_root)
+  file(MAKE_DIRECTORY ${SOAPY_EMPTY_ROOT})
+  target_compile_definitions(qa_SoapySource PRIVATE GR_SDR_TEST_SOAPY_MODULE_DIR="${SOAPY_MODULE_DIR}"
+                                                    GR_SDR_TEST_SOAPY_EMPTY_ROOT="${SOAPY_EMPTY_ROOT}")
+  if(SOAPY_CXX_ABI_COMPATIBLE)
+    add_dependencies(qa_SoapySource gr-sdr-loopback)
+    add_custom_command(
+      TARGET qa_SoapySource
+      POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${SOAPY_MODULE_DIR}
+      COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:gr-sdr-loopback> ${SOAPY_MODULE_DIR}/
+      COMMENT "Copying gr-sdr-loopback.so for the SoapySource test")
+  endif()
   # skip LSAN: 168-byte leak inside SoapySDR's dynamically loaded driver modules (not our code)
-  set_tests_properties(qa_SoapySource PROPERTIES ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
+  set_tests_properties(
+    qa_SoapySource
+    PROPERTIES
+      ENVIRONMENT
+      "SOAPY_SDR_ROOT=${SOAPY_EMPTY_ROOT};SOAPY_SDR_PLUGIN_PATH=${SOAPY_MODULE_DIR};ASAN_OPTIONS=detect_leaks=0")
 
   # includes a filter block header before the sdr headers, so it compiles only while the sdr headers name every kernel
   # of gr::filter in full. No device is opened.
@@ -143,7 +164,6 @@ if(TARGET SoapySDR)
               gr-testing
               ut)
     add_dependencies(qa_SoapyRaiiWrapper gr-sdr-loopback)
-    set(SOAPY_MODULE_DIR ${CMAKE_CURRENT_BINARY_DIR}/soapy_modules)
     add_custom_command(
       TARGET qa_SoapyRaiiWrapper
       POST_BUILD
