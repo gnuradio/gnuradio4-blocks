@@ -158,7 +158,7 @@ struct FirFilterCore {
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
-                const std::size_t made = _tags.outputsToMake(self().in, processedIn / _decimation, _decimation, 1UZ, static_cast<std::uint64_t>(span.streamIndex));
+                const std::size_t made = _tags.outputsToMake(self().in, processedIn / _decimation, span.size(), _decimation, 1UZ, static_cast<std::uint64_t>(span.streamIndex));
                 if (made > 0UZ) { // a call that makes nothing publishes nothing
                     _tags.release(span, made, false);
                 }

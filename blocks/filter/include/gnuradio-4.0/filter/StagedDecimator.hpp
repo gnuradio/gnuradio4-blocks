@@ -226,7 +226,7 @@ of the stream leaves on the stream's last output. )"">;
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
-                const std::size_t made = _tags.outputsToMake(this->in, processedIn / static_cast<std::size_t>(_decimation), static_cast<std::size_t>(_decimation), 1UZ, static_cast<std::uint64_t>(span.streamIndex));
+                const std::size_t made = _tags.outputsToMake(this->in, processedIn / static_cast<std::size_t>(_decimation), span.size(), static_cast<std::size_t>(_decimation), 1UZ, static_cast<std::uint64_t>(span.streamIndex));
                 if (made > 0UZ) { // a call that makes nothing publishes nothing
                     _tags.release(span, made, false);
                 }
