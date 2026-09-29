@@ -195,7 +195,7 @@ if(NOT TARGET httplib::httplib)
   endif()
 endif()
 
-# the Python block embeds the interpreter, so it needs the embedding libraries and NumPy's C headers
+# the Python block embeds the interpreter. It needs the embedding libraries and NumPy's C headers.
 set(GR4_EXPORT_NEEDS_PYTHON OFF)
 if(GR4_ENABLE_PYTHON AND NOT EMSCRIPTEN)
   find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter Development.Embed NumPy)
