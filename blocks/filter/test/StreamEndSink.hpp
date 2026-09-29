@@ -14,6 +14,7 @@
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Graph.hpp>
+#include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
@@ -112,6 +113,46 @@ template<typename T, typename TBlock>
     return EndSinks<T>{end, samples};
 }
 
+/// @brief What the two sinks of `EndSinks` saw of a run, kept past the scheduler that ran it.
+struct EndRun {
+    bool                       ran     = false;
+    std::size_t                samples = 0UZ;
+    std::optional<std::size_t> endIndex;   ///< the index of the `end_of_stream` tag
+    std::vector<gr::Tag>       tags;       ///< every tag, those at the end-of-stream index included
+    std::vector<gr::Tag>       sampleTags; ///< the tags a sample-by-sample consumer sees
+
+    [[nodiscard]] std::vector<std::size_t> offsetsOf(std::string_view key) const { return testing::offsetsOf(tags, key); }
+    [[nodiscard]] std::vector<std::size_t> sampleOffsetsOf(std::string_view key) const { return testing::offsetsOf(sampleTags, key); }
+};
+
+/**
+ * @brief Run @p nSamples carrying @p tags through `TUpstream` made with @p upstream, then `TBlock` made with
+ * @p settings, into both sinks of `EndSinks`.
+ */
+template<typename TUpstream, typename TBlock>
+[[nodiscard]] EndRun runChained(gr::property_map upstream, gr::property_map settings, gr::Size_t nSamples, const std::vector<gr::Tag>& tags) {
+    using namespace gr::blocks::testing;
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", nSamples}, {"mark_tag", false}});
+    source._tags     = tags;
+    auto& first      = graph.emplaceBlock<TUpstream>(std::move(upstream));
+    auto& block      = graph.emplaceBlock<TBlock>(std::move(settings));
+    auto  sinks      = connectEndSinks<float>(graph, block);
+
+    EndRun run;
+    if (!graph.connect<"out", "in">(source, first).has_value() || !graph.connect<"out", "in">(first, block).has_value() || !sinks.has_value()) {
+        return run;
+    }
+    gr::scheduler::Simple scheduler;
+    run.ran        = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
+    run.samples    = sinks->end._samples.size();
+    run.endIndex   = sinks->end.endIndex();
+    run.tags       = sinks->end._tags;
+    run.sampleTags = sinks->samples._tags;
+    run.ran        = run.ran && sinks->samples._samples.size() == run.samples;
+    return run;
+}
+
 /**
  * @brief Expect a stream of @p outputs samples at both sinks of @p sinks, ending at index @p outputs, with each tag
  * carrying one of @p keys at that end-of-stream index and on no sample.
@@ -125,6 +166,18 @@ void expectAtStreamEnd(const EndSinks<T>& sinks, std::size_t outputs, std::initi
     for (const std::string_view key : keys) {
         expect(that % (sinks.end.offsetsOf(key) == std::vector<std::size_t>{outputs})) << std::format("{}: {} at the end-of-stream index", label, key);
         expect(that % offsetsOf(sinks.samples._tags, key).empty()) << std::format("{}: {} on no sample of a sample-by-sample consumer", label, key);
+    }
+}
+
+/// @brief `expectAtStreamEnd` over what a run's sinks saw, kept in @p run.
+inline void expectAtStreamEnd(const EndRun& run, std::size_t outputs, std::initializer_list<std::string_view> keys, std::string_view label = {}) {
+    using namespace boost::ut;
+    expect(run.ran) << std::format("{}: the graph ran, and both sinks saw every output", label);
+    expect(eq(run.samples, outputs)) << std::format("{}: every output, and none past the last input", label);
+    expect(eq(run.endIndex.value_or(std::numeric_limits<std::size_t>::max()), outputs)) << std::format("{}: the stream ends one past the last output, tags seen: {}", label, describe(run.tags));
+    for (const std::string_view key : keys) {
+        expect(that % (run.offsetsOf(key) == std::vector<std::size_t>{outputs})) << std::format("{}: {} at the end-of-stream index", label, key);
+        expect(that % run.sampleOffsetsOf(key).empty()) << std::format("{}: {} on no sample of a sample-by-sample consumer", label, key);
     }
 }
 

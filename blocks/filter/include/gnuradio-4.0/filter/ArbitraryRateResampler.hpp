@@ -207,13 +207,14 @@ output lies past the stream's last output leaves at the end-of-stream index, one
     }
 
     /// @brief The stream's last samples, and every held tag: a tag past the stream's last output leaves at the
-    /// end-of-stream index.
+    /// end-of-stream index, with the tags on input the call leaves and past the last sample.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& inSpan, TOutput& outSpan) {
         const auto [nIn, made] = fitToRoom(inSpan.size(), outSpan.size());
 
         mapTags(inSpan, nIn);
         std::ignore = _resampler->process(std::span<const T>(inSpan.data(), nIn), std::span<T>(outSpan.data(), made));
+        _tags.takeRemainder(in, static_cast<std::uint64_t>(inSpan.streamIndex) + static_cast<std::uint64_t>(nIn), [this](property_map& tag) { scaleSampleRate(tag); });
         _tags.release(outSpan, made, true);
 
         std::ignore = inSpan.consume(nIn);

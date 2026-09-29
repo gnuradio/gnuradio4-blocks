@@ -572,6 +572,16 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         filter_test::expectAtStreamEnd(*sinks, kOutputs, {"trigger_name", "tx_eob"}, "M = 4, 1003 inputs");
     };
 
+    "tags an upstream block leaves at its end-of-stream index pass to this block's end-of-stream index"_test = [] {
+        // the first filter holds the trigger and the burst end on the last inputs past its 250 outputs and publishes them
+        // at index 250, where no sample is; the second, at M = 2, passes them to its own end-of-stream index, 125
+        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
+        const std::vector<float>   taps = gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0);
+        const auto                 run  = filter_test::runChained<FirFilter<float, float>, FirFilter<float, float>>({{"taps", taps}, {"decimation", 4U}}, {{"taps", taps}, {"decimation", 2U}}, 1000U, tags);
+        filter_test::expectAtStreamEnd(run, 125UZ, {"trigger_name", "tx_eob"}, "M = 4, then M = 2");
+        expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
+    };
+
     "a taps change moves no held tag, and a later tag never lands ahead of it"_test = [] {
         const std::vector<float> longer  = gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0); // delays by 15
         const std::vector<float> shorter = gr::filter::fir::design::kaiserLowpass(5, 0.1, 60.0);  // delays by 2

@@ -167,13 +167,14 @@ struct FirFilterCore {
     }
 
     /// @brief The stream's last whole input chunks, and every held tag: a tag past their outputs leaves at the
-    /// end-of-stream index.
+    /// end-of-stream index, with the tags the input holds past its last sample.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
         const std::size_t outputs = std::min(input.size() / _decimation, output.size());
         if (outputs > 0UZ) {
             std::ignore = processBulk(std::span<const TSample>(input.data(), outputs * _decimation), std::span<TOut>(output.data(), outputs));
         }
+        _tags.takeRemainder(self().in, static_cast<std::uint64_t>(input.streamIndex) + static_cast<std::uint64_t>(input.size()), [this](property_map& tag) { self().scaleSampleRateByChunkRatio(tag); });
         _tags.release(output, outputs, true);
         output.publish(outputs);
         return work::Status::OK;
