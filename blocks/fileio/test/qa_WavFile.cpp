@@ -24,6 +24,7 @@
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
+#include "FileOpenCounter.hpp"
 #include "ScopedWorkingDirectory.hpp"
 
 #if GR4_ENABLE_HTTP_TESTS && !defined(__EMSCRIPTEN__)
@@ -212,6 +213,9 @@ std::expected<void, gr::Error> runSchedulerFor(gr::scheduler::Simple<>& sched, s
 }
 
 using gr::blocks::fileio::test::ScopedWorkingDirectory;
+
+// the reason the reader gives for a path it cannot open as a regular file
+constexpr std::string_view kReaderRefusal = "file not found or not a regular file";
 
 std::string errorMessage(const std::expected<void, gr::Error>& result) { return result.has_value() ? std::string{} : result.error().message; }
 
@@ -614,16 +618,25 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
 
     "WavSource refuses at start a file that does not exist or is not a regular file"_test = [] {
         ScopedWorkingDirectory workingDirectory;
-        const std::string      uri          = (workingDirectory.directory / "tone.wav").string();
-        const std::string      noSuchFile   = std::make_error_code(std::errc::no_such_file_or_directory).message();
-        const std::string      isADirectory = std::make_error_code(std::errc::is_a_directory).message();
+        const std::string      uri = (workingDirectory.directory / "tone.wav").string();
 
-        expectRefusedStart(runWavSource(uri, "overwrite"), {uri, noSuchFile});
-        expectRefusedStart(runWavSource(std::format("file://{}", uri), "overwrite"), {uri, noSuchFile});
+        expectRefusedStart(runWavSource(uri, "overwrite"), {uri, kReaderRefusal});
+        expectRefusedStart(runWavSource(std::format("file://{}", uri), "overwrite"), {uri, kReaderRefusal});
 
         std::filesystem::create_directory(uri);
-        expectRefusedStart(runWavSource(uri, "overwrite"), {uri, isADirectory});
+        expectRefusedStart(runWavSource(uri, "overwrite"), {uri, kReaderRefusal});
     };
+
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
+    "WavSource opens its file once"_test = [] {
+        const std::vector<std::int16_t> reference{1000, 2000, 3000};
+        TempFile                        file{writeTempAudioFile(makeWav(1U, 1U, 16U, 8000U, encodePcm16(reference)))};
+
+        const gr::blocks::fileio::test::FileOpenCounter opens(file.path);
+        expect(eq(readWavFile(file.path.string(), "overwrite"), reference));
+        expect(eq(opens.count(), 1UZ));
+    };
+#endif
 
     "WavSource refuses at start a uri scheme it cannot read"_test = [] { expectRefusedStart(runWavSource("ftp://127.0.0.1/tone.wav", "overwrite"), {"ftp://127.0.0.1/tone.wav"}); };
 
