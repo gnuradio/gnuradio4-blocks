@@ -86,7 +86,9 @@ inline void holdTag(HeldTags& held, std::uint64_t& latest, std::uint64_t delayed
  * makes no output past its last input, so a tag on one of the last inputs lies past every output. While a tag is held
  * past the outputs of a call, the block keeps back its last input chunk and asks for two chunks a call. When the
  * stream ends, the framework hands the kept chunk to the block's epilogue, whose outputs are the stream's last, and
- * every tag still held leaves on the last of them. A block whose input is not connected keeps nothing back.
+ * every tag still held leaves on the last of them. A block over `Async` ports keeps back the fewest input samples that
+ * still make one output and asks for one sample more than it keeps. A block whose input is not connected keeps nothing
+ * back.
  */
 struct TagDelayLine {
     HeldTags      held;
@@ -147,6 +149,19 @@ struct TagDelayLine {
         }
         in.min_samples = waiting ? std::max(freeMinSamples, 2UZ * inChunk) : freeMinSamples;
         return made;
+    }
+
+    /// @brief Whether a held tag lies at or past output @p end.
+    [[nodiscard]] bool heldPast(std::uint64_t end) const noexcept { return !held.empty() && held.back().first >= end; }
+
+    /**
+     * @brief Record that a call over `Async` ports keeps back @p kept input samples, and set the `min_samples` of @p in
+     * to one more than those while it keeps any. The framework then ends the stream when only the kept samples remain.
+     */
+    template<typename TPort>
+    void keepInputs(TPort& in, std::size_t kept) {
+        keepBack       = kept > 0UZ;
+        in.min_samples = keepBack ? std::max(freeMinSamples, kept + 1UZ) : freeMinSamples;
     }
 
     /**

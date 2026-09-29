@@ -9,6 +9,8 @@
 #include <format>
 #include <numbers>
 #include <span>
+#include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -529,6 +531,45 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
             expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{first})) << std::format("r = {}: the trigger moves by the delay", rate);
             expect(oneTag) << std::format("r = {}: the rate and the trigger leave as one tag", rate);
             expect(that % (got.offsetsOf("frequency") == std::vector<std::size_t>{narrowIndex<std::size_t>(mapArbitraryOffset(100ULL, kBank, stepFor(kBank, rate), delayedPhase(prototype)))})) << std::format("r = {}: the retune arrives on the delayed sample", rate);
+        }
+    };
+
+    "a tag whose delayed output lies past the end of the stream leaves on the stream's last output"_test = [] {
+        // the prototype delays by more than two inputs: a trigger and a burst end on the last two inputs lie past the last
+        // output, which carries them both, below unity and above it
+        constexpr std::size_t kBank    = 32UZ;
+        constexpr gr::Size_t  kSamples = 1000U;
+        for (const double rate : {0.5, 1.7}) {
+            const std::vector<float> prototype = prototypeFor(kBank, rate);
+            const gr::property_map   settings{{"rate", rate}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototype}};
+            const std::size_t        outputs = makeResampler<float>(settings).outputsFor(kSamples);
+
+            gr::Graph graph;
+            auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+            source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
+            source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+            auto& block = graph.emplaceBlock<ArbitraryRateResampler<float>>(settings);
+            auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+            expect(graph.connect<"out", "in">(source, block).has_value());
+            expect(graph.connect<"out", "in">(block, sink).has_value());
+            expect(gt(block.groupDelaySamples(), 2.0)) << std::format("r = {}: the prototype delays the last two inputs past the last output", rate);
+            gr::scheduler::Simple scheduler;
+            expect(scheduler.exchange(std::move(graph)).has_value());
+            expect(scheduler.runAndWait().has_value());
+
+            const auto offsetsOf = [&sink](std::string_view key) {
+                std::vector<std::size_t> offsets;
+                for (const gr::Tag& seen : sink._tags) {
+                    if (seen.map.contains(gr::property_map::key_type{key})) {
+                        offsets.push_back(seen.index);
+                    }
+                }
+                return offsets;
+            };
+            expect(eq(sink._samples.size(), outputs)) << std::format("r = {}: every output, and none past the last input", rate);
+            expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{outputs - 1UZ})) << std::format("r = {}: the trigger on the last output", rate);
+            expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{outputs - 1UZ})) << std::format("r = {}: the burst end on the last output", rate);
         }
     };
 

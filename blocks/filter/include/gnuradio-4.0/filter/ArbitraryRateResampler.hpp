@@ -51,7 +51,7 @@ interpolated rate `L*fs_in`: a tag on input `i` leaves on the output nearest the
 sample that carries the energy of input `i`. A designed or other symmetric prototype of `N` taps delays by `(N-1)/2`. An
 asymmetric supplied prototype moves its tags by the centroid of its energy, rounded to the whole interpolated sample. A
 tag is placed when its sample is consumed and keeps that output whatever rate change or rebuild follows, and a tag whose
-output lies past the end of the stream is not published. )"">;
+output lies past the end of the stream leaves on the stream's last output. )"">;
 
     PortIn<T, Async>  in;
     PortOut<T, Async> out;
@@ -67,17 +67,17 @@ output lies past the end of the stream is not published. )"">;
 
     GR_MAKE_REFLECTABLE(ArbitraryRateResampler, in, out, rate, min_rate, bank_size, interpolation_order, taps, rolloff, attenuation_db, max_ripple_db);
 
-    std::optional<TKernel>                              _resampler;
-    std::size_t                                         _bankSize    = 1UZ;
-    double                                              _designedFor = 1.0; /// the `min(1, r)` the prototype was cut for
-    std::uint64_t                                       _inOrigin    = 0ULL;
-    std::uint64_t                                       _outOrigin   = 0ULL;
-    std::uint64_t                                       _stepOrigin  = 0ULL;
-    std::int64_t                                        _phaseOrigin = 0LL;
-    std::uint64_t                                       _twiceDelay  = 0ULL; /// the prototype's delay in half interpolated samples, `twiceTapDelay`
-    bool                                                _reorigin    = false;
-    std::vector<std::pair<std::uint64_t, property_map>> _pendingTags;
-    std::uint64_t                                       _latestHeld = 0ULL; /// the output of the last held tag
+    std::optional<TKernel> _resampler;
+    std::size_t            _bankSize    = 1UZ;
+    double                 _designedFor = 1.0; /// the `min(1, r)` the prototype was cut for
+    std::uint64_t          _inOrigin    = 0ULL;
+    std::uint64_t          _outOrigin   = 0ULL;
+    std::uint64_t          _stepOrigin  = 0ULL;
+    std::int64_t           _phaseOrigin = 0LL;
+    std::uint64_t          _twiceDelay  = 0ULL; /// the prototype's delay in half interpolated samples, `twiceTapDelay`
+    bool                   _reorigin    = false;
+    detail::TagDelayLine   _tags;
+    std::uint64_t          _latestHeld = 0ULL; /// the output of the last held tag
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         static constexpr std::array kRebuildKeys{"bank_size", "interpolation_order", "taps", "rolloff", "attenuation_db", "max_ripple_db"};
@@ -95,7 +95,7 @@ output lies past the end of the stream is not published. )"">;
 
     void start() {
         rebuild();
-        _pendingTags.clear();
+        _tags.reset(in);
         _latestHeld = 0ULL;
         _inOrigin   = 0ULL;
         _outOrigin  = 0ULL;
@@ -187,30 +187,58 @@ output lies past the end of the stream is not published. )"">;
         _reorigin    = false;
     }
 
+    /**
+     * @brief One call's samples, less the inputs a held tag keeps back for the stream's end.
+     *
+     * A call that takes all of its input while a tag lies past its outputs keeps back the sample that completes its last
+     * output and every sample after it. The kept samples make that output in a later call or in the epilogue, and a tag
+     * past the stream's end leaves on it.
+     */
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        const std::size_t room = outSpan.size();
-        std::size_t       nIn  = inSpan.size();
-        std::size_t       made = _resampler->outputsFor(nIn);
-        if (made > room) {
-            // the largest input count whose outputs still fit: `inputsFor` is the smallest count reaching a given
-            // output, so one short of what reaches `room + 1` is exactly it
-            nIn  = _resampler->inputsFor(room + 1UZ) - 1UZ;
-            made = _resampler->outputsFor(nIn);
+        auto [nIn, made] = fitToRoom(inSpan.size(), outSpan.size());
+
+        std::size_t kept = 0UZ;
+        if (in.isConnected() && nIn > 0UZ && nIn == inSpan.size() && tagPast(inSpan, nIn, static_cast<std::uint64_t>(outSpan.streamIndex) + made)) {
+            const std::size_t taken = made > 0UZ ? _resampler->inputsFor(made) - 1UZ : 0UZ;
+            kept                    = nIn - taken;
+            nIn                     = taken;
+            made                    = _resampler->outputsFor(nIn);
         }
+        _tags.keepInputs(in, kept);
 
         mapTags(inSpan, nIn);
         std::ignore = _resampler->process(std::span<const T>(inSpan.data(), nIn), std::span<T>(outSpan.data(), made));
-        releaseTags(outSpan, made);
+        _tags.release(outSpan, made, false);
 
         std::ignore = inSpan.consume(nIn);
         inSpan.consumeTags(nIn);
         outSpan.publish(made);
 
         if (made == 0UZ && nIn == 0UZ) {
+            if (kept > 0UZ) {
+                return work::Status::INSUFFICIENT_INPUT_ITEMS;
+            }
             // above unity one input sample can carry two outputs, so a room of one is not short of input: it is short
             // of room, and reporting that is what stops the scheduler re-offering the same window
             return _resampler->outputsFor(inSpan.size()) > 0UZ ? work::Status::INSUFFICIENT_OUTPUT_ITEMS : work::Status::INSUFFICIENT_INPUT_ITEMS;
         }
+        return work::Status::OK;
+    }
+
+    /// @brief The stream's last samples, the kept-back ones among them, and every held tag, those past the end on the
+    /// stream's last output.
+    template<InputSpanLike TInput, OutputSpanLike TOutput>
+    [[nodiscard]] work::Status processEpilogue(TInput& inSpan, TOutput& outSpan) {
+        const auto [nIn, made] = fitToRoom(inSpan.size(), outSpan.size());
+        _tags.keepInputs(in, 0UZ);
+
+        mapTags(inSpan, nIn);
+        std::ignore = _resampler->process(std::span<const T>(inSpan.data(), nIn), std::span<T>(outSpan.data(), made));
+        _tags.release(outSpan, made, true);
+
+        std::ignore = inSpan.consume(nIn);
+        inSpan.consumeTags(nIn);
+        outSpan.publish(made);
         return work::Status::OK;
     }
 
@@ -225,6 +253,38 @@ private:
         if (const float* inputRate = it->second.get_if<float>(); inputRate != nullptr) {
             it->second = static_cast<float>(rate * static_cast<double>(*inputRate));
         }
+    }
+
+    /// @brief The inputs of @p available a call takes and the outputs they make, the outputs no more than @p room.
+    [[nodiscard]] std::pair<std::size_t, std::size_t> fitToRoom(std::size_t available, std::size_t room) const {
+        std::size_t nIn  = available;
+        std::size_t made = _resampler->outputsFor(nIn);
+        if (made > room) {
+            // the largest input count whose outputs still fit: `inputsFor` is the smallest count reaching a given
+            // output, so one short of what reaches `room + 1` is exactly it
+            nIn  = _resampler->inputsFor(room + 1UZ) - 1UZ;
+            made = _resampler->outputsFor(nIn);
+        }
+        return {nIn, made};
+    }
+
+    /// @brief The output that input @p at maps to under the regime in force now.
+    [[nodiscard]] std::uint64_t outputOf(std::uint64_t at) const noexcept {
+        const std::int64_t delayed = _phaseOrigin - static_cast<std::int64_t>(_twiceDelay << (gr::filter::kArbitraryFractionBits - 1)); // the first output's position less the delay, in 2^-F interpolated samples
+        return _outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, delayed);
+    }
+
+    /// @brief Whether a tag held now, or a tag of the first @p nIn samples of @p inSpan, lies at or past output @p end.
+    [[nodiscard]] bool tagPast(InputSpanLike auto& inSpan, std::size_t nIn, std::uint64_t end) const {
+        if (_tags.heldPast(end)) {
+            return true;
+        }
+        const std::uint64_t first = static_cast<std::uint64_t>(inSpan.streamIndex);
+        const std::uint64_t last  = first + static_cast<std::uint64_t>(nIn);
+        return std::ranges::any_of(inSpan.rawTags, [&](const gr::Tag& tag) {
+            const std::uint64_t at = static_cast<std::uint64_t>(tag.index);
+            return at >= first && at < last && std::max(_latestHeld, outputOf(at)) >= end;
+        });
     }
 
     /// @brief The `min(1, r)` the prototype has to cover: the stated floor where there is one, and the current rate otherwise.
@@ -251,9 +311,8 @@ private:
         if (nIn == 0UZ || !inSpan.isConnected) {
             return;
         }
-        const std::uint64_t first   = static_cast<std::uint64_t>(inSpan.streamIndex);
-        const std::uint64_t last    = first + static_cast<std::uint64_t>(nIn);
-        const std::int64_t  delayed = _phaseOrigin - static_cast<std::int64_t>(_twiceDelay << (gr::filter::kArbitraryFractionBits - 1)); // the first output's position less the delay, in 2^-F interpolated samples
+        const std::uint64_t first = static_cast<std::uint64_t>(inSpan.streamIndex);
+        const std::uint64_t last  = first + static_cast<std::uint64_t>(nIn);
         for (const gr::Tag& tag : inSpan.rawTags) {
             const std::uint64_t at = static_cast<std::uint64_t>(tag.index);
             if (at < first || at >= last) {
@@ -261,28 +320,8 @@ private:
             }
             property_map forwarded(tag.map);
             scaleSampleRate(forwarded); // the rate that consumes the sample, which is the rate the tag describes
-            detail::holdTag(_pendingTags, _latestHeld, _outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, delayed), std::move(forwarded));
+            detail::holdTag(_tags.held, _latestHeld, outputOf(at), std::move(forwarded));
         }
-    }
-
-    /// @brief Publish the tags whose output this call produced, and hold the rest. An unconnected port drops them at
-    /// `publishTag` rather than here, so the held list cannot grow without bound behind an unconnected port.
-    void releaseTags(OutputSpanLike auto& outSpan, std::size_t made) {
-        if (_pendingTags.empty()) {
-            return;
-        }
-        const std::uint64_t base = static_cast<std::uint64_t>(outSpan.streamIndex);
-        const std::uint64_t end  = base + made;
-
-        std::vector<std::pair<std::uint64_t, property_map>> deferred;
-        for (auto& tag : _pendingTags) {
-            if (tag.first >= end) { // its output is not in this call: hold it rather than move it
-                deferred.push_back(std::move(tag));
-                continue;
-            }
-            outSpan.publishTag(tag.second, static_cast<std::size_t>(tag.first > base ? tag.first - base : 0ULL));
-        }
-        _pendingTags = std::move(deferred);
     }
 };
 
