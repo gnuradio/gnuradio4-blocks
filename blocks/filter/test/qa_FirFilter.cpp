@@ -8,6 +8,7 @@
 #include <format>
 #include <numbers>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <gnuradio-4.0/Graph.hpp>
@@ -518,28 +519,32 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         }
     };
 
-    "a tag whose delayed output lies past the end of the stream is not published"_test = [] {
+    "a tag whose delayed output lies past the end of the stream leaves on the stream's last output"_test = [] {
+        // 31 taps delay by 15: input 900 leaves on output 915 / M, and a trigger at input 990 and a burst end at input
+        // 999 lie past the last output, which carries them both
         constexpr gr::Size_t kSamples = 1000U;
-        gr::Graph            graph;
+        for (const gr::Size_t m : {1U, 4U}) {
+            gr::Graph graph;
+            auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+            source._tags.emplace_back(900UZ, tagKey(0));
+            source._tags.emplace_back(990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
+            source._tags.emplace_back(999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+            auto& filter = graph.emplaceBlock<FirFilter<float, float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", m}});
+            auto& sink   = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
 
-        // 31 taps delay by 15: input 900 leaves on output 915, and input 990 would leave on output 1005, which a stream of
-        // 1000 samples never produces
-        auto& source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
-        source._tags.emplace_back(900UZ, tagKey(0));
-        source._tags.emplace_back(990UZ, tagKey(1));
-        auto& filter = graph.emplaceBlock<FirFilter<float, float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 1U}});
-        auto& sink   = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+            expect(graph.connect<"out", "in">(source, filter).has_value());
+            expect(graph.connect<"out", "in">(filter, sink).has_value());
 
-        expect(graph.connect<"out", "in">(source, filter).has_value());
-        expect(graph.connect<"out", "in">(filter, sink).has_value());
+            gr::scheduler::Simple scheduler;
+            expect(scheduler.exchange(std::move(graph)).has_value());
+            expect(scheduler.runAndWait().has_value());
 
-        gr::scheduler::Simple scheduler;
-        expect(scheduler.exchange(std::move(graph)).has_value());
-        expect(scheduler.runAndWait().has_value());
-
-        expect(eq(sink._samples.size(), static_cast<std::size_t>(kSamples)));
-        expect(that % (sinkOffsetsOf(sink, "tag0") == std::vector<std::size_t>{915UZ})) << "a delayed tag inside the stream arrives through the scheduler";
-        expect(that % sinkOffsetsOf(sink, "tag1").empty()) << "the stream ends with the tag's energy still inside the filter";
+            const std::size_t outputs = kSamples / m;
+            expect(eq(sink._samples.size(), outputs)) << std::format("M = {}: every output, and none past the last input", m);
+            expect(that % (sinkOffsetsOf(sink, "tag0") == std::vector<std::size_t>{(2UZ * 915UZ + m) / (2UZ * m)})) << std::format("M = {}: a delayed tag inside the stream", m);
+            expect(that % (sinkOffsetsOf(sink, "trigger_name") == std::vector<std::size_t>{outputs - 1UZ})) << std::format("M = {}: the trigger on the last output", m);
+            expect(that % (sinkOffsetsOf(sink, "tx_eob") == std::vector<std::size_t>{outputs - 1UZ})) << std::format("M = {}: the burst end on the last output", m);
+        }
     };
 
     "a taps change moves no held tag, and a later tag never lands ahead of it"_test = [] {

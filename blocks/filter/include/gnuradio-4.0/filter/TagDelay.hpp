@@ -78,6 +78,103 @@ inline void holdTag(HeldTags& held, std::uint64_t& latest, std::uint64_t delayed
     held.emplace_back(latest, std::move(tag));
 }
 
+/**
+ * @brief The tags a delaying block holds for outputs it has not made yet, and the input it keeps back so that the end
+ * of its stream finds an output to carry them.
+ *
+ * A tag leaves on the output that carries its input sample's energy, up to the block's delay past its input. The block
+ * makes no output past its last input, so a tag on one of the last inputs lies past every output. While a tag is held
+ * past the outputs of a call, the block keeps back its last input chunk and asks for two chunks a call. When the
+ * stream ends, the framework hands the kept chunk to the block's epilogue, whose outputs are the stream's last, and
+ * every tag still held leaves on the last of them. A block whose input is not connected keeps nothing back.
+ */
+struct TagDelayLine {
+    HeldTags      held;
+    std::uint64_t takenUntil     = 0ULL;  ///< the input offset below which every tag is held or published
+    bool          keepBack       = false; ///< the current call keeps back its last input chunk
+    std::size_t   freeMinSamples = 0UZ;   ///< the input port's `min_samples` while no tag is held past a call
+    bool          captured       = false; ///< `freeMinSamples` holds the port's own value
+
+    /// @brief Forget every held tag, and give @p in back the `min_samples` it had before any tag was held.
+    template<typename TPort>
+    void reset(TPort& in) {
+        if (!captured) {
+            freeMinSamples = in.min_samples;
+            captured       = true;
+        }
+        in.min_samples = freeMinSamples;
+        held.clear();
+        takenUntil = 0ULL;
+        keepBack   = false;
+    }
+
+    /**
+     * @brief Hold the tags of the first @p processedIn samples of @p span that no earlier call took, each on the output
+     * @p place returns for its input offset. @p place may rewrite the tag it is handed.
+     */
+    template<typename TSpan, typename TPlace>
+    void take(TSpan& span, std::size_t processedIn, TPlace&& place) {
+        std::uint64_t       latest = held.empty() ? 0ULL : held.back().first;
+        const std::uint64_t first  = static_cast<std::uint64_t>(span.streamIndex);
+        for (const auto& [relIndex, tagMap] : span.tags(processedIn)) {
+            if (relIndex < 0) {
+                continue;
+            }
+            const std::uint64_t at = first + static_cast<std::uint64_t>(relIndex);
+            if (at < takenUntil) { // a kept-back sample, presented again
+                continue;
+            }
+            property_map        tag(tagMap.get());
+            const std::uint64_t output = place(at, tag);
+            holdTag(held, latest, output, std::move(tag));
+        }
+        takenUntil = std::max(takenUntil, first + static_cast<std::uint64_t>(processedIn));
+    }
+
+    /**
+     * @brief The outputs a call of @p chunks input chunks makes, from output @p outBase: every chunk's @p outChunk
+     * outputs, less one chunk while a held tag lies past them and @p in is connected. A call of one chunk then makes
+     * none, and the input waits for a second chunk or for the stream's end. Sets the `min_samples` of @p in for the
+     * next call: two chunks of @p inChunk while a tag is held past this call.
+     */
+    template<typename TPort>
+    [[nodiscard]] std::size_t outputsToMake(TPort& in, std::size_t chunks, std::size_t inChunk, std::size_t outChunk, std::uint64_t outBase) {
+        std::size_t made    = chunks * outChunk;
+        const bool  waiting = in.isConnected() && !held.empty() && held.back().first >= outBase + made;
+        keepBack            = waiting && chunks > 0UZ;
+        if (keepBack) {
+            made -= outChunk;
+        }
+        in.min_samples = waiting ? std::max(freeMinSamples, 2UZ * inChunk) : freeMinSamples;
+        return made;
+    }
+
+    /**
+     * @brief Publish on @p span the held tags whose output lies among its first @p made outputs, and hold the rest.
+     * With @p streamEnds every held tag leaves, one past those outputs on the last of them, or on the first output of
+     * @p span when it makes none.
+     */
+    template<typename TSpan>
+    void release(TSpan& span, std::size_t made, bool streamEnds) {
+        if (held.empty()) {
+            return;
+        }
+        const std::uint64_t base = static_cast<std::uint64_t>(span.streamIndex);
+        const std::uint64_t end  = base + static_cast<std::uint64_t>(made);
+        const std::uint64_t last = made > 0UZ ? end - 1ULL : base;
+        HeldTags            deferred;
+        for (auto& [output, tag] : held) {
+            if (output >= end && !streamEnds) {
+                deferred.emplace_back(output, std::move(tag));
+                continue;
+            }
+            const std::uint64_t at = std::min(output, last);
+            span.publishTag(tag, static_cast<std::size_t>(at > base ? at - base : 0ULL));
+        }
+        held = std::move(deferred);
+    }
+};
+
 } // namespace gr::blocks::filter::detail
 
 #endif // GNURADIO_FILTER_TAG_DELAY_HPP

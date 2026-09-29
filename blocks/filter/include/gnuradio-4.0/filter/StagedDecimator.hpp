@@ -51,7 +51,7 @@ output `round((i + d) / D)`, the sample that carries the energy of input `i`. Ov
 `groupDelaySamples()`. Over complex samples the halving stages run as a halfband cascade, which samples each halving's
 output one sample of that stage's input rate early; there `d` is `groupDelaySamples()` less `2^k - 1` for `k` halvings.
 A tag keeps the output it was given when it crossed, whatever rebuild follows, and a tag whose output lies past the end
-of the stream is not published. )"">;
+of the stream leaves on the stream's last output. )"">;
 
     PortIn<T>  in;
     PortOut<T> out;
@@ -67,18 +67,18 @@ of the stream is not published. )"">;
 
     static constexpr bool kHalfbandKernel = std::same_as<T, std::complex<float>>;
 
-    gr::filter::StagedDecimatorDesign                   _design;
-    std::optional<gr::filter::HalfbandCascade>          _cascade;
-    std::vector<gr::filter::PolyphaseResampler<T>>      _tail;
-    std::uint64_t                                       _decimation = 1ULL;
-    std::uint64_t                                       _inOrigin   = 0ULL;
-    std::uint64_t                                       _outOrigin  = 0ULL;
-    std::uint64_t                                       _twiceDelay = 0ULL; /// the path's delay in half input samples, which the tags move by
-    bool                                                _live       = false;
-    bool                                                _reorigin   = false;
-    std::vector<T>                                      _front;
-    std::vector<T>                                      _back;
-    std::vector<std::pair<std::uint64_t, property_map>> _pendingTags;
+    gr::filter::StagedDecimatorDesign              _design;
+    std::optional<gr::filter::HalfbandCascade>     _cascade;
+    std::vector<gr::filter::PolyphaseResampler<T>> _tail;
+    std::uint64_t                                  _decimation = 1ULL;
+    std::uint64_t                                  _inOrigin   = 0ULL;
+    std::uint64_t                                  _outOrigin  = 0ULL;
+    std::uint64_t                                  _twiceDelay = 0ULL; /// the path's delay in half input samples, which the tags move by
+    bool                                           _live       = false;
+    bool                                           _reorigin   = false;
+    std::vector<T>                                 _front;
+    std::vector<T>                                 _back;
+    detail::TagDelayLine                           _tags;
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         static constexpr std::array kRebuildKeys{"decimation", "passband_width", "attenuation_db", "ripple_db", "factor_odd", "max_odd_factor"};
@@ -92,7 +92,7 @@ of the stream is not published. )"">;
 
     void start() {
         rebuild();
-        _pendingTags.clear();
+        _tags.reset(this->in);
         _inOrigin  = 0ULL;
         _outOrigin = 0ULL;
         _reorigin  = false;
@@ -181,8 +181,8 @@ of the stream is not published. )"">;
      * decimation and never stage by stage. A tag whose output is not in this call is held and published by the call
      * that produces that output. A tag is placed once, when it crosses, under the delay and the decimation in force
      * then. A rebuild moves no held tag, and a tag that crosses after one is never placed ahead of a tag held from
-     * before it. Tags therefore leave in the order they arrived. A held tag whose output the stream ends before is
-     * never published.
+     * before it. Tags therefore leave in the order they arrived. A tag held past the stream's last output leaves on
+     * that output.
      *
      * This replaces the framework's forwarding rather than adjusting it, and it is also where a `decimation` change takes
      * its new origin: the change is applied on the settings path, between calls, where neither absolute offset is
@@ -209,51 +209,59 @@ of the stream is not published. )"">;
             _reorigin = false;
         }
 
-        std::uint64_t latest = _pendingTags.empty() ? 0ULL : _pendingTags.back().first;
         gr::for_each_reader_span(
-            [&latest, processedIn, this](auto& span) {
+            [processedIn, this](auto& span) {
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
-                for (const auto& [relIndex, tagMap] : span.tags(processedIn)) {
-                    if (relIndex < 0) { // a tag from before this window is one this block has already placed
-                        continue;
-                    }
-                    const std::uint64_t at = static_cast<std::uint64_t>(span.streamIndex) + static_cast<std::uint64_t>(relIndex);
-                    property_map        forwarded(tagMap.get());
-                    this->scaleSampleRateByChunkRatio(forwarded); // the rate in force where the tag crossed, not where it is published
-                    detail::holdTag(_pendingTags, latest, _outOrigin + detail::mapDelayedOffset(at - _inOrigin, 1ULL, _decimation, _twiceDelay), std::move(forwarded));
-                }
+                _tags.take(span, processedIn, [this](std::uint64_t at, property_map& tag) {
+                    this->scaleSampleRateByChunkRatio(tag); // the ratio in force where the tag crossed, not where it is published
+                    return _outOrigin + detail::mapDelayedOffset(at - _inOrigin, 1ULL, _decimation, _twiceDelay);
+                });
             },
             inputSpans);
 
-        if (_pendingTags.empty()) {
-            return;
-        }
-
-        std::vector<std::pair<std::uint64_t, property_map>> deferred;
         gr::for_each_writer_span(
-            [&](auto& span) {
+            [processedIn, this](auto& span) {
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
-                const std::uint64_t base = static_cast<std::uint64_t>(span.streamIndex);
-                const std::uint64_t end  = base + span.size();
-
-                const auto place = [&](const std::pair<std::uint64_t, property_map>& tag) {
-                    if (tag.first >= end) { // its output is not in this call: hold it rather than move it
-                        deferred.push_back(tag);
-                        return;
-                    }
-                    span.publishTag(tag.second, static_cast<std::size_t>(tag.first > base ? tag.first - base : 0ULL));
-                };
-                for (const auto& tag : _pendingTags) {
-                    place(tag);
+                const std::size_t made = _tags.outputsToMake(this->in, processedIn / static_cast<std::size_t>(_decimation), static_cast<std::size_t>(_decimation), 1UZ, static_cast<std::uint64_t>(span.streamIndex));
+                if (made > 0UZ) { // a call that makes nothing publishes nothing
+                    _tags.release(span, made, false);
                 }
             },
             outputSpans);
+    }
 
-        _pendingTags = std::move(deferred);
+    /// @brief One call's samples, less the input chunk and its outputs that a held tag keeps back for the stream's end.
+    template<InputSpanLike TInput, OutputSpanLike TOutput>
+    [[nodiscard]] work::Status processBulk(TInput& input, TOutput& output) {
+        if (!_tags.keepBack) {
+            return processBulk(std::span<const T>(input.data(), input.size()), std::span<T>(output.data(), output.size()));
+        }
+        const std::size_t inputs  = input.size() - static_cast<std::size_t>(_decimation);
+        const std::size_t outputs = output.size() - 1UZ;
+        if (outputs == 0UZ) {
+            return work::Status::INSUFFICIENT_INPUT_ITEMS;
+        }
+        const work::Status status = processBulk(std::span<const T>(input.data(), inputs), std::span<T>(output.data(), outputs));
+        std::ignore               = input.consume(inputs);
+        output.publish(outputs);
+        return status;
+    }
+
+    /// @brief The stream's last input chunks, the kept-back one among them, and every held tag on their last output.
+    template<InputSpanLike TInput, OutputSpanLike TOutput>
+    [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
+        const std::size_t chunks = std::min(input.size() / static_cast<std::size_t>(_decimation), output.size() / 1UZ);
+        if (chunks > 0UZ) {
+            std::ignore = processBulk(std::span<const T>(input.data(), chunks * static_cast<std::size_t>(_decimation)), std::span<T>(output.data(), chunks * 1UZ));
+        }
+        _tags.release(output, chunks * 1UZ, true);
+        _tags.keepBack = false;
+        output.publish(chunks * 1UZ);
+        return work::Status::OK;
     }
 
     [[nodiscard]] work::Status processBulk(std::span<const T> input, std::span<T> output) {
