@@ -34,13 +34,14 @@ struct SavitzkyGolayFilter : Block<SavitzkyGolayFilter<T>>, detail::DelayedTagFi
 Applies local polynomial smoothing/differentiation to streaming scalar data.
 Filter coefficients are computed using SVD-based least-squares fitting.
 
-Alignment modes:
-- centered, the default: the fit is evaluated at the middle of the window, at the older of the two middle samples for
-  an even window, and the output lags the input by ceil((window_size-1)/2) samples; linear-phase for an odd window
-- Causal: past-only window, minimal latency, non-linear phase
+Alignment modes, by the value of `alignment`:
+- the default value, and every value other than `Causal`: the fit is evaluated at the middle of the window, at the
+  older of the two middle samples for an even window, and the output lags the input by ceil((window_size-1)/2)
+  samples; linear-phase for an odd window
+- `Causal`: past-only window, minimal latency, non-linear phase
 
-Every tag moves whole, every key with it, by that lag, 0 in the Causal alignment: a tag on input `i` leaves on output
-`i + lag`, the sample whose fit is evaluated at input `i`. A tag whose output lies past the end of the stream leaves on the stream's
+Every tag moves whole, every key with it, by that lag, 0 for `Causal`: a tag on input `i` leaves on output `i + lag`,
+the sample whose fit is evaluated at input `i`. A tag whose output lies past the end of the stream leaves on the stream's
 last output.
 )"">; // clang-format off
 

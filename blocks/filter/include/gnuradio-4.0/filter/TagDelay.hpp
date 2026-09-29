@@ -326,7 +326,7 @@ struct DelayedTagFilter {
     }
 
     /// @brief The stream's last input chunks, the kept-back one among them, and every held tag on their last output.
-    /// Without a delay the stream's partial last chunk makes no output.
+    /// Without a delay the epilogue makes no output.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
         std::size_t outputs = 0UZ;
