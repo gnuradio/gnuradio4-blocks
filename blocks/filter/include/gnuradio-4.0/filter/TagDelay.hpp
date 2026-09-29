@@ -81,22 +81,27 @@ inline void holdTag(HeldTags& held, std::uint64_t& latest, std::uint64_t delayed
 }
 
 /**
- * @brief The tags a delaying block holds for outputs it has not made yet, and the input it keeps back so that the end
- * of its stream finds an output to carry them.
+ * @brief The tags a delaying block holds for outputs it has not made yet, and the input it keeps back for the end of
+ * its stream.
  *
  * A tag leaves on the output that carries its input sample's energy, up to the block's delay past its input. The block
- * makes no output past its last input, so a tag on one of the last inputs lies past every output. While a tag is held
- * past the outputs of a call, the block keeps back its last input chunk and asks for two chunks a call. When the
- * stream ends, the framework hands the kept chunk to the block's epilogue, whose outputs are the stream's last, and
- * every tag still held leaves on the last of them. A block over `Async` ports keeps back the fewest input samples that
- * still make one output and asks for one sample more than it keeps. A block whose input is not connected keeps nothing
- * back.
+ * makes no output past its last input. A tag on one of the last inputs therefore lies past every output. A block that
+ * takes more than one input per output also meets a partial last chunk: the framework hands those inputs to the
+ * block's epilogue alone, and they make no output. The block keeps back its last input chunk on each call while a tag
+ * is held past the call's outputs, and on every call where a chunk holds more than one input. It then asks for two
+ * chunks a call. When the stream ends, the framework hands the kept chunk and any partial chunk to the epilogue. The
+ * epilogue makes the stream's last output from the kept chunk, and every tag still held leaves on that output.
+ *
+ * A block over `Async` ports keeps back, on every call, the input samples from the one that completes its last output,
+ * and asks for one sample more than it keeps. A block whose input is not connected, or whose input buffer cannot hold
+ * two chunks, keeps nothing back. A tag held past the stream's last output then leaves at the index after that output,
+ * the index of the stream's end.
  */
 struct TagDelayLine {
     HeldTags      held;
     std::uint64_t takenUntil     = 0ULL;  ///< the input offset below which every tag is held or published
     bool          keepBack       = false; ///< the current call keeps back its last input chunk
-    std::size_t   freeMinSamples = 0UZ;   ///< the input port's `min_samples` while no tag is held past a call
+    std::size_t   freeMinSamples = 0UZ;   ///< the input port's `min_samples` where a call keeps nothing back
     bool          captured       = false; ///< `freeMinSamples` holds the port's own value
 
     /// @brief Forget every held tag, and give @p in back the `min_samples` it had before any tag was held.
@@ -139,20 +144,27 @@ struct TagDelayLine {
 
     /**
      * @brief The outputs a call of @p chunks input chunks makes, from output @p outBase: every chunk's @p outChunk
-     * outputs, less one chunk while a held tag lies past them and @p in is connected. A call of one chunk then makes
-     * none, and the input waits for a second chunk or for the stream's end. Sets the `min_samples` of @p in for the
-     * next call: two chunks of @p inChunk while a tag is held past this call.
+     * outputs, less the last chunk's where the call keeps it back. A call of one chunk then makes none, and the input
+     * waits for a second chunk or for the stream's end. Sets the `min_samples` of @p in for the next call: two chunks
+     * of @p inChunk where calls keep back.
      */
     template<typename TPort>
     [[nodiscard]] std::size_t outputsToMake(TPort& in, std::size_t chunks, std::size_t inChunk, std::size_t outChunk, std::uint64_t outBase) {
-        std::size_t made    = chunks * outChunk;
-        const bool  waiting = in.isConnected() && !held.empty() && held.back().first >= outBase + made;
-        keepBack            = waiting && chunks > 0UZ;
-        if (keepBack) {
-            made -= outChunk;
-        }
-        in.min_samples = waiting ? std::max(freeMinSamples, 2UZ * inChunk) : freeMinSamples;
-        return made;
+        const std::size_t made  = chunks * outChunk;
+        const bool        keeps = keepsBack(in, inChunk, outBase + made);
+        keepBack                = keeps && chunks > 0UZ;
+        in.min_samples          = keeps ? std::max(freeMinSamples, 2UZ * inChunk) : freeMinSamples;
+        return keepBack ? made - outChunk : made;
+    }
+
+    /**
+     * @brief Whether a call keeps back its last input chunk of @p inChunk samples: on every call where a chunk holds
+     * more than one input, and while a tag is held at or past output @p end. Only a connected input whose buffer holds
+     * two chunks keeps anything back.
+     */
+    template<typename TPort>
+    [[nodiscard]] bool keepsBack(const TPort& in, std::size_t inChunk, std::uint64_t end) const {
+        return in.isConnected() && (inChunk > 1UZ || heldPast(end)) && 2UZ * inChunk <= in.bufferSize();
     }
 
     /// @brief Whether a held tag lies at or past output @p end.
@@ -170,8 +182,9 @@ struct TagDelayLine {
 
     /**
      * @brief Publish on @p span the held tags whose output lies among its first @p made outputs, and hold the rest.
-     * With @p streamEnds every held tag leaves, one past those outputs on the last of them, or on the first output of
-     * @p span when it makes none.
+     * With @p streamEnds every held tag leaves, and a tag whose output lies past those outputs leaves on the last of
+     * them. A @p span that makes no output takes the tags at its first index, the index after the last output published
+     * before it.
      */
     template<typename TSpan>
     void release(TSpan& span, std::size_t made, bool streamEnds) {
