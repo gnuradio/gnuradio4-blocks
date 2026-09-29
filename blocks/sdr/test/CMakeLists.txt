@@ -195,8 +195,14 @@ if(TARGET SoapySDR)
       COMMENT "Copying gr-sdr-loopback.so for integration test")
     add_test(NAME qa_SoapyIntegration COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
                                               ${CMAKE_CURRENT_BINARY_DIR}/qa_SoapyIntegration)
-    set_tests_properties(qa_SoapyIntegration
-                         PROPERTIES ENVIRONMENT "SOAPY_SDR_PLUGIN_PATH=${SOAPY_MODULE_DIR};ASAN_OPTIONS=detect_leaks=0")
+    # confined as qa_SoapySource is. Its LimeSDR cases run only in a direct run with GR_SDR_TEST_HARDWARE=1.
+    target_compile_definitions(qa_SoapyIntegration PRIVATE GR_SDR_TEST_SOAPY_MODULE_DIR="${SOAPY_MODULE_DIR}"
+                                                           GR_SDR_TEST_SOAPY_EMPTY_ROOT="${SOAPY_EMPTY_ROOT}")
+    set_tests_properties(
+      qa_SoapyIntegration
+      PROPERTIES
+        ENVIRONMENT
+        "SOAPY_SDR_ROOT=${SOAPY_EMPTY_ROOT};SOAPY_SDR_PLUGIN_PATH=${SOAPY_MODULE_DIR};ASAN_OPTIONS=detect_leaks=0")
     # SoapySink's transmit burst tags against the loopback module, which records the flags and time of every write.
     # Every case names the loopback driver alone.
     add_executable(qa_SoapySinkBurst qa_SoapySinkBurst.cpp)

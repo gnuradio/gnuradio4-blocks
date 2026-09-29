@@ -6,7 +6,7 @@
 #include <chrono>
 #include <complex>
 #include <cstdlib>
-#include <filesystem>
+#include <cstring>
 #include <numbers>
 #include <numeric>
 #include <optional>
@@ -47,6 +47,25 @@ struct KeepFirstOfChunk : gr::Block<KeepFirstOfChunk, gr::Resampling<>> {
 namespace {
 
 namespace soapy = gr::blocks::sdr::soapy;
+
+/// true when GR_SDR_TEST_HARDWARE=1 asks for the host's SoapySDR modules and the radios they open
+bool hardwareRequested() {
+    // 'using namespace boost::ut' makes '==' on a string_view a ut expression, whose '&&' evaluates both sides
+    const char* value = std::getenv("GR_SDR_TEST_HARDWARE");
+    return value != nullptr && std::strcmp(value, "1") == 0;
+}
+
+/// Without GR_SDR_TEST_HARDWARE=1, SOAPY_SDR_ROOT names an empty directory and SOAPY_SDR_PLUGIN_PATH the loopback
+/// module's directory. SoapySDR then loads the loopback module alone. With it, the loopback module's directory joins the
+/// host's module folders unless SOAPY_SDR_PLUGIN_PATH is set. The flag is initialized ahead of the suites below.
+const bool kHardwareRequested = [] {
+    const bool requested = hardwareRequested();
+    if (!requested) {
+        setenv("SOAPY_SDR_ROOT", GR_SDR_TEST_SOAPY_EMPTY_ROOT, 1);
+    }
+    setenv("SOAPY_SDR_PLUGIN_PATH", GR_SDR_TEST_SOAPY_MODULE_DIR, requested ? 0 : 1);
+    return requested;
+}();
 
 // The block and the test reach one device object by opening it with the same arguments, so what the device
 // recorded while the graph ran is readable through the SoapySDR API. The probe is opened before the graph
@@ -274,6 +293,19 @@ std::array<std::vector<CF32>, nChannels> transmitThroughLoopback(const std::stri
 }
 
 } // namespace
+
+const boost::ut::suite<"SoapySDR modules"> moduleTests = [] {
+    if (kHardwareRequested) {
+        return;
+    }
+    "every listed module lies in the loopback module's directory"_test = [] {
+        const std::vector<std::string> modules = soapy::getSoapySDRModules();
+        expect(!modules.empty()) << "the loopback module is listed";
+        for (const auto& module : modules) {
+            expect(module.starts_with(GR_SDR_TEST_SOAPY_MODULE_DIR "/")) << module;
+        }
+    };
+};
 
 const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
     using namespace gr;
@@ -919,6 +951,12 @@ const boost::ut::suite<"LimeSDR hardware"> limeTests = [] {
     using namespace gr::blocks::testing;
     using Sched = gr::scheduler::Simple<>;
 
+    // the LimeSDR cases run only with GR_SDR_TEST_HARDWARE=1 and without DISABLE_SENSITIVE_TESTS
+    if (!kHardwareRequested || std::getenv("DISABLE_SENSITIVE_TESTS") != nullptr) {
+        std::println("LimeSDR cases skipped: GR_SDR_TEST_HARDWARE=1 runs them against the host's modules and radios");
+        return;
+    }
+
     auto limeAvailable = [] {
         auto devices = soapy::Device::enumerate({{"driver", "lime"}});
         return !devices.empty();
@@ -1053,22 +1091,7 @@ const boost::ut::suite<"LimeSDR hardware"> limeTests = [] {
 };
 
 int main() {
-    if (!std::getenv("SOAPY_SDR_PLUGIN_PATH")) {
-        std::error_code ec;
-        auto            exePath = std::filesystem::read_symlink("/proc/self/exe", ec);
-        if (ec) {
-            std::println(stderr, "[qa_SoapyIntegration] SOAPY_SDR_PLUGIN_PATH not set and /proc/self/exe unreadable ({}) — loopback tests will fail", ec.message());
-            return 0;
-        }
-
-        auto modulePath = exePath.parent_path() / "soapy_modules";
-        if (std::filesystem::exists(modulePath)) {
-            setenv("SOAPY_SDR_PLUGIN_PATH", modulePath.c_str(), 0);
-        } else {
-            std::println(stderr, "[qa_SoapyIntegration] SOAPY_SDR_PLUGIN_PATH not set and {} not found — loopback tests will fail", modulePath.string());
-        }
-    }
-    // SoapySDR loads every module it finds on these paths the first time a device is made or enumerated
+    // SoapySDR loads every module it finds on its search paths the first time a device is made or enumerated
     const auto modules = soapy::getSoapySDRModules();
     std::println(stderr, "[qa_SoapyIntegration] {} SoapySDR module(s): {}", modules.size(), gr::join(modules, ", "));
 }
