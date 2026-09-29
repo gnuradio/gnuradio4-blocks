@@ -12,7 +12,7 @@ namespace gr::blocks::common {
 /**
  * @brief Abstract interface for browser-mediated device access (WASM only).
  *
- * Derived types encapsulate one device class (e.g. WebSerial, Web Audio) and manage
+ * Derived types encapsulate one device class (e.g. Web Audio) and manage
  * the permission → connect → disconnect lifecycle required by browser security policies.
  * Native builds bypass this entirely — blocks call OS APIs directly.
  */

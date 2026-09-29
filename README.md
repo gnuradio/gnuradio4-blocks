@@ -34,9 +34,9 @@ The default build contains:
 - common device utilities and testing, monitoring, delay, and null-source blocks
 
 Audio source/sink blocks and SDR support through SoapySDR are available as
-opt-in block modules. The tree also contains native and Emscripten examples for
-GPS and audio-related workflows where their corresponding modules and
-toolchains are enabled.
+opt-in block modules. The tree also contains an Emscripten example for the
+audio blocks, built when the audio module and the Emscripten toolchain are
+enabled.
 
 ## Building
 
@@ -178,7 +178,6 @@ owning block module:
 | `math`        | `gr::blocks::math::`              |
 | `sdr`         | `gr::blocks::sdr::`               |
 | `testing`     | `gr::blocks::testing::`           |
-| `timing`      | `gr::blocks::timing::`            |
 
 For example, use `gr::blocks::math::Multiply<float>` in C++ and
 `gr::blocks::math::Multiply<float32>` as its registry key. New blocks must
