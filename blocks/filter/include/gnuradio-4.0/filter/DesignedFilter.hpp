@@ -45,7 +45,7 @@ Every forwarded tag moves whole by the design's delay `d = (designed_taps - 1) /
 `context` keys as much as a trigger, a burst edge or a time stamp, because a tag describes the sample it sits on: a tag
 on input `i` leaves on output `round((i + d) / decimation)`, the sample that carries the energy of input `i`. A tag
 keeps the output it was given when it crossed, whatever redesign or decimation change follows, and a tag whose output
-lies past the end of the stream is not published.
+lies past the end of the stream leaves on the stream's last output.
 
 The tap type states which family the block designs: real taps carry `lowpass`, `highpass`, `bandpass`, `bandstop`,
 `root_raised_cosine` and `hilbert`; complex taps carry `complex_bandpass` and `complex_bandstop`. A profile outside the

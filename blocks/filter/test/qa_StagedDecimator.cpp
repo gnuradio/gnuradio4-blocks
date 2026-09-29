@@ -11,6 +11,8 @@
 #include <numbers>
 #include <print>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include <gnuradio-4.0/Graph.hpp>
@@ -649,6 +651,38 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         const auto tail = test::runDecimating<CF>(block, std::span<const CF>(x).subspan(1000UZ), kD, kD, {}, 1000UZ, 100UZ);
         expect(eq(tail.samples.size(), 100UZ));
         expect(that % (tail.offsetsOf("tag0") == std::vector<std::size_t>{placed})) << "a design change that moves no tag keeps the held one, at the offset it already had";
+    };
+
+    "a tag whose delayed output lies past the end of the stream leaves on the stream's last output"_test = [] {
+        // the D = 8 ladder delays by more than two inputs: a trigger and a burst end on the last two inputs lie past the last output, which carries them both
+        constexpr gr::Size_t kSamples = 8000U;
+        gr::Graph            graph;
+        auto&                source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
+        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+        auto& block = graph.emplaceBlock<StagedDecimator<float>>({{"decimation", 8U}});
+        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+        expect(graph.connect<"out", "in">(source, block).has_value());
+        expect(graph.connect<"out", "in">(block, sink).has_value());
+        constexpr std::size_t kOutputs = 1000UZ; // 8000 inputs at D = 8
+        expect(gt(pathDelay(block), 16ULL)) << "the ladder delays the last two inputs past the last output";
+        gr::scheduler::Simple scheduler;
+        expect(scheduler.exchange(std::move(graph)).has_value());
+        expect(scheduler.runAndWait().has_value());
+
+        const auto offsetsOf = [&sink](std::string_view key) {
+            std::vector<std::size_t> offsets;
+            for (const gr::Tag& seen : sink._tags) {
+                if (seen.map.contains(gr::property_map::key_type{key})) {
+                    offsets.push_back(seen.index);
+                }
+            }
+            return offsets;
+        };
+        expect(eq(sink._samples.size(), kOutputs)) << "every output, and none past the last input";
+        expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the trigger on the last output";
+        expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the burst end on the last output";
     };
 
     "a rebuild to a ladder already built designs nothing new"_test = [] {
