@@ -1,5 +1,6 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <format>
@@ -19,6 +20,7 @@
 #include <gnuradio-4.0/filter/time_domain_filter.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
+#include <gnuradio-4.0/testing/TestSpans.hpp>
 
 /// @brief One sample through the `processBulk` of @p block.
 template<typename TBlock, typename T>
@@ -448,6 +450,43 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
         expect(eq(got.samples, std::size_t{kSamples}));
         expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{kMid})) << "the framework places the tag";
         expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kLast}));
+    };
+
+    "a switch from FIR to IIR publishes the held tag ahead of the next call's tags"_test = [] {
+        // the FIR design delays the trigger on input 99 past the first call's 100 outputs; the second call runs in IIR
+        // mode and starts on a tag, which the framework places on output 100: the held trigger leaves there too
+        namespace test = gr::blocks::testing::span;
+        BasicFilter<float> block;
+        block.filter_type       = FilterType::FIR;
+        block.filter_response   = gr::filter::Type::LOWPASS;
+        block.filter_order      = 4U;
+        block.f_low             = 100.0f;
+        block.sample_rate       = 1000.0f;
+        block.fir_design_method = gr::algorithm::window::Type::Hamming;
+        block.start();
+        expect(gt(block.twiceTagDelay().value_or(0ULL), 0ULL)) << "the FIR design delays its tags";
+
+        const std::vector<float>   input(100UZ, 0.0f);
+        std::vector<float>         output(100UZ);
+        test::Capture<float>       got;
+        const std::vector<gr::Tag> firstTags{{99UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("held")}}}};
+        const std::vector<gr::Tag> secondTags{{100UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("next")}}}};
+        for (const auto& [at, tags] : {std::pair{0UZ, std::span<const gr::Tag>(firstTags)}, std::pair{100UZ, std::span<const gr::Tag>(secondTags)}}) {
+            if (at > 0UZ) {
+                block.filter_type = FilterType::IIR;
+                block.designFilter();
+            }
+            test::InputSpan<float>  inSpan(std::span<const float>(input), at, tags);
+            test::OutputSpan<float> outSpan(std::span<float>(output), at, &got.tags);
+            auto                    inputs  = std::tie(inSpan);
+            auto                    outputs = std::tie(outSpan);
+            block.forwardTags(inputs, outputs, input.size());
+            std::ignore = block.processBulk(std::span<const float>(inSpan), std::span<float>(outSpan));
+        }
+
+        expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{100UZ})) << "the held trigger on the IIR call's first output";
+        expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{100UZ})) << "the framework's tag on its own input";
+        expect(std::ranges::is_sorted(got.tags, std::ranges::less{}, &gr::Tag::index)) << "the tags published in index order";
     };
 };
 
