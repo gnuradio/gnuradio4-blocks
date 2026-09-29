@@ -77,9 +77,10 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *  - every configuration call the device receives is recorded in order; the log
  *    is read back through readSetting("call_log") and cleared by writing that
  *    key, which reaches it through the SoapySDR API alone
- *  - every writeStream that takes samples is recorded with the count asked for,
- *    the count taken, and the flags and time it carried; the log is read back
- *    through readSetting("write_log") and cleared by writing that key
+ *  - record_writes=true records every writeStream that takes samples with the
+ *    count asked for, the count taken, and the flags and time it carried; the
+ *    log is read back through readSetting("write_log") and cleared by writing
+ *    that key (false, the default, records nothing)
  *
  * Frontend device arguments (all optional, all with the defaults of a plain
  * one-element RX device):
@@ -317,6 +318,7 @@ class LoopbackDevice : public SoapySDR::Device {
     bool                             _hasFrequencyCorrection = true;
     mutable std::mutex               _callLogMutex;
     mutable std::vector<std::string> _callLog;
+    bool                             _recordWrites = false;
     mutable std::mutex               _writeLogMutex;
     std::vector<WriteRecord>         _writeLog;
 
@@ -355,6 +357,9 @@ public:
         }
         if (auto it = args.find("device_mode"); it != args.end()) {
             _deviceMode = parseDeviceMode(it->second);
+        }
+        if (auto it = args.find("record_writes"); it != args.end()) {
+            _recordWrites = it->second == "true" || it->second == "1";
         }
         if (_deviceMode == DeviceMode::RxOnly) {
             _simulateTiming.store(true, std::memory_order_relaxed);
@@ -429,7 +434,7 @@ public:
         _callLog.clear();
     }
 
-    // Every writeStream that took samples, in order.
+    // Every writeStream that took samples, in order, while the device records writes.
     [[nodiscard]] std::vector<WriteRecord> writeLog() const {
         auto lock = std::lock_guard(_writeLogMutex);
         return _writeLog;
@@ -999,7 +1004,7 @@ public:
             info.key         = "write_log";
             info.value       = "";
             info.type        = SoapySDR::ArgInfo::STRING;
-            info.description = "writes that took samples as requested,taken,flags,timeNs, ';'-separated; writing the key clears it";
+            info.description = "with record_writes=true, writes that took samples as requested,taken,flags,timeNs, ';'-separated; writing the key clears it";
             infos.push_back(info);
         }
         return infos;
@@ -1012,6 +1017,9 @@ private:
     }
 
     void recordWrite(const WriteRecord& write) {
+        if (!_recordWrites) {
+            return;
+        }
         auto lock = std::lock_guard(_writeLogMutex);
         _writeLog.push_back(write);
     }
