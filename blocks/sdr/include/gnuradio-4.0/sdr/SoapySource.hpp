@@ -276,10 +276,11 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
 
     // The device writes each read straight into the reserved output spans. A read waits until every output has room
     // for all of it; until then the device's own buffer holds the samples, and the device reports an overflow once
-    // that buffer is full. A read is max_chunk_size samples, or the output buffer's size where that is smaller,
-    // rounded down to whole MTUs where it holds one.
+    // that buffer is full. A read is max_chunk_size samples or half the output buffer, whichever is smaller, rounded
+    // down to whole MTUs where it holds one. The half bounds the wait: the source waits only while more than half the
+    // buffer is unread, and a consumer whose input chunk is at most half the buffer can take a chunk from that.
     [[nodiscard]] static std::size_t readSize(std::size_t maxChunkSize, std::size_t outputCapacity, std::size_t mtu) noexcept {
-        const std::size_t nRead = std::min(maxChunkSize, outputCapacity);
+        const std::size_t nRead = std::min(maxChunkSize, std::max(outputCapacity / 2UZ, 1UZ));
         return (mtu > 0UZ && nRead >= mtu) ? nRead - nRead % mtu : nRead;
     }
 
