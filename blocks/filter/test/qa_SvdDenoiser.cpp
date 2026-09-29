@@ -1,12 +1,30 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
+#include <format>
 #include <numbers>
 #include <random>
+#include <span>
+#include <string>
+#include <string_view>
+#include <tuple>
 #include <vector>
 
+#include <gnuradio-4.0/Graph.hpp>
+#include <gnuradio-4.0/Scheduler.hpp>
+
 #include <gnuradio-4.0/filter/SvdDenoiser.hpp>
+#include <gnuradio-4.0/testing/TagMonitors.hpp>
+
+/// @brief One sample through the `processBulk` of @p block.
+template<typename TBlock, typename T>
+[[nodiscard]] T filterOne(TBlock& block, T input) {
+    T output{};
+    std::ignore = block.processBulk(std::span<const T>(&input, 1UZ), std::span<T>(&output, 1UZ));
+    return output;
+}
 
 const boost::ut::suite<"SvdDenoiser Block"> svdDenoiserBlockTests = [] {
     using namespace boost::ut;
@@ -27,7 +45,7 @@ const boost::ut::suite<"SvdDenoiser Block"> svdDenoiserBlockTests = [] {
         // Process a few samples and verify we get finite output
         std::vector<float> outputs;
         for (int i = 0; i < 100; ++i) {
-            outputs.push_back(denoiser.processOne(static_cast<float>(i)));
+            outputs.push_back(filterOne(denoiser, static_cast<float>(i)));
         }
         expect(eq(outputs.size(), 100UZ));
         expect(std::isfinite(outputs.back())) << "output should be finite";
@@ -39,7 +57,7 @@ const boost::ut::suite<"SvdDenoiser Block"> svdDenoiserBlockTests = [] {
 
         std::vector<double> outputs;
         for (int i = 0; i < 100; ++i) {
-            outputs.push_back(denoiser.processOne(static_cast<double>(i)));
+            outputs.push_back(filterOne(denoiser, static_cast<double>(i)));
         }
         expect(eq(outputs.size(), 100UZ));
         expect(std::isfinite(outputs.back())) << "output should be finite";
@@ -67,7 +85,7 @@ const boost::ut::suite<"SvdDenoiser Block"> svdDenoiserBlockTests = [] {
 
         std::vector<double> denoised(N);
         for (std::size_t i = 0UZ; i < N; ++i) {
-            denoised[i] = denoiser.processOne(noisy[i]);
+            denoised[i] = filterOne(denoiser, noisy[i]);
         }
 
         const std::size_t filterDelay = (denoiser.window_size.value - 1UZ) / 2UZ;
@@ -107,12 +125,12 @@ const boost::ut::suite<"SvdDenoiser Block"> svdDenoiserBlockTests = [] {
         denoiser.start();
 
         for (int i = 0; i < 100; ++i) {
-            std::ignore = denoiser.processOne(static_cast<float>(i));
+            std::ignore = filterOne(denoiser, static_cast<float>(i));
         }
         denoiser.reset();
 
         // After reset, history is cleared and re-initialized with zeros
-        float output = denoiser.processOne(1.0f);
+        float output = filterOne(denoiser, 1.0f);
         expect(std::isfinite(output)) << "output finite after reset";
     };
 };
@@ -132,7 +150,7 @@ const boost::ut::suite<"SvdDenoiser complex support"> svdDenoiserComplexTests = 
         std::vector<C> output;
         for (std::size_t i = 0UZ; i < 100UZ; ++i) {
             float phase = 2.0f * std::numbers::pi_v<float> * static_cast<float>(i) / 16.0f;
-            output.push_back(denoiser.processOne(C{std::cos(phase), std::sin(phase)}));
+            output.push_back(filterOne(denoiser, C{std::cos(phase), std::sin(phase)}));
         }
         expect(eq(output.size(), 100UZ));
         expect(std::isfinite(output.back().real())) << "output should be finite";
@@ -149,7 +167,7 @@ const boost::ut::suite<"SvdDenoiser complex support"> svdDenoiserComplexTests = 
         std::vector<C> output;
         for (std::size_t i = 0UZ; i < 100UZ; ++i) {
             double phase = 2.0 * std::numbers::pi * static_cast<double>(i) / 16.0;
-            output.push_back(denoiser.processOne(C{std::cos(phase), std::sin(phase)}));
+            output.push_back(filterOne(denoiser, C{std::cos(phase), std::sin(phase)}));
         }
         expect(eq(output.size(), 100UZ));
         expect(std::isfinite(output.back().real())) << "output should be finite";
@@ -169,7 +187,7 @@ const boost::ut::suite<"SvdDenoiser edge cases"> svdDenoiserEdgeCaseTests = [] {
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 100UZ; ++i) {
-                outputs.push_back(denoiser.processOne(std::sin(2.0 * std::numbers::pi * static_cast<double>(i) / 16.0)));
+                outputs.push_back(filterOne(denoiser, std::sin(2.0 * std::numbers::pi * static_cast<double>(i) / 16.0)));
             }
             expect(std::isfinite(outputs.back()));
         };
@@ -182,7 +200,7 @@ const boost::ut::suite<"SvdDenoiser edge cases"> svdDenoiserEdgeCaseTests = [] {
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 50UZ; ++i) {
-                outputs.push_back(denoiser.processOne(static_cast<double>(i)));
+                outputs.push_back(filterOne(denoiser, static_cast<double>(i)));
             }
             expect(std::isfinite(outputs.back()));
         };
@@ -197,7 +215,7 @@ const boost::ut::suite<"SvdDenoiser edge cases"> svdDenoiserEdgeCaseTests = [] {
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 50UZ; ++i) {
-                outputs.push_back(denoiser.processOne(std::sin(2.0 * std::numbers::pi * static_cast<double>(i) / 8.0)));
+                outputs.push_back(filterOne(denoiser, std::sin(2.0 * std::numbers::pi * static_cast<double>(i) / 8.0)));
             }
             expect(std::isfinite(outputs.back()));
         };
@@ -210,7 +228,7 @@ const boost::ut::suite<"SvdDenoiser edge cases"> svdDenoiserEdgeCaseTests = [] {
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 50UZ; ++i) {
-                outputs.push_back(denoiser.processOne(std::sin(2.0 * std::numbers::pi * static_cast<double>(i) / 8.0)));
+                outputs.push_back(filterOne(denoiser, std::sin(2.0 * std::numbers::pi * static_cast<double>(i) / 8.0)));
             }
             expect(std::isfinite(outputs.back()));
         };
@@ -226,7 +244,7 @@ const boost::ut::suite<"SvdDenoiser edge cases"> svdDenoiserEdgeCaseTests = [] {
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 100UZ; ++i) {
-                outputs.push_back(denoiser.processOne(std::sin(2.0 * std::numbers::pi * static_cast<double>(i) / 16.0)));
+                outputs.push_back(filterOne(denoiser, std::sin(2.0 * std::numbers::pi * static_cast<double>(i) / 16.0)));
             }
             expect(std::isfinite(outputs.back()));
         };
@@ -240,7 +258,7 @@ const boost::ut::suite<"SvdDenoiser edge cases"> svdDenoiserEdgeCaseTests = [] {
 
         std::vector<float> outputs;
         for (int i = 0; i < 20; ++i) {
-            outputs.push_back(denoiser.processOne(static_cast<float>(i)));
+            outputs.push_back(filterOne(denoiser, static_cast<float>(i)));
         }
         expect(std::isfinite(outputs.back()));
     };
@@ -254,7 +272,7 @@ const boost::ut::suite<"SvdDenoiser edge cases"> svdDenoiserEdgeCaseTests = [] {
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 50UZ; ++i) {
-                outputs.push_back(denoiser.processOne(static_cast<double>(i)));
+                outputs.push_back(filterOne(denoiser, static_cast<double>(i)));
             }
             expect(std::isfinite(outputs.back()));
         };
@@ -267,7 +285,7 @@ const boost::ut::suite<"SvdDenoiser edge cases"> svdDenoiserEdgeCaseTests = [] {
 
             std::vector<double> outputs;
             for (std::size_t i = 0UZ; i < 50UZ; ++i) {
-                outputs.push_back(denoiser.processOne(static_cast<double>(i)));
+                outputs.push_back(filterOne(denoiser, static_cast<double>(i)));
             }
             expect(std::isfinite(outputs.back()));
         };
@@ -283,11 +301,59 @@ const boost::ut::suite<"SvdDenoiser edge cases"> svdDenoiserEdgeCaseTests = [] {
         std::vector<double> outputs;
         for (std::size_t i = 0UZ; i < 50UZ; ++i) {
             double input = 5.0 + 0.001 * std::sin(2.0 * std::numbers::pi * static_cast<double>(i) / 50.0);
-            outputs.push_back(denoiser.processOne(input));
+            outputs.push_back(filterOne(denoiser, input));
         }
 
         for (const auto& val : outputs) {
             expect(std::isfinite(val));
+        }
+    };
+};
+
+const boost::ut::suite<"SvdDenoiser tag placement"> svdTagPlacementTests = [] {
+    using namespace boost::ut;
+    using namespace gr::blocks::filter;
+    using namespace gr::blocks::testing;
+
+    "a tag leaves on the output that estimates its input"_test = [] {
+        // with every singular value kept the estimate is the input itself: the impulse the source puts under the tag
+        // arrives on the lagged output. A window of 64 at the default hop lags by 31. A window of 16 whose hop is the
+        // whole window lags by 15, where the library's delay() reads 7.
+        constexpr gr::Size_t  kSamples = 200U;
+        constexpr std::size_t kAt      = 50UZ;
+        struct Case {
+            gr::Size_t  window;
+            float       hopFraction;
+            std::size_t lag;
+        };
+        for (const Case& c : {Case{64U, 0.25f, 31UZ}, Case{16U, 1.0f, 15UZ}}) {
+            gr::Graph graph;
+            auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", true}});
+            source._tags.emplace_back(kAt, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("impulse")}});
+            source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}, {gr::property_map::key_type{"tx_eob"}, true}});
+            auto& block = graph.emplaceBlock<SvdDenoiser<float>>({{"window_size", c.window}, {"hop_fraction", c.hopFraction}, {"energy_fraction", 2.0f}});
+            auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+            expect(graph.connect<"out", "in">(source, block).has_value());
+            expect(graph.connect<"out", "in">(block, sink).has_value());
+            gr::scheduler::Simple scheduler;
+            expect(scheduler.exchange(std::move(graph)).has_value());
+            expect(scheduler.runAndWait().has_value());
+
+            const auto offsetsOf = [&sink](std::string_view key) {
+                std::vector<std::size_t> offsets;
+                for (const gr::Tag& seen : sink._tags) {
+                    if (seen.map.contains(gr::property_map::key_type{key})) {
+                        offsets.push_back(seen.index);
+                    }
+                }
+                return offsets;
+            };
+            const std::string label = std::format("W = {}, hop fraction {}", c.window, c.hopFraction);
+            expect(eq(sink._samples.size(), std::size_t{kSamples})) << label << ": every output, and none past the last input";
+            const auto head = std::span<const float>(sink._samples).first(3UZ * kAt);
+            expect(eq(static_cast<std::size_t>(std::ranges::max_element(head) - head.begin()), kAt + c.lag)) << label << ": the impulse on the lagged output";
+            expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{kAt + c.lag})) << label << ": the tag with it";
+            expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": a burst end past the end on the last output";
         }
     };
 };

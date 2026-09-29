@@ -1,11 +1,17 @@
 #ifndef GNURADIO_SVD_DENOISER_HPP
 #define GNURADIO_SVD_DENOISER_HPP
 
+#include <algorithm>
+#include <cstdint>
+#include <optional>
+#include <span>
+
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/algorithm/filter/SvdFilter.hpp>
 
 #include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
+#include <gnuradio-4.0/filter/TagDelay.hpp>
 
 namespace gr::blocks::filter {
 
@@ -14,7 +20,7 @@ using namespace gr;
 GR_REGISTER_BLOCK(gr::blocks::filter::SvdDenoiser, [T], [ float, std::complex<float> ])
 
 template<typename T>
-struct SvdDenoiser : Block<SvdDenoiser<T>> {
+struct SvdDenoiser : Block<SvdDenoiser<T>>, detail::DelayedTagFilter<SvdDenoiser<T>, T, T> {
     using Block<SvdDenoiser<T>>::Block;
     static_assert(std::floating_point<T> || gr::meta::complex_like<T>, "T must be floating_point or complex_like");
 
@@ -29,6 +35,10 @@ Singular values are kept if ALL criteria are satisfied:
 - σ_i / σ_0 ≥ relative_threshold
 - σ_i ≥ absolute_threshold
 - cumulative energy ≤ energy_fraction × total energy
+
+The output lags the input by `max((window_size-1)/2, hop-1)` samples, `hop` being the SVD recomputation interval in
+samples. Every tag moves whole, every key with it, by that lag: a tag on input `i` leaves on output `i + lag`, the
+output that estimates input `i`. A tag whose output lies past the end of the stream leaves on the stream's last output.
 )"">; // clang-format off
 
     using RealT = gr::meta::fundamental_base_value_type_t<T>;
@@ -73,6 +83,7 @@ public:
             static_cast<std::size_t>(window_size),
             static_cast<std::size_t>(hankel_rows),
             buildConfig());
+        this->tagsStart();
     }
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
@@ -89,7 +100,22 @@ public:
 
     void reset() { _state.reset(); }
 
-    [[nodiscard]] constexpr T processOne(T input) noexcept { return _state.processOne(input); }
+    [[nodiscard]] std::size_t tagDecimation() const noexcept { return 1UZ; }
+
+    /// @brief The lag in half samples. Each SVD computation serves the next `hop` outputs from index `W-1-lag` of its
+    /// window, oldest first; that index is `W-1-(W-1)/2`, or `W-hop` where a hop reaches past the window's middle.
+    [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept {
+        const std::uint64_t window = _state.windowSize();
+        const std::uint64_t hop    = _state.hopSize();
+        const std::uint64_t first  = std::min(window - 1ULL - (window - 1ULL) / 2ULL, window > hop ? window - hop : 0ULL);
+        return 2ULL * (window - 1ULL - first);
+    }
+
+    void filterSamples(std::span<const T> input, std::span<T> output) {
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            output[i] = _state.processOne(input[i]);
+        }
+    }
 };
 
 } // namespace gr::blocks::filter

@@ -523,7 +523,7 @@ const boost::ut::suite<"SG vs SVD comparison"> comparisonTests = [] {
         std::vector<double> sgFiltered(N), svdFiltered(N);
         for (std::size_t i = 0UZ; i < N; ++i) {
             sgFiltered[i]  = filterOne(sgFilter, noisy[i]);
-            svdFiltered[i] = svdFilter.processOne(noisy[i]);
+            svdFiltered[i] = filterOne(svdFilter, noisy[i]);
         }
 
         constexpr std::size_t skipN    = 50UZ;
@@ -571,7 +571,7 @@ const boost::ut::suite<"SG vs SVD comparison"> comparisonTests = [] {
         std::vector<double> sgFiltered(N), svdFiltered(N);
         for (std::size_t i = 0UZ; i < N; ++i) {
             sgFiltered[i]  = filterOne(sgFilter, noisy[i]);
-            svdFiltered[i] = svdFilter.processOne(noisy[i]);
+            svdFiltered[i] = filterOne(svdFilter, noisy[i]);
         }
 
         ImChart<kChartWidth, kChartHeight> chart;
@@ -612,7 +612,7 @@ const boost::ut::suite<"SG vs SVD comparison"> comparisonTests = [] {
         std::vector<double> sgFiltered(N), svdFiltered(N);
         for (std::size_t i = 0UZ; i < N; ++i) {
             sgFiltered[i]  = filterOne(sgFilter, noisy[i]);
-            svdFiltered[i] = svdFilter.processOne(noisy[i]);
+            svdFiltered[i] = filterOne(svdFilter, noisy[i]);
         }
 
         constexpr std::size_t skipN    = 40UZ;
@@ -666,7 +666,7 @@ const boost::ut::suite<"SG vs SVD comparison"> comparisonTests = [] {
         std::vector<double> sgFiltered(N), svdFiltered(N);
         for (std::size_t i = 0UZ; i < N; ++i) {
             sgFiltered[i]  = filterOne(sgFilter, noisy[i]);
-            svdFiltered[i] = svdFilter.processOne(noisy[i]);
+            svdFiltered[i] = filterOne(svdFilter, noisy[i]);
         }
 
         constexpr std::size_t skipN    = 60UZ;
