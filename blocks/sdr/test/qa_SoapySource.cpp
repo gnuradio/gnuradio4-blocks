@@ -142,6 +142,11 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
                 std::print("  Module: {}\n", module);
             }
         }
+        if (!kHardwareRequested) { // confined: every module SoapySDR lists lies in the loopback module's directory
+            for (const auto& module : modules) {
+                expect(module.starts_with(GR_SDR_TEST_SOAPY_MODULE_DIR "/")) << std::format("{} lies outside the loopback module's directory", module);
+            }
+        }
     };
 
     "available devices"_test = [] {
