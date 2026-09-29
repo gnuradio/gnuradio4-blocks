@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <format>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <string_view>
@@ -46,8 +47,8 @@ Transmit bursts: a write ends at a sample tagged tx_eob (true) and goes to the d
 write starts at a sample tagged tx_time (UTC ns, an integer of any width) and goes with SOAPY_SDR_HAS_TIME and that
 time. A write the device takes only part of is completed with the same flag, and the time goes with the first sample
 alone. tx_sob asks nothing of the device: SoapySDR begins a burst with the first write after an end of burst. A tag on
-any input applies to every channel at that sample. A tx_eob that is not a bool and a tx_time that is not an integer of
-at least 0 are ignored, and the block reports the first such tag of a run on its message port. The burst taper ramps
+any input applies to every channel at that sample. A tx_eob that is not a bool and a tx_time that is not an integer
+from 0 to 2^63 - 1 are ignored, and the block reports the first such tag of a run on its message port. The burst taper ramps
 up the stream's first samples and ramps down after its last, and does not shape the bursts in between; no ramp-down
 follows a stream whose last sample ended a burst.)">;
 
@@ -319,9 +320,9 @@ follows a stream whose last sample ended a burst.)">;
             }
         }
         if (const auto it = tagMap.find(std::string_view(gr::tag::TX_TIME.shortKey())); it != tagMap.end()) {
-            mark.timeNs = nonNegativeInteger<std::uint64_t, std::uint32_t, std::uint16_t, std::uint8_t, std::int64_t, std::int32_t, std::int16_t, std::int8_t>(it->second);
+            mark.timeNs = deviceTimeNs<std::uint64_t, std::uint32_t, std::uint16_t, std::uint8_t, std::int64_t, std::int32_t, std::int16_t, std::int8_t>(it->second);
             if (!mark.timeNs.has_value()) {
-                reportIgnoredBurstTag(gr::tag::TX_TIME.shortKey(), position, "an integer of at least 0");
+                reportIgnoredBurstTag(gr::tag::TX_TIME.shortKey(), position, "an integer from 0 to 2^63 - 1");
             }
         }
         if (!mark.endsBurst && !mark.timeNs.has_value()) {
@@ -340,13 +341,14 @@ follows a stream whose last sample ended a burst.)">;
         }
     }
 
-    // the value as a std::uint64_t when it holds one of the integer types TInts and is not negative
+    // The value as a std::uint64_t when it holds one of the integer types TInts and lies from 0 to the largest long long.
+    // SoapySDR takes a time as a long long.
     template<typename... TInts>
-    [[nodiscard]] static std::optional<std::uint64_t> nonNegativeInteger(const auto& value) {
+    [[nodiscard]] static std::optional<std::uint64_t> deviceTimeNs(const auto& value) {
         std::optional<std::uint64_t> result;
         (
             [&value, &result] {
-                if (const TInts* held = value.template get_if<TInts>(); held != nullptr && std::cmp_greater_equal(*held, 0)) {
+                if (const TInts* held = value.template get_if<TInts>(); held != nullptr && std::cmp_greater_equal(*held, 0) && std::cmp_less_equal(*held, std::numeric_limits<long long>::max())) {
                     if constexpr (std::is_same_v<TInts, std::uint64_t>) {
                         result = *held;
                     } else {

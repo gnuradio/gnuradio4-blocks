@@ -7,6 +7,7 @@
 #include <complex>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -244,6 +245,17 @@ const boost::ut::suite<"SoapySink transmit bursts"> burstTests = [] {
         expectBurstWrites("mistyped tags", writes, kSamples, {}, {});
         expect(fatal(eq(reports.size(), 1UZ))) << "one report for the run";
         expect(reports.front().contains("tx_eob") && reports.front().contains("100")) << reports.front();
+    };
+
+    "a tx_time above the largest device time is ignored and reported"_test = [] {
+        constexpr std::size_t    kSamples  = 1000UZ;
+        constexpr auto           kLargest  = static_cast<std::uint64_t>(std::numeric_limits<long long>::max());
+        constexpr std::uint64_t  kTooLarge = kLargest + 1U;
+        std::vector<std::string> reports;
+        const auto               writes = transmit("", kSamples, {{200UZ, {{gr::tag::TX_TIME.shortKey(), kTooLarge}}}, {600UZ, {{gr::tag::TX_TIME.shortKey(), kLargest}}}}, {}, &reports);
+        expectBurstWrites("times at and above the largest", writes, kSamples, {}, {{600UZ, kLargest}});
+        expect(fatal(eq(reports.size(), 1UZ))) << "one report for the run";
+        expect(reports.front().contains("tx_time") && reports.front().contains("200")) << reports.front();
     };
 
     "a device that takes part of a write still ends the burst at its last sample"_test = [] {
