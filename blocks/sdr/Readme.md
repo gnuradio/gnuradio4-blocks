@@ -44,6 +44,29 @@ datasheets that were originally covered by NDAs but have since become publicly a
 
 The R860 tuner found in recent dongles is electrically identical to the R820T2.
 
+## Running the SoapySDR tests
+
+`qa_SoapySource` runs against the loopback SoapySDR module built with this
+family. Its ctest registration and the program itself set `SOAPY_SDR_ROOT` to an
+empty directory and `SOAPY_SDR_PLUGIN_PATH` to the loopback module's directory.
+SoapySDR then loads no module of the host and opens no attached radio:
+
+```sh
+ctest --test-dir <build-dir> -R qa_SoapySource
+```
+
+The hardware cases run against the host's modules and attached radios only
+when the binary runs directly with `GR_SDR_TEST_HARDWARE=1`:
+
+```sh
+GR_SDR_TEST_HARDWARE=1 <build-dir>/blocks/sdr/test/qa_SoapySource
+```
+
+With the variable set, each hardware case runs only when enumeration lists its
+driver (`rtlsdr` or `lime`), and `DISABLE_SENSITIVE_TESTS` in the environment
+runs none of them. The ctest registration keeps the loopback module alone
+whatever the variable says.
+
 ## License
 
 MIT — same as the rest of GR4.
