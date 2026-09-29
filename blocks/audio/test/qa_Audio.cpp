@@ -445,6 +445,106 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         expect(eq(state.silenceInRing.load(), 0UZ)) << caseName;
     };
 
+    "frames stored before a capture loss keep their capture time"_test = [] {
+        constexpr std::string_view caseName = "AudioSource capture loss";
+        constexpr double           kRate    = 1000.0; // one frame per millisecond
+        constexpr std::int64_t     kMs      = 1'000'000;
+
+        gr::blocks::audio::detail::AudioSourceState<float> state;
+        state.recreateBuffer(1000UZ);
+        const std::size_t capacity = state.buffer.size();
+
+        // the device delivers frames captured one millisecond apart; a delivery stores what the ring
+        // takes and states the capture time of the newest frame offered
+        std::int64_t              nextCaptureMs = 1;
+        std::vector<std::int64_t> capturedMs; // the capture time of each stored frame, by ring frame
+        std::vector<float>        samples(capacity, 0.f);
+        const auto                deliver = [&](std::size_t nFrames) {
+            const std::size_t nStored = state.writePlanarFloat(samples.data(), nFrames, 1UZ, 1UZ);
+            for (std::size_t i = 0UZ; i < nStored; ++i) {
+                capturedMs.push_back(nextCaptureMs + static_cast<std::int64_t>(i));
+            }
+            nextCaptureMs += static_cast<std::int64_t>(nFrames);
+            state.recordCaptureTime((nextCaptureMs - 1) * kMs, 1UZ, kRate);
+            return nStored;
+        };
+        const auto expectDated = [&](std::size_t frame) {
+            const auto dated = state.captureTimeNs(frame, kRate);
+            expect(dated.has_value()) << std::format("{}: frame {} has no capture time", caseName, frame);
+            if (dated.has_value()) {
+                expect(eq(*dated, capturedMs[frame] * kMs)) << std::format("{}: frame {} is dated {:+.3f} ms off its capture", caseName, frame, static_cast<double>(*dated - capturedMs[frame] * kMs) * 1e-6);
+            }
+        };
+
+        expect(eq(deliver(100UZ), 100UZ)) << caseName;
+        // the ring takes all but the last 100 frames of this delivery
+        expect(eq(deliver(capacity), capacity - 100UZ)) << caseName;
+        std::vector<float> out(500UZ);
+        expect(eq(state.readToOutput(out, 1UZ), 500UZ)) << caseName;
+        // the frames after the loss are stored whole, and their measurement dates them
+        expect(eq(deliver(100UZ), 100UZ)) << caseName;
+
+        expectDated(500UZ);           // the oldest unread frame, stored before the loss
+        expectDated(capacity - 1UZ);  // the last frame stored before the loss
+        expectDated(capacity);        // the first frame stored after it
+        expectDated(capacity + 99UZ); // the newest frame
+    };
+
+    "a loss the device reports splits the ring's capture times"_test = [] {
+        constexpr std::string_view caseName = "AudioSource device loss";
+        constexpr double           kRate    = 1000.0;
+        constexpr std::int64_t     kMs      = 1'000'000;
+        using State                         = gr::blocks::audio::detail::AudioSourceState<float>;
+
+        State state;
+        state.recreateBuffer(1000UZ);
+
+        std::int64_t              nextCaptureMs = 1;
+        std::vector<std::int64_t> capturedMs;
+        std::vector<float>        samples(10UZ, 0.f);
+        const auto                deliver = [&] {
+            expect(eq(state.writePlanarFloat(samples.data(), samples.size(), 1UZ, 1UZ), samples.size())) << caseName;
+            for (std::size_t i = 0UZ; i < samples.size(); ++i) {
+                capturedMs.push_back(nextCaptureMs + static_cast<std::int64_t>(i));
+            }
+            nextCaptureMs += static_cast<std::int64_t>(samples.size());
+            state.recordCaptureTime((nextCaptureMs - 1) * kMs, 1UZ, kRate);
+        };
+        const auto lose = [&] { // the device reports five frames it never delivered
+            state.noteCaptureLoss();
+            nextCaptureMs += 5;
+        };
+        const auto datedAt = [&](std::size_t frame) { return state.captureTimeNs(frame, kRate) == std::optional<std::int64_t>{capturedMs[frame] * kMs}; };
+
+        // one segment per run of frames between losses, as many as the state holds
+        deliver();
+        for (std::size_t segment = 1UZ; segment < State::kMaxSegments; ++segment) {
+            lose();
+            deliver();
+        }
+        for (std::size_t frame = 0UZ; frame < capturedMs.size(); ++frame) {
+            expect(datedAt(frame)) << std::format("{}: frame {} misdated across {} losses", caseName, frame, State::kMaxSegments - 1UZ);
+        }
+
+        // with no segment free, the frames on both sides of the next loss lose their capture time
+        const std::size_t lastSegmentStart = capturedMs.size() - samples.size();
+        const std::size_t afterLoss        = capturedMs.size();
+        lose();
+        deliver();
+        expect(datedAt(0UZ)) << caseName;
+        expect(!state.captureTimeNs(lastSegmentStart, kRate).has_value()) << std::format("{}: a frame before the unrecorded loss keeps a time", caseName);
+        expect(!state.captureTimeNs(afterLoss, kRate).has_value()) << std::format("{}: a frame after the unrecorded loss keeps a time", caseName);
+
+        // reading frees segments, and the next measurement dates the frames since that loss
+        std::vector<float> out(20UZ);
+        expect(eq(state.readToOutput(out, 1UZ), 20UZ)) << caseName;
+        expect(eq(state.readToOutput(std::span(out).first(1UZ), 1UZ), 1UZ)) << caseName;
+        deliver();
+        for (std::size_t frame = afterLoss; frame < capturedMs.size(); ++frame) {
+            expect(datedAt(frame)) << std::format("{}: frame {} after the loss is misdated", caseName, frame);
+        }
+    };
+
     "AudioSink accounts for samples the device ring refused"_test = [] {
         constexpr std::string_view      caseName = "AudioSink sample accounting";
         const std::vector<std::int16_t> reference(8000, std::int16_t(1000)); // 3.6x the 0.1 s staging ring

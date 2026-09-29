@@ -558,6 +558,7 @@ private:
     static void overflowCallback(SoundIoInStream* instream) {
         if (auto* self = static_cast<SoundIoSourceBackend*>(instream->userdata); self != nullptr) {
             self->_state.overflowCount.fetch_add(1U, std::memory_order_relaxed);
+            self->_state.noteCaptureLoss();
         }
     }
 
@@ -577,6 +578,7 @@ private:
     void countDroppedSamples(std::size_t offered, std::size_t written) {
         if (written < offered) {
             _state.droppedSamples.fetch_add(offered - written, std::memory_order_relaxed);
+            _state.noteCaptureLoss();
         }
     }
 
@@ -605,6 +607,7 @@ private:
         }
 
         std::fill_n(writeSpan.begin(), static_cast<std::ptrdiff_t>(published), T{});
+        _state.beginSegmentAfterLoss();
         writeSpan.publish(published);
         // silence that was stored is delivered as data; what was not stored is a drop, not silence
         _state.silenceSamples.fetch_add(published, std::memory_order_relaxed);
@@ -653,6 +656,7 @@ private:
             }
         }
 
+        _state.beginSegmentAfterLoss();
         writeSpan.publish(published);
         countDroppedSamples(offered, published);
     }
@@ -665,7 +669,6 @@ private:
 
         const std::size_t channelCount  = std::max<std::size_t>(1U, static_cast<std::size_t>(instream->layout.channel_count));
         const std::size_t firstPosition = self->_state.writer.position();
-        std::size_t       nOffered      = 0U;
         int               framesLeft    = frameCountMax;
 
         while (framesLeft > 0) {
@@ -682,7 +685,6 @@ private:
             }
 
             const std::size_t frames = static_cast<std::size_t>(frameCount);
-            nOffered += frames * channelCount;
             if (areas == nullptr) {
                 self->writeSilenceFrames(frames, channelCount);
             } else {
@@ -698,13 +700,15 @@ private:
             framesLeft -= frameCount;
         }
 
-        // after the reads, soundio_instream_get_latency() returns the age of the newest frame read, and
-        // libsoundio answers it only inside this callback; a callback that lost frames records nothing,
-        // because the ring's newest frame then precedes the newest frame read
-        double latency = 0.0;
-        if (nOffered > 0U && self->_state.writer.position() - firstPosition == nOffered && soundio_instream_get_latency(instream, &latency) == SoundIoErrorNone && std::isfinite(latency) && latency >= 0.0) {
+        // libsoundio documents soundio_instream_get_latency() as the time the next captured frame
+        // takes to arrive in its buffer plus the duration of the frames buffered there, and answers
+        // it only inside this callback. After the reads, the answer is the age of the oldest unread
+        // frame. The newest frame read was captured one sample period before that frame.
+        const double sampleRate = static_cast<double>(instream->sample_rate);
+        double       latency    = 0.0;
+        if (self->_state.writer.position() != firstPosition && sampleRate > 0.0 && soundio_instream_get_latency(instream, &latency) == SoundIoErrorNone && std::isfinite(latency) && latency >= 0.0) {
             const auto tNowNs = static_cast<std::int64_t>(wallClockNs());
-            self->_state.recordCaptureTime(tNowNs - static_cast<std::int64_t>(std::llround(latency * 1e9)), channelCount, static_cast<double>(instream->sample_rate));
+            self->_state.recordCaptureTime(tNowNs - static_cast<std::int64_t>(std::llround((latency + 1.0 / sampleRate) * 1e9)), channelCount, sampleRate);
         }
     }
 };
