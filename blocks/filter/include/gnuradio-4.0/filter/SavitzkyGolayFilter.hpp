@@ -39,8 +39,8 @@ Alignment modes:
   an even window, and the output lags the input by ceil((window_size-1)/2) samples; linear-phase for an odd window
 - Causal: past-only window, minimal latency, non-linear phase
 
-Every forwarded tag moves by that lag, 0 in the Causal alignment: a tag on input `i` leaves on output `i + lag`, the
-sample whose fit is evaluated at input `i`. A tag whose output lies past the end of the stream leaves on the stream's
+Every tag moves whole, every key with it, by that lag, 0 in the Causal alignment: a tag on input `i` leaves on output
+`i + lag`, the sample whose fit is evaluated at input `i`. A tag whose output lies past the end of the stream leaves on the stream's
 last output.
 )"">; // clang-format off
 

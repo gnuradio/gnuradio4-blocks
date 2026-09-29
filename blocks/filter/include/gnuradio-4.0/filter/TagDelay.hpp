@@ -214,10 +214,9 @@ struct TagDelayLine {
  *
  * `TDerived` has the input port `in` and provides `tagDecimation()`, the input samples per output;
  * `twiceTagDelay()`, the delay in half input samples, or no value where the framework places the tags; and
- * `filterSamples(input, output)`, which filters whole input chunks into their outputs. Each tag passes the framework's
- * key filter and setting substitution as it is taken in, so only its position differs from the framework's own
- * forwarding. A tag on input `i` leaves on output `round((i + d) / M)`, a half rounding up, and keeps that output
- * whatever delay or decimation change follows.
+ * `filterSamples(input, output)`, which filters whole input chunks into their outputs. A tag on input `i` leaves whole,
+ * every key with it, on output `round((i + d) / M)`, a half rounding up, and keeps that output whatever delay or
+ * decimation change follows. A `sample_rate` key is divided by `M` as the tag is taken in.
  */
 template<typename TDerived, typename TIn, typename TOut>
 struct DelayedTagFilter {
@@ -284,14 +283,13 @@ struct DelayedTagFilter {
             _reorigin = false;
         }
 
-        std::optional<property_map> cachedSettings;
         gr::for_each_reader_span(
             [&](auto& span) {
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
                 _tags.take(span, processedIn, [&](std::uint64_t at, property_map& tag) {
-                    tag = self().filterAndSubstituteTag(tag, cachedSettings);
+                    self().scaleSampleRateByChunkRatio(tag); // the ratio in force where the tag crossed, not where it is published
                     return _outOrigin + mapDelayedOffset(at - _inOrigin, 1ULL, decimation, *twiceDelay);
                 });
             },

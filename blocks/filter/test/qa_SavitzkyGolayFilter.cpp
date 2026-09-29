@@ -707,7 +707,7 @@ const boost::ut::suite<"SavitzkyGolayFilter tag placement"> sgTagPlacementTests 
             gr::Graph graph;
             auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", true}});
             source._tags.emplace_back(kAt, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("impulse")}});
-            source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}});
+            source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}, {gr::property_map::key_type{"tx_eob"}, true}});
             gr::property_map settings{{"window_size", c.window}, {"poly_order", gr::Size_t{2}}};
             if (c.causal) {
                 settings.insert_or_assign(gr::property_map::key_type{"alignment"}, std::string("Causal"));
@@ -735,6 +735,7 @@ const boost::ut::suite<"SavitzkyGolayFilter tag placement"> sgTagPlacementTests 
             const auto head = std::span<const float>(sink._samples).first(2UZ * kAt);
             expect(eq(static_cast<std::size_t>(std::ranges::max_element(head) - head.begin()), kAt + c.lag)) << label << ": the impulse peaks on that output";
             expect(that % (offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": a tag past the end on the last output";
+            expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": the burst end with it, a key the framework would drop";
         }
     };
 };
