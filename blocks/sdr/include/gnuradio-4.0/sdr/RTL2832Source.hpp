@@ -39,16 +39,18 @@ inline void convertToComplex(const std::uint8_t* raw, std::complex<float>* out, 
 
 GR_REGISTER_BLOCK("gr::blocks::sdr::RTL2832Source", gr::blocks::sdr::RTL2832Source, [T], [ uint8_t, std::complex<float> ])
 
-// reads dropped after a retune: natively the device discards its queued transfers and flushes its FIFO at the tune,
-// and the browser read queue keeps the samples WebUSB delivered before the tune
+// reads dropped after a retune, a sample rate change or a correction change: natively the device discards its queued
+// transfers and flushes its FIFO at the change, and the browser read queue keeps the samples WebUSB delivered before it
 #if defined(__EMSCRIPTEN__)
-inline constexpr std::uint8_t kPostRetuneDiscardReads = 3;
+inline constexpr std::uint8_t kPostDiscardReads = 3;
 #else
-inline constexpr std::uint8_t kPostRetuneDiscardReads = 0;
+inline constexpr std::uint8_t kPostDiscardReads = 0;
 #endif
 
-template<typename T>
-struct RTL2832Source : gr::Block<RTL2832Source<T>> {
+// TDevice is the driver the source opens, configures and reads: RTL2832Device, or a type with the members of it that the
+// source calls.
+template<typename T, typename TDevice = RTL2832Device>
+struct RTL2832Source : gr::Block<RTL2832Source<T, TDevice>> {
     using Description = Doc<R"(RTL2832U SDR source for USB dongles with the R820T/R820T2/R860, R828D, and E4000 tuners.
 Native: Linux USB ioctl (zero-dependency). WASM: WebUSB via thin JS shims.
 
@@ -83,7 +85,7 @@ Operating modes:
 
     GR_MAKE_REFLECTABLE(RTL2832Source, clk_in, out, frequency, sample_rate, gain, auto_gain, device_index, device_name, ppm_correction, polling_period, trigger_name, emit_timing_tags, emit_meta_info, tag_interval, dc_blocker_enabled, dc_blocker_cutoff, ppm_estimator_cutoff, ppm_tag_threshold);
 
-    RTL2832Device                  _device;
+    TDevice                        _device;
     bool                           _ioThreadDone     = true;
     std::int64_t                   _clockOffsetNs    = 0;
     bool                           _clockOffsetValid = false;
@@ -93,10 +95,10 @@ Operating modes:
     float                          _prevGain       = 0.f;
     bool                           _prevAutoGain   = false;
     std::string                    _prevDeviceName;
-    bool                           _firstEmission          = true;
-    std::uint64_t                  _lastTagTimeNs          = 0UL;
-    bool                           _retuneRequested        = false;
-    std::uint8_t                   _postRetuneDiscardCount = 0;
+    bool                           _firstEmission        = true;
+    std::uint64_t                  _lastTagTimeNs        = 0UL;
+    bool                           _discardRequested     = false;
+    std::uint8_t                   _postDiscardReadCount = 0;
     DcBlocker                      _dcFilterI;
     DcBlocker                      _dcFilterQ;
     algorithm::SampleRateEstimator _rateEstimator;
@@ -122,11 +124,11 @@ Operating modes:
         _clockOffsetNs    = 0;
         _clockOffsetValid = false;
         _clockTriggerName.clear();
-        _firstEmission          = true;
-        _lastTagTimeNs          = 0UL;
-        _retuneRequested        = false;
-        _postRetuneDiscardCount = 0;
-        _ppmLastEmitted         = 0.0f;
+        _firstEmission        = true;
+        _lastTagTimeNs        = 0UL;
+        _discardRequested     = false;
+        _postDiscardReadCount = 0;
+        _ppmLastEmitted       = 0.0f;
         rebuildDcFilter();
         rebuildRateEstimator();
         // The browser build leaves the open to the io thread, which retries a refused open every 2 s. WebUSB grants the
@@ -200,7 +202,7 @@ Operating modes:
             if (!reportError(_device.setCenterFrequency(frequency), "setCenterFrequency")) {
                 return;
             }
-            _retuneRequested = true;
+            _discardRequested = true;
             forwardSettings.insert_or_assign(std::pmr::string("frequency"), frequency.value);
             forwardSettings.insert_or_assign(std::pmr::string("retune"), true);
         }
@@ -213,16 +215,21 @@ Operating modes:
                 }
             }
         }
+        // A sample rate or correction change alters every sample taken after it, as a retune does. The source discards
+        // the stream after it, as setCenterFrequency does after a tune.
         if (newSettings.contains("sample_rate")) {
             if (!reportError(_device.setSampleRate(sample_rate), "setSampleRate")) {
                 return;
             }
+            reportError(_device.discardStream(), "discardStream");
+            _discardRequested = true;
             rebuildDcFilter();
             rebuildRateEstimator();
             forwardSettings.insert_or_assign(std::pmr::string("sample_rate"), sample_rate.value);
         }
-        if (newSettings.contains("ppm_correction")) {
-            reportError(_device.setFreqCorrection(ppm_correction), "setFreqCorrection");
+        if (newSettings.contains("ppm_correction") && reportError(_device.setFreqCorrection(ppm_correction), "setFreqCorrection")) {
+            reportError(_device.discardStream(), "discardStream");
+            _discardRequested = true;
         }
         if (newSettings.contains("dc_blocker_cutoff") || newSettings.contains("dc_blocker_enabled")) {
             rebuildDcFilter();
@@ -248,9 +255,9 @@ Operating modes:
         while (lifecycle::isActive(this->state())) {
             this->applyChangedSettings();
 
-            if (_retuneRequested) {
-                _retuneRequested        = false;
-                _postRetuneDiscardCount = kPostRetuneDiscardReads;
+            if (_discardRequested) {
+                _discardRequested     = false;
+                _postDiscardReadCount = kPostDiscardReads;
                 _dcFilterI.reset();
                 _dcFilterQ.reset();
                 _rateEstimator.resetPhase();
@@ -293,8 +300,8 @@ Operating modes:
                 continue;
             }
 
-            if (_postRetuneDiscardCount > 0) {
-                --_postRetuneDiscardCount;
+            if (_postDiscardReadCount > 0) {
+                --_postDiscardReadCount;
                 continue;
             }
 
@@ -375,14 +382,15 @@ Operating modes:
         std::ignore  = clkSpan.consume(nAvailable);
     }
 
-    // an already-read USB chunk is published whole: a gap in a continuous IQ stream is a phase discontinuity downstream.
-    // A retune applied while the chunk waits for room ends it early, because the rest holds samples of the old
-    // frequency. tryReserve is all-or-nothing, so each request asks for what the ring reports
+    // An already-read USB chunk is published whole unless a change that discards the stream ends it: a gap in a
+    // continuous IQ stream is a phase discontinuity downstream. A retune, sample rate change or correction change applied
+    // while the chunk waits for room ends it early, because the rest holds samples taken before the change. tryReserve is
+    // all-or-nothing, so each request asks for what the ring reports
     void publishSamples(auto& writer, const std::uint8_t* data, std::size_t nBytes, std::uint64_t tWallNs) {
         const std::size_t nOutputSamples = std::is_same_v<T, std::uint8_t> ? nBytes : nBytes / 2UZ;
 
         std::size_t done = 0UZ;
-        while (done < nOutputSamples && !_retuneRequested && lifecycle::isActive(this->state())) {
+        while (done < nOutputSamples && !_discardRequested && lifecycle::isActive(this->state())) {
             const std::size_t remaining = nOutputSamples - done;
             const std::size_t nRequest  = std::min(remaining, writer.available());
             if (nRequest == 0UZ) {
