@@ -11,7 +11,6 @@
 #include <fstream>
 #include <limits>
 #include <optional>
-#include <print>
 #include <span>
 #include <string>
 #include <string_view>
@@ -823,10 +822,7 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
 
         std::int64_t latestNs   = std::numeric_limits<std::int64_t>::min(); // stamp less the latest possible capture
         std::int64_t earliestNs = std::numeric_limits<std::int64_t>::max(); // stamp less the earliest possible capture
-        std::int64_t minEpochNs = std::numeric_limits<std::int64_t>::max(); // stamp less the sample's offset in the stream
-        std::int64_t maxEpochNs = std::numeric_limits<std::int64_t>::min();
         std::size_t  nChunks    = 0UZ;
-        std::size_t  maxLength  = 0UZ;
         for (std::size_t i = 0UZ; i + 1UZ < stamps.size(); ++i) {
             const std::size_t first = stamps[i].index;
             const std::size_t last  = stamps[i + 1UZ].index - 1UZ;
@@ -842,17 +838,10 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
             const auto         stampNs = static_cast<std::int64_t>(stamps[i].timeNs);
             latestNs                   = std::max(latestNs, stampNs - upperNs);
             earliestNs                 = std::min(earliestNs, stampNs - lowerNs);
-            minEpochNs                 = std::min(minEpochNs, stampNs - duration(first));
-            maxEpochNs                 = std::max(maxEpochNs, stampNs - duration(first));
-            maxLength                  = std::max(maxLength, last - first + 1UZ);
             ++nChunks;
         }
 
         expect(ge(nChunks, 2UZ)) << caseName;
-        if (nChunks > 0UZ) {
-            std::println("{}: {} chunks of at most {} samples ({:.3f} ms); trigger_time less the latest possible capture of the chunk's first sample at most {:+.3f} ms, less the earliest at least {:+.3f} ms; trigger_time less the sample's offset spread {:.3f} ms", //
-                caseName, nChunks, maxLength, static_cast<double>(duration(maxLength)) * 1e-6, static_cast<double>(latestNs) * 1e-6, static_cast<double>(earliestNs) * 1e-6, static_cast<double>(maxEpochNs - minEpochNs) * 1e-6);
-        }
         expect(le(latestNs, std::int64_t{0})) << std::format("{}: a chunk is stamped {:.3f} ms after its first sample could have been captured", caseName, static_cast<double>(latestNs) * 1e-6);
         expect(ge(earliestNs, std::int64_t{0})) << std::format("{}: a chunk is stamped {:.3f} ms before its first sample could have been captured", caseName, static_cast<double>(-earliestNs) * 1e-6);
     };
