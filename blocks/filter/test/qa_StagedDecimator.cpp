@@ -712,6 +712,18 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
     };
 
+    "a stop request publishes no held tag and makes no output"_test = [] {
+        // the D = 8 ladder delays by more than two inputs: the trigger on input 79 lies past the 10 outputs of its call
+        StagedDecimator<float>     block = makeBlock<float>({{"decimation", 8U}});
+        const std::vector<float>   input(96UZ, 1.0f);
+        const std::vector<gr::Tag> tags{{79UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("last")}}}};
+        expect(gt(pathDelay(block), 16ULL));
+        const auto run = filter_test::runIntoStop(block, std::span<const float>(input).first(80UZ), std::span<const float>(input).subspan(80UZ), tags, 8UZ, 1UZ);
+        expect(that % run.beforeStop.empty()) << "the call holds the trigger past its outputs";
+        expect(eq(run.stopOutputs, 0UZ)) << "the epilogue under the stop request makes no output";
+        expect(that % run.atStop.empty()) << std::format("and publishes no held tag: {}", filter_test::describe(run.atStop));
+    };
+
     "a rebuild to a ladder already built designs nothing new"_test = [] {
         StagedDecimator<CF>             block = makeBlock<CF>({{"decimation", 16U}, {"passband_width", 0.90f}});
         std::vector<std::vector<float>> first;
