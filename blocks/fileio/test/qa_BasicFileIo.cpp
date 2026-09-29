@@ -394,7 +394,7 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
         expectRefusedStart(runFloatSource(fileName, "overwrite"), {fileName, kReaderRefusal});
     };
 
-    "BasicFileSource in multi mode refuses at start a stem that no file name holds"_test = [] {
+    "BasicFileSource in multi mode refuses at start a base name that no file name holds"_test = [] {
         ScopedWorkingDirectory workingDirectory;
         std::ofstream(workingDirectory.directory / "noise.f32", std::ios::binary) << "0123";
 

@@ -12,6 +12,7 @@
 #include <complex>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <span>
 #include <string_view>
 
@@ -48,14 +49,18 @@ inline std::vector<std::filesystem::path> getSortedFilesContaining(const std::st
     return std::filesystem::file_size(filePath);
 }
 
+// deletes the regular files of the file name's directory whose names hold its file name; a directory that cannot be
+// listed holds none
 [[maybe_unused]] inline std::vector<std::string> deleteFilesContaining(const std::string& fileName) {
-    std::filesystem::path filePath(fileName);
-    if (!std::filesystem::exists(parentDirectory(filePath))) {
+    const std::filesystem::path         filePath(fileName);
+    std::error_code                     listError;
+    std::filesystem::directory_iterator entries(parentDirectory(filePath), listError);
+    if (listError) {
         return {};
     }
 
     std::vector<std::string> deletedFiles;
-    for (const auto& entry : std::filesystem::directory_iterator(parentDirectory(filePath))) {
+    for (const auto& entry : entries) {
         if (entry.is_regular_file() && entry.path().filename().string().contains(filePath.filename().string())) {
             deletedFiles.push_back(entry.path().string());
             std::filesystem::remove(entry.path());
@@ -201,13 +206,13 @@ Important: this implementation assumes a host-order, CPU architecture specific b
 
     GR_MAKE_REFLECTABLE(BasicFileSource, out, file_name, mode, repeat, offset, length, trigger_name);
 
-    gr::algorithm::fileio::Reader      _reader;
-    std::vector<std::filesystem::path> _filesToRead;
-    bool                               _emittedStartTrigger = false;
-    bool                               _readerActive        = false;
-    std::size_t                        _totalBytesRead      = 0UZ;
-    std::size_t                        _totalBytesReadFile  = 0UZ;
-    std::size_t                        _currentFileIndex    = 0UZ;
+    gr::algorithm::fileio::Reader             _reader;
+    std::set<std::filesystem::path>           _filesToRead; // sorted by path, so a multi-mode set plays in name order
+    std::set<std::filesystem::path>::iterator _nextFile{_filesToRead.end()};
+    bool                                      _emittedStartTrigger = false;
+    bool                                      _readerActive        = false;
+    std::size_t                               _totalBytesRead      = 0UZ;
+    std::size_t                               _totalBytesReadFile  = 0UZ;
 
     ~BasicFileSource() {
         // cancel before ~Block() runs — derived members are destroyed before the CRTP base destructor
@@ -221,8 +226,7 @@ Important: this implementation assumes a host-order, CPU architecture specific b
     // throws when there is nothing to read: the reader cannot open the file, or in multi mode the directory cannot be
     // listed or no file name in it holds the base name
     void start() {
-        _currentFileIndex = 0UZ;
-        _totalBytesRead   = 0UZ;
+        _totalBytesRead = 0UZ;
         _filesToRead.clear();
         _reader       = {};
         _readerActive = false;
@@ -231,16 +235,18 @@ Important: this implementation assumes a host-order, CPU architecture specific b
         switch (mode) {
         case Mode::overwrite:
         case Mode::append: {
-            _filesToRead.push_back(filePath);
+            _filesToRead.insert(filePath);
         } break;
         case Mode::multi: {
-            _filesToRead = detail::getSortedFilesContaining(file_name.value);
-            if (_filesToRead.empty()) {
+            const auto matchingFiles = detail::getSortedFilesContaining(file_name.value);
+            if (matchingFiles.empty()) {
                 throw gr::exception(std::format("no file in '{}' has a name containing '{}'", detail::parentDirectory(filePath).string(), filePath.filename().string()));
             }
+            _filesToRead.insert(matchingFiles.begin(), matchingFiles.end());
         } break;
         default: throw gr::exception("unsupported file mode.");
         }
+        _nextFile = _filesToRead.begin();
 
         openNextFile();
         awaitFirstRead();
@@ -341,7 +347,7 @@ private:
     }
 
     void openNextFile() {
-        if (_currentFileIndex >= _filesToRead.size()) {
+        if (_nextFile == _filesToRead.end()) {
             return;
         }
         _totalBytesReadFile  = 0UZ;
@@ -361,13 +367,13 @@ private:
         config.chunkBytes          = chunkBytes;
         config.chunkAlignmentBytes = sizeof(T);
 
-        auto readerExp = gr::algorithm::fileio::readAsync(_filesToRead[_currentFileIndex].string(), std::move(config));
+        auto readerExp = gr::algorithm::fileio::readAsync(_nextFile->string(), std::move(config));
         if (!readerExp.has_value()) {
             throw gr::exception(readerExp.error().message, readerExp.error().sourceLocation);
         }
         _reader       = std::move(readerExp.value());
         _readerActive = true;
-        _currentFileIndex++;
+        ++_nextFile;
     }
 
     // waits for the reader's first message, which follows its open of the file: an error refuses the start, a chunk
@@ -393,12 +399,12 @@ private:
 
     [[nodiscard]] work::Status finishCurrentFile() {
         closeFile();
-        if (_currentFileIndex < _filesToRead.size()) {
+        if (_nextFile != _filesToRead.end()) {
             openNextFile();
             return work::Status::OK;
         }
         if (repeat && !_filesToRead.empty()) {
-            _currentFileIndex = 0UZ;
+            _nextFile = _filesToRead.begin();
             openNextFile();
             return work::Status::OK;
         }
