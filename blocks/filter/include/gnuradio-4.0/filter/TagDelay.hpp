@@ -241,7 +241,8 @@ struct DelayedTagFilter {
 
     /**
      * @brief Hold each tag for its delayed output and publish those this call makes. Without a delay, the framework's
-     * own forwarding runs, and the tags still held leave on the call's outputs.
+     * own forwarding runs. The tags still held from a delay in force before leave on the call's first output, ahead of
+     * every tag the framework forwards.
      */
     template<typename TInputSpans, typename TOutputSpans>
     void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
@@ -253,9 +254,9 @@ struct DelayedTagFilter {
                 self().in.min_samples = _tags.freeMinSamples;
             }
             gr::for_each_writer_span(
-                [processedIn, decimation, this](auto& span) {
+                [this](auto& span) {
                     if (span.isSync && span.isConnected) {
-                        _tags.release(span, processedIn / decimation, true);
+                        _tags.release(span, 0UZ, true);
                     }
                 },
                 outputSpans);
