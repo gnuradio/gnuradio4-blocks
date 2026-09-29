@@ -270,6 +270,12 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
                     expect(device.setSampleRate(SOAPY_SDR_RX, 0, 44'100.).has_value());
                 }
                 expect(device.setCenterFrequency(SOAPY_SDR_RX, 0, 107'000'000.).has_value());
+                if (deviceDriver.starts_with("loopback")) {
+                    // The loopback forwards TX samples by default and this case writes none. In rx_only it generates a tone.
+                    // Its timed read returns a timeout at once for a buffer longer than the poll timeout. The case reads untimed.
+                    expect(device.writeSetting("device_mode", "rx_only").has_value());
+                    expect(device.writeSetting("simulate_timing", "false").has_value());
+                }
                 auto streamResult = device.setupStream<TValueType, SOAPY_SDR_RX>();
                 expect(streamResult.has_value()) << "setupStream must succeed";
                 if (!streamResult) {
