@@ -281,8 +281,9 @@ enum class EnforceFunction { MANDATORY, OPTIONAL };
 class Interpreter {
     /// Imports the linked module's NumPy table and initializes the embedded interpreter if it is not yet initialized. Each
     /// linked module holds one instance, which the module's first 'Interpreter' constructs. The instance that initialized
-    /// the interpreter finalizes it at process exit. An interpreter that the host process initialized is left for the host
-    /// to finalize.
+    /// the interpreter finalizes it at process exit. NumPy cannot be imported again into a process after 'Py_Finalize()'.
+    /// A block's destruction therefore releases only the block's own objects. An interpreter that the host process
+    /// initialized is left for the host to finalize.
     class Runtime {
         bool               _ownsInterpreter = Py_IsInitialized() == 0;
         std::exception_ptr _numpyError;
@@ -437,9 +438,6 @@ Interpreter::Runtime::Runtime() {
     {
         python::PyGILGuard guard;
         if (_import_array() < 0) {
-            // NumPy cannot be imported again into a process after 'Py_Finalize()', so the interpreter lives until
-            // the process exits and a block's destruction releases only the block's own objects.
-
             // initialize NumPy -- N.B. NumPy does not support sub-interpreters (as of Python 3.12):
             // "sys:1: UserWarning: NumPy was imported from a Python sub-interpreter but NumPy does not properly support sub-interpreters.
             // This will likely work for most users but might cause hard to track down issues or subtle bugs.
