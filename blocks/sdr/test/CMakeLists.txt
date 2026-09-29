@@ -172,8 +172,14 @@ if(TARGET SoapySDR)
       COMMENT "Copying gr-sdr-loopback.so for wrapper test")
     add_test(NAME qa_SoapyRaiiWrapper COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
                                               ${CMAKE_CURRENT_BINARY_DIR}/qa_SoapyRaiiWrapper)
-    set_tests_properties(qa_SoapyRaiiWrapper
-                         PROPERTIES ENVIRONMENT "SOAPY_SDR_PLUGIN_PATH=${SOAPY_MODULE_DIR};ASAN_OPTIONS=detect_leaks=0")
+    # loads the loopback module alone, as qa_SoapySource does. It names no other driver.
+    target_compile_definitions(qa_SoapyRaiiWrapper PRIVATE GR_SDR_TEST_SOAPY_MODULE_DIR="${SOAPY_MODULE_DIR}"
+                                                           GR_SDR_TEST_SOAPY_EMPTY_ROOT="${SOAPY_EMPTY_ROOT}")
+    set_tests_properties(
+      qa_SoapyRaiiWrapper
+      PROPERTIES
+        ENVIRONMENT
+        "SOAPY_SDR_ROOT=${SOAPY_EMPTY_ROOT};SOAPY_SDR_PLUGIN_PATH=${SOAPY_MODULE_DIR};ASAN_OPTIONS=detect_leaks=0")
     # GR4 integration test: SoapySource + loopback through scheduler
     add_executable(qa_SoapyIntegration qa_SoapyIntegration.cpp)
     target_link_libraries(
