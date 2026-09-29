@@ -267,7 +267,7 @@ class LoopbackDevice : public SoapySDR::Device {
     struct ChannelState {
         double                        frequency  = 100e6;
         double                        sampleRate = 1e6;
-        double                        bandwidth  = 0.0;
+        double                        bandwidth  = 1e6; // a value listBandwidths() holds
         std::map<std::string, double> elementGains;
         bool                          gainMode      = false;
         double                        ppmCorrection = 0.0;
