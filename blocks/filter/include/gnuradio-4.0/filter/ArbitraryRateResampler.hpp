@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <complex>
 #include <concepts>
 #include <cstdint>
@@ -188,17 +189,17 @@ output lies past the end of the stream leaves on the stream's last output. )"">;
     }
 
     /**
-     * @brief One call's samples, less the inputs a held tag keeps back for the stream's end.
+     * @brief One call's samples, less the inputs kept back for the stream's end.
      *
-     * A call that takes all of its input while a tag lies past its outputs keeps back the sample that completes its last
-     * output and every sample after it. The kept samples make that output in a later call or in the epilogue, and a tag
-     * past the stream's end leaves on it.
+     * A call that takes all of its input keeps back the sample that completes its last output and every sample after
+     * it. The kept samples make that output in a later call or in the epilogue. A tag past the stream's end leaves on
+     * it, a tag on an input that completes no output included.
      */
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
         auto [nIn, made] = fitToRoom(inSpan.size(), outSpan.size());
 
         std::size_t kept = 0UZ;
-        if (in.isConnected() && nIn > 0UZ && nIn == inSpan.size() && tagPast(inSpan, nIn, static_cast<std::uint64_t>(outSpan.streamIndex) + made)) {
+        if (keepsInput() && nIn > 0UZ && nIn == inSpan.size()) {
             const std::size_t taken = made > 0UZ ? _resampler->inputsFor(made) - 1UZ : 0UZ;
             kept                    = nIn - taken;
             nIn                     = taken;
@@ -274,17 +275,11 @@ private:
         return _outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, delayed);
     }
 
-    /// @brief Whether a tag held now, or a tag of the first @p nIn samples of @p inSpan, lies at or past output @p end.
-    [[nodiscard]] bool tagPast(InputSpanLike auto& inSpan, std::size_t nIn, std::uint64_t end) const {
-        if (_tags.heldPast(end)) {
-            return true;
-        }
-        const std::uint64_t first = static_cast<std::uint64_t>(inSpan.streamIndex);
-        const std::uint64_t last  = first + static_cast<std::uint64_t>(nIn);
-        return std::ranges::any_of(inSpan.rawTags, [&](const gr::Tag& tag) {
-            const std::uint64_t at = static_cast<std::uint64_t>(tag.index);
-            return at >= first && at < last && std::max(_latestHeld, outputOf(at)) >= end;
-        });
+    /// @brief True where a call keeps input back: on a connected input whose buffer holds the inputs of two outputs and
+    /// one sample more.
+    [[nodiscard]] bool keepsInput() const {
+        const double perOutput = std::ceil(1.0 / realizedRate());
+        return in.isConnected() && 2.0 * perOutput + 1.0 <= static_cast<double>(in.bufferSize());
     }
 
     /// @brief The `min(1, r)` the prototype has to cover: the stated floor where there is one, and the current rate otherwise.

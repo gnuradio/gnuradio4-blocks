@@ -419,21 +419,25 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
         expect(gt(twice, 4ULL)) << "the design delays the last two inputs past the last output";
 
         const gr::property_map design{{"filter_type", std::string("FIR")}, {"filter_response", std::string("LOWPASS")}, {"filter_order", gr::Size_t{4}}, {"f_low", 100.0f}, {"f_high", 200.0f}, {"sample_rate", 1000.0f}, {"fir_design_method", std::string("Hamming")}};
+        // at M = 5 a stream of 1003 ends in a partial chunk of 3 inputs, which holds both end tags and makes no output
         for (const gr::Size_t decimation : {gr::Size_t{1}, gr::Size_t{5}}) {
-            gr::property_map settings = design;
-            settings.insert_or_assign(gr::property_map::key_type{"decimate"}, decimation);
-            const TaggedRun   got     = decimation == 1U ? runTagged<BasicFilter<float>>(settings, kSamples, kMid) : runTagged<BasicDecimatingFilter<float>>(settings, kSamples, kMid);
-            const TaggedRun   ref     = runTagged<FirFilter<float>>({{"taps", taps}, {"decimation", decimation}}, kSamples, kMid);
-            const std::size_t outputs = kSamples / decimation;
-            const std::size_t mid     = gr::blocks::filter::detail::mapDelayedOffset(kMid, 1ULL, decimation, twice);
+            for (const gr::Size_t samples : {kSamples, gr::Size_t{kSamples + 3U}}) {
+                gr::property_map settings = design;
+                settings.insert_or_assign(gr::property_map::key_type{"decimate"}, decimation);
+                const TaggedRun   got     = decimation == 1U ? runTagged<BasicFilter<float>>(settings, samples, kMid) : runTagged<BasicDecimatingFilter<float>>(settings, samples, kMid);
+                const TaggedRun   ref     = runTagged<FirFilter<float>>({{"taps", taps}, {"decimation", decimation}}, samples, kMid);
+                const std::size_t outputs = samples / decimation;
+                const std::size_t mid     = gr::blocks::filter::detail::mapDelayedOffset(kMid, 1ULL, decimation, twice);
+                const std::string label   = std::format("M = {}, {} inputs", decimation, samples);
 
-            expect(got.ran && ref.ran);
-            expect(eq(got.samples, outputs)) << std::format("M = {}: every output, and none past the last input", decimation);
-            expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{mid})) << std::format("M = {}: the trigger on the delayed sample", decimation);
-            expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{outputs - 1UZ})) << std::format("M = {}: a tag past the end on the last output", decimation);
-            expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{outputs - 1UZ})) << std::format("M = {}: the tag on the last input as well", decimation);
-            for (const std::string_view key : {"trigger_name", "trigger_time", "trigger_meta_info"}) {
-                expect(that % (got.offsetsOf(key) == ref.offsetsOf(key))) << std::format("M = {}: {} where FirFilter puts it", decimation, key);
+                expect(got.ran && ref.ran);
+                expect(eq(got.samples, outputs)) << label << ": every output, and none past the last input";
+                expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{mid})) << label << ": the trigger on the delayed sample";
+                expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{outputs - 1UZ})) << label << ": a tag past the end on the last output";
+                expect(that % (got.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{outputs - 1UZ})) << label << ": the tag on the last input as well";
+                for (const std::string_view key : {"trigger_name", "trigger_time", "trigger_meta_info"}) {
+                    expect(that % (got.offsetsOf(key) == ref.offsetsOf(key))) << label << ": " << key << " where FirFilter puts it";
+                }
             }
         }
     };

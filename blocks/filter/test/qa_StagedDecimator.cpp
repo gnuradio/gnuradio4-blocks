@@ -685,6 +685,38 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the burst end on the last output";
     };
 
+    "a tag on the partial last chunk leaves on the stream's last output"_test = [] {
+        // at D = 8 the last 5 of 8005 inputs are no whole chunk and make no output: a trigger and a burst end on them
+        // leave on the last output the 1000 whole chunks make
+        constexpr gr::Size_t  kSamples = 8005U;
+        constexpr std::size_t kOutputs = 1000UZ;
+        gr::Graph             graph;
+        auto&                 source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
+        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+        auto& block = graph.emplaceBlock<StagedDecimator<float>>({{"decimation", 8U}});
+        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+        expect(graph.connect<"out", "in">(source, block).has_value());
+        expect(graph.connect<"out", "in">(block, sink).has_value());
+        gr::scheduler::Simple scheduler;
+        expect(scheduler.exchange(std::move(graph)).has_value());
+        expect(scheduler.runAndWait().has_value());
+
+        const auto offsetsOf = [&sink](std::string_view key) {
+            std::vector<std::size_t> offsets;
+            for (const gr::Tag& seen : sink._tags) {
+                if (seen.map.contains(gr::property_map::key_type{key})) {
+                    offsets.push_back(seen.index);
+                }
+            }
+            return offsets;
+        };
+        expect(eq(sink._samples.size(), kOutputs)) << "the whole chunks' outputs, and none from the partial chunk";
+        expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the trigger on the last output";
+        expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the burst end on the last output";
+    };
+
     "a rebuild to a ladder already built designs nothing new"_test = [] {
         StagedDecimator<CF>             block = makeBlock<CF>({{"decimation", 16U}, {"passband_width", 0.90f}});
         std::vector<std::vector<float>> first;

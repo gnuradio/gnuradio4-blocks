@@ -547,6 +547,29 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         }
     };
 
+    "a tag on the partial last chunk leaves on the stream's last output"_test = [] {
+        // at M = 4 the last 3 of 1003 inputs are no whole chunk and make no output: a trigger and a burst end on them
+        // leave on the last output the 250 whole chunks make
+        constexpr gr::Size_t  kSamples = 1003U;
+        constexpr std::size_t kOutputs = 250UZ;
+        gr::Graph             graph;
+        auto&                 source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
+        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+        auto& filter = graph.emplaceBlock<FirFilter<float, float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}});
+        auto& sink   = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+        expect(graph.connect<"out", "in">(source, filter).has_value());
+        expect(graph.connect<"out", "in">(filter, sink).has_value());
+        gr::scheduler::Simple scheduler;
+        expect(scheduler.exchange(std::move(graph)).has_value());
+        expect(scheduler.runAndWait().has_value());
+
+        expect(eq(sink._samples.size(), kOutputs)) << "the whole chunks' outputs, and none from the partial chunk";
+        expect(that % (sinkOffsetsOf(sink, "trigger_name") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the trigger on the last output";
+        expect(that % (sinkOffsetsOf(sink, "tx_eob") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the burst end on the last output";
+    };
+
     "a taps change moves no held tag, and a later tag never lands ahead of it"_test = [] {
         const std::vector<float> longer  = gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0); // delays by 15
         const std::vector<float> shorter = gr::filter::fir::design::kaiserLowpass(5, 0.1, 60.0);  // delays by 2
@@ -634,6 +657,30 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         expect(that % (got.samples == x)) << "bit for bit";
         expect(that % (got.offsetsOf("tag0") == std::vector<std::size_t>{7UZ}));
         expect(that % (got.offsetsOf("tag1") == std::vector<std::size_t>{300UZ}));
+    };
+
+    "a decimation above half the input buffer keeps nothing back and runs to the end"_test = [] {
+        // a chunk of 3000 inputs in a buffer of fewer than 6000 leaves no room for the two chunks a keep-back asks for;
+        // the trigger on the last input of chunk 4 rounds to output 5, past the call that takes it
+        constexpr gr::Size_t  kDecimation = 3000U;
+        constexpr std::size_t kOutputs    = 10UZ;
+        constexpr gr::Size_t  kSamples    = kDecimation * static_cast<gr::Size_t>(kOutputs);
+        constexpr std::size_t kAt         = 5UZ * kDecimation - 1UZ;
+        gr::Graph             graph;
+        auto&                 source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        source._tags.emplace_back(kAt, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("mid")}});
+        auto& filter = graph.emplaceBlock<FirFilter<float, float>>({{"taps", std::vector<float>{1.0f}}, {"decimation", kDecimation}});
+        auto& sink   = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+        expect(graph.connect<"out", "in">(source, filter, gr::EdgeParameters{.minBufferSize = 4096UZ}).has_value());
+        expect(graph.connect<"out", "in">(filter, sink).has_value());
+        gr::scheduler::Simple scheduler;
+        expect(scheduler.exchange(std::move(graph)).has_value());
+        expect(scheduler.runAndWait().has_value());
+
+        expect(lt(filter.in.bufferSize(), 2UZ * kDecimation)) << "the buffer holds fewer than two chunks";
+        expect(eq(sink._samples.size(), kOutputs)) << "every output";
+        expect(that % (sinkOffsetsOf(sink, "trigger_name") == std::vector<std::size_t>{5UZ})) << "the trigger on its rounded output";
     };
 };
 

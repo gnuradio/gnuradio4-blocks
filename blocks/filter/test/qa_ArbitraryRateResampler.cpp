@@ -573,6 +573,38 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         }
     };
 
+    "a tag on an input whose call makes no output leaves on the stream's last output"_test = [] {
+        // at a rate of 0.5 the last of 1001 inputs completes no output: the source hands it over alone with its burst
+        // end, and the call that takes it makes nothing
+        constexpr std::size_t    kBank     = 32UZ;
+        constexpr gr::Size_t     kSamples  = 1001U;
+        const std::vector<float> prototype = prototypeFor(kBank, 0.5);
+        const gr::property_map   settings{{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototype}};
+        const std::size_t        outputs = makeResampler<float>(settings).outputsFor(kSamples);
+        expect(eq(makeResampler<float>(settings).outputsFor(kSamples - 1UZ), outputs)) << "the last input completes no output";
+
+        gr::Graph graph;
+        auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+        auto& block = graph.emplaceBlock<ArbitraryRateResampler<float>>(settings);
+        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+        expect(graph.connect<"out", "in">(source, block).has_value());
+        expect(graph.connect<"out", "in">(block, sink).has_value());
+        gr::scheduler::Simple scheduler;
+        expect(scheduler.exchange(std::move(graph)).has_value());
+        expect(scheduler.runAndWait().has_value());
+
+        std::vector<std::size_t> offsets;
+        for (const gr::Tag& seen : sink._tags) {
+            if (seen.map.contains(gr::property_map::key_type{"tx_eob"})) {
+                offsets.push_back(seen.index);
+            }
+        }
+        expect(eq(sink._samples.size(), outputs)) << "every output, and none past the last input";
+        expect(that % (offsets == std::vector<std::size_t>{outputs - 1UZ})) << "the burst end on the last output";
+    };
+
     "a tag leaves on the output that carries its sample's energy"_test = [] {
         constexpr std::size_t kBank = 32UZ;
 

@@ -509,6 +509,40 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
         expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the burst end on the last output";
     };
 
+    "a tag on the partial last chunk leaves on the stream's last output"_test = [] {
+        // at 147/160 the last 50 of 16050 inputs are no whole chunk and make no output: a trigger and a burst end on
+        // them leave on the last output the 100 whole chunks make
+        constexpr gr::Size_t  kSamples = 16050U;
+        constexpr std::size_t kOutputs = 14700UZ;
+        static_assert(kSamples % 160U != 0U && kSamples / 160U * 147U == kOutputs);
+        gr::Graph graph;
+        auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
+        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+        auto& block = graph.emplaceBlock<RationalResampler<float>>({{"interpolation", 147U}, {"decimation", 160U}});
+        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+        expect(graph.connect<"out", "in">(source, block).has_value());
+        expect(graph.connect<"out", "in">(block, sink).has_value());
+        expect(eq(block.input_chunk_size.value, 160U)) << "the ratio does not reduce";
+        gr::scheduler::Simple scheduler;
+        expect(scheduler.exchange(std::move(graph)).has_value());
+        expect(scheduler.runAndWait().has_value());
+
+        const auto offsetsOf = [&sink](std::string_view key) {
+            std::vector<std::size_t> offsets;
+            for (const gr::Tag& seen : sink._tags) {
+                if (seen.map.contains(gr::property_map::key_type{key})) {
+                    offsets.push_back(seen.index);
+                }
+            }
+            return offsets;
+        };
+        expect(eq(sink._samples.size(), kOutputs)) << "the whole chunks' outputs, and none from the partial chunk";
+        expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the trigger on the last output";
+        expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the burst end on the last output";
+    };
+
     "the L=3 M=2 offsets are the table"_test = [] {
         constexpr std::uint64_t kWant[] = {0ULL, 2ULL, 3ULL, 5ULL, 6ULL, 8ULL, 9ULL, 11ULL};
         for (std::uint64_t i = 0ULL; i < 8ULL; ++i) {
