@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <complex>
 #include <concepts>
 #include <cstdint>
@@ -51,8 +50,8 @@ as a trigger, a burst edge or a time stamp, because a tag describes the sample i
 interpolated rate `L*fs_in`: a tag on input `i` leaves on the output nearest the interpolated position `i*L + d`, the
 sample that carries the energy of input `i`. A designed or other symmetric prototype of `N` taps delays by `(N-1)/2`. An
 asymmetric supplied prototype moves its tags by the centroid of its energy, rounded to the whole interpolated sample. A
-tag is placed when its sample is consumed and keeps that output whatever rate change or rebuild follows, and a tag whose
-output lies past the end of the stream leaves on the stream's last output. )"">;
+tag is placed when its sample is consumed and keeps that output whatever rate change or rebuild follows. A tag whose
+output lies past the stream's last output leaves at the end-of-stream index, one past that output. )"">;
 
     PortIn<T, Async>  in;
     PortOut<T, Async> out;
@@ -96,7 +95,7 @@ output lies past the end of the stream leaves on the stream's last output. )"">;
 
     void start() {
         rebuild();
-        _tags.reset(in);
+        _tags.reset();
         _latestHeld = 0ULL;
         _inOrigin   = 0ULL;
         _outOrigin  = 0ULL;
@@ -188,24 +187,8 @@ output lies past the end of the stream leaves on the stream's last output. )"">;
         _reorigin    = false;
     }
 
-    /**
-     * @brief One call's samples, less the inputs kept back for the stream's end.
-     *
-     * A call that takes all of its input keeps back the sample that completes its last output and every sample after
-     * it. The kept samples make that output in a later call or in the epilogue. A tag past the stream's end leaves on
-     * it, a tag on an input that completes no output included.
-     */
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
-        auto [nIn, made] = fitToRoom(inSpan.size(), outSpan.size());
-
-        std::size_t kept = 0UZ;
-        if (keepsInput() && nIn > 0UZ && nIn == inSpan.size()) {
-            const std::size_t taken = made > 0UZ ? _resampler->inputsFor(made) - 1UZ : 0UZ;
-            kept                    = nIn - taken;
-            nIn                     = taken;
-            made                    = _resampler->outputsFor(nIn);
-        }
-        _tags.keepInputs(in, kept);
+        const auto [nIn, made] = fitToRoom(inSpan.size(), outSpan.size());
 
         mapTags(inSpan, nIn);
         std::ignore = _resampler->process(std::span<const T>(inSpan.data(), nIn), std::span<T>(outSpan.data(), made));
@@ -216,9 +199,6 @@ output lies past the end of the stream leaves on the stream's last output. )"">;
         outSpan.publish(made);
 
         if (made == 0UZ && nIn == 0UZ) {
-            if (kept > 0UZ) {
-                return work::Status::INSUFFICIENT_INPUT_ITEMS;
-            }
             // above unity one input sample can carry two outputs, so a room of one is not short of input: it is short
             // of room, and reporting that is what stops the scheduler re-offering the same window
             return _resampler->outputsFor(inSpan.size()) > 0UZ ? work::Status::INSUFFICIENT_OUTPUT_ITEMS : work::Status::INSUFFICIENT_INPUT_ITEMS;
@@ -226,12 +206,11 @@ output lies past the end of the stream leaves on the stream's last output. )"">;
         return work::Status::OK;
     }
 
-    /// @brief The stream's last samples, the kept-back ones among them, and every held tag, those past the end on the
-    /// stream's last output.
+    /// @brief The stream's last samples, and every held tag: a tag past the stream's last output leaves at the
+    /// end-of-stream index.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& inSpan, TOutput& outSpan) {
         const auto [nIn, made] = fitToRoom(inSpan.size(), outSpan.size());
-        _tags.keepInputs(in, 0UZ);
 
         mapTags(inSpan, nIn);
         std::ignore = _resampler->process(std::span<const T>(inSpan.data(), nIn), std::span<T>(outSpan.data(), made));
@@ -273,13 +252,6 @@ private:
     [[nodiscard]] std::uint64_t outputOf(std::uint64_t at) const noexcept {
         const std::int64_t delayed = _phaseOrigin - static_cast<std::int64_t>(_twiceDelay << (gr::filter::kArbitraryFractionBits - 1)); // the first output's position less the delay, in 2^-F interpolated samples
         return _outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, delayed);
-    }
-
-    /// @brief True where a call keeps input back: on a connected input whose buffer holds the inputs of two outputs and
-    /// one sample more.
-    [[nodiscard]] bool keepsInput() const {
-        const double perOutput = std::ceil(1.0 / realizedRate());
-        return in.isConnected() && 2.0 * perOutput + 1.0 <= static_cast<double>(in.bufferSize());
     }
 
     /// @brief The `min(1, r)` the prototype has to cover: the stated floor where there is one, and the current rate otherwise.

@@ -41,8 +41,8 @@ Alignment modes, by the value of `alignment`:
 - `Causal`: past-only window, minimal latency, non-linear phase
 
 Every tag moves whole, every key with it, by that lag, 0 for `Causal`: a tag on input `i` leaves on output `i + lag`,
-the sample whose fit is evaluated at input `i`. A tag whose output lies past the end of the stream leaves on the stream's
-last output.
+the sample whose fit is evaluated at input `i`. A tag whose output lies past the stream's last output leaves at the
+end-of-stream index, one past that output.
 )"">; // clang-format off
 
     PortIn<T>  in;

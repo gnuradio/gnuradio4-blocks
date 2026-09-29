@@ -47,7 +47,7 @@ H(z) = b[0] + b[1]*z^-1 + b[2]*z^-2 + ... + b[N]*z^-N
 Every tag moves whole, every key with it, by the filter's delay `d`: a tag on input `i` leaves on output `i + d`, a
 half rounding up, the sample that carries the energy of input `i`. A symmetric or antisymmetric set of `N+1` coefficients delays by
 `N/2`. An asymmetric set moves its tags by the centroid of its energy, rounded to the whole sample. A tag whose output
-lies past the end of the stream leaves on the stream's last output.
+lies past the stream's last output leaves at the end-of-stream index, one past that output.
 )"">;
     PortIn<T>  in;
     PortOut<T> out;
@@ -183,8 +183,8 @@ with selectable filter type (low-pass, high-pass, band-pass, band-stop), and sup
 
 In FIR mode every tag moves whole, every key with it, by the designed filter's delay `d`, `(N-1)/2` for its `N`
 coefficients: a tag on input `i` leaves on output `round((i + d) / M)`, the sample that carries the energy of input `i`.
-`M` is the decimation of `BasicDecimatingFilter` and 1 for `BasicFilter`. A tag whose output lies past the end of the
-stream leaves on the stream's last output. In IIR mode the framework places the tags and forwards its auto-forward keys
+`M` is the decimation of `BasicDecimatingFilter` and 1 for `BasicFilter`. A tag whose output lies past the stream's
+last output leaves at the end-of-stream index, one past that output. In IIR mode the framework places the tags and forwards its auto-forward keys
 alone: an IIR response has no single delay.
 )"">;
     using ValueType   = meta::fundamental_base_value_type_t<T>;

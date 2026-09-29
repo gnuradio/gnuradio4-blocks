@@ -24,12 +24,15 @@
 
 #include <gnuradio-4.0/testing/TestSpans.hpp>
 
+#include "StreamEndSink.hpp"
+
 namespace {
 
 using gr::blocks::filter::FirFilter;
 using gr::blocks::filter::StagedDecimator;
-using CF       = std::complex<float>;
-namespace test = gr::blocks::testing::span;
+using CF              = std::complex<float>;
+namespace test        = gr::blocks::testing::span;
+namespace filter_test = gr::blocks::filter::testing;
 
 /// A 64-bit stream offset narrowed to an index; a template, so the cast stands where `std::size_t` is 32 bits and is
 /// not a useless cast where the two are the same 64-bit type.
@@ -653,68 +656,50 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(that % (tail.offsetsOf("tag0") == std::vector<std::size_t>{placed})) << "a design change that moves no tag keeps the held one, at the offset it already had";
     };
 
-    "a tag whose delayed output lies past the end of the stream leaves on the stream's last output"_test = [] {
-        // the D = 8 ladder delays by more than two inputs: a trigger and a burst end on the last two inputs lie past the last output, which carries them both
-        constexpr gr::Size_t kSamples = 8000U;
-        gr::Graph            graph;
-        auto&                source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
-        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
-        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
-        auto& block = graph.emplaceBlock<StagedDecimator<float>>({{"decimation", 8U}});
-        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
-
-        expect(graph.connect<"out", "in">(source, block).has_value());
-        expect(graph.connect<"out", "in">(block, sink).has_value());
+    "a tag whose delayed output lies past the end of the stream leaves at the end-of-stream index"_test = [] {
+        // the D = 8 ladder delays by more than two inputs: a trigger and a burst end on the last two inputs lie past the
+        // last output, and both leave at the end-of-stream index, one past it
+        constexpr gr::Size_t  kSamples = 8000U;
         constexpr std::size_t kOutputs = 1000UZ; // 8000 inputs at D = 8
-        expect(gt(pathDelay(block), 16ULL)) << "the ladder delays the last two inputs past the last output";
-        gr::scheduler::Simple scheduler;
-        expect(scheduler.exchange(std::move(graph)).has_value());
-        expect(scheduler.runAndWait().has_value());
-
-        const auto offsetsOf = [&sink](std::string_view key) {
-            std::vector<std::size_t> offsets;
-            for (const gr::Tag& seen : sink._tags) {
-                if (seen.map.contains(gr::property_map::key_type{key})) {
-                    offsets.push_back(seen.index);
-                }
-            }
-            return offsets;
-        };
-        expect(eq(sink._samples.size(), kOutputs)) << "every output, and none past the last input";
-        expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the trigger on the last output";
-        expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the burst end on the last output";
-    };
-
-    "a tag on the partial last chunk leaves on the stream's last output"_test = [] {
-        // at D = 8 the last 5 of 8005 inputs are no whole chunk and make no output: a trigger and a burst end on them
-        // leave on the last output the 1000 whole chunks make
-        constexpr gr::Size_t  kSamples = 8005U;
-        constexpr std::size_t kOutputs = 1000UZ;
         gr::Graph             graph;
         auto&                 source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
         source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
         source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
         auto& block = graph.emplaceBlock<StagedDecimator<float>>({{"decimation", 8U}});
-        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+        auto  sinks = filter_test::connectEndSinks<float>(graph, block);
 
         expect(graph.connect<"out", "in">(source, block).has_value());
-        expect(graph.connect<"out", "in">(block, sink).has_value());
+        expect(fatal(sinks.has_value()));
+        expect(gt(pathDelay(block), 16ULL)) << "the ladder delays the last two inputs past the last output";
         gr::scheduler::Simple scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
-        const auto offsetsOf = [&sink](std::string_view key) {
-            std::vector<std::size_t> offsets;
-            for (const gr::Tag& seen : sink._tags) {
-                if (seen.map.contains(gr::property_map::key_type{key})) {
-                    offsets.push_back(seen.index);
-                }
-            }
-            return offsets;
-        };
-        expect(eq(sink._samples.size(), kOutputs)) << "the whole chunks' outputs, and none from the partial chunk";
-        expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the trigger on the last output";
-        expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kOutputs - 1UZ})) << "the burst end on the last output";
+        filter_test::expectAtStreamEnd(*sinks, kOutputs, {"trigger_name", "tx_eob"}, "D = 8");
+    };
+
+    "a tag on the partial last chunk leaves at the end-of-stream index"_test = [] {
+        // at D = 8 the last 5 of 8005 inputs are no whole chunk and make no output, as they make none on a stream without
+        // tags: a trigger and a burst end on them leave one past the last output the 1000 whole chunks make
+        constexpr gr::Size_t  kSamples = 8005U;
+        constexpr std::size_t kOutputs = 1000UZ;
+        gr::Graph             graph;
+        auto&                 source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+        source._tags.emplace_back(4000UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}});
+        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
+        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+        auto& block = graph.emplaceBlock<StagedDecimator<float>>({{"decimation", 8U}});
+        auto  sinks = filter_test::connectEndSinks<float>(graph, block);
+
+        expect(graph.connect<"out", "in">(source, block).has_value());
+        expect(fatal(sinks.has_value()));
+        gr::scheduler::Simple scheduler;
+        expect(scheduler.exchange(std::move(graph)).has_value());
+        expect(scheduler.runAndWait().has_value());
+
+        filter_test::expectAtStreamEnd(*sinks, kOutputs, {"trigger_name", "tx_eob"}, "D = 8, 8005 inputs"); // the whole chunks' outputs, the count of a stream without tags
+        expect(eq(sinks->end.offsetsOf("trigger_meta_info").size(), 1UZ)) << "the tag inside the stream on one output";
+        expect(that % (filter_test::offsetsOf(sinks->samples._tags, "trigger_meta_info") == sinks->end.offsetsOf("trigger_meta_info"))) << "a sample-by-sample consumer sees a tag on its sample";
     };
 
     "a rebuild to a ladder already built designs nothing new"_test = [] {

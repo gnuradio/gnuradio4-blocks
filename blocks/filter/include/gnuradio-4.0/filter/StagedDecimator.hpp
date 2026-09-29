@@ -50,8 +50,8 @@ trigger, a burst edge or a time stamp, because a tag describes the sample it sit
 output `round((i + d) / D)`, the sample that carries the energy of input `i`. Over real samples `d` is
 `groupDelaySamples()`. Over complex samples the halving stages run as a halfband cascade, which samples each halving's
 output one sample of that stage's input rate early; there `d` is `groupDelaySamples()` less `2^k - 1` for `k` halvings.
-A tag keeps the output it was given when it crossed, whatever rebuild follows, and a tag whose output lies past the end
-of the stream leaves on the stream's last output. )"">;
+A tag keeps the output it was given when it crossed, whatever rebuild follows. A tag whose output lies past the
+stream's last output leaves at the end-of-stream index, one past that output. )"">;
 
     PortIn<T>  in;
     PortOut<T> out;
@@ -92,7 +92,7 @@ of the stream leaves on the stream's last output. )"">;
 
     void start() {
         rebuild();
-        _tags.reset(this->in);
+        _tags.reset();
         _inOrigin  = 0ULL;
         _outOrigin = 0ULL;
         _reorigin  = false;
@@ -181,8 +181,8 @@ of the stream leaves on the stream's last output. )"">;
      * decimation and never stage by stage. A tag whose output is not in this call is held and published by the call
      * that produces that output. A tag is placed once, when it crosses, under the delay and the decimation in force
      * then. A rebuild moves no held tag, and a tag that crosses after one is never placed ahead of a tag held from
-     * before it. Tags therefore leave in the order they arrived. A tag held past the stream's last output leaves on
-     * that output.
+     * before it. Tags therefore leave in the order they arrived. A tag held past the stream's last output leaves at the
+     * end-of-stream index.
      *
      * This replaces the framework's forwarding rather than adjusting it, and it is also where a `decimation` change takes
      * its new origin: the change is applied on the settings path, between calls, where neither absolute offset is
@@ -226,7 +226,7 @@ of the stream leaves on the stream's last output. )"">;
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
-                const std::size_t made = _tags.outputsToMake(this->in, processedIn / static_cast<std::size_t>(_decimation), span.size(), static_cast<std::size_t>(_decimation), 1UZ, static_cast<std::uint64_t>(span.streamIndex));
+                const std::size_t made = detail::TagDelayLine::outputsToMake(processedIn / static_cast<std::size_t>(_decimation), span.size(), 1UZ);
                 if (made > 0UZ) { // a call that makes nothing publishes nothing
                     _tags.release(span, made, false);
                 }
@@ -234,33 +234,16 @@ of the stream leaves on the stream's last output. )"">;
             outputSpans);
     }
 
-    /// @brief One call's samples, less the input chunk and its outputs that a held tag keeps back for the stream's end.
-    template<InputSpanLike TInput, OutputSpanLike TOutput>
-    [[nodiscard]] work::Status processBulk(TInput& input, TOutput& output) {
-        if (!_tags.keepBack) {
-            return processBulk(std::span<const T>(input.data(), input.size()), std::span<T>(output.data(), output.size()));
-        }
-        const std::size_t inputs  = input.size() - static_cast<std::size_t>(_decimation);
-        const std::size_t outputs = output.size() - 1UZ;
-        if (outputs == 0UZ) {
-            return work::Status::INSUFFICIENT_INPUT_ITEMS;
-        }
-        const work::Status status = processBulk(std::span<const T>(input.data(), inputs), std::span<T>(output.data(), outputs));
-        std::ignore               = input.consume(inputs);
-        output.publish(outputs);
-        return status;
-    }
-
-    /// @brief The stream's last input chunks, the kept-back one among them, and every held tag on their last output.
+    /// @brief The stream's last whole input chunks, and every held tag: a tag past their outputs leaves at the
+    /// end-of-stream index.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
-        const std::size_t chunks = std::min(input.size() / static_cast<std::size_t>(_decimation), output.size() / 1UZ);
-        if (chunks > 0UZ) {
-            std::ignore = processBulk(std::span<const T>(input.data(), chunks * static_cast<std::size_t>(_decimation)), std::span<T>(output.data(), chunks * 1UZ));
+        const std::size_t outputs = std::min(input.size() / static_cast<std::size_t>(_decimation), output.size());
+        if (outputs > 0UZ) {
+            std::ignore = processBulk(std::span<const T>(input.data(), outputs * static_cast<std::size_t>(_decimation)), std::span<T>(output.data(), outputs));
         }
-        _tags.release(output, chunks * 1UZ, true);
-        _tags.keepBack = false;
-        output.publish(chunks * 1UZ);
+        _tags.release(output, outputs, true);
+        output.publish(outputs);
         return work::Status::OK;
     }
 

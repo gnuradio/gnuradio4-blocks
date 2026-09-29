@@ -18,6 +18,8 @@
 #include <gnuradio-4.0/filter/SvdDenoiser.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
+#include "StreamEndSink.hpp"
+
 /// @brief One sample through the `processBulk` of @p block.
 template<typename TBlock, typename T>
 [[nodiscard]] T filterOne(TBlock& block, T input) {
@@ -332,28 +334,18 @@ const boost::ut::suite<"SvdDenoiser tag placement"> svdTagPlacementTests = [] {
             source._tags.emplace_back(kAt, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("impulse")}});
             source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}, {gr::property_map::key_type{"tx_eob"}, true}});
             auto& block = graph.emplaceBlock<SvdDenoiser<float>>({{"window_size", c.window}, {"hop_fraction", c.hopFraction}, {"energy_fraction", 2.0f}});
-            auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+            auto  sinks = gr::blocks::filter::testing::connectEndSinks<float>(graph, block);
             expect(graph.connect<"out", "in">(source, block).has_value());
-            expect(graph.connect<"out", "in">(block, sink).has_value());
+            expect(fatal(sinks.has_value()));
             gr::scheduler::Simple scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
 
-            const auto offsetsOf = [&sink](std::string_view key) {
-                std::vector<std::size_t> offsets;
-                for (const gr::Tag& seen : sink._tags) {
-                    if (seen.map.contains(gr::property_map::key_type{key})) {
-                        offsets.push_back(seen.index);
-                    }
-                }
-                return offsets;
-            };
             const std::string label = std::format("W = {}, hop fraction {}", c.window, c.hopFraction);
-            expect(eq(sink._samples.size(), std::size_t{kSamples})) << label << ": every output, and none past the last input";
-            const auto head = std::span<const float>(sink._samples).first(3UZ * kAt);
+            const auto        head  = std::span<const float>(sinks->end._samples).first(3UZ * kAt);
             expect(eq(static_cast<std::size_t>(std::ranges::max_element(head) - head.begin()), kAt + c.lag)) << label << ": the impulse on the lagged output";
-            expect(that % (offsetsOf("trigger_name") == std::vector<std::size_t>{kAt + c.lag})) << label << ": the tag with it";
-            expect(that % (offsetsOf("tx_eob") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": a burst end past the end on the last output";
+            expect(that % (sinks->end.offsetsOf("trigger_name") == std::vector<std::size_t>{kAt + c.lag})) << label << ": the tag with it";
+            gr::blocks::filter::testing::expectAtStreamEnd(*sinks, kSamples, {"trigger_meta_info", "tx_eob"}, label);
         }
     };
 };
