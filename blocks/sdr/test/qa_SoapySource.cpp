@@ -97,6 +97,20 @@ std::set<std::string> enumeratedDrivers() {
     return drivers;
 }
 
+/// true when the hardware cases run: GR_SDR_TEST_HARDWARE=1 and no DISABLE_SENSITIVE_TESTS
+bool hardwareCasesRun() { return kHardwareRequested && std::getenv("DISABLE_SENSITIVE_TESTS") == nullptr; }
+
+/// drivers the Basic API test opens: the loopback always, the others only when the hardware cases run
+std::set<std::string> basicApiDrivers(const std::set<std::string>& drivers, bool withHardware) {
+    std::set<std::string> selected;
+    for (const auto& driver : drivers) {
+        if (withHardware || driver.starts_with("loopback")) {
+            selected.insert(driver);
+        }
+    }
+    return selected;
+}
+
 /// tags of the hardware cases whose driver is in `drivers`; a case whose driver is absent is skipped
 std::vector<std::string_view> hardwareCaseTags(const std::set<std::string>& drivers) {
     std::vector<std::string_view> tags;
@@ -144,8 +158,8 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
             return;
         }
     };
-    const std::set<std::string> availableDeviceDriver = enumeratedDrivers();
-    std::println("Detected available devices: [{}]", gr::join(availableDeviceDriver, ", "));
+    const std::set<std::string> availableDeviceDriver = basicApiDrivers(enumeratedDrivers(), hardwareCasesRun());
+    std::println("Basic API test drivers: [{}]", gr::join(availableDeviceDriver, ", "));
 
     "Basic API test"_test =
         [](std::string deviceDriver) {
@@ -330,6 +344,12 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
 
 const boost::ut::suite<"Soapy Block API "> soapyBlockAPI = [] {
     using namespace boost::ut;
+
+    "the Basic API test opens a hardware driver only when the hardware cases run"_test = [] {
+        expect(basicApiDrivers({"loopback", "rtlsdr"}, false) == std::set<std::string>{"loopback"});
+        expect(basicApiDrivers({"lime", "loopback", "rtlsdr"}, true) == std::set<std::string>{"lime", "loopback", "rtlsdr"});
+        expect(basicApiDrivers({}, true).empty());
+    };
 
     "hardware case tags follow the enumerated drivers"_test = [] {
         expect(hardwareCaseTags({}).empty());
