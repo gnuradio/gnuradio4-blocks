@@ -143,14 +143,14 @@ struct TagDelayLine {
     }
 
     /**
-     * @brief The outputs a call of @p chunks input chunks makes, from output @p outBase: every chunk's @p outChunk
-     * outputs, less the last chunk's where the call keeps it back. A call of one chunk then makes none, and the input
-     * waits for a second chunk or for the stream's end. Sets the `min_samples` of @p in for the next call: two chunks
-     * of @p inChunk where calls keep back.
+     * @brief The outputs a call of @p chunks input chunks makes, from output @p outBase into a span of @p room outputs:
+     * the @p outChunk outputs of every chunk the span holds, less the last chunk's where the call keeps it back. A call
+     * of one chunk then makes none, and the input waits for a second chunk or for the stream's end. Sets the
+     * `min_samples` of @p in for the next call: two chunks of @p inChunk where calls keep back.
      */
     template<typename TPort>
-    [[nodiscard]] std::size_t outputsToMake(TPort& in, std::size_t chunks, std::size_t inChunk, std::size_t outChunk, std::uint64_t outBase) {
-        const std::size_t made  = chunks * outChunk;
+    [[nodiscard]] std::size_t outputsToMake(TPort& in, std::size_t chunks, std::size_t room, std::size_t inChunk, std::size_t outChunk, std::uint64_t outBase) {
+        const std::size_t made  = std::min(chunks, room / outChunk) * outChunk;
         const bool        keeps = keepsBack(in, inChunk, outBase + made);
         keepBack                = keeps && chunks > 0UZ;
         in.min_samples          = keeps ? std::max(freeMinSamples, 2UZ * inChunk) : freeMinSamples;
@@ -301,7 +301,7 @@ struct DelayedTagFilter {
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
-                const std::size_t made = _tags.outputsToMake(self().in, processedIn / decimation, decimation, 1UZ, static_cast<std::uint64_t>(span.streamIndex));
+                const std::size_t made = _tags.outputsToMake(self().in, processedIn / decimation, span.size(), decimation, 1UZ, static_cast<std::uint64_t>(span.streamIndex));
                 if (made > 0UZ) { // a call that makes nothing publishes nothing
                     _tags.release(span, made, false);
                 }

@@ -599,6 +599,27 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         expect(!tail.tags.empty() && tail.tags.front().map.contains(gr::property_map::key_type{"tag0"})) << "the tag that crossed first leaves first";
     };
 
+    "an epilogue short of output room publishes its tags in order"_test = [] {
+        // twelve trailing inputs make three outputs at M = 4, and the epilogue's span holds one: the tag for output 1
+        // and the tag held for output 3 both leave on output 0, the one output made
+        FirFilter<float, float>    block = makeFir<float, float>({{"taps", std::vector<float>{1.0f}}, {"decimation", 4U}});
+        const std::vector<float>   input(12UZ, 1.0f);
+        const std::vector<gr::Tag> tags{{4UZ, tagKey(0)}, {11UZ, tagKey(1)}};
+        std::vector<float>         room(1UZ);
+        test::Capture<float>       got;
+        test::InputSpan<float>     inSpan(std::span<const float>(input), 0UZ, std::span<const gr::Tag>(tags));
+        test::OutputSpan<float>    outSpan(std::span<float>(room), 0UZ, &got.tags);
+
+        auto inputs  = std::tie(inSpan);
+        auto outputs = std::tie(outSpan);
+        block.forwardTags(inputs, outputs, input.size());
+        std::ignore = block.processEpilogue(inSpan, outSpan);
+
+        expect(eq(outSpan.count, 1UZ)) << "the epilogue makes the output its span holds";
+        expect(that % (got.offsetsOf("tag0") == std::vector<std::size_t>{0UZ})) << "the tag for output 1 on the one output made";
+        expect(that % (got.offsetsOf("tag1") == std::vector<std::size_t>{0UZ})) << "the held tag on the same output";
+    };
+
     "the frequency-translating identity"_test = [] {
         constexpr int            kTaps = 143;
         constexpr gr::Size_t     kD    = 10U;
