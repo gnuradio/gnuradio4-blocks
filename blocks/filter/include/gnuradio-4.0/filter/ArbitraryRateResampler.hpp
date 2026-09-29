@@ -45,14 +45,13 @@ pass-through.
 
 A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the rate of the stream this block hands it.
 
-Every forwarded tag that marks a time position, such as a trigger, a burst edge or a time stamp, moves by the
-prototype's delay `d`, in samples of the interpolated rate `L*fs_in`: a tag on input `i` leaves on the output nearest
-the interpolated position `i*L + d`, the sample that carries the energy of input `i`. A tag that states a property of
-the stream, such as `sample_rate`, `signal_name` or `context`, crosses unmoved, to the output of input `i` itself. A
-designed or other symmetric prototype of `N` taps delays by `(N-1)/2`. An asymmetric supplied prototype moves its tags
-by the centroid of its energy, rounded to the whole interpolated sample. A tag is placed when its sample is consumed and
-keeps that output whatever rate change or rebuild follows, and a tag whose output lies past the end of the stream is not
-published. )"">;
+Every forwarded tag moves whole by the prototype's delay `d`, its `sample_rate`, `frequency` or `context` keys as much
+as a trigger, a burst edge or a time stamp, because a tag describes the sample it sits on. `d` is in samples of the
+interpolated rate `L*fs_in`: a tag on input `i` leaves on the output nearest the interpolated position `i*L + d`, the
+sample that carries the energy of input `i`. A designed or other symmetric prototype of `N` taps delays by `(N-1)/2`. An
+asymmetric supplied prototype moves its tags by the centroid of its energy, rounded to the whole interpolated sample. A
+tag is placed when its sample is consumed and keeps that output whatever rate change or rebuild follows, and a tag whose
+output lies past the end of the stream is not published. )"">;
 
     PortIn<T, Async>  in;
     PortOut<T, Async> out;
@@ -78,7 +77,7 @@ published. )"">;
     std::uint64_t                                       _twiceDelay  = 0ULL; /// the prototype's delay in half interpolated samples, `twiceTapDelay`
     bool                                                _reorigin    = false;
     std::vector<std::pair<std::uint64_t, property_map>> _pendingTags;
-    std::uint64_t                                       _latestHeld = 0ULL; /// the output of the last held tag that marks a time position
+    std::uint64_t                                       _latestHeld = 0ULL; /// the output of the last held tag
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         static constexpr std::array kRebuildKeys{"bank_size", "interpolation_order", "taps", "rolloff", "attenuation_db", "max_ripple_db"};
@@ -238,9 +237,8 @@ private:
      * @brief Place the tags of the samples this call consumes at their output offsets, under the regime in force now.
      *
      * Input `i` maps to the output nearest the interpolated position `i*L + d`, `d` being the prototype's delay and a
-     * half rounding up. The keys that state a property of the stream (`detail::kStreamPropertyKeys`) go to the output
-     * nearest `i*L` instead. A tag whose sample is consumed after a rate change or a rebuild is never placed ahead of a
-     * tag held from before it. Tags therefore leave in the order they arrived.
+     * half rounding up, all the tag's keys together. A tag whose sample is consumed after a rate change or a rebuild is
+     * never placed ahead of a tag held from before it. Tags therefore leave in the order they arrived.
      *
      * A tag's mapping is committed here, where its sample is consumed, and not where the tag first becomes visible.
      * An `Async` port is presented every sample it holds and the block consumes a prefix of them, so a tag past that
@@ -263,7 +261,7 @@ private:
             }
             property_map forwarded(tag.map);
             scaleSampleRate(forwarded); // the rate that consumes the sample, which is the rate the tag describes
-            detail::holdTag(_pendingTags, _latestHeld, _outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, _phaseOrigin), _outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, delayed), std::move(forwarded));
+            detail::holdTag(_pendingTags, _latestHeld, _outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, delayed), std::move(forwarded));
         }
     }
 

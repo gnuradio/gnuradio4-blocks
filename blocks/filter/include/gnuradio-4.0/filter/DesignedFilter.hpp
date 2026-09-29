@@ -41,11 +41,11 @@ transition width or an explicit odd length, a window or a Kaiser attenuation, ga
 design-affecting setting is live: a redesign keeps the input/output alignment exactly, and a `decimation` change moves
 the phase origin. `taps` here is an observable count, never a setting - a chain supplies a passband, not a vector.
 
-Every forwarded tag that marks a time position, such as a trigger, a burst edge or a time stamp, moves by the design's
-delay `d = (designed_taps - 1) / 2`: a tag on input `i` leaves on output `round((i + d) / decimation)`, the sample that
-carries the energy of input `i`. A tag that states a property of the stream, such as `sample_rate`, `signal_name` or
-`context`, crosses unmoved, to the output of input `i` itself. A tag keeps the output it was given when it crossed,
-whatever redesign or decimation change follows, and a tag whose output lies past the end of the stream is not published.
+Every forwarded tag moves whole by the design's delay `d = (designed_taps - 1) / 2`, its `sample_rate`, `frequency` or
+`context` keys as much as a trigger, a burst edge or a time stamp, because a tag describes the sample it sits on: a tag
+on input `i` leaves on output `round((i + d) / decimation)`, the sample that carries the energy of input `i`. A tag
+keeps the output it was given when it crossed, whatever redesign or decimation change follows, and a tag whose output
+lies past the end of the stream is not published.
 
 The tap type states which family the block designs: real taps carry `lowpass`, `highpass`, `bandpass`, `bandstop`,
 `root_raised_cosine` and `hilbert`; complex taps carry `complex_bandpass` and `complex_bandstop`. A profile outside the

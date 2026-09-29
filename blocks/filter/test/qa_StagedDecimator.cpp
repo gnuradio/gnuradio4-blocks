@@ -471,20 +471,27 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         }
     };
 
-    "a tag that states a property of the stream crosses unmoved, and a trigger moves by the delay"_test = [] {
-        // the rate describes output 0 as it describes input 0; the trigger leaves on the output of the path's delay alone
+    "a tag moves whole by the delay, its rate with its trigger, and a retune arrives on the delayed sample"_test = [] {
+        // a tag describes the sample it sits on: the opening tag leaves whole on the output of the path's delay alone,
+        // and a retune at input 3*D on the output of 3*D plus the delay
         for (const gr::Size_t decimation : {8U, 10U}) {
             StagedDecimator<float> block = makeBlock<float>({{"decimation", decimation}});
             const std::uint64_t    delay = pathDelay(block);
             gr::property_map       opening; // a source's opening tag: the stream's rate and the trigger of its first sample
             opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
             opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
-            const std::vector<gr::Tag> tags{gr::Tag{0UZ, opening}};
+            gr::property_map retune; // a mid-stream retune
+            retune.insert_or_assign(gr::property_map::key_type{"frequency"}, 1.0e8);
+            const std::vector<gr::Tag> tags{gr::Tag{0UZ, opening}, gr::Tag{3UZ * decimation, retune}};
             const std::vector<float>   x(narrowIndex<std::size_t>(delay + 40ULL * decimation), 0.0f);
             const auto                 y = run(block, x, 4UZ, std::span<const gr::Tag>(tags));
 
-            expect(that % (y.offsetsOf("sample_rate") == std::vector<std::size_t>{0UZ})) << std::format("D = {}: the rate stays on output 0", decimation);
-            expect(that % (y.offsetsOf("trigger_time") == std::vector<std::size_t>{narrowIndex<std::size_t>(mapResampledOffset(delay, 1ULL, decimation))})) << std::format("D = {}: the trigger moves by the delay", decimation);
+            const std::size_t first  = narrowIndex<std::size_t>(mapResampledOffset(delay, 1ULL, decimation));
+            const bool        oneTag = std::ranges::any_of(y.tags, [](const gr::Tag& t) { return t.map.contains(gr::property_map::key_type{"sample_rate"}) && t.map.contains(gr::property_map::key_type{"trigger_time"}); });
+            expect(that % (y.offsetsOf("sample_rate") == std::vector<std::size_t>{first})) << std::format("D = {}: the rate moves by the delay", decimation);
+            expect(that % (y.offsetsOf("trigger_time") == std::vector<std::size_t>{first})) << std::format("D = {}: the trigger moves by the delay", decimation);
+            expect(oneTag) << std::format("D = {}: the rate and the trigger leave as one tag", decimation);
+            expect(that % (y.offsetsOf("frequency") == std::vector<std::size_t>{narrowIndex<std::size_t>(mapResampledOffset(3ULL * decimation + delay, 1ULL, decimation))})) << std::format("D = {}: the retune arrives on the delayed sample", decimation);
         }
     };
 
