@@ -1238,7 +1238,7 @@ const boost::ut::suite<"LoopbackDevice frontend"> frontendTests = [] {
     };
 
     "the write log records what each write carried and a write clears it"_test = [] {
-        LoopbackDevice dev(SoapySDR::Kwargs{{"driver", "loopback"}, {"device_mode", "tx_only"}, {"max_write_samples", "5"}});
+        LoopbackDevice dev(SoapySDR::Kwargs{{"driver", "loopback"}, {"device_mode", "tx_only"}, {"max_write_samples", "5"}, {"record_writes", "true"}});
         auto*          txStream = dev.setupStream(SOAPY_SDR_TX, SOAPY_SDR_CF32);
         dev.activateStream(txStream);
 
@@ -1255,6 +1255,20 @@ const boost::ut::suite<"LoopbackDevice frontend"> frontendTests = [] {
         expect(eq(dev.readSetting("write_log"), std::format("8,5,{},123;3,3,0,0;", kBurstFlags)));
         dev.writeSetting("write_log", "");
         expect(dev.writeLog().empty());
+        dev.deactivateStream(txStream);
+    };
+
+    "a device that is not asked to record writes records none"_test = [] {
+        LoopbackDevice dev(SoapySDR::Kwargs{{"driver", "loopback"}, {"device_mode", "tx_only"}});
+        auto*          txStream = dev.setupStream(SOAPY_SDR_TX, SOAPY_SDR_CF32);
+        dev.activateStream(txStream);
+
+        std::vector<CF32> txData(8, CF32{1.f, 0.f});
+        const void*       txBufs[] = {txData.data()};
+        int               flags    = SOAPY_SDR_END_BURST;
+        expect(eq(dev.writeStream(txStream, txBufs, 8, flags, 0LL), 8));
+        expect(dev.writeLog().empty());
+        expect(dev.readSetting("write_log").empty());
         dev.deactivateStream(txStream);
     };
 

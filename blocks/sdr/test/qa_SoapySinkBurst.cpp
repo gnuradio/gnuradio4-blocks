@@ -120,7 +120,7 @@ bool runToEnd(gr::scheduler::Simple<>& sched) {
 // Streams nSamples through a one-port sink to a transmit-only loopback device and returns the writes it received.
 // With reports, it also collects the messages that report an ignored burst tag.
 std::vector<Write> transmit(std::string parameters, std::size_t nSamples, std::vector<gr::Tag> tags, gr::property_map extraSettings = {}, std::vector<std::string>* reports = nullptr) {
-    parameters = "device_mode=tx_only" + (parameters.empty() ? std::string() : "," + parameters);
+    parameters = "device_mode=tx_only,record_writes=true" + (parameters.empty() ? std::string() : "," + parameters);
     soapy::Kwargs kwargs{{"driver", "loopback"}};
     kwargs.merge(soapy::parseKwargsString(parameters));
     auto probe = soapy::Device::make(kwargs);
@@ -270,7 +270,7 @@ const boost::ut::suite<"SoapySink transmit bursts"> burstTests = [] {
 
     "a burst tag on one channel ends the write of every channel"_test = [] {
         constexpr std::size_t kSamples   = 1000UZ;
-        const std::string     parameters = "device_mode=tx_only,num_channels=2";
+        const std::string     parameters = "device_mode=tx_only,num_channels=2,record_writes=true";
         soapy::Kwargs         kwargs{{"driver", "loopback"}};
         kwargs.merge(soapy::parseKwargsString(parameters));
         auto probe = soapy::Device::make(kwargs);
