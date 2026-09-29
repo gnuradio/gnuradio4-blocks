@@ -263,14 +263,17 @@ namespace gr::python {
 
 enum class EnforceFunction { MANDATORY, OPTIONAL };
 
+/// Runs one block's Python code in a module of its own. Each instance creates a private module and holds it for its whole
+/// life. The module's dictionary holds the block's capsule and every name the block's script defines, and two instances
+/// whose scripts define the same name each keep their own.
 class Interpreter {
     static std::atomic<std::size_t> _nInterpreters;
     static std::atomic<std::size_t> _nNumPyInit;
+    static std::atomic<std::size_t> _nModules;
     static PyThreadState*           _interpreterThreadState;
     PyModuleDef*                    _moduleDefinitions;
-    PyObject*                       _pMainModule; // borrowed reference
-    PyObject*                       _pMainDict;   // borrowed reference
-    PyObjectGuard                   _pCapsule;
+    PyObject*                       _pModule = nullptr; // owned reference, released under the interpreter lock
+    PyObject*                       _pDict   = nullptr; // borrowed from _pModule
 
 public:
     template<typename T>
@@ -299,18 +302,25 @@ public:
         // Ensure the Python GIL is initialized for this instance
         python::PyGILGuard localGuard;
 
-        // need to be executed after the Python environment has been initialised
-        _pMainModule = PyImport_AddModule("__main__");
-        _pMainDict   = PyModule_GetDict(_pMainModule);
+        const std::string moduleName = std::format("{}_{}", moduleDefinitions != nullptr ? moduleDefinitions->m_name : "gr_python", _nModules.fetch_add(1UZ, std::memory_order_relaxed));
+        _pModule                     = PyModule_New(moduleName.c_str());
+        if (_pModule == nullptr) {
+            python::throwCurrentPythonError(std::format("failed to create the module {}", moduleName), location);
+        }
+        _pDict = PyModule_GetDict(_pModule);
+        if (PyDict_SetItemString(_pDict, "__builtins__", PyEval_GetBuiltins()) != 0) {
+            python::throwCurrentPythonError(std::format("failed to add the builtins to the module {}", moduleName), location);
+        }
         if (classReference == nullptr || moduleDefinitions == nullptr) {
             return;
         }
-        _pCapsule = PyObjectGuard(PyCapsule_New(static_cast<void*>(classReference), _moduleDefinitions->m_name, nullptr));
-        if (!_pCapsule) {
+        PyObjectGuard capsule(PyCapsule_New(static_cast<void*>(classReference), _moduleDefinitions->m_name, nullptr));
+        if (!capsule) {
             python::throwCurrentPythonError(std::format("Interpreter(*{}) - failed to create a capsule", gr::meta::type_name<T>()));
         }
-        PyDict_SetItemString(_pMainDict, "capsule", _pCapsule);
-        python::PyIncRef(_pCapsule); // need to explicitly increas count for the Python interpreter not to delete the reference by 'accident'
+        if (PyDict_SetItemString(_pDict, "capsule", capsule) != 0) {
+            python::throwCurrentPythonError(std::format("Interpreter(*{}) - failed to store the capsule", gr::meta::type_name<T>()), location);
+        }
 
         // replaces the 'PyImport_AppendInittab("ClassName", &classDefinition)' to allow for other blocks being added
         // after the global Python interpreter is already being initialised
@@ -338,6 +348,10 @@ public:
     }
 
     ~Interpreter() {
+        if (Py_IsInitialized()) {
+            PyGILGuard localGuard;
+            python::PyDecRef(_pModule);
+        }
         if (_nInterpreters.fetch_sub(1UZ, std::memory_order_acq_rel) == 1UZ && Py_IsInitialized()) {
             Py_Finalize();
         }
@@ -349,9 +363,9 @@ public:
     Interpreter(Interpreter&&)                 = delete;
     Interpreter& operator=(Interpreter&&)      = delete;
 
-    PyObject* getModule() { return _pMainModule; }
+    PyObject* getModule() { return _pModule; }
 
-    PyObject* getDictionary() { return _pMainDict; }
+    PyObject* getDictionary() { return _pDict; }
 
     template<NoParamNoReturn Func>
     void invoke(Func func, std::string_view pythonCode = "", std::source_location location = std::source_location::current()) {
@@ -391,6 +405,7 @@ public:
 
 inline std::atomic<std::size_t> Interpreter::_nInterpreters{0UZ};
 inline std::atomic<std::size_t> Interpreter::_nNumPyInit{0UZ};
+inline std::atomic<std::size_t> Interpreter::_nModules{0UZ};
 inline PyThreadState*           Interpreter::_interpreterThreadState = nullptr;
 
 } // namespace gr::python

@@ -30,6 +30,8 @@ C++ and Python. This is a proof-of-concept implementation that can and should be
 extended (e.g. notably pmt-integration, and message handling) but should provide a start for
 'processBulk(...)' based signal processing using Python.
 
+Each block runs its script in a module of its own. Two blocks whose scripts define the same name each keep their own.
+
 Usage Example:
 @code
 #include <gnuradio-4.0/PythonBlock.hpp>
