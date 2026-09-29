@@ -29,5 +29,6 @@ add_basic_test(qa_SyncBlock)
 
 if(PYTHON_AVAILABLE)
   add_basic_test(qa_PythonBlock)
-  target_link_libraries(qa_PythonBlock PRIVATE Python3::Python Python3::NumPy)
+  # the block library compiles PythonBlock<int32_t> and PythonBlock<float> in two units, and a case runs both
+  target_link_libraries(qa_PythonBlock PRIVATE Python3::Python Python3::NumPy gnuradio4::GrBasicBlocksShared)
 endif()

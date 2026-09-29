@@ -1,13 +1,42 @@
-// Python related includes need to be first.
+// Python related includes need to be first. This unit holds the program's NumPy API table and interpreter runtime.
+#define GR_PYTHON_RUNTIME_OWNER
 #include <gnuradio-4.0/basic/PythonBlock.hpp>
 
 #include <boost/ut.hpp>
 
+#include <gnuradio-4.0/GrBasicBlocks.hpp>
 #include <gnuradio-4.0/Graph.hpp>
 
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
+
+namespace {
+/// runs five samples through a Python block the block library's registration makes
+template<typename T>
+std::vector<T> runLibraryBlock(std::string_view typeName, const std::string& pythonScript) {
+    using namespace boost::ut;
+    using namespace gr::blocks::testing;
+    gr::Graph                       graph;
+    auto&                           src    = graph.emplaceBlock<TagSource<T>>({{"n_samples_max", 5U}, {"mark_tag", false}});
+    auto&                           sink   = graph.emplaceBlock<TagSink<T, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_expected", 5U}});
+    std::shared_ptr<gr::BlockModel> python = gr::globalBlockRegistry().create(typeName, {{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}});
+    expect(python != nullptr) << std::format("the block library registers {}", typeName);
+    if (python == nullptr) {
+        return {};
+    }
+    graph.addBlock(python);
+    expect(graph.connect(gr::graph::findBlock(graph, src).value(), "out", python, "inputs#0").has_value());
+    expect(graph.connect(python, "outputs#0", gr::graph::findBlock(graph, sink).value(), "in").has_value());
+
+    gr::scheduler::Simple sched;
+    if (auto ret = sched.exchange(std::move(graph)); !ret) {
+        throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+    }
+    expect(sched.runAndWait().has_value());
+    return {sink._samples.begin(), sink._samples.end()};
+}
+} // namespace
 
 const boost::ut::suite<"python::<C-API abstraction interfaces>"> pythonInterfaceTests = [] {
     using namespace boost::ut;
@@ -381,6 +410,17 @@ def process_bulk(ins, outs):
         expect(eq(makeAndRun(), std::vector<float>{3.f, 6.f, 9.f}));
         expect(Py_IsInitialized() != 0) << "destroying the only block leaves the interpreter initialized";
         expect(eq(makeAndRun(), std::vector<float>{3.f, 6.f, 9.f})) << "a block made after the first one is destroyed";
+    };
+
+    "blocks of two value types from the block library"_test = [] {
+        // the library compiles each value type in a unit of its own, and the int32 block runs before the float block
+        gr::blocklib::initGrBasicBlocks(gr::globalBlockRegistry());
+        const std::string pythonScript = R"(def process_bulk(ins, outs):
+    for i in range(len(ins)):
+        outs[i][:] = ins[i] * 2
+)";
+        expect(eq(runLibraryBlock<std::int32_t>("gr::blocks::basic::PythonBlock<int32>", pythonScript), std::vector<std::int32_t>{0, 2, 4, 6, 8}));
+        expect(eq(runLibraryBlock<float>("gr::blocks::basic::PythonBlock<float32>", pythonScript), std::vector<float>{0.f, 2.f, 4.f, 6.f, 8.f}));
     };
 };
 
