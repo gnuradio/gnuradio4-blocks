@@ -52,7 +52,7 @@ names the elements directly (IFGR: 20) and is applied in the order the driver li
 state, because a driver may refuse a gain write while its AGC is on. Where both are given, the elements
 are applied last and take precedence.
 
-Reads: a max_chunk_size above half the output buffer reads half the output buffer.
+A read takes at most half the output buffer, whatever max_chunk_size is.
 
 Tested with RTL-SDR and LimeSDR drivers.)">;
 
@@ -199,11 +199,8 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         }
     }
 
-    // start() throws when the device cannot be opened or configured, or when it refuses to activate the stream.
-    // The framework calls no stop() after a start() that throws, and failStart() releases the device before it
-    // throws. A block that shares the device activates its stream once every user of the device has configured
-    // it, and that can be after start() has returned. work() reports a refusal found then as ERROR, and the
-    // scheduler ends the run on it.
+    // Throws when the device cannot be opened, configured or activated. On a shared device the stream can activate
+    // after start() returns, and work() then reports a refusal as ERROR.
     void start() {
         _overflowCount.store(0U, std::memory_order_relaxed);
         _fragmentCount.store(0U, std::memory_order_relaxed);
@@ -246,6 +243,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         _device.reset();
     }
 
+    // Releases the device, then throws. The framework calls no stop() after a start() that throws.
     [[noreturn]] void failStart(std::string_view reason, std::source_location location = std::source_location::current()) {
         stop();
         throw gr::exception(reason, location);
@@ -920,7 +918,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
 
     void rebuildRateEstimator() {
         if (ppm_estimator_cutoff > 0.f) {
-            // one update per read, each read of the size it has while every output has room for it
+            // one update per read, each read at the size readSize() gives when every output has room
             const std::size_t nRead         = readSize(max_chunk_size, outputCapacity(), outputCapacity(), _rxStream.mtu());
             double            nomRate       = static_cast<double>(sample_rate.value);
             double            updateHz      = (nomRate > 0.0) ? (nomRate / static_cast<double>(nRead)) : 250.0;

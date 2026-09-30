@@ -71,9 +71,8 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *  - overflow_every=N reports SOAPY_SDR_OVERFLOW from every Nth readStream and
  *    returns no samples on it, which is the receiver that lost data a caller
  *    has to survive (0, the default, never overflows)
- *  - refuse_activation=true makes every activateStream report
- *    SOAPY_SDR_STREAM_ERROR, which is the device a caller cannot start (false,
- *    the default, activates)
+ *  - refuse_activation=true makes every activateStream return
+ *    SOAPY_SDR_STREAM_ERROR (default false)
  *  - configurable frontend: gain elements with ranges, an AGC whose default
  *    state and refusals are set per instance, antennas, frequency components
  *    with a tuning step, and the has* facilities a caller queries first

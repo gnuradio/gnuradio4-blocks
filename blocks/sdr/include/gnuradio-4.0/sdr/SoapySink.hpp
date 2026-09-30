@@ -151,11 +151,8 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
     bool                  _endBurstOwed     = false; // the device took a burst's last sample without END_BURST
     bool                  _burstTagReported = false; // mistyped burst tag reported this run (scheduler thread only)
 
-    // start() throws when the device cannot be opened or configured, or when it refuses to activate the stream.
-    // The framework calls no stop() after a start() that throws, and failStart() releases the device before it
-    // throws. A block that shares the device activates its stream once every user of the device has configured
-    // it, and that can be after start() has returned. work() reports a refusal found then as ERROR, and the
-    // scheduler ends the run on it.
+    // Throws when the device cannot be opened, configured or activated. On a shared device the stream can activate
+    // after start() returns, and work() then reports a refusal as ERROR.
     void start() {
         _underflowCount.store(0U, std::memory_order_relaxed);
         _stalledWrites.store(0UZ, std::memory_order_relaxed);
@@ -215,6 +212,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
         _device.reset();
     }
 
+    // Releases the device, then throws. The framework calls no stop() after a start() that throws.
     [[noreturn]] void failStart(std::string_view reason, std::source_location location = std::source_location::current()) {
         stop();
         throw gr::exception(reason, location);
@@ -790,9 +788,9 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
     // sample with the taper off goes to the device straight from the staging buffer.
     [[nodiscard]] bool transformsSamples() const noexcept { return std::is_same_v<T, std::complex<float>> || burst_taper_enabled; }
 
-    // Copies n samples, tapered while the taper is enabled and saturated for the device. The envelope is 1 once the
-    // taper is on, and scaling by 1 leaves a sample unchanged, so from there the samples are copied and saturated in
-    // one pass. The samples of a ramp are tapered one by one and then saturated in place.
+    // Copies n samples, tapered while the taper is enabled and saturated for the device. Once the taper is on, its
+    // envelope is 1, and the samples are copied and saturated in one pass. The samples of a ramp are tapered one by
+    // one and then saturated in place.
     //
     // A CF32 stream is full scale at +/-1.0 and what a driver does with a part past that is its own: SoapyHackRF
     // converts a part to the device's eight bits as (int8_t)(part * 127.0) with no clamp, so an overrange part

@@ -10,7 +10,7 @@ namespace gr::blocks::sdr {
 // Saturates each part of every sample to [-1, 1]. A CF32 SoapySDR stream is full scale at +/-1.0, and a driver
 // converts the real and the imaginary part separately, so what has to stay within full scale is each part and not
 // the magnitude. The first form writes the saturated samples to `to`, which holds as many samples as `from` and may
-// be `from` itself; the second saturates in place.
+// be `from` itself. The second form saturates in place.
 //
 // A part already within the range comes back bit-identical, the sign of a zero included: the bounds are applied
 // with std::min and std::max, which compare with <, and not with std::fmin and std::fmax, which return the bound
