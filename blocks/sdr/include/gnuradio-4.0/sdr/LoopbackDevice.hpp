@@ -81,6 +81,9 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *    flags and time of each writeStream that takes samples.
  *    readSetting("write_log") reads the log, and writing that key clears it
  *    (default false)
+ *  - writeSetting("hold_writes", "true") makes every writeStream wait out its
+ *    timeout and return SOAPY_SDR_TIMEOUT with nothing taken, as a device with
+ *    a full buffer does. Writing "false" releases the device
  *
  * Frontend device arguments (all optional, all with the defaults of a plain
  * one-element RX device):
@@ -319,6 +322,7 @@ class LoopbackDevice : public SoapySDR::Device {
     mutable std::mutex               _callLogMutex;
     mutable std::vector<std::string> _callLog;
     bool                             _recordWrites = false;
+    std::atomic<bool>                _holdWrites{false};
     mutable std::mutex               _writeLogMutex;
     std::vector<WriteRecord>         _writeLog;
 
@@ -622,9 +626,13 @@ public:
         return 0;
     }
 
-    int writeStream(SoapySDR::Stream* /*stream*/, const void* const* buffs, const size_t numElems, int& flags, const long long timeNs = 0, const long /*timeoutUs*/ = 100000) override {
+    int writeStream(SoapySDR::Stream* /*stream*/, const void* const* buffs, const size_t numElems, int& flags, const long long timeNs = 0, const long timeoutUs = 100000) override {
         if (!_txStreamActive.load(std::memory_order_relaxed)) {
             return SOAPY_SDR_STREAM_ERROR;
+        }
+        if (_holdWrites.load(std::memory_order_acquire)) {
+            std::this_thread::sleep_for(std::chrono::microseconds(timeoutUs));
+            return SOAPY_SDR_TIMEOUT;
         }
         ++_writeCalls;
         if (_underflowEvery != 0UZ && _writeCalls % _underflowEvery == 0UZ) {
@@ -861,6 +869,10 @@ public:
             clearWriteLog();
             return;
         }
+        if (key == "hold_writes") {
+            _holdWrites.store(value == "true" || value == "1", std::memory_order_release);
+            return;
+        }
         record(std::format("writeSetting({},{})", key, value));
         if (key == "simulate_timing") {
             _simulateTiming.store(value == "true" || value == "1", std::memory_order_relaxed);
@@ -899,6 +911,9 @@ public:
         }
         if (key == "simulate_timing") {
             return _simulateTiming.load(std::memory_order_relaxed) ? "true" : "false";
+        }
+        if (key == "hold_writes") {
+            return _holdWrites.load(std::memory_order_acquire) ? "true" : "false";
         }
         if (key == "device_mode") {
             switch (_deviceMode) {
@@ -1005,6 +1020,14 @@ public:
             info.value       = "";
             info.type        = SoapySDR::ArgInfo::STRING;
             info.description = "with record_writes=true, writes that took samples as requested,taken,flags,timeNs, ';'-separated; writing the key clears it";
+            infos.push_back(info);
+        }
+        {
+            SoapySDR::ArgInfo info;
+            info.key         = "hold_writes";
+            info.value       = "false";
+            info.type        = SoapySDR::ArgInfo::BOOL;
+            info.description = "every write waits out its timeout and takes nothing";
             infos.push_back(info);
         }
         return infos;
