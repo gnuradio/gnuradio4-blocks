@@ -16,9 +16,9 @@
 
 namespace gr::blocks::fileio::test {
 
-// counts the opens of one file by any thread of any process, from construction on, through the kernel's inotify events;
-// the watch takes the closes too, because the kernel merges an event into an identical one queued just before it, and
-// two opens with no close between them count as one
+// Counts the opens of one file by any thread of any process from construction on, through inotify. The watch includes
+// the closes. The kernel merges an event into an identical one queued just before it, and without the closes two opens
+// in a row would count as one.
 struct FileOpenCounter {
     int _fd = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
 

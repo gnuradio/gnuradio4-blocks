@@ -219,7 +219,8 @@ constexpr std::string_view kReaderRefusal = "file not found or not a regular fil
 
 std::string errorMessage(const std::expected<void, gr::Error>& result) { return result.has_value() ? std::string{} : result.error().message; }
 
-// the result of a run, with the file block's name and its lifecycle state once the run ended; a source run also holds the samples it delivered
+// The result of a run, with the file block's name and its lifecycle state once the run ended. A source run also holds
+// the samples it delivered.
 struct FileBlockRun {
     std::expected<void, gr::Error> result;
     std::string                    blockName;

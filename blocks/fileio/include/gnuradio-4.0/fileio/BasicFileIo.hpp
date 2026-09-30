@@ -49,8 +49,8 @@ inline std::vector<std::filesystem::path> getSortedFilesContaining(const std::st
     return std::filesystem::file_size(filePath);
 }
 
-// deletes the regular files of the file name's directory whose names hold its file name; a directory that cannot be
-// listed holds none
+// Deletes the regular files of the file name's directory whose names hold its file name. A directory that cannot be
+// listed counts as empty.
 [[maybe_unused]] inline std::vector<std::string> deleteFilesContaining(const std::string& fileName) {
     const std::filesystem::path         filePath(fileName);
     std::error_code                     listError;
@@ -223,8 +223,8 @@ Important: this implementation assumes a host-order, CPU architecture specific b
         }
     }
 
-    // throws when there is nothing to read: the reader cannot open the file, or in multi mode the directory cannot be
-    // listed or no file name in it holds the base name
+    // Throws when there is nothing to read. That is when the reader cannot open the file, or, in multi mode, when the
+    // directory cannot be listed or no file name in it holds the base name.
     void start() {
         _totalBytesRead = 0UZ;
         _filesToRead.clear();
@@ -376,8 +376,9 @@ private:
         ++_nextFile;
     }
 
-    // waits for the reader's first message, which follows its open of the file: an error refuses the start, a chunk
-    // exceeds the maximum size of zero and stays queued for processBulk(), and the end of an empty file ends that file
+    // Waits for the reader's first message, which comes after the reader opens the file. An error refuses the start.
+    // A chunk stays queued for processBulk(), since this poll accepts no data. At the end of an empty file the block
+    // finishes that file and opens the next one, if any.
     void awaitFirstRead() {
         std::optional<gr::Error> error;
         bool                     finished = false;
