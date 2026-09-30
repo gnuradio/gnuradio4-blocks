@@ -292,13 +292,17 @@ using BasicDecimatingFilter = BasicFilterProto<T, BackwardTagPropagation, Resamp
 GR_REGISTER_BLOCK(gr::blocks::filter::Decimator, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float>, gr::UncertainValue<float> ])
 
 template<typename T>
-struct Decimator : Block<Decimator<T>, BackwardTagPropagation, Resampling<1UZ, 1UZ, false>> {
+struct Decimator : Block<Decimator<T>, BackwardTagPropagation, Resampling<1UZ, 1UZ, false>>, detail::DelayedTagFilter<Decimator<T>, T, T> {
     using TParent     = Block<Decimator<T>, BackwardTagPropagation, Resampling<1UZ, 1UZ, false>>;
     using Description = Doc<R""(@brief Basic Decimator Block
 
 This block implements a decimator for downsampling (dropping) input data by a
 configurable factor. Filtering is not included in this implementation so expect
 aliasing and sub-sampling related effects.
+
+The framework places the tags and forwards its auto-forward keys alone. A stream whose length is no multiple of the
+factor ends in a partial chunk, which makes no output. The tags on that chunk, and those an upstream block publishes
+past the last input, leave at the end-of-stream index, one past the last output.
 )"">;
 
     PortIn<T>  in;
@@ -308,9 +312,17 @@ aliasing and sub-sampling related effects.
 
     GR_MAKE_REFLECTABLE(Decimator, in, out, decim);
 
+    void start() { this->tagsStart(); }
+
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& /*newSettings*/) { this->input_chunk_size = decim; }
 
-    [[nodiscard]] work::Status processBulk(std::span<const T> input, std::span<T> output) noexcept {
+    /// @brief Input samples per output, `decim`.
+    [[nodiscard]] std::size_t tagDecimation() const noexcept { return static_cast<std::size_t>(decim); }
+
+    /// @brief No delay: the framework places the tags.
+    [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept { return std::nullopt; }
+
+    void filterSamples(std::span<const T> input, std::span<T> output) noexcept {
         assert(output.size() >= input.size() / decim);
 
         std::size_t out_sample_idx = 0;
@@ -319,7 +331,6 @@ aliasing and sub-sampling related effects.
                 output[out_sample_idx++] = input[i];
             }
         }
-        return work::Status::OK;
     }
 };
 
