@@ -496,20 +496,21 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
         expect(that % got.offsetsOf("tx_eob").empty()) << "the framework's key filter drops a key it does not forward";
     };
 
-    "a stop request publishes no held tag of fir_filter and makes no output"_test = [] {
-        // 5 equal taps delay by 2: the trigger on input 9 maps to output 11, past the 10 outputs of its call
+    "under a stop request the epilogue of fir_filter publishes nothing, and a call publishes its outputs' tags"_test = [] {
+        // 5 equal taps delay by 2: the trigger on input 9 maps to output 11, past the 10 outputs of its call and among
+        // the 4 outputs of the next 4 inputs
         namespace filter_test = gr::blocks::filter::testing;
-        fir_filter<float> block({{"b", std::vector<float>(5UZ, 0.2f)}});
-        block.settings().init();
-        std::ignore = block.settings().applyStagedParameters();
-        block.start();
+        const auto make       = [] {
+            fir_filter<float> block({{"b", std::vector<float>(5UZ, 0.2f)}});
+            block.settings().init();
+            std::ignore = block.settings().applyStagedParameters();
+            block.start();
+            return block;
+        };
         const std::vector<float>   input(14UZ, 1.0f);
         const std::vector<gr::Tag> tags{{9UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("last")}}}};
-        expect(eq(block.twiceTagDelay().value_or(0ULL), 4ULL));
-        const auto run = filter_test::runIntoStop(block, std::span<const float>(input).first(10UZ), std::span<const float>(input).subspan(10UZ), tags, 1UZ, 1UZ);
-        expect(that % run.beforeStop.empty()) << "the call holds the trigger past its outputs";
-        expect(eq(run.stopOutputs, 0UZ)) << "the epilogue under the stop request makes no output";
-        expect(that % run.atStop.empty()) << std::format("and publishes no held tag: {}", filter_test::describe(run.atStop));
+        expect(eq(make().twiceTagDelay().value_or(0ULL), 4ULL));
+        filter_test::expectStopCost(make, std::span<const float>(input).first(10UZ), std::span<const float>(input).subspan(10UZ), tags, 1UZ, 1UZ, "trigger_name");
     };
 
     "a switch from FIR to IIR publishes the held tag ahead of the next call's tags"_test = [] {

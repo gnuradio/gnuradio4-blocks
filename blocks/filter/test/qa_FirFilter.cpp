@@ -582,15 +582,12 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
     };
 
-    "a stop request publishes no held tag and makes no output"_test = [] {
-        // 31 taps delay by 15: the trigger on input 39 maps to output 14 at M = 4, past the 10 outputs of its call
-        FirFilter<float, float>    block = makeFir<float, float>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}});
-        const std::vector<float>   input(48UZ, 1.0f);
+    "under a stop request the epilogue publishes nothing, and a call publishes its outputs' tags"_test = [] {
+        // 31 taps delay by 15: the trigger on input 39 maps to output 14 at M = 4, past the 10 outputs of its call and
+        // among the 10 outputs of the next 40 inputs
+        const std::vector<float>   input(80UZ, 1.0f);
         const std::vector<gr::Tag> tags{{39UZ, tagKey(0)}};
-        const auto                 run = filter_test::runIntoStop(block, std::span<const float>(input).first(40UZ), std::span<const float>(input).subspan(40UZ), tags, 4UZ, 1UZ);
-        expect(that % run.beforeStop.empty()) << "the call holds the trigger past its outputs";
-        expect(eq(run.stopOutputs, 0UZ)) << "the epilogue under the stop request makes no output";
-        expect(that % run.atStop.empty()) << std::format("and publishes no held tag: {}", filter_test::describe(run.atStop));
+        filter_test::expectStopCost([] { return makeFir<float, float>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}}); }, std::span<const float>(input).first(40UZ), std::span<const float>(input).subspan(40UZ), tags, 4UZ, 1UZ, "tag0");
     };
 
     "a taps change moves no held tag, and a later tag never lands ahead of it"_test = [] {

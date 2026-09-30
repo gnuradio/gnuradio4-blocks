@@ -712,16 +712,16 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
     };
 
-    "a stop request publishes no held tag and makes no output"_test = [] {
-        // the D = 8 ladder delays by more than two inputs: the trigger on input 79 lies past the 10 outputs of its call
-        StagedDecimator<float>     block = makeBlock<float>({{"decimation", 8U}});
-        const std::vector<float>   input(96UZ, 1.0f);
+    "under a stop request the epilogue publishes nothing, and a call publishes its outputs' tags"_test = [] {
+        // the D = 8 ladder delays by more than two inputs and less than 800: the trigger on input 79 lies past the 10
+        // outputs of its call and among the 100 outputs of the next 800 inputs
+        const auto                 make = [] { return makeBlock<float>({{"decimation", 8U}}); };
+        const std::vector<float>   input(880UZ, 1.0f);
         const std::vector<gr::Tag> tags{{79UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("last")}}}};
-        expect(gt(pathDelay(block), 16ULL));
-        const auto run = filter_test::runIntoStop(block, std::span<const float>(input).first(80UZ), std::span<const float>(input).subspan(80UZ), tags, 8UZ, 1UZ);
-        expect(that % run.beforeStop.empty()) << "the call holds the trigger past its outputs";
-        expect(eq(run.stopOutputs, 0UZ)) << "the epilogue under the stop request makes no output";
-        expect(that % run.atStop.empty()) << std::format("and publishes no held tag: {}", filter_test::describe(run.atStop));
+        auto                       probe = make();
+        expect(gt(pathDelay(probe), 16ULL));
+        expect(lt(pathDelay(probe), 800ULL));
+        filter_test::expectStopCost(make, std::span<const float>(input).first(80UZ), std::span<const float>(input).subspan(80UZ), tags, 8UZ, 1UZ, "trigger_name");
     };
 
     "a rebuild to a ladder already built designs nothing new"_test = [] {

@@ -91,8 +91,9 @@ inline void holdTag(HeldTags& held, std::uint64_t& latest, std::uint64_t delayed
  * block's epilogue alone, and they make no output. When the stream ends, every tag still held leaves at the
  * end-of-stream index, one past the last output, where the framework publishes its `end_of_stream` tag. The tags the
  * framework leaves on the input past the last sample the block consumed leave there too. No tag moves onto an earlier
- * output, and the block keeps no input back to make an output for it. A stop request ends no stream: the block drops
- * the tags it holds with the samples they ride on, and publishes none of them.
+ * output, and the block keeps no input back to make an output for it. A stop request ends no stream. The framework
+ * stops a block at a stop request without running its epilogue, and the tags the block holds are lost with the samples
+ * they ride on.
  */
 struct TagDelayLine {
     static constexpr std::uint64_t kStreamEnd = std::numeric_limits<std::uint64_t>::max(); ///< the output of a tag held for the end-of-stream index
@@ -185,10 +186,26 @@ struct TagDelayLine {
     }
 };
 
-/// @brief Whether @p block runs under a stop request, where it forwards and publishes no tag.
-template<typename TBlock>
-[[nodiscard]] bool stopRequested(const TBlock& block) noexcept {
-    return lifecycle::isShuttingDown(block.state());
+/**
+ * @brief Whether @p block runs its epilogue under a stop request. If so, drop every tag @p tags holds, withdraw the
+ * tags already placed on @p output, and publish no output there.
+ *
+ * The framework stops a block at a stop request before any epilogue. It still runs the epilogue under one when the
+ * stop arrives after the call's lifecycle check, or when no output is connected. The epilogue then publishes nothing:
+ * no sample, no held tag, and no tag the forwarding placed on its span ahead of it. A call's forwarding checks no
+ * state, and its tags leave with the outputs the framework publishes for the call.
+ */
+template<typename TBlock, typename TOutput>
+[[nodiscard]] bool dropAtStop(const TBlock& block, TagDelayLine& tags, TOutput& output) {
+    if (!lifecycle::isShuttingDown(block.state())) {
+        return false;
+    }
+    tags.reset();
+    if constexpr (requires { output.tagsPublished = 0UZ; }) {
+        output.tagsPublished = 0UZ;
+    }
+    output.publish(0UZ);
+    return true;
 }
 
 /**
@@ -225,13 +242,10 @@ struct DelayedTagFilter {
     /**
      * @brief Hold each tag for its delayed output and publish those this call makes. Without a delay, the framework's
      * own forwarding runs. The tags still held from a delay in force before leave on the call's first output, ahead of
-     * every tag the framework forwards. Under a stop request no tag moves.
+     * every tag the framework forwards.
      */
     template<typename TInputSpans, typename TOutputSpans>
     void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
-        if (stopRequested(self())) {
-            return;
-        }
         const std::size_t                  decimation = self().tagDecimation();
         const std::optional<std::uint64_t> twiceDelay = self().twiceTagDelay();
         if (!twiceDelay.has_value()) {
@@ -295,14 +309,11 @@ struct DelayedTagFilter {
      * @brief The stream's last whole input chunks, and every held tag: a tag past their outputs leaves at the
      * end-of-stream index, with the tags the input holds past its last sample. Without a delay the epilogue makes no
      * output, and the tags the framework forwards from no call, those of a partial last chunk among them, leave at the
-     * end-of-stream index through the framework's key filter. Under a stop request the epilogue makes no output and
-     * drops every held tag.
+     * end-of-stream index through the framework's key filter. Under a stop request the epilogue publishes nothing.
      */
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
-        if (stopRequested(self())) {
-            _tags.reset();
-            output.publish(0UZ);
+        if (dropAtStop(self(), _tags, output)) {
             return work::Status::OK;
         }
         const std::uint64_t past    = static_cast<std::uint64_t>(input.streamIndex) + static_cast<std::uint64_t>(input.size());
