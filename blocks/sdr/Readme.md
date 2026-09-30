@@ -63,10 +63,10 @@ GR_SDR_TEST_HARDWARE=1 <build-dir>/blocks/sdr/test/qa_SoapySource
 ```
 
 With the variable set, each hardware case runs only when enumeration lists its
-driver (`rtlsdr` or `lime`), and `DISABLE_SENSITIVE_TESTS` in the environment
-runs none of them. The parameterized Basic API test opens the loopback device
-always and every other listed device under the same rule. The ctest
-registration keeps the loopback module alone whatever the variable says.
+driver (`rtlsdr` or `lime`). With `DISABLE_SENSITIVE_TESTS` in the environment,
+none of them runs. The parameterized Basic API test always opens the loopback
+device. It opens a listed hardware device only when the hardware cases run.
+Under ctest the test loads only the loopback module, whatever the variable says.
 
 ## License
 

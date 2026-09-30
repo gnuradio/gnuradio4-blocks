@@ -203,7 +203,8 @@ if(TARGET SoapySDR)
       COMMENT "Copying gr-sdr-loopback.so for integration test")
     add_test(NAME qa_SoapyIntegration COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
                                               ${CMAKE_CURRENT_BINARY_DIR}/qa_SoapyIntegration)
-    # confined as qa_SoapySource is. Its LimeSDR cases run only in a direct run with GR_SDR_TEST_HARDWARE=1.
+    # The test loads the loopback module alone, as qa_SoapySource does. Its LimeSDR cases run only in a direct run with
+    # GR_SDR_TEST_HARDWARE=1.
     target_compile_definitions(qa_SoapyIntegration PRIVATE GR_SDR_TEST_SOAPY_MODULE_DIR="${SOAPY_MODULE_DIR}"
                                                            GR_SDR_TEST_SOAPY_EMPTY_ROOT="${SOAPY_EMPTY_ROOT}")
     set_tests_properties(
