@@ -539,17 +539,15 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
         expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
     };
 
-    "a stop request publishes no held tag and makes no output"_test = [] {
-        // the designed 3/2 prototype delays by more than two inputs: the trigger on input 39 lies past the 60 outputs of
-        // its call
-        RationalResampler<float>   block = makeResampler<float>({{"interpolation", 3U}, {"decimation", 2U}});
-        const std::vector<float>   input(48UZ, 1.0f);
+    "under a stop request the epilogue publishes nothing, and a call publishes its outputs' tags"_test = [] {
+        // the designed 3/2 prototype delays by more than two inputs and less than 400: the trigger on input 39 lies past
+        // the 60 outputs of its call and among the 600 outputs of the next 400 inputs
+        const auto                 make = [] { return makeResampler<float>({{"interpolation", 3U}, {"decimation", 2U}}); };
+        const std::vector<float>   input(440UZ, 1.0f);
         const std::vector<gr::Tag> tags{{39UZ, tagKey(0)}};
-        expect(gt(block.groupDelaySamples(), 2.0));
-        const auto run = filter_test::runIntoStop(block, std::span<const float>(input).first(40UZ), std::span<const float>(input).subspan(40UZ), tags, 2UZ, 3UZ);
-        expect(that % run.beforeStop.empty()) << "the call holds the trigger past its outputs";
-        expect(eq(run.stopOutputs, 0UZ)) << "the epilogue under the stop request makes no output";
-        expect(that % run.atStop.empty()) << std::format("and publishes no held tag: {}", filter_test::describe(run.atStop));
+        expect(gt(make().groupDelaySamples(), 2.0));
+        expect(lt(make().groupDelaySamples(), 400.0));
+        filter_test::expectStopCost(make, std::span<const float>(input).first(40UZ), std::span<const float>(input).subspan(40UZ), tags, 2UZ, 3UZ, "t0");
     };
 
     "the L=3 M=2 offsets are the table"_test = [] {

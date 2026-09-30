@@ -185,41 +185,104 @@ inline void expectAtStreamEnd(const EndRun& run, std::size_t outputs, std::initi
     }
 }
 
-/// @brief What a synchronous block published over one call, and over an epilogue under a stop request after it.
+/**
+ * @brief A test output span that holds the tags placed on it and hands on the first `tagsPublished` of them, as the
+ * framework's output span does when it is released. A block withdraws the tags it placed by setting `tagsPublished`
+ * to 0.
+ */
+template<typename T>
+struct StagedOutputSpan : gr::blocks::testing::span::OutputSpan<T> {
+    std::vector<gr::Tag> staged;
+    std::size_t          tagsPublished = 0UZ;
+
+    StagedOutputSpan(std::span<T> items, std::size_t at) : gr::blocks::testing::span::OutputSpan<T>(items, at) {}
+
+    void publishTag(const gr::property_map& tagData, std::size_t tagOffset = 0UZ) {
+        staged.resize(tagsPublished);
+        staged.push_back(gr::Tag{this->streamIndex + tagOffset, tagData});
+        ++tagsPublished;
+    }
+
+    /// @brief The tags the span hands on when it is released.
+    [[nodiscard]] std::vector<gr::Tag> released() const { return {staged.begin(), staged.begin() + static_cast<std::ptrdiff_t>(tagsPublished)}; }
+};
+
+/// @brief What the framework runs of a block after a stop request that arrives with input queued.
+enum class AtStop {
+    Epilogue, ///< the epilogue, when the stop arrives between a call's lifecycle check and its end-of-stream test
+    Call,     ///< the rest of the call, when the stop arrives after its end-of-stream test
+};
+
+/// @brief What a synchronous block published over one call, and over the call or the epilogue under a stop request
+/// after it.
 struct StopRun {
     std::vector<gr::Tag> beforeStop;        ///< the tags the call published
-    std::vector<gr::Tag> atStop;            ///< the tags the epilogue published
-    std::size_t          stopOutputs = 0UZ; ///< the outputs the epilogue made
+    std::vector<gr::Tag> atStop;            ///< the tags published under the stop request
+    std::size_t          stopFirst   = 0UZ; ///< the index of the first output under the stop request
+    std::size_t          stopOutputs = 0UZ; ///< the outputs published under the stop request
 };
 
 /**
- * @brief Hand @p block one call over @p head, which carries @p tags, then a stop request, then the epilogue over
- * @p tail that the framework runs when the stop arrives with input still queued. The block makes @p outChunk outputs
- * for every @p inChunk inputs, and both spans hold whole chunks.
+ * @brief Hand @p block one call over @p head, which carries @p tags, then a stop request, then what @p at names over
+ * @p tail. The framework stops a block at a stop request before any epilogue. It runs the epilogue or the rest of a
+ * call under the request only when the stop arrives during that call. The block makes @p outChunk outputs for every
+ * @p inChunk inputs, and both spans hold whole chunks. A call's outputs are those the framework publishes for it.
  */
 template<typename TBlock>
-[[nodiscard]] StopRun runIntoStop(TBlock& block, std::span<const float> head, std::span<const float> tail, std::span<const gr::Tag> tags, std::size_t inChunk, std::size_t outChunk) {
+[[nodiscard]] StopRun runIntoStop(TBlock& block, std::span<const float> head, std::span<const float> tail, std::span<const gr::Tag> tags, std::size_t inChunk, std::size_t outChunk, AtStop at = AtStop::Epilogue) {
     namespace harness = gr::blocks::testing::span;
     StopRun            run;
     const std::size_t  headOutputs = head.size() / inChunk * outChunk;
-    std::vector<float> output(std::max(head.size(), tail.size()) / inChunk * outChunk);
+    const std::size_t  tailOutputs = tail.size() / inChunk * outChunk;
+    std::vector<float> output(std::max(headOutputs, tailOutputs));
     {
-        harness::InputSpan<float>  inSpan(head, 0UZ, tags);
-        harness::OutputSpan<float> outSpan(std::span<float>(output).first(headOutputs), 0UZ, &run.beforeStop);
-        auto                       inputs  = std::tie(inSpan);
-        auto                       outputs = std::tie(outSpan);
+        harness::InputSpan<float> inSpan(head, 0UZ, tags);
+        StagedOutputSpan<float>   outSpan(std::span<float>(output).first(headOutputs), 0UZ);
+        auto                      inputs  = std::tie(inSpan);
+        auto                      outputs = std::tie(outSpan);
         block.forwardTags(inputs, outputs, head.size());
-        std::ignore = block.processBulk(std::span<const float>(inSpan), std::span<float>(outSpan));
+        std::ignore    = block.processBulk(std::span<const float>(inSpan), std::span<float>(outSpan));
+        run.beforeStop = outSpan.released();
     }
     block.requestStop();
-    harness::InputSpan<float>  inSpan(tail, head.size());
-    harness::OutputSpan<float> outSpan(std::span<float>(output).first(tail.size() / inChunk * outChunk), headOutputs, &run.atStop);
-    auto                       inputs  = std::tie(inSpan);
-    auto                       outputs = std::tie(outSpan);
+    harness::InputSpan<float> inSpan(tail, head.size());
+    StagedOutputSpan<float>   outSpan(std::span<float>(output).first(tailOutputs), headOutputs);
+    auto                      inputs  = std::tie(inSpan);
+    auto                      outputs = std::tie(outSpan);
     block.forwardTags(inputs, outputs, tail.size());
-    std::ignore     = block.processEpilogue(inSpan, outSpan);
-    run.stopOutputs = outSpan.count;
+    if (at == AtStop::Epilogue) {
+        std::ignore     = block.processEpilogue(inSpan, outSpan);
+        run.stopOutputs = outSpan.count;
+    } else {
+        std::ignore     = block.processBulk(std::span<const float>(inSpan), std::span<float>(outSpan));
+        run.stopOutputs = tailOutputs;
+    }
+    run.stopFirst = headOutputs;
+    run.atStop    = outSpan.released();
     return run;
+}
+
+/**
+ * @brief Expect a block that @p make returns, run into a stop request, to hold its tag of @p key past the call before
+ * the stop, to publish nothing from the epilogue under the stop, and to publish the tag once on an output of the call
+ * under the stop.
+ */
+template<typename TMake>
+void expectStopCost(TMake&& make, std::span<const float> head, std::span<const float> tail, std::span<const gr::Tag> tags, std::size_t inChunk, std::size_t outChunk, std::string_view key) {
+    using namespace boost::ut;
+    {
+        auto       block = make();
+        const auto run   = runIntoStop(block, head, tail, tags, inChunk, outChunk, AtStop::Epilogue);
+        expect(that % offsetsOf(run.beforeStop, key).empty()) << "the call holds the tag past its outputs";
+        expect(eq(run.stopOutputs, 0UZ)) << "the epilogue under the stop request makes no output";
+        expect(that % run.atStop.empty()) << std::format("and publishes no tag: {}", describe(run.atStop));
+    }
+    auto                           block = make();
+    const auto                     run   = runIntoStop(block, head, tail, tags, inChunk, outChunk, AtStop::Call);
+    const std::vector<std::size_t> at    = offsetsOf(run.atStop, key);
+    expect(that % offsetsOf(run.beforeStop, key).empty()) << "the call holds the tag past its outputs";
+    expect(eq(at.size(), 1UZ)) << std::format("a call under the stop request publishes the held tag with its outputs: {}", describe(run.atStop));
+    expect(that % std::ranges::all_of(at, [&run](std::size_t index) { return index >= run.stopFirst && index < run.stopFirst + run.stopOutputs; })) << "on one of the call's outputs";
 }
 
 } // namespace gr::blocks::filter::testing

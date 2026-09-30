@@ -208,12 +208,10 @@ output lies past the stream's last output leaves at the end-of-stream index, one
 
     /// @brief The stream's last samples, and every held tag: a tag past the stream's last output leaves at the
     /// end-of-stream index, with the tags on input the call leaves and past the last sample. Under a stop request the
-    /// epilogue makes no output and drops every held tag.
+    /// epilogue publishes nothing.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& inSpan, TOutput& outSpan) {
-        if (detail::stopRequested(*this)) {
-            _tags.reset();
-            outSpan.publish(0UZ);
+        if (detail::dropAtStop(*this, _tags, outSpan)) {
             return work::Status::OK;
         }
         const auto [nIn, made] = fitToRoom(inSpan.size(), outSpan.size());

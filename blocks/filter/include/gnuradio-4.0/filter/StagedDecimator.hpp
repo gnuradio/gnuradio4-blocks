@@ -188,13 +188,9 @@ stream's last output leaves at the end-of-stream index, one past that output. )"
      * its new origin: the change is applied on the settings path, between calls, where neither absolute offset is
      * knowable. A `sample_rate` tag is divided by the total decimation as it is taken in, so a tag that crossed before a
      * rate change carries the ratio that was in force when it crossed.
-     * Under a stop request no tag moves.
      */
     template<typename TInputSpans, typename TOutputSpans>
     void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
-        if (detail::stopRequested(*this)) {
-            return;
-        }
         if (_reorigin) {
             gr::for_each_reader_span(
                 [this](auto& span) {
@@ -239,13 +235,11 @@ stream's last output leaves at the end-of-stream index, one past that output. )"
     }
 
     /// @brief The stream's last whole input chunks, and every held tag: a tag past their outputs leaves at the
-    /// end-of-stream index, with the tags the input holds past its last sample. Under a stop request the epilogue makes
-    /// no output and drops every held tag.
+    /// end-of-stream index, with the tags the input holds past its last sample. Under a stop request the epilogue
+    /// publishes nothing.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
-        if (detail::stopRequested(*this)) {
-            _tags.reset();
-            output.publish(0UZ);
+        if (detail::dropAtStop(*this, _tags, output)) {
             return work::Status::OK;
         }
         const std::size_t outputs = std::min(input.size() / static_cast<std::size_t>(_decimation), output.size());

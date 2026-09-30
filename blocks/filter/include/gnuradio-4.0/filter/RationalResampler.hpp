@@ -143,14 +143,10 @@ end-of-stream index, one past that output. )"">;
      * index matching its input index, which is only right at a ratio of one. It is also where a ratio change takes its
      * new origin: the change is applied on the settings path, between calls, where neither absolute offset is knowable.
      * A tag already held keeps its absolute output offset, which the new origin leaves alone, and the `sample_rate`
-     * value it was scaled by on arrival, which is the ratio that was in force when it crossed. Under a stop request no
-     * tag moves.
+     * value it was scaled by on arrival, which is the ratio that was in force when it crossed.
      */
     template<typename TInputSpans, typename TOutputSpans>
     void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
-        if (detail::stopRequested(*this)) {
-            return;
-        }
         if (_reorigin) {
             gr::for_each_reader_span(
                 [this](auto& span) {
@@ -195,13 +191,11 @@ end-of-stream index, one past that output. )"">;
     }
 
     /// @brief The stream's last whole input chunks, and every held tag: a tag past their outputs leaves at the
-    /// end-of-stream index, with the tags the input holds past its last sample. Under a stop request the epilogue makes
-    /// no output and drops every held tag.
+    /// end-of-stream index, with the tags the input holds past its last sample. Under a stop request the epilogue
+    /// publishes nothing.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
-        if (detail::stopRequested(*this)) {
-            _tags.reset();
-            output.publish(0UZ);
+        if (detail::dropAtStop(*this, _tags, output)) {
             return work::Status::OK;
         }
         const std::size_t chunks = std::min(input.size() / static_cast<std::size_t>(_decimation), output.size() / static_cast<std::size_t>(_interpolation));
