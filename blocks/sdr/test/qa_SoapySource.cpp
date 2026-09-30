@@ -78,7 +78,7 @@ inline void resetRtlSdrUsbDevices() {
 #endif
 }
 
-/// driver keys of the hardware cases; each case carries its driver key as its tag
+/// driver keys of the hardware cases, each case tagged with its key
 constexpr std::array<std::string_view, 2UZ> kHardwareCaseDrivers{"rtlsdr", "lime"};
 
 /// devices listed by one `Device::enumerate()` call, shared by every suite
@@ -97,10 +97,10 @@ std::set<std::string> enumeratedDrivers() {
     return drivers;
 }
 
-/// true when the hardware cases run: GR_SDR_TEST_HARDWARE=1 and no DISABLE_SENSITIVE_TESTS
+/// true when the hardware cases run: GR_SDR_TEST_HARDWARE=1 is set and DISABLE_SENSITIVE_TESTS is not
 bool hardwareCasesRun() { return kHardwareRequested && std::getenv("DISABLE_SENSITIVE_TESTS") == nullptr; }
 
-/// drivers the Basic API test opens: the loopback always, the others only when the hardware cases run
+/// drivers the Basic API test opens, the loopback always and the others only when the hardware cases run
 std::set<std::string> basicApiDrivers(const std::set<std::string>& drivers, bool withHardware) {
     std::set<std::string> selected;
     for (const auto& driver : drivers) {
@@ -111,7 +111,7 @@ std::set<std::string> basicApiDrivers(const std::set<std::string>& drivers, bool
     return selected;
 }
 
-/// tags of the hardware cases whose driver is in `drivers`; a case whose driver is absent is skipped
+/// Tags of the hardware cases whose driver is in `drivers`. A case whose driver is absent is skipped.
 std::vector<std::string_view> hardwareCaseTags(const std::set<std::string>& drivers) {
     std::vector<std::string_view> tags;
     for (std::string_view driver : kHardwareCaseDrivers) {
@@ -142,7 +142,7 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
                 std::print("  Module: {}\n", module);
             }
         }
-        if (!kHardwareRequested) { // confined: every module SoapySDR lists lies in the loopback module's directory
+        if (!kHardwareRequested) { // every module SoapySDR lists lies in the loopback module's directory
             for (const auto& module : modules) {
                 expect(module.starts_with(GR_SDR_TEST_SOAPY_MODULE_DIR "/")) << std::format("{} lies outside the loopback module's directory", module);
             }

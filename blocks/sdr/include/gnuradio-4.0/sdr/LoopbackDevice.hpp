@@ -61,10 +61,10 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *  - configurable N channels with per-channel models (default: passthrough)
  *  - sample format conversion: CF32 <-> CS16 <-> CU8
  *  - optional rate-limited readStream (simulate_timing, default on for rxOnly)
- *  - pluggable channel model via setChannelModel() or Soapy writeSetting();
- *    readSetting(direction, channel, key) returns the value written to a key
- *    getSettingInfo(direction, channel) lists since the channel's model was
- *    last replaced, or its listed default
+ *  - pluggable channel model via setChannelModel() or Soapy writeSetting().
+ *    For a key that getSettingInfo(direction, channel) lists,
+ *    readSetting(direction, channel, key) returns the value last written since
+ *    the channel's model was replaced, or else the key's listed default
  *  - built-in models: passthrough, attenuation, AWGN, delay, composable chain
  *  - max_write_samples=N caps every writeStream to N samples, so a caller sees
  *    the short writes a real device produces (0, the default, accepts the lot)
