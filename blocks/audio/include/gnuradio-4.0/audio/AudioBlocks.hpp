@@ -97,8 +97,8 @@ Publishes timing tags with estimated sample rate and optional GPS/PPS clock disc
     };
     IoThreadGuard _ioGuard{_ioThreadDone};
 
-    // start() throws when the device cannot be opened, so the run fails with the reason. The framework calls no stop()
-    // after a start() that throws, so the backend is shut down first.
+    // start() throws when the device cannot be opened, and the run fails with the reason. The framework calls no stop()
+    // after a start() that throws. The backend is shut down before the throw.
     void start() {
         if (auto result = initialiseBackend(); !result) {
             _backendImpl.shutdown();
@@ -536,9 +536,9 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
         }
     };
 
-    // start() throws when the device cannot be opened, so the run fails with the reason before a sample arrives. The
-    // framework calls no stop() after a start() that throws, so the backend is shut down first. A device lost to a
-    // reconfiguration during the run is reported by failUnlocked() instead.
+    // start() throws when the device cannot be opened, and the run fails with the reason before a sample arrives. The
+    // framework calls no stop() after a start() that throws. The backend is shut down before the throw. A device lost
+    // to a reconfiguration during the run is reported by failUnlocked().
     void start() {
         std::lock_guard deviceLock(_deviceMutex);
         gr::atomic_ref(_reconfigureRequested).store_release(false);

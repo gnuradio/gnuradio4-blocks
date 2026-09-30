@@ -730,8 +730,8 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         expect(result->error().message.contains("nosuchbackend")) << result->error().message;
     };
 
-    // with a reader on the scheduler's messages, the scheduler forwards an error message and does not end the run on
-    // it: the run ends only if the source's start fails it
+    // With a reader on the scheduler's messages, the scheduler forwards an error message and the run goes on. Only a
+    // failed start of the source ends the run.
     "an AudioSource whose device cannot be opened fails the run of a host that reads messages"_test = [] {
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"backend", std::string("nosuchbackend")}});

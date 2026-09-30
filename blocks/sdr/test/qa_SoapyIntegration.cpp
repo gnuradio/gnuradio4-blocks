@@ -140,8 +140,8 @@ bool sawError(gr::MsgPortIn& port, std::string_view fragment) {
     return std::ranges::any_of(messages, [fragment](const gr::Message& message) { return !message.data.has_value() && message.data.error().message.contains(fragment); });
 }
 
-// The receive-only loopback turns its tone by 2*pi*frequency/sampleRate from one sample to the next, so a stream that
-// holds every sample once and in order shows that step between every pair of neighbors.
+// The receive-only loopback advances its tone's phase by 2*pi*frequency/sampleRate per sample. A stream that holds
+// every sample once and in order shows that step between every pair of neighbors.
 std::optional<std::size_t> firstPhaseBreak(const auto& samples, double frequency, double sampleRate) {
     const double step = 2.0 * std::numbers::pi * frequency / sampleRate;
     for (std::size_t i = 1UZ; i < samples.size(); ++i) {
@@ -173,9 +173,9 @@ bool evenlySpaced(const std::vector<std::size_t>& indices, std::size_t nRead) {
     return !indices.empty();
 }
 
-// A pattern of prime length, so that no chunk, read or write size is a multiple of it. The imaginary parts are
-// distinct and within full scale, so each sample shows its place in the pattern; every seventh real part lies beyond
-// full scale, on alternating sides.
+// A pattern of prime length. No chunk, read or write size is a multiple of it. The imaginary parts are distinct and
+// within full scale, and each one marks its sample's place in the pattern. Every seventh real part lies beyond full
+// scale, on alternating sides.
 std::vector<CF32> placeMarkedPattern(std::size_t length) {
     std::vector<CF32> values(length);
     for (std::size_t k = 0UZ; k < length; ++k) {
@@ -186,9 +186,9 @@ std::vector<CF32> placeMarkedPattern(std::size_t length) {
     return values;
 }
 
-// What a sink sends for the first n samples of the repeated pattern: each part saturated to full scale and, with a
-// ramp time, each sample scaled by the envelope of a linear taper started as the sink starts its own, followed by
-// the ramp-down the sink sends from its last sample when it stops.
+// Returns what a sink sends for the first n samples of the repeated pattern. Each part is clamped to full scale. With a
+// ramp time, a linear taper that starts with the sink scales each sample, and the ramp-down from the last sample
+// follows.
 std::vector<CF32> expectedTransmission(const std::vector<CF32>& values, std::size_t n, std::optional<float> rampTime, float sampleRate) {
     const auto atFullScale = [](CF32 sample) { return CF32{std::clamp(sample.real(), -1.0f, 1.0f), std::clamp(sample.imag(), -1.0f, 1.0f)}; };
 
@@ -219,9 +219,9 @@ std::optional<std::size_t> firstDifference(const std::vector<CF32>& received, co
     return static_cast<std::size_t>(mismatch.in1 - received.begin());
 }
 
-// Sends each channel's pattern through a sink on the loopback device and returns what the device's receiver holds
-// once the sink has stopped, which in loopback mode is every sample the sink sent. The probe opens the device with
-// the sink's arguments first, so the two share it and the device outlives the sink.
+// Sends each channel's pattern through a sink on the loopback device. Returns what the device's receiver holds once
+// the sink has stopped. In loopback mode that is every sample the sink sent. The probe opens the device with the
+// sink's arguments first. The two then share the device, and the device outlives the sink.
 template<std::size_t nChannels>
 requires(nChannels == 1UZ || nChannels == 2UZ)
 std::array<std::vector<CF32>, nChannels> transmitThroughLoopback(const std::string& parameters, gr::property_map settings, const std::array<std::vector<CF32>, nChannels>& patterns, gr::Size_t nSamples) {
@@ -531,8 +531,8 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
         std::size_t          outputCapacity = 0UZ;
     };
 
-    // Without its rate limit the receive-only loopback hands over a read as soon as it is asked for one, so the
-    // source's output fills and every read waits for room. A timing tag marks every read.
+    // Without its rate limit the receive-only loopback returns each read at once. The source's output fills, and
+    // every read waits for room. A timing tag marks every read.
     auto receive = [](const std::string& parameters, property_map extraSettings, gr::Size_t nSamples) {
         gr::Graph    flow;
         property_map settings{{"device", "loopback"}, {"device_parameter", parameters}, {"device_settings", std::string("simulate_timing=false")}, {"sample_rate", kRate}, {"frequency", std::vector{kFrequency}}, {"emit_timing_tags", true}, {"tag_interval", 0.f}};
@@ -563,8 +563,8 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
         const auto        timing = tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey());
         expect(evenlySpaced(timing, nRead)) << std::format("{} timing tags, {} samples per read", timing.size(), nRead);
 
-        // every kOverflowEvery-th read reports an overflow and delivers nothing, so its tag sits where the next read
-        // starts, after the kOverflowEvery - 1 reads before it
+        // Every kOverflowEvery-th read reports an overflow and delivers nothing. Its tag sits where the next read
+        // starts, after the kOverflowEvery - 1 reads before it.
         const auto overflows = tagIndices(received.tags, "rx_overflow");
         expect(!overflows.empty()) << "the device reported overflows";
         for (std::size_t i = 0UZ; i < overflows.size(); ++i) {
@@ -704,8 +704,8 @@ const boost::ut::suite<"SoapySink write path"> writePathTests = [] {
     static constexpr float      kRampTime = 1e-3f;
     static constexpr gr::Size_t kSamples  = 100'000U;
 
-    // The receiver's buffer holds every sample a run sends, and the device takes at most 3001 samples a write, so
-    // writes end short of the chunks the sink hands it.
+    // The receiver's buffer holds every sample a run sends. The device takes at most 3001 samples a write, so writes
+    // end short of the sink's chunks.
     static const std::string kDevice = "buffer_size=131072,max_write_samples=3001";
 
     const property_map taperOn{{"burst_taper_enabled", true}, {"burst_ramp_time", kRampTime}, {"burst_taper_type", std::string("Linear")}};
@@ -1598,9 +1598,9 @@ const boost::ut::suite<"SoapySource device configuration"> configurationTests = 
     };
 };
 
-// A block that cannot start fails the run, and runAndWait() returns. Every case runs within a bound: a block that
-// stops itself inside start() leaves the blocks around it waiting forever. Each graph has a scheduler subscriber,
-// which keeps a block's error report a message.
+// A block that cannot start fails the run, and runAndWait() returns. Every case runs within a bound, because a block
+// that stops itself inside start() leaves the blocks around it waiting forever. Each graph has a scheduler
+// subscriber, and with it a block's error report stays a message.
 const boost::ut::suite<"Soapy blocks that cannot start"> startFailureTests = [] {
     using namespace gr;
     using namespace gr::blocks::sdr;

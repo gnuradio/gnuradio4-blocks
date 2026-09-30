@@ -879,7 +879,7 @@ public:
             return {};
         }
 
-        // the driver's transfer unit in samples; 0 without a stream
+        // the driver's transfer unit in samples, or 0 without a stream
         [[nodiscard]] std::size_t mtu() const {
             if (_device.get() == nullptr || _stream.get() == nullptr) {
                 return 0UZ;
