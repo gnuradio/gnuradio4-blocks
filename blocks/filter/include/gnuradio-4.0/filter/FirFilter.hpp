@@ -232,8 +232,8 @@ trigger, a burst edge or a time stamp, because a tag describes the sample it sit
 output `round((i + d) / decimation)`, the sample that carries the energy of input `i`. A symmetric or antisymmetric tap
 set delays by `(N-1)/2`. An asymmetric set moves its tags by the centroid of its energy, rounded to the whole input
 sample. A tag keeps the output it was given when it crossed, whatever taps or decimation change follows. A tag whose
-output lies past the stream's last output leaves at the end-of-stream index, one past that output. A forwarded `sample_rate` tag is divided by
-the decimation, so downstream reads the rate of the stream this block hands it. )"">;
+output lies past the stream's last output leaves at the end-of-stream index, one past that output. A forwarded
+`sample_rate` tag is divided by the decimation, so downstream reads the rate of the stream this block hands it. )"">;
 
     PortIn<TSample> in;
     PortOut<TOut>   out;
