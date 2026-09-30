@@ -18,7 +18,7 @@ namespace gr::blocks::analog {
 GR_REGISTER_BLOCK(gr::blocks::analog::QuadratureDemod, [T], [float])
 
 template<std::floating_point T>
-struct QuadratureDemod : Block<QuadratureDemod<T>, UnfilteredTagPropagation> {
+struct QuadratureDemod : Block<QuadratureDemod<T>> {
     using Description = Doc<R""(
 @brief Recovers the instantaneous frequency of a complex baseband signal.
 

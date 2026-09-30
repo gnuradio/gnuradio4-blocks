@@ -1017,8 +1017,8 @@ const boost::ut::suite<"DataSetToPacket under the scheduler"> schedulerTests = [
         expect(eq(sink._tags.size(), 0UZ)) << "and no tag arrives on the packet port";
     };
 
-    // Runtime half: discard_reason rides a tag, so it survives a direct connection and one hop kills it
-    "a rejection reason reaches a sink on reject and does not survive one ordinary block"_test = [] {
+    // Runtime half: discard_reason rides a tag beside the record, across a direct connection and across one ordinary block
+    "a rejection reason reaches a sink on reject, directly and through one ordinary block"_test = [] {
         const auto rejections = [](bool intervening) {
             std::vector<Record<std::uint8_t>> records;
             Record<std::uint8_t>              noSignals = makePacketRecord<std::uint8_t>(4UZ);
@@ -1046,16 +1046,16 @@ const boost::ut::suite<"DataSetToPacket under the scheduler"> schedulerTests = [
             gr::scheduler::Simple scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
-            return std::pair<std::size_t, std::size_t>{refused._items.size(), offsetsOf(std::span<const Tag>(refused._tags), "discard_reason").size()};
+            return std::pair<std::size_t, std::vector<std::size_t>>{refused._items.size(), offsetsOf(std::span<const Tag>(refused._tags), "discard_reason")};
         };
 
         const auto [directRecords, directReasons] = rejections(false);
         expect(eq(directRecords, 1UZ)) << "the refused record leaves by the reject port";
-        expect(eq(directReasons, 1UZ)) << "with its reason on a tag beside it";
+        expect(eq(directReasons.size(), 1UZ)) << "with its reason on a tag beside it";
 
         const auto [hoppedRecords, hoppedReasons] = rejections(true);
         expect(eq(hoppedRecords, 1UZ)) << "the record itself survives the hop";
-        expect(eq(hoppedReasons, 0UZ)) << "discard_reason is not a reserved key, so the default forwarder drops it";
+        expect(that % (hoppedReasons == directReasons)) << "the default forwarder keeps discard_reason at its offset, a key the auto-forward set does not name";
     };
 };
 

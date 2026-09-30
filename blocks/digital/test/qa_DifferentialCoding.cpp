@@ -161,8 +161,8 @@ template<typename T>
     return bits;
 }
 
-/// A marker per tag. Five keys come from `gr::tag::kDefaultTags` and `private_key` from nowhere: all three blocks
-/// declare `UnfilteredTagPropagation`, so the reserved and the private key are forwarded alike.
+/// A marker per tag. Five keys come from `gr::tag::kDefaultTags` and `private_key` from nowhere. The default forwarder
+/// keeps every key on all three blocks and forwards the reserved and the private key alike.
 struct Marker {
     const char*    key;
     std::size_t    at;
@@ -215,6 +215,12 @@ template<typename T, typename TBlock>
     }
     return offsets;
 }
+
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DifferentialEncoder<std::uint8_t>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DifferentialEncoder<std::uint16_t>>);
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DifferentialDecoder<std::uint8_t>>);
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DifferentialDecoder<std::uint16_t>>);
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DifferentialPhasor<float>>);
 
 } // namespace
 

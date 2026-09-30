@@ -84,10 +84,12 @@ inline void steerLoop(const property_map& source, TLoop& loop, std::uint64_t& ig
  * @brief The family's stream-tag contract: `phase_est` and `freq_est` steer the loop and are consumed, the same two
  * keys inside a trigger's `trigger_meta_info` steer it and ride on, and everything else rides through at its own offset.
  *
- * A detector states a burst's estimates inside the trigger's own map, which is where the framework keeps a trigger's
- * additional information and the only place they survive a block standing between the detector and the loop, since a
- * tag key of neither `gr::tag::kDefaultTags` nor the block's own settings is not forwarded. Those estimates are read
- * but not taken out: the map describes the trigger, and the framer and the symbol synchronizer downstream read it too.
+ * A detector states a burst's estimates inside the trigger's own map, where the framework keeps a trigger's additional
+ * information. A block that `gr::block::kUnfilteredTagPropagationAdmissible` refuses and that declares no tag policy
+ * keeps the auto-forward keys alone: the keys of `gr::tag::kDefaultTags` and its own settings. A `NoTagPropagation`
+ * block forwards nothing through the framework, and a `forwardTags()` override forwards what it writes. The trigger's
+ * map carries the estimates across a block that keeps the auto-forward keys. Those estimates are read but not taken
+ * out: the map describes the trigger, and the framer and the symbol synchronizer downstream read it too.
  * A top-level key is a directive addressed to this block, is applied after the trigger's and is consumed.
  *
  * Payloads are validated before they reach the loop — an unchecked phase would reach a subtractive wrap

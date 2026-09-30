@@ -90,6 +90,11 @@ template<typename T, typename FBody>
     return std::chrono::duration<double>(Clock::now() - start).count();
 }
 
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Throttle<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Throttle<std::complex<float>>>);
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Throttle<std::int16_t>>);
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Throttle<std::uint8_t>>);
+
 } // namespace
 
 const boost::ut::suite<"Throttle"> throttleTests = [] {
@@ -127,7 +132,7 @@ const boost::ut::suite<"Throttle"> throttleTests = [] {
         for (const std::size_t at : {7UZ, 64UZ, 1000UZ}) {
             source._tags.emplace_back(at, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::format("probe{}", at)}});
         }
-        // a key outside the auto-forward set, which the block's pass-all policy carries all the same
+        // a key outside the auto-forward set; the default forwarder keeps it on this block
         source._tags.emplace_back(300UZ, gr::property_map{{gr::property_map::key_type{"private_key"}, gr::pmt::Value(std::string("carried"))}});
         std::ranges::sort(source._tags, std::ranges::less{}, &gr::Tag::index);
 

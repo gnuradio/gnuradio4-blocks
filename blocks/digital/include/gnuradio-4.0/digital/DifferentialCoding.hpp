@@ -81,7 +81,7 @@ inline void configure(CodingState& coding, gr::Size_t modulus, std::string_view 
 GR_REGISTER_BLOCK(gr::blocks::digital::DifferentialEncoder, [T], [ std::uint8_t, std::uint16_t ])
 
 template<SymbolLike T>
-struct DifferentialEncoder : Block<DifferentialEncoder<T>, UnfilteredTagPropagation> {
+struct DifferentialEncoder : Block<DifferentialEncoder<T>> {
     using Description = Doc<R""(
 @brief Puts the information in the change between symbols: `y[n] = (x[n] + y[n-1]) mod M`.
 
@@ -149,7 +149,7 @@ The block is 1:1, so every input tag key passes through at its own offset.
 GR_REGISTER_BLOCK(gr::blocks::digital::DifferentialDecoder, [T], [ std::uint8_t, std::uint16_t ])
 
 template<SymbolLike T>
-struct DifferentialDecoder : Block<DifferentialDecoder<T>, UnfilteredTagPropagation> {
+struct DifferentialDecoder : Block<DifferentialDecoder<T>> {
     using Description = Doc<R""(
 @brief Recovers the differentially coded stream: `x[n] = (y[n] - y[n-1]) mod M`, exact for every M.
 
@@ -232,7 +232,7 @@ The block is 1:1, so every input tag key passes through at its own offset.
 GR_REGISTER_BLOCK(gr::blocks::digital::DifferentialPhasor, [T], [float])
 
 template<std::floating_point T>
-struct DifferentialPhasor : Block<DifferentialPhasor<T>, UnfilteredTagPropagation> {
+struct DifferentialPhasor : Block<DifferentialPhasor<T>> {
     using Description = Doc<R""(
 @brief Differences the phase in the signal domain: `y[n] = x[n] * conj(x[n-1])`.
 

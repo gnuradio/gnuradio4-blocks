@@ -476,7 +476,7 @@ GR_REGISTER_BLOCK(gr::blocks::analog::SimpleSquelch, [T], [ float, std::complex<
 
 template<typename T>
 requires(std::same_as<T, float> || std::same_as<T, std::complex<float>>)
-struct SimpleSquelch : Block<SimpleSquelch<T>, UnfilteredTagPropagation> {
+struct SimpleSquelch : Block<SimpleSquelch<T>> {
     using Description = Doc<R""(
 @brief A hard power gate: no ramp, no burst tags, no rate change.
 

@@ -29,7 +29,7 @@ GR_REGISTER_BLOCK(gr::blocks::sync::PreambleTiming, [T], [float])
 
 template<typename T>
 requires(std::same_as<T, float>)
-struct PreambleTiming : Block<PreambleTiming<T>, UnfilteredTagPropagation> {
+struct PreambleTiming : Block<PreambleTiming<T>> {
     using Description = Doc<R""(
 @brief Data-aided burst timing: measures a burst's symbol phase from its alternating training sequence and tags it.
 
