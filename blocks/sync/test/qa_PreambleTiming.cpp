@@ -328,6 +328,8 @@ struct TagSink : gr::Block<TagSink> {
     return values;
 }
 
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<PreambleTiming<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
+
 } // namespace qa_preamble_timing
 
 using namespace qa_preamble_timing;

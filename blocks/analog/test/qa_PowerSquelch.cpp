@@ -219,8 +219,7 @@ const boost::ut::suite<"PowerSquelch"> powerSquelchTests = [] {
         PowerSquelch<CF> block = makeSquelch<CF>(gateSettings(static_cast<gr::Size_t>(kRamp), true));
         const auto       got   = spans::run<PowerSquelch<CF>, CF>(block, std::span<const CF>(input), 0UZ, std::span<const gr::Tag>(tags));
 
-        // The framework's default forwarding keeps only the auto-forward keys and drops the rest. This
-        // block republishes every key it was handed.
+        // Under NoTagPropagation the framework forwards nothing. This block republishes every key it was handed.
         expect(eq(got.offsetsOf("test_probe").size(), 1UZ)) << "a key no block declares still reaches the output";
         expect(that % (got.offsetsOf("sample_rate") == got.offsetsOf("test_probe"))) << "and rides the same output tag it arrived on";
     };
