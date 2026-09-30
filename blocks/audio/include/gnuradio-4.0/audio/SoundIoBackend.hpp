@@ -700,9 +700,9 @@ private:
             framesLeft -= frameCount;
         }
 
-        // libsoundio documents soundio_instream_get_latency() as the time the next captured frame
-        // takes to arrive in its buffer plus the duration of the frames buffered there, and answers
-        // it only inside this callback. After the reads, the answer is the age of the oldest unread
+        // libsoundio defines soundio_instream_get_latency() as the time the next captured frame takes
+        // to reach its buffer, plus the duration of the frames buffered there. The call works only
+        // inside this callback. After the reads, the answer is the age of the oldest unread
         // frame. The newest frame read was captured one sample period before that frame.
         const double sampleRate = static_cast<double>(instream->sample_rate);
         double       latency    = 0.0;

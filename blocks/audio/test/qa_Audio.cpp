@@ -209,8 +209,8 @@ public:
     }
 };
 
-// records the trigger_time of every timing tag with the sample it marks, and the time each sample
-// arrived: a sample cannot arrive before it was captured
+// Records the trigger_time of every timing tag with the sample it marks, and the time each sample
+// arrived. A sample cannot arrive before it was captured.
 template<typename T>
 class ArrivalSink : public gr::Block<ArrivalSink<T>> {
 public:
@@ -392,7 +392,7 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         for (std::size_t attempt = 0UZ; attempt < 2000UZ && !backend._state.captureTimeNs(0UZ, kRate).has_value(); ++attempt) {
             std::this_thread::sleep_for(1ms);
         }
-        backend.quiesceCapture(); // no callback runs after this; the ring and its record stay unchanged
+        backend.quiesceCapture(); // no callback runs after this, and the ring and its record stay unchanged
         const auto tEndNs = static_cast<std::int64_t>(gr::blocks::audio::detail::wallClockNs());
 
         const std::size_t nStored = backend._state.writer.position();
@@ -453,8 +453,8 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         state.recreateBuffer(1000UZ);
         const std::size_t capacity = state.buffer.size();
 
-        // the device delivers frames captured one millisecond apart; a delivery stores what the ring
-        // takes and states the capture time of the newest frame offered
+        // The device delivers frames captured one millisecond apart. A delivery stores what the ring
+        // takes and states the capture time of the newest frame offered.
         std::int64_t              nextCaptureMs = 1;
         std::vector<std::int64_t> capturedMs; // the capture time of each stored frame, by ring frame
         std::vector<float>        samples(capacity, 0.f);
@@ -815,7 +815,8 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         expect(runSchedulerFor(sched, 500ms).has_value()) << caseName;
         expect(sched.state() != gr::lifecycle::State::ERROR) << caseName;
 
-        // with tag_interval 0 every chunk carries a timing tag on its first sample; a chunk ends where the next tag begins
+        // With tag_interval 0 every chunk carries a timing tag on its first sample.
+        // A chunk ends where the next tag begins.
         const auto& stamps   = sink._triggerTimes;
         const auto& arrivals = sink._arrivals;
         const auto  duration = [](std::size_t nSamples) { return static_cast<std::int64_t>(std::llround(static_cast<double>(nSamples) * 1e9 / kRate)); };
@@ -830,9 +831,10 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
             if (last < first || seen == arrivals.end()) {
                 continue;
             }
-            // upper bound: the chunk's last sample was captured before it arrived, and its first
-            // sample (last - first) sample periods earlier; lower bound: the backend captured no
-            // sample before the graph started, nor faster than its rate
+            // The chunk's last sample was captured before it arrived, and its first sample
+            // (last - first) sample periods before that. These give the upper bound. The backend
+            // captured no sample before the graph started, nor faster than its rate. These give
+            // the lower bound.
             const std::int64_t upperNs = static_cast<std::int64_t>(seen->timeNs) - duration(last - first);
             const std::int64_t lowerNs = tStartNs + duration(first);
             const auto         stampNs = static_cast<std::int64_t>(stamps[i].timeNs);
