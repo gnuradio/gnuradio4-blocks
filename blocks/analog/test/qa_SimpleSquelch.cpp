@@ -91,6 +91,9 @@ template<typename TIn, typename TOut, typename TBlock>
     return offsets;
 }
 
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<SimpleSquelch<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<SimpleSquelch<CF>>);
+
 } // namespace
 
 const boost::ut::suite<"SimpleSquelch"> simpleSquelchTests = [] {
@@ -241,7 +244,7 @@ const boost::ut::suite<"SimpleSquelch"> simpleSquelchTests = [] {
 
     "a non-reserved tag key rides through at its own offset"_test = [] {
         const std::vector<std::size_t> offsets = privateTagOffsets<float, float, SimpleSquelch<float>>({{"threshold_db", -150.0}});
-        expect(that % (offsets == std::vector<std::size_t>{7UZ, 300UZ, 1000UZ})) << "the pass-all policy keeps a key the auto-forward set does not name";
+        expect(that % (offsets == std::vector<std::size_t>{7UZ, 300UZ, 1000UZ})) << "the default forwarder keeps a key the auto-forward set does not name";
     };
 };
 

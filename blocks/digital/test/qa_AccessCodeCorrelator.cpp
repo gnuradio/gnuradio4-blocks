@@ -177,6 +177,9 @@ struct Rng {
     return sink._tags;
 }
 
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<AccessCodeCorrelator<std::uint8_t>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<AccessCodeCorrelator<float>>);
+
 } // namespace
 
 const boost::ut::suite<"access code correlator"> accessCodeTests = [] {
@@ -404,7 +407,7 @@ const boost::ut::suite<"access code correlator"> accessCodeTests = [] {
                 where.push_back(seenTag.index);
             }
         }
-        expect(that % (where == std::vector<std::size_t>{11UZ, 400UZ})) << "the pass-all policy keeps a key the auto-forward set does not name, beside this block's own detections";
+        expect(that % (where == std::vector<std::size_t>{11UZ, 400UZ})) << "the default forwarder keeps a key the auto-forward set does not name, beside this block's own detections";
     };
 
     "an upstream trigger_name passes unrewritten and the block's own detections carry the configured label"_test = [] {

@@ -153,6 +153,10 @@ struct Rng {
     return false;
 }
 
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<ConstellationDecoder<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<ConstellationEncoder<float>>);
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<SymbolMap>);
+
 } // namespace
 
 const boost::ut::suite<"constellation blocks"> constellationBlockTests = [] {
@@ -494,7 +498,7 @@ const boost::ut::suite<"constellation blocks"> constellationBlockTests = [] {
                 offsets.push_back(seenTag.index);
             }
         }
-        expect(that % (offsets == std::vector<std::size_t>{11UZ, 300UZ})) << "three pass-all 1:1 blocks in series carry a private key unmoved";
+        expect(that % (offsets == std::vector<std::size_t>{11UZ, 300UZ})) << "three 1:1 blocks in series carry a private key unmoved under the default forwarder";
     };
 };
 

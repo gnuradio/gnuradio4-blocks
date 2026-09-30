@@ -64,7 +64,7 @@ GR_REGISTER_BLOCK(gr::blocks::analog::Agc, [T], [ float, std::complex<float> ])
 
 template<typename T>
 requires(std::same_as<T, float> || std::same_as<T, std::complex<float>>)
-struct Agc : Block<Agc<T>, UnfilteredTagPropagation> {
+struct Agc : Block<Agc<T>> {
     using Description = Doc<R""(
 @brief Holds the output level of a stream near a target by adapting a gain, with attack and decay in seconds.
 

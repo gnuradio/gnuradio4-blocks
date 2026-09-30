@@ -41,8 +41,7 @@ inline void requireFieldWidth(gr::Size_t bits, std::string_view setting) {
  * Holding is ordinary here rather than a corner case: at `1:8` packing seven of every eight tags map into the
  * current call and the eighth may not, and at `8:1` unpacking a tag near the end of a call routinely lands past the
  * output span. Order and multiplicity are preserved and no tag is deduplicated. Every key is republished verbatim,
- * which is what replacing the forwarder means, so a key the default forwarder would filter survives these blocks
- * and will not survive a default-forwarding neighbor.
+ * a key outside the auto-forward set included.
  */
 struct RepackTagRoute {
     std::vector<std::pair<std::uint64_t, property_map>> pending{};

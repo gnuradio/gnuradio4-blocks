@@ -135,6 +135,9 @@ template<typename TIn, typename TOut, typename TBlock>
     return offsets;
 }
 
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Agc<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Agc<std::complex<float>>>);
+
 } // namespace
 
 const boost::ut::suite<"Agc"> agcTests = [] {
@@ -325,7 +328,7 @@ const boost::ut::suite<"Agc"> agcTests = [] {
 
     "a non-reserved tag key rides through at its own offset"_test = [] {
         const std::vector<std::size_t> offsets = privateTagOffsets<float, float, Agc<float>>({{"sample_rate", 48000.f}});
-        expect(that % (offsets == std::vector<std::size_t>{7UZ, 300UZ, 1000UZ})) << "the pass-all policy keeps a key the auto-forward set does not name";
+        expect(that % (offsets == std::vector<std::size_t>{7UZ, 300UZ, 1000UZ})) << "the default forwarder keeps a key the auto-forward set does not name";
     };
 };
 

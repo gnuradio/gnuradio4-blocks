@@ -23,7 +23,7 @@ namespace gr::blocks::basic {
 GR_REGISTER_BLOCK(gr::blocks::basic::Throttle, [T], [ float, std::complex<float>, std::int16_t, std::uint8_t ])
 
 template<typename T>
-struct Throttle : Block<Throttle<T>, UnfilteredTagPropagation> {
+struct Throttle : Block<Throttle<T>> {
     using Description = Doc<R""(
 @brief Paces a stream to a configured samples per second against an absolute deadline schedule.
 

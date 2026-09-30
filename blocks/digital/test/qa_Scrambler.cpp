@@ -626,11 +626,11 @@ const boost::ut::suite<"multiplicative descrambler"> multiplicativeDescramblerTe
 const boost::ut::suite<"the family's cross-cuts"> familyTests = [] {
     using namespace boost::ut;
 
-    "all three are admissible for the pass-all tag policy"_test = [] {
+    "all three are admissible for forwarding every key"_test = [] {
         static_assert(gr::block::kUnfilteredTagPropagationAdmissible<AdditiveScrambler>);
         static_assert(gr::block::kUnfilteredTagPropagationAdmissible<MultiplicativeScrambler>);
         static_assert(gr::block::kUnfilteredTagPropagationAdmissible<MultiplicativeDescrambler>, "each is 1:1 on synchronous ports, declares no resampling or stride and supplies no forwardTags()");
-        expect(true) << "the compile-time half of the policy, which costs nothing to keep asserted";
+        expect(true) << "the compile-time half of the every-key default, which costs nothing to keep asserted";
     };
 
     "a key rides a whole transmit and receive chain at its own offset"_test = [] {

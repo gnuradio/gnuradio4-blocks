@@ -127,7 +127,7 @@ struct Word128 {
 GR_REGISTER_BLOCK(gr::blocks::digital::AccessCodeCorrelator, [T], [ std::uint8_t, float ])
 
 template<BitLike T>
-struct AccessCodeCorrelator : Block<AccessCodeCorrelator<T>, UnfilteredTagPropagation> {
+struct AccessCodeCorrelator : Block<AccessCodeCorrelator<T>> {
     using Description = Doc<R""(
 @brief Finds a known bit pattern in the stream and tags where the payload starts. The stream itself passes through.
 
@@ -163,9 +163,9 @@ two 64-bit limbs, so a code may carry up to 128 items and the AO-40 long form's 
 always sat and is what a contiguous chain wants. `code_start` is the code's FIRST item, which is where a strided frame
 begins, and it gives the block an output lag of `D = (n-1)*s + 1` items on `PreambleCorrelator`'s stated precedent:
 `out[j] == in[j-D]`, the first `D` output items are zero, and the tag index does not move -- only the stream under it
-does. An extractor after `code_start` is a start-only filter with no history at all. A tag arriving from upstream is
-republished by the framework's default forwarding at the start of the output window, so under `code_start` it can
-stand up to `D` items ahead of the sample it marked; only the tags this block emits carry the lag.
+does. An extractor after `code_start` is a start-only filter with no history at all. A tag arriving from upstream keeps
+its input offset. Under `code_start` it stands `D` items ahead of the sample it marked. Only the tags this block emits
+carry the lag.
 )"">;
 
     /// @brief The largest `stride`, at sixteen bytes of register each: 64 KB of state at the cap, and the AO-40
