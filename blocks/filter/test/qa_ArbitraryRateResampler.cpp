@@ -625,9 +625,11 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
             expect(that % beforeStop.tags.empty()) << "and holds the trigger past its outputs";
         }
         block.requestStop();
-        test::InputSpan<float>  inSpan(std::span<const float>(input).subspan(100UZ), 100UZ, {}, false);
-        test::OutputSpan<float> outSpan(std::span<float>(output), 50UZ, &atStop.tags, true, false);
-        std::ignore = block.processEpilogue(inSpan, outSpan);
+        test::InputSpan<float>               inSpan(std::span<const float>(input).subspan(100UZ), 100UZ, {}, false);
+        filter_test::StagedOutputSpan<float> outSpan(std::span<float>(output), 50UZ);
+        outSpan.isSync = false;
+        std::ignore    = block.processEpilogue(inSpan, outSpan);
+        atStop.tags    = outSpan.released();
         expect(eq(outSpan.count, 0UZ)) << "the epilogue under the stop request makes no output";
         expect(that % atStop.tags.empty()) << std::format("and publishes no held tag: {}", filter_test::describe(atStop.tags));
     };
