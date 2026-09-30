@@ -77,10 +77,10 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *  - every configuration call the device receives is recorded in order; the log
  *    is read back through readSetting("call_log") and cleared by writing that
  *    key, which reaches it through the SoapySDR API alone
- *  - record_writes=true records every writeStream that takes samples with the
- *    count asked for, the count taken, and the flags and time it carried; the
- *    log is read back through readSetting("write_log") and cleared by writing
- *    that key (false, the default, records nothing)
+ *  - record_writes=true records the count asked for, the count taken, and the
+ *    flags and time of each writeStream that takes samples.
+ *    readSetting("write_log") reads the log, and writing that key clears it
+ *    (default false)
  *
  * Frontend device arguments (all optional, all with the defaults of a plain
  * one-element RX device):
@@ -183,7 +183,7 @@ struct ChannelModel {
     }
 };
 
-// one writeStream call that took samples: the count asked for, the count taken, and the flags and time it carried
+// The count asked for, the count taken, and the flags and time of one writeStream call that took samples.
 struct WriteRecord {
     std::size_t requested = 0UZ;
     std::size_t taken     = 0UZ;
