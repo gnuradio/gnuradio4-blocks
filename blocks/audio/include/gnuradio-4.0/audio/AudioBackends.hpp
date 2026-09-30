@@ -242,24 +242,24 @@ struct AudioSourceState : AudioStateBase<T> {
     static constexpr std::int64_t kNoCaptureTime = std::numeric_limits<std::int64_t>::min();
     static constexpr std::size_t  kMaxSegments   = 16U;
 
-    // a run of ring samples the device delivered with no loss between them: the ring position of
-    // its first sample, and the capture time of that frame on the wallClockNs() clock, extrapolated
-    // at the nominal rate from the newest frame of the run whose capture time was measured, or
-    // kNoCaptureTime until one is. A loss ends the run. The frames stored after the loss open the
-    // next segment, and the frames before it keep their time.
+    // A run of ring samples the device delivered without a loss. firstSample is the ring position of
+    // the run's first sample. firstFrameNs is the capture time of that frame on the wallClockNs()
+    // clock, extrapolated at the nominal rate from the run's newest measured frame, or kNoCaptureTime
+    // until a frame is measured. A loss ends the run. The frames stored after the loss open the next
+    // segment, and the frames before it keep their time.
     struct CaptureSegment {
         std::atomic<std::size_t>  firstSample{0U};
         std::atomic<std::int64_t> firstFrameNs{kNoCaptureTime};
     };
 
-    // segments [segmentsRetired, segmentsOpened) are live, in ring order, each at its index modulo
-    // kMaxSegments; the writing side opens them, the reading side retires them
+    // Segments [segmentsRetired, segmentsOpened) are live, in ring order. Each sits at its index
+    // modulo kMaxSegments. The writing side opens segments and the reading side retires them.
     std::array<CaptureSegment, kMaxSegments> segments{};
     std::atomic<std::size_t>                 segmentsOpened{1U};
     std::atomic<std::size_t>                 segmentsRetired{0U};
     std::atomic<std::size_t>                 frameSamples{1U}; // samples per ring frame, as the latest record states
     std::atomic<bool>                        lossPending{false};
-    std::optional<std::size_t>               overdueSegmentStart; // writing side only: a loss whose segment found no free slot
+    std::optional<std::size_t>               overdueSegmentStart; // a loss with no free segment slot, writing side only
 
     void recreateBuffer(std::size_t capacitySamples) {
         AudioStateBase<T>::recreateBuffer(capacitySamples);
@@ -274,10 +274,10 @@ struct AudioSourceState : AudioStateBase<T> {
         overdueSegmentStart.reset();
     }
 
-    // capture was lost after the ring's newest sample; safe from any thread
+    // Notes that capture was lost after the ring's newest sample. Safe from any thread.
     void noteCaptureLoss() { lossPending.store(true, std::memory_order_release); }
 
-    // on the writing side, before samples are published: after a loss they open a new segment
+    // Called on the writing side before samples are published. After a loss, those samples open a new segment.
     void beginSegmentAfterLoss() {
         if (lossPending.exchange(false, std::memory_order_acquire)) {
             overdueSegmentStart = writer.position();
@@ -309,8 +309,8 @@ struct AudioSourceState : AudioStateBase<T> {
         segment.firstFrameNs.store(newestCaptureNs - framesToNs(nFrames - 1U, sampleRate), std::memory_order_release);
     }
 
-    // the capture time of ring frame `frame`, counted from the ring's start, where one was measured
-    // for its segment; valid for an unread frame and for the first frame of the latest read
+    // The capture time of ring frame `frame`, counted from the ring's start, when its segment has a
+    // measured time. Valid for an unread frame and for the first frame of the latest read.
     [[nodiscard]] std::optional<std::int64_t> captureTimeNs(std::size_t frame, double sampleRate) const {
         if (!(sampleRate > 0.0)) {
             return std::nullopt;
@@ -428,8 +428,8 @@ struct AudioSourceState : AudioStateBase<T> {
     }
 
 private:
-    // opens a segment at ring sample firstSample, or reuses the latest one when no sample was stored
-    // since it opened; with every slot live, the latest segment spans the loss and loses its time
+    // Opens a segment at ring sample firstSample, or reuses the latest one when no sample was stored
+    // since it opened. With every slot live, the latest segment spans the loss and loses its time.
     void openSegment(std::size_t firstSample) {
         const std::size_t opened = segmentsOpened.load(std::memory_order_relaxed);
         CaptureSegment&   latest = segments[(opened - 1U) % kMaxSegments];
@@ -449,8 +449,8 @@ private:
         latest.firstFrameNs.store(kNoCaptureTime, std::memory_order_relaxed);
     }
 
-    // retires the segments that end at or before the oldest unread sample; the segment of the frame
-    // read first by the previous read stays live until this call
+    // Retires the segments that end at or before the oldest unread sample. The segment of the frame
+    // read first by the previous read stays live until this call.
     void retireSegments() {
         const std::size_t oldestUnread = reader.position();
         const std::size_t opened       = segmentsOpened.load(std::memory_order_acquire);
