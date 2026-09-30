@@ -1,8 +1,10 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <complex>
 #include <format>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -1269,6 +1271,27 @@ const boost::ut::suite<"LoopbackDevice frontend"> frontendTests = [] {
         expect(eq(dev.writeStream(txStream, txBufs, 8, flags, 0LL), 8));
         expect(dev.writeLog().empty());
         expect(dev.readSetting("write_log").empty());
+        dev.deactivateStream(txStream);
+    };
+
+    "a held device takes nothing until it is released"_test = [] {
+        LoopbackDevice dev(SoapySDR::Kwargs{{"driver", "loopback"}, {"record_writes", "true"}});
+        auto*          txStream = dev.setupStream(SOAPY_SDR_TX, SOAPY_SDR_CF32);
+        dev.activateStream(txStream);
+
+        std::vector<CF32> txData(4, CF32{1.f, 0.f});
+        const void*       txBufs[] = {txData.data()};
+        int               noFlags  = 0;
+        expect(eq(dev.readSetting("hold_writes"), std::string("false")));
+        dev.writeSetting("hold_writes", "true");
+        expect(eq(dev.readSetting("hold_writes"), std::string("true")));
+        expect(eq(dev.writeStream(txStream, txBufs, 4, noFlags, 0LL, 10L), SOAPY_SDR_TIMEOUT)) << "a held device takes nothing";
+        dev.writeSetting("hold_writes", "false");
+        expect(eq(dev.writeStream(txStream, txBufs, 4, noFlags, 0LL, 10L), 4)) << "a released device takes the write";
+
+        const std::vector<WriteRecord> expected{{.requested = 4UZ, .taken = 4UZ, .flags = 0, .timeNs = 0LL}};
+        expect(dev.writeLog() == expected) << "the log holds the write the device took";
+        expect(std::ranges::none_of(dev.callLog(), [](const std::string& call) { return call.contains("hold_writes"); })) << "holding the device is no configuration call";
         dev.deactivateStream(txStream);
     };
 

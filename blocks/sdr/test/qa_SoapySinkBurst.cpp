@@ -7,6 +7,8 @@
 #include <complex>
 #include <cstdint>
 #include <format>
+#include <functional>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -81,8 +83,8 @@ gr::Tag burstStart(std::size_t index) { return {index, {{gr::tag::TX_SOB.shortKe
 gr::Tag timedBurstStart(std::size_t index, std::uint64_t timeNs) { return {index, {{gr::tag::TX_SOB.shortKey(), true}, {gr::tag::TX_TIME.shortKey(), timeNs}}}; }
 gr::Tag burstEnd(std::size_t index) { return {index, {{gr::tag::TX_EOB.shortKey(), true}}}; }
 
-// the text of every message on the port that reports an ignored burst tag
-std::vector<std::string> burstTagReports(gr::MsgPortIn& port) {
+// the text of every error message on the port that contains filter
+std::vector<std::string> errorReports(gr::MsgPortIn& port, std::string_view filter) {
     std::vector<std::string> reports;
     auto&                    reader   = port.streamReader();
     auto                     messages = reader.get<gr::SpanReleasePolicy::ProcessAll>(reader.available());
@@ -91,7 +93,7 @@ std::vector<std::string> burstTagReports(gr::MsgPortIn& port) {
             continue;
         }
         if (const auto it = message.data->find(std::string_view("error")); it != message.data->end()) {
-            if (auto text = it->second.value_or(std::string()); text.contains("tx_")) {
+            if (auto text = it->second.value_or(std::string()); text.contains(filter)) {
                 reports.push_back(std::move(text));
             }
         }
@@ -147,7 +149,7 @@ std::vector<Write> transmit(std::string parameters, std::size_t nSamples, std::v
     }
     expect(runToEnd(sched)) << "the stream ends and the sink stops by itself";
     if (reports != nullptr) {
-        *reports = burstTagReports(fromScheduler);
+        *reports = errorReports(fromScheduler, "tx_");
     }
     return writeLog(*probe);
 }
@@ -158,6 +160,125 @@ std::vector<Write> transmit(std::string parameters, std::size_t nSamples, std::v
         total += write.taken;
     }
     return total;
+}
+
+/// Sends n samples of one value, and ends its stream once mayEnd holds.
+struct GatedSource : gr::Block<GatedSource> {
+    gr::PortOut<CF32> out;
+
+    GR_MAKE_REFLECTABLE(GatedSource, out);
+
+    std::size_t           n = 0UZ;
+    std::function<bool()> mayEnd;
+    std::size_t           _sent = 0UZ;
+
+    [[nodiscard]] gr::work::Status processBulk(gr::OutputSpanLike auto& output) {
+        const std::size_t count = std::min(output.size(), n - _sent);
+        std::fill_n(output.begin(), count, CF32{0.5f, 0.f});
+        output.publish(count);
+        _sent += count;
+        if (_sent < n || (mayEnd && !mayEnd())) {
+            return gr::work::Status::OK;
+        }
+        return gr::work::Status::DONE;
+    }
+};
+
+/// Passes its input through. When its input ends and publishes is set, it publishes tx_eob = true at the end-of-stream
+/// index, one past the last sample.
+struct EndBurstAtStreamEnd : gr::Block<EndBurstAtStreamEnd> {
+    gr::PortIn<CF32>  in;
+    gr::PortOut<CF32> out;
+
+    GR_MAKE_REFLECTABLE(EndBurstAtStreamEnd, in, out);
+
+    bool publishes = true;
+
+    [[nodiscard]] gr::work::Status processBulk(gr::InputSpanLike auto& input, gr::OutputSpanLike auto& output) {
+        std::ranges::copy(input, output.begin());
+        return gr::work::Status::OK;
+    }
+
+    [[nodiscard]] gr::work::Status processEpilogue(gr::InputSpanLike auto& /*input*/, gr::OutputSpanLike auto& output) {
+        if (publishes && !gr::lifecycle::isShuttingDown(this->state())) {
+            output.publishTag(gr::property_map{{gr::tag::TX_EOB.shortKey(), true}}, 0UZ);
+        }
+        output.publish(0UZ);
+        return gr::work::Status::OK;
+    }
+};
+
+// Streams nSamples on each of nPorts inputs through EndBurstAtStreamEnd to a sink on a transmit-only loopback device,
+// and returns the writes the device received. Only the last input carries the tx_eob. Each source ends its stream once
+// mayEnd holds for the device. With held, the device takes no sample until the sink has stopped running. With reports,
+// it also collects the error messages that mention END_BURST.
+template<std::size_t nPorts = 1UZ>
+requires(nPorts == 1UZ || nPorts == 2UZ)
+std::vector<Write> transmitToStreamEnd(std::size_t nSamples, bool held, std::function<bool(soapy::Device&)> mayEnd = {}, std::vector<std::string>* reports = nullptr) {
+    const std::string parameters = std::format("device_mode=tx_only,num_channels={},record_writes=true", nPorts);
+    soapy::Kwargs     kwargs{{"driver", "loopback"}};
+    kwargs.merge(soapy::parseKwargsString(parameters));
+    auto probe = soapy::Device::make(kwargs);
+    expect(fatal(probe.has_value())) << "the probe must open the device the block will open";
+    std::ignore = probe->writeSetting("write_log", "");
+    std::ignore = probe->writeSetting("hold_writes", held ? "true" : "false");
+
+    gr::Graph flow;
+    auto&     sink = flow.emplaceBlock<gr::blocks::sdr::SoapySink<CF32, nPorts>>({{"device", std::string("loopback")}, {"device_parameter", parameters}, {"sample_rate", 1e6f}, {"num_channels", static_cast<gr::Size_t>(nPorts)}});
+    for (std::size_t port = 0UZ; port < nPorts; ++port) {
+        auto& source = flow.emplaceBlock<GatedSource>();
+        source.n     = nSamples;
+        if (mayEnd) {
+            source.mayEnd = [&device = *probe, mayEnd] { return mayEnd(device); };
+        }
+        auto& relay     = flow.emplaceBlock<EndBurstAtStreamEnd>();
+        relay.publishes = port + 1UZ == nPorts;
+        expect(fatal(flow.connect<"out", "in">(source, relay).has_value()));
+        if constexpr (nPorts == 1UZ) {
+            expect(fatal(flow.connect<"out", "in">(relay, sink).has_value()));
+        } else {
+            const bool connected = port == 0UZ ? flow.connect<"out", "in#0">(relay, sink).has_value() : flow.connect<"out", "in#1">(relay, sink).has_value();
+            expect(fatal(connected));
+        }
+    }
+
+    // a held device takes no sample until the sink stops running, and by then the sink has staged every sample
+    auto release = std::jthread([&device = *probe, &sink, held](std::stop_token stoken) {
+        if (!held) {
+            return;
+        }
+        while (!stoken.stop_requested() && !gr::lifecycle::isShuttingDown(sink.state())) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        std::ignore = device.writeSetting("hold_writes", "false");
+    });
+
+    gr::scheduler::Simple<> sched;
+    gr::MsgPortIn           fromScheduler;
+    expect(fatal(sched.exchange(std::move(flow)).has_value()));
+    if (reports != nullptr) {
+        expect(fatal(sched.msgOut.connect(fromScheduler).has_value()));
+    }
+    expect(runToEnd(sched)) << "the stream ends and the sink stops by itself";
+    release.request_stop();
+    release.join();
+    if (reports != nullptr) {
+        *reports = errorReports(fromScheduler, "END_BURST");
+    }
+    return writeLog(*probe);
+}
+
+// The source ends its stream once the device has taken nSamples.
+bool deviceTookAll(const soapy::Device& device, std::size_t nSamples) { return samplesTaken(writeLog(device)) >= nSamples; }
+
+// The device took every sample in writes without END_BURST, then one zero sample with END_BURST.
+void expectOwedEndBurst(std::string_view scenario, const std::vector<Write>& writes, std::size_t nSamples) {
+    expect(eq(samplesTaken(writes), nSamples + 1UZ)) << std::format("{}: the device took every sample once and one sample after them", scenario);
+    expect(fatal(!writes.empty()));
+    const Write& last = writes.back();
+    expect(eq(last.first, nSamples) && eq(last.requested, 1UZ) && eq(last.taken, 1UZ)) << std::format("{}: the last write holds one sample after the last sample", scenario);
+    expect(last.endsBurst()) << std::format("{}: the last write carries END_BURST", scenario);
+    expect(std::none_of(writes.begin(), std::prev(writes.end()), [](const Write& write) { return write.endsBurst(); })) << std::format("{}: no earlier write ends a burst", scenario);
 }
 
 // A write asks the device for a range of samples. It carries END_BURST exactly when the range ends at a burst's last
@@ -278,6 +399,56 @@ const boost::ut::suite<"SoapySink transmit bursts"> burstTests = [] {
         expectBurstWrites("ended burst with taper", writes, kSamples, {kSamples - 1UZ}, {});
         expect(fatal(!writes.empty()));
         expect(writes.back().endsBurst()) << "the device's last write is the one that ended the burst";
+    };
+
+    "a tx_eob at the end of the stream ends the burst at the last sample"_test = [] {
+        constexpr std::size_t kSamples = 3000UZ;
+        const auto            writes   = transmitToStreamEnd(kSamples, true);
+        expectBurstWrites("tx_eob at the end of the stream", writes, kSamples, {kSamples - 1UZ}, {});
+        expect(fatal(!writes.empty()));
+        expect(writes.back().taken > 0UZ && writes.back().endsBurst()) << "the write that takes the last sample carries END_BURST";
+    };
+
+    "a tx_eob at the end of the stream ends a burst the device already took with one zero sample"_test = [] {
+        constexpr std::size_t kSamples = 3000UZ;
+        const auto            writes   = transmitToStreamEnd(kSamples, false, [](soapy::Device& device) { return deviceTookAll(device, kSamples); });
+        expectOwedEndBurst("already taken", writes, kSamples);
+    };
+
+    "a tx_eob at the end of one channel's stream ends the burst on a two-port sink"_test = [] {
+        constexpr std::size_t kSamples = 3000UZ;
+        const auto            marked   = transmitToStreamEnd<2UZ>(kSamples, true);
+        expectBurstWrites("two ports, not yet taken", marked, kSamples, {kSamples - 1UZ}, {});
+        expect(fatal(!marked.empty()));
+        expect(marked.back().taken > 0UZ && marked.back().endsBurst()) << "the write that takes the last sample carries END_BURST";
+
+        const auto owed = transmitToStreamEnd<2UZ>(kSamples, false, [](soapy::Device& device) { return deviceTookAll(device, kSamples); });
+        expectOwedEndBurst("two ports, already taken", owed, kSamples);
+    };
+
+    "a zero sample the device does not take is reported once"_test = [] {
+        constexpr std::size_t    kSamples = 3000UZ;
+        std::vector<std::string> reports;
+        // the device takes every sample, then holds every write to the end of the run
+        const auto writes = transmitToStreamEnd(
+            kSamples, false,
+            [](soapy::Device& device) {
+                if (!deviceTookAll(device, kSamples)) {
+                    return false;
+                }
+                std::ignore = device.writeSetting("hold_writes", "true");
+                return true;
+            },
+            &reports);
+        expect(eq(samplesTaken(writes), kSamples)) << "the device took every sample and no zero sample";
+        expect(std::ranges::none_of(writes, &Write::endsBurst)) << "no write ends the burst";
+        expect(fatal(eq(reports.size(), 1UZ))) << "one report for the run";
+        expect(reports.front().contains(std::format("END_BURST after sample {} was not sent", kSamples - 1UZ))) << reports.front();
+    };
+
+    "a tx_eob at the end of an empty stream ends nothing"_test = [] {
+        const auto writes = transmitToStreamEnd(0UZ, false);
+        expect(writes.empty()) << "the device receives no write";
     };
 
     "a burst tag on one channel ends the write of every channel"_test = [] {

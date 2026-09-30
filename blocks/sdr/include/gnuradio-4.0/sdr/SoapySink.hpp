@@ -43,14 +43,17 @@ serialized settings map has been given every setting that map holds, and a setti
 runs is given by that change. tx_gain_elements names the driver's gain elements directly and is applied in
 the order the driver lists them, after the AGC state.
 
-Two tags mark transmit bursts. A write ends at a sample tagged tx_eob = true and carries SOAPY_SDR_END_BURST. A write
-starts at a sample tagged tx_time (UTC ns, any integer type) and carries SOAPY_SDR_HAS_TIME with that time. When the
-device takes part of a write, the next write sends the rest and repeats END_BURST. The time goes with the first sample
-alone. The block ignores tx_sob, because SoapySDR begins a burst with the first write after an end of burst. A tag on
-any input applies to every channel at that sample. The block ignores a tx_eob that is not a bool and a tx_time that is
-not an integer from 0 to 2^63 - 1. It reports the first such tag of a run on its message port. The burst taper ramps up
-the stream's first samples and ramps down after its last. It does not shape the bursts in between. No ramp-down follows
-a stream whose last sample ended a burst.)">;
+Two tags mark transmit bursts. A write ends at a sample tagged tx_eob = true and carries SOAPY_SDR_END_BURST. A
+tx_eob = true can also arrive with the end of the stream, one past its last sample. It ends the burst at the last sample
+the block staged. When the device has already taken that sample without END_BURST, a write of one zero sample carries
+END_BURST. When that write fails, the block reports it on its message port. Under a stop request the block ends no
+burst. A write starts at a sample tagged tx_time (UTC ns, any integer type) and carries SOAPY_SDR_HAS_TIME with that
+time. When the device takes part of a write that ends a burst, the next write sends the rest and repeats END_BURST. The
+time goes with the first sample alone. The block ignores tx_sob, because SoapySDR begins a burst with the first write
+after an end of burst. A tag on any input applies to every channel at that sample. The block ignores a tx_eob that is
+not a bool and a tx_time that is not an integer from 0 to 2^63 - 1. It reports the first such tag of a run on its
+message port. The burst taper ramps up the stream's first samples and ramps down after its last. It does not shape the
+bursts in between. No ramp-down follows a stream whose last sample ended a burst.)">;
 
     using TSizeChecker  = Limits<std::uint32_t{1}, std::numeric_limits<std::uint32_t>::max(), [](std::uint32_t x) { return std::has_single_bit(x); }>;
     using TBasePort     = PortIn<T>;
@@ -136,12 +139,15 @@ a stream whose last sample ended a burst.)">;
         int         flags    = 0;
         long long   timeNs   = 0LL;
     };
+    // The mutex guards the marks and _endBurstOwed. While the io thread runs, it alone writes _samplesWritten and
+    // _burstEnded, under the mutex.
     std::mutex            _burstMarkMutex;
-    std::deque<BurstMark> _burstMarks;               // in position order, added by processBulk, removed by the io thread
+    std::deque<BurstMark> _burstMarks;               // in position order; the scheduler adds, the io thread removes
     std::uint64_t         _samplesStaged    = 0U;    // scheduler thread only
-    std::uint64_t         _samplesWritten   = 0U;    // io thread only
-    bool                  _burstEnded       = false; // set when the last sample the device took ended a burst (io thread only)
-    bool                  _burstTagReported = false; // set when a mistyped burst tag was reported this run (scheduler thread only)
+    std::uint64_t         _samplesWritten   = 0U;    // the samples the device took
+    bool                  _burstEnded       = false; // the last sample the device took ended a burst
+    bool                  _endBurstOwed     = false; // the device took a burst's last sample without END_BURST
+    bool                  _burstTagReported = false; // mistyped burst tag reported this run (scheduler thread only)
 
     void start() {
         _underflowCount.store(0U, std::memory_order_relaxed);
@@ -155,6 +161,7 @@ a stream whose last sample ended a burst.)">;
         {
             std::lock_guard lock(_burstMarkMutex);
             _burstMarks.clear();
+            _endBurstOwed = false;
         }
         configureTaper();
         reinitDevice();
@@ -300,6 +307,62 @@ a stream whose last sample ended a burst.)">;
         return gr::work::Status::OK;
     }
 
+    // A tag at or past the first sample the block did not consume arrives with the end of the stream. Only the input's
+    // tag ring holds it. A tx_eob = true there ends the burst at the last staged sample. Under a stop request the block
+    // ends no burst.
+    [[nodiscard]] gr::work::Status processEpilogue(InputSpanLike auto& input) noexcept
+    requires(nPorts == 1U)
+    {
+        if (streamEndEndsBurst(in, input.streamIndex)) {
+            endBurstAtLastStagedSample();
+        }
+        return gr::work::Status::OK;
+    }
+
+    template<InputSpanLike TInSpan>
+    [[nodiscard]] gr::work::Status processEpilogue(std::span<TInSpan>& inputs) noexcept
+    requires(nPorts != 1U)
+    {
+        bool endsBurst = false;
+        for (std::size_t port = 0UZ; port < std::min(inputs.size(), in.size()); ++port) {
+            endsBurst = streamEndEndsBurst(in[port], inputs[port].streamIndex) || endsBurst;
+        }
+        if (endsBurst) {
+            endBurstAtLastStagedSample();
+        }
+        return gr::work::Status::OK;
+    }
+
+    // True when the tag ring of port holds a tx_eob = true at or past the stream index from, the io thread runs, the port
+    // is connected and no stop is requested.
+    [[nodiscard]] bool streamEndEndsBurst(TBasePort& port, std::size_t from) {
+        if (lifecycle::isShuttingDown(this->state()) || !_ioThreadStarted.load(std::memory_order_acquire) || !port.isConnected()) {
+            return false;
+        }
+        bool endsBurst = false;
+        for (const Tag& tag : port.tagReader().get()) {
+            if (tag.index >= from) {
+                endsBurst = tagEndsBurst(tag.map, _samplesStaged) || endsBurst;
+            }
+        }
+        return endsBurst;
+    }
+
+    // Ends the burst at the last staged sample. A mark ends it when the device has yet to take that sample. When the
+    // device took it without END_BURST, the io thread owes the device one zero sample that carries END_BURST.
+    void endBurstAtLastStagedSample() {
+        if (_samplesStaged == 0U) {
+            return;
+        }
+        const std::uint64_t last = _samplesStaged - 1U;
+        std::lock_guard     lock(_burstMarkMutex);
+        if (last >= _samplesWritten) {
+            holdBurstMark(BurstMark{.position = last, .endsBurst = true, .timeNs = std::nullopt});
+        } else if (!_burstEnded) {
+            _endBurstOwed = true;
+        }
+    }
+
     // Marks the staged samples that carry tx_eob or tx_time, before they are published to the io thread. It reads the
     // tags of the nStaged samples alone, each once. A tag the span has not retired comes back at a negative index and
     // is skipped.
@@ -311,15 +374,21 @@ a stream whose last sample ended a burst.)">;
         }
     }
 
-    void addBurstMark(std::uint64_t position, const property_map& tagMap) {
-        BurstMark mark{.position = position, .endsBurst = false, .timeNs = std::nullopt};
-        if (const auto it = tagMap.find(std::string_view(gr::tag::TX_EOB.shortKey())); it != tagMap.end()) {
-            if (const bool* endsBurst = it->second.template get_if<bool>(); endsBurst != nullptr) {
-                mark.endsBurst = *endsBurst;
-            } else {
-                reportIgnoredBurstTag(gr::tag::TX_EOB.shortKey(), position, "a bool");
-            }
+    // True when the tag holds tx_eob = true. A tx_eob that is not a bool is reported and ignored.
+    [[nodiscard]] bool tagEndsBurst(const property_map& tagMap, std::uint64_t position) {
+        const auto it = tagMap.find(std::string_view(gr::tag::TX_EOB.shortKey()));
+        if (it == tagMap.end()) {
+            return false;
         }
+        if (const bool* endsBurst = it->second.template get_if<bool>(); endsBurst != nullptr) {
+            return *endsBurst;
+        }
+        reportIgnoredBurstTag(gr::tag::TX_EOB.shortKey(), position, "a bool");
+        return false;
+    }
+
+    void addBurstMark(std::uint64_t position, const property_map& tagMap) {
+        BurstMark mark{.position = position, .endsBurst = tagEndsBurst(tagMap, position), .timeNs = std::nullopt};
         if (const auto it = tagMap.find(std::string_view(gr::tag::TX_TIME.shortKey())); it != tagMap.end()) {
             mark.timeNs = deviceTimeNs<std::uint64_t, std::uint32_t, std::uint16_t, std::uint8_t, std::int64_t, std::int32_t, std::int16_t, std::int8_t>(it->second);
             if (!mark.timeNs.has_value()) {
@@ -329,10 +398,15 @@ a stream whose last sample ended a burst.)">;
         if (!mark.endsBurst && !mark.timeNs.has_value()) {
             return;
         }
-        // the ports of an N-port sink are marked one after the other, so a mark can precede or match one already held
         std::lock_guard lock(_burstMarkMutex);
-        const auto      held = std::ranges::lower_bound(_burstMarks, position, std::ranges::less{}, &BurstMark::position);
-        if (held == _burstMarks.end() || held->position != position) {
+        holdBurstMark(mark);
+    }
+
+    // Adds a mark in position order, or merges it into the mark held for its sample. The ports of an N-port sink are
+    // marked one after the other, so a mark can precede or match one already held. The caller holds _burstMarkMutex.
+    void holdBurstMark(const BurstMark& mark) {
+        const auto held = std::ranges::lower_bound(_burstMarks, mark.position, std::ranges::less{}, &BurstMark::position);
+        if (held == _burstMarks.end() || held->position != mark.position) {
             _burstMarks.insert(held, mark);
             return;
         }
@@ -397,22 +471,58 @@ a stream whose last sample ended a burst.)">;
     }
 
     // Removes the marks of the samples the device took. A write that ends before a burst's last sample leaves that mark
-    // for the next write.
-    void retireBurstMarks(std::size_t nTaken) {
+    // for the next write. A mark added after its write was formed ends no burst in that write. The io thread then owes
+    // the device END_BURST.
+    void retireBurstMarks(std::size_t nTaken, bool writeEndsBurst) {
         if (nTaken == 0UZ) {
             return;
         }
         const std::uint64_t end        = _samplesWritten + nTaken;
         bool                endedBurst = false;
-        {
-            std::lock_guard lock(_burstMarkMutex);
-            while (!_burstMarks.empty() && _burstMarks.front().position < end) {
-                endedBurst = _burstMarks.front().endsBurst && _burstMarks.front().position + 1U == end;
-                _burstMarks.pop_front();
-            }
+        std::lock_guard     lock(_burstMarkMutex);
+        while (!_burstMarks.empty() && _burstMarks.front().position < end) {
+            const BurstMark& mark = _burstMarks.front();
+            endedBurst            = mark.endsBurst && writeEndsBurst && mark.position + 1U == end;
+            _endBurstOwed         = _endBurstOwed || (mark.endsBurst && !endedBurst);
+            _burstMarks.pop_front();
         }
         _samplesWritten = end;
         _burstEnded     = endedBurst;
+    }
+
+    // Sends the END_BURST the device is owed with one zero sample. SoapySDR defines no write of no samples, and its
+    // return of 0 does not tell a sent flag from a timeout. A write that is not sent within the stall budget, or that
+    // fails, leaves the burst open and is reported on the message port.
+    void sendOwedEndBurst(std::vector<T>& scratch) {
+        {
+            std::lock_guard lock(_burstMarkMutex);
+            if (!_endBurstOwed) {
+                return;
+            }
+            _endBurstOwed = false;
+        }
+        scratch[0]               = T{};
+        const std::size_t budget = stalledWriteBudget();
+        for (std::size_t stalled = 0UZ; stalled < budget; ++stalled) {
+            int flags = SOAPY_SDR_END_BURST;
+            int ret   = 0;
+            if constexpr (nPorts == 1U) {
+                ret = _txStream.writeStream(flags, 0LL, static_cast<long>(max_time_out_us), std::span<const T>(scratch.data(), 1UZ));
+            } else {
+                std::vector<std::span<const T>> zeroSample(_stagingReaders.size(), std::span<const T>(scratch.data(), 1UZ));
+                ret = _txStream.writeStreamFromBufferList(flags, 0LL, static_cast<long>(max_time_out_us), std::span<std::span<const T>>(zeroSample));
+            }
+            if (ret > 0) {
+                std::lock_guard lock(_burstMarkMutex);
+                _burstEnded = true;
+                return;
+            }
+            if (ret < 0 && ret != SOAPY_SDR_TIMEOUT && !handleStreamError(ret)) {
+                break;
+            }
+            _stalledWrites.fetch_add(1UZ, std::memory_order_relaxed);
+        }
+        this->emitMessage("ioWriteLoop()", {{"error", std::format("END_BURST after sample {} was not sent and the burst stays open", _samplesWritten - 1U)}});
     }
 
     void settingsChanged(const property_map& /*oldSettings*/, property_map& newSettings, property_map& /*forwardSettings*/) {
@@ -512,6 +622,7 @@ a stream whose last sample ended a burst.)">;
         }
 
         drainRemainingSamples(txScratch);
+        sendOwedEndBurst(txScratch);
         completeSafetyRampDown(txScratch);
 
         if (auto r = _txStream.deactivate(); !r) {
@@ -561,7 +672,7 @@ a stream whose last sample ended a burst.)">;
         if (nWritten > 0UZ) {
             _underflowCount.store(0U, std::memory_order_relaxed);
             rememberLastTransmitted(0UZ, scratch[nWritten - 1UZ]);
-            retireBurstMarks(nWritten);
+            retireBurstMarks(nWritten, (burst.flags & SOAPY_SDR_END_BURST) != 0);
         }
         return {nWritten, true};
     }
@@ -631,7 +742,7 @@ a stream whose last sample ended a burst.)">;
             for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
                 rememberLastTransmitted(ch, chScratch[ch][nConsumed - 1UZ]);
             }
-            retireBurstMarks(nConsumed);
+            retireBurstMarks(nConsumed, (burst.flags & SOAPY_SDR_END_BURST) != 0);
         }
         if (ret < 0 && ret != SOAPY_SDR_TIMEOUT) {
             return {nConsumed, handleStreamError(ret)};
@@ -704,9 +815,27 @@ a stream whose last sample ended a burst.)">;
             }
         } else {
             std::vector<std::vector<T>> chScratch(_stagingReaders.size(), std::vector<T>(static_cast<std::size_t>(max_chunk_size)));
+            const std::size_t           budget  = stalledWriteBudget();
+            std::size_t                 stalled = 0UZ;
             while (true) {
+                std::size_t avail = std::numeric_limits<std::size_t>::max();
+                for (const auto& reader : _stagingReaders) {
+                    avail = std::min(avail, static_cast<std::size_t>(reader.available()));
+                }
+                if (avail == 0UZ) {
+                    break;
+                }
                 const auto [written, ok] = taperAndWriteMulti(chScratch);
-                if (written == 0UZ || !ok) {
+                if (!ok) {
+                    break;
+                }
+                if (written > 0UZ) {
+                    stalled = 0UZ;
+                    continue;
+                }
+                _stalledWrites.fetch_add(1UZ, std::memory_order_relaxed);
+                if (++stalled >= budget) {
+                    std::println(stderr, "[SoapySink] shutdown drain abandoned after {} stalled writes ({} samples left staged)", stalled, avail);
                     break;
                 }
             }
