@@ -20,11 +20,11 @@
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 /**
- * @brief What SoapySink hands the device at the transmit burst tags `tx_sob`, `tx_eob` and `tx_time`.
+ * @brief The writes SoapySink sends the device at the transmit burst tags `tx_sob`, `tx_eob` and `tx_time`.
  *
  * The sink writes to the loopback device, which records every write with the count asked for, the count taken and
- * the flags and time the write carried. The test opens the device with the block's own arguments, which reaches the
- * same device object, and reads that record through the SoapySDR API. Every case names the loopback driver alone.
+ * the flags and time the write carried. The test opens the device with the block's own arguments and gets the same
+ * device object. It reads that record through the SoapySDR API. Every case names the loopback driver alone.
  */
 
 using namespace boost::ut;
@@ -99,7 +99,7 @@ std::vector<std::string> burstTagReports(gr::MsgPortIn& port) {
     return reports;
 }
 
-// The source ends the stream, so the run ends by itself; the watchdog only bounds a sink that fails to stop.
+// The source ends the stream, and the run ends with it. The watchdog bounds a sink that fails to stop.
 bool runToEnd(gr::scheduler::Simple<>& sched) {
     std::atomic<bool> stoppedByWatchdog{false};
     auto              watchdog = std::jthread([&sched, &stoppedByWatchdog](std::stop_token stoken) {
@@ -160,10 +160,10 @@ std::vector<Write> transmit(std::string parameters, std::size_t nSamples, std::v
     return total;
 }
 
-// The device sees END_BURST on a write exactly when the samples it asked the device to take end at a burst's last
-// sample, and HAS_TIME with the burst's time exactly when they start at a timed burst's first; no write asks for
-// samples on both sides of either, every burst's last sample is taken by a write that carries END_BURST, and every
-// timed sample by a write that carries its time.
+// A write asks the device for a range of samples. It carries END_BURST exactly when the range ends at a burst's last
+// sample. It carries HAS_TIME with the burst's time exactly when the range starts at a timed sample. No range reaches
+// past a burst's last sample, and no range holds a timed sample after its own first sample. Every burst's last sample
+// goes out in a write that carries END_BURST, and every timed sample in a write that carries its time.
 void expectBurstWrites(std::string_view scenario, const std::vector<Write>& writes, std::size_t nSamples, const std::vector<std::size_t>& lastSamples, const std::vector<TimedSample>& timedSamples) {
     expect(eq(samplesTaken(writes), nSamples)) << std::format("{}: the device took every sample once", scenario);
 

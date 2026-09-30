@@ -43,14 +43,14 @@ serialized settings map has been given every setting that map holds, and a setti
 runs is given by that change. tx_gain_elements names the driver's gain elements directly and is applied in
 the order the driver lists them, after the AGC state.
 
-Transmit bursts: a write ends at a sample tagged tx_eob (true) and goes to the device with SOAPY_SDR_END_BURST, and a
-write starts at a sample tagged tx_time (UTC ns, an integer of any width) and goes with SOAPY_SDR_HAS_TIME and that
-time. A write the device takes only part of is completed with the same flag, and the time goes with the first sample
-alone. tx_sob asks nothing of the device: SoapySDR begins a burst with the first write after an end of burst. A tag on
-any input applies to every channel at that sample. A tx_eob that is not a bool and a tx_time that is not an integer
-from 0 to 2^63 - 1 are ignored, and the block reports the first such tag of a run on its message port. The burst taper ramps
-up the stream's first samples and ramps down after its last, and does not shape the bursts in between; no ramp-down
-follows a stream whose last sample ended a burst.)">;
+Two tags mark transmit bursts. A write ends at a sample tagged tx_eob = true and carries SOAPY_SDR_END_BURST. A write
+starts at a sample tagged tx_time (UTC ns, any integer type) and carries SOAPY_SDR_HAS_TIME with that time. When the
+device takes part of a write, the next write sends the rest and repeats END_BURST. The time goes with the first sample
+alone. The block ignores tx_sob, because SoapySDR begins a burst with the first write after an end of burst. A tag on
+any input applies to every channel at that sample. The block ignores a tx_eob that is not a bool and a tx_time that is
+not an integer from 0 to 2^63 - 1. It reports the first such tag of a run on its message port. The burst taper ramps up
+the stream's first samples and ramps down after its last. It does not shape the bursts in between. No ramp-down follows
+a stream whose last sample ended a burst.)">;
 
     using TSizeChecker  = Limits<std::uint32_t{1}, std::numeric_limits<std::uint32_t>::max(), [](std::uint32_t x) { return std::has_single_bit(x); }>;
     using TBasePort     = PortIn<T>;
@@ -137,11 +137,11 @@ follows a stream whose last sample ended a burst.)">;
         long long   timeNs   = 0LL;
     };
     std::mutex            _burstMarkMutex;
-    std::deque<BurstMark> _burstMarks;               // ordered by position; processBulk adds, the io thread retires
+    std::deque<BurstMark> _burstMarks;               // in position order, added by processBulk, removed by the io thread
     std::uint64_t         _samplesStaged    = 0U;    // scheduler thread only
     std::uint64_t         _samplesWritten   = 0U;    // io thread only
-    bool                  _burstEnded       = false; // io thread only: the last sample the device took ended a burst
-    bool                  _burstTagReported = false; // scheduler thread only: a mistyped burst tag was reported this run
+    bool                  _burstEnded       = false; // set when the last sample the device took ended a burst (io thread only)
+    bool                  _burstTagReported = false; // set when a mistyped burst tag was reported this run (scheduler thread only)
 
     void start() {
         _underflowCount.store(0U, std::memory_order_relaxed);
@@ -300,8 +300,9 @@ follows a stream whose last sample ended a burst.)">;
         return gr::work::Status::OK;
     }
 
-    // Marks the staged samples that carry tx_eob or tx_time, before they are published to the io thread. Only the tags
-    // of the nStaged samples are read, and each once: a tag the span leaves unretired returns at a negative index.
+    // Marks the staged samples that carry tx_eob or tx_time, before they are published to the io thread. It reads the
+    // tags of the nStaged samples alone, each once. A tag the span has not retired comes back at a negative index and
+    // is skipped.
     void markBurstTags(InputSpanLike auto& input, std::size_t nStaged) {
         for (const auto& [relIndex, tagMap] : input.tags(nStaged)) {
             if (relIndex >= 0) {
@@ -368,8 +369,8 @@ follows a stream whose last sample ended a burst.)">;
         this->emitMessage("processBulk()", {{"error", std::format("{} at sample {} is not {} and is ignored", key, position, expected)}});
     }
 
-    // The next write takes at most nAvailable samples. It ends at a burst's last sample, with END_BURST, and before a
-    // timed sample, which starts the following write with HAS_TIME and its time.
+    // The next write takes at most nAvailable samples. It ends with END_BURST at a burst's last sample. It also ends
+    // before a timed sample, and the following write starts with HAS_TIME and that sample's time.
     [[nodiscard]] BurstWrite nextBurstWrite(std::size_t nAvailable) {
         BurstWrite      write{.nSamples = nAvailable, .flags = 0, .timeNs = 0LL};
         std::lock_guard lock(_burstMarkMutex);
@@ -395,8 +396,8 @@ follows a stream whose last sample ended a burst.)">;
         return write;
     }
 
-    // retires the marks of the samples the device took; a write that stopped short of a burst's last sample keeps its
-    // mark, so the write of the remainder carries END_BURST again
+    // Removes the marks of the samples the device took. A write that ends before a burst's last sample leaves that mark
+    // for the next write.
     void retireBurstMarks(std::size_t nTaken) {
         if (nTaken == 0UZ) {
             return;
@@ -712,8 +713,8 @@ follows a stream whose last sample ended a burst.)">;
         }
     }
 
-    // A stream whose last sample ended a burst has left the transmitter idle, and a ramp-down after it would key the
-    // transmitter again for a burst of its own.
+    // No ramp-down follows a stream whose last sample ended a burst. The transmitter is idle then, and a ramp-down
+    // would key it for a burst of its own.
     void completeSafetyRampDown(std::vector<T>& scratch) {
         if (!burst_taper_enabled || !burst_safety_rampdown || _taper.isOff() || _burstEnded) {
             return;
