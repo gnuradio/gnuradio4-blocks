@@ -44,10 +44,10 @@ struct fir_filter : Block<fir_filter<T>>, detail::DelayedTagFilter<fir_filter<T>
 The transfer function of an FIR filter is given by:
 H(z) = b[0] + b[1]*z^-1 + b[2]*z^-2 + ... + b[N]*z^-N
 
-Every tag moves whole, every key with it, by the filter's delay `d`: a tag on input `i` leaves on output `i + d`, a
-half rounding up, the sample that carries the energy of input `i`. A symmetric or antisymmetric set of `N+1` coefficients delays by
-`N/2`. An asymmetric set moves its tags by the centroid of its energy, rounded to the whole sample. A tag whose output
-lies past the stream's last output leaves at the end-of-stream index, one past that output.
+Every tag moves whole, every key with it, by the filter's delay `d`: a tag on input `i` leaves on output `i + d`, a half
+rounding up, the sample that carries the energy of input `i`. A symmetric or antisymmetric set of `N+1` coefficients
+delays by `N/2`. An asymmetric set moves its tags by the centroid of its energy, rounded to the whole sample. A tag
+whose output lies past the stream's last output leaves at the end-of-stream index, one past that output.
 )"">;
     PortIn<T>  in;
     PortOut<T> out;

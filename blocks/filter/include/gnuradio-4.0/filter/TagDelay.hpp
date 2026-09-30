@@ -92,8 +92,8 @@ inline void holdTag(HeldTags& held, std::uint64_t& latest, std::uint64_t delayed
  * end-of-stream index, one past the last output, where the framework publishes its `end_of_stream` tag. The tags the
  * framework leaves on the input past the last sample the block consumed leave there too. No tag moves onto an earlier
  * output, and the block keeps no input back to make an output for it. A stop request ends no stream. The framework
- * stops a block at a stop request without running its epilogue, and the tags the block holds are lost with the samples
- * they ride on.
+ * stops a block at a stop request without running its epilogue, except in the two cases `dropAtStop` names, and the
+ * tags the block holds are lost with the samples they ride on.
  */
 struct TagDelayLine {
     static constexpr std::uint64_t kStreamEnd = std::numeric_limits<std::uint64_t>::max(); ///< the output of a tag held for the end-of-stream index
@@ -192,18 +192,18 @@ struct TagDelayLine {
  *
  * The framework stops a block at a stop request before any epilogue. It still runs the epilogue under one when the
  * stop arrives after the call's lifecycle check, or when no output is connected. The epilogue then publishes nothing:
- * no sample, no held tag, and no tag the forwarding placed on its span ahead of it. A call's forwarding checks no
- * state, and its tags leave with the outputs the framework publishes for the call.
+ * no sample, no held tag, and no tag placed on its span ahead of it, the forwarding's tags and the framework's
+ * forwarded settings tag alike. A call's forwarding checks no state, and its tags leave with the outputs the framework
+ * publishes for the call.
  */
 template<typename TBlock, typename TOutput>
 [[nodiscard]] bool dropAtStop(const TBlock& block, TagDelayLine& tags, TOutput& output) {
     if (!lifecycle::isShuttingDown(block.state())) {
         return false;
     }
+    static_assert(requires { output.tagsPublished = 0UZ; }, "the epilogue's output span counts the tags it publishes in `tagsPublished`");
     tags.reset();
-    if constexpr (requires { output.tagsPublished = 0UZ; }) {
-        output.tagsPublished = 0UZ;
-    }
+    output.tagsPublished = 0UZ;
     output.publish(0UZ);
     return true;
 }

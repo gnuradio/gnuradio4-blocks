@@ -622,18 +622,19 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
     "an epilogue short of output room publishes the tags past its outputs at the end-of-stream index"_test = [] {
         // twelve trailing inputs make three outputs at M = 4, and the epilogue's span holds one: the tag for output 1
         // and the tag held for output 3 both lie past the one output made, and both leave at index 1, in order
-        FirFilter<float, float>    block = makeFir<float, float>({{"taps", std::vector<float>{1.0f}}, {"decimation", 4U}});
-        const std::vector<float>   input(12UZ, 1.0f);
-        const std::vector<gr::Tag> tags{{4UZ, tagKey(0)}, {11UZ, tagKey(1)}};
-        std::vector<float>         room(1UZ);
-        test::Capture<float>       got;
-        test::InputSpan<float>     inSpan(std::span<const float>(input), 0UZ, std::span<const gr::Tag>(tags));
-        test::OutputSpan<float>    outSpan(std::span<float>(room), 0UZ, &got.tags);
+        FirFilter<float, float>              block = makeFir<float, float>({{"taps", std::vector<float>{1.0f}}, {"decimation", 4U}});
+        const std::vector<float>             input(12UZ, 1.0f);
+        const std::vector<gr::Tag>           tags{{4UZ, tagKey(0)}, {11UZ, tagKey(1)}};
+        std::vector<float>                   room(1UZ);
+        test::Capture<float>                 got;
+        test::InputSpan<float>               inSpan(std::span<const float>(input), 0UZ, std::span<const gr::Tag>(tags));
+        filter_test::StagedOutputSpan<float> outSpan(std::span<float>(room), 0UZ);
 
         auto inputs  = std::tie(inSpan);
         auto outputs = std::tie(outSpan);
         block.forwardTags(inputs, outputs, input.size());
         std::ignore = block.processEpilogue(inSpan, outSpan);
+        got.tags    = outSpan.released();
 
         expect(eq(outSpan.count, 1UZ)) << "the epilogue makes the output its span holds";
         expect(that % (got.offsetsOf("tag0") == std::vector<std::size_t>{1UZ})) << "the tag for output 1 one past the one output made";
