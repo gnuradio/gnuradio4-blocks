@@ -168,7 +168,7 @@ struct Marker {
     gr::pmt::Value value;
 };
 
-/// Six keys at five offsets; the first five are `gr::tag::kDefaultTags` and `t0` is not. The table is a function-local
+/// Six keys at five offsets. The first five are `gr::tag::kDefaultTags`, and `t0` is not. The table is a function-local
 /// static rather than a namespace-scope one: a `pmt::Value` holding a string owns memory from the polymorphic resource,
 /// the suites run from the unit-test runner's destructor, and a table destroyed earlier in that sequence leaves those
 /// values dangling.

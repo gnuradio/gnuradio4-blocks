@@ -132,7 +132,7 @@ const boost::ut::suite<"Throttle"> throttleTests = [] {
         for (const std::size_t at : {7UZ, 64UZ, 1000UZ}) {
             source._tags.emplace_back(at, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::format("probe{}", at)}});
         }
-        // a key outside the auto-forward set; the default forwarder keeps it on this block
+        // a key outside the auto-forward set, which the default forwarder keeps on this block
         source._tags.emplace_back(300UZ, gr::property_map{{gr::property_map::key_type{"private_key"}, gr::pmt::Value(std::string("carried"))}});
         std::ranges::sort(source._tags, std::ranges::less{}, &gr::Tag::index);
 

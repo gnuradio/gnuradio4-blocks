@@ -1017,7 +1017,8 @@ const boost::ut::suite<"DataSetToPacket under the scheduler"> schedulerTests = [
         expect(eq(sink._tags.size(), 0UZ)) << "and no tag arrives on the packet port";
     };
 
-    // Runtime half: discard_reason rides a tag beside the record, across a direct connection and across one ordinary block
+    // Runtime half: discard_reason travels in a tag beside the record,
+    // across a direct connection and across one ordinary block
     "a rejection reason reaches a sink on reject, directly and through one ordinary block"_test = [] {
         const auto rejections = [](bool intervening) {
             std::vector<Record<std::uint8_t>> records;

@@ -162,7 +162,7 @@ template<typename T>
 }
 
 /// A marker per tag. Five keys come from `gr::tag::kDefaultTags` and `private_key` from nowhere. The default forwarder
-/// keeps every key on all three blocks and forwards the reserved and the private key alike.
+/// keeps every key on all three blocks, the reserved and the private key alike.
 struct Marker {
     const char*    key;
     std::size_t    at;
