@@ -433,17 +433,17 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
             for (const gr::Size_t samples : {kSamples, gr::Size_t{kSamples + 3U}}) {
                 gr::property_map settings = design;
                 settings.insert_or_assign(gr::property_map::key_type{"decimate"}, decimation);
-                const TaggedRun   got     = decimation == 1U ? runTagged<BasicFilter<float>>(settings, samples, kMid) : runTagged<BasicDecimatingFilter<float>>(settings, samples, kMid);
-                const TaggedRun   ref     = runTagged<FirFilter<float>>({{"taps", taps}, {"decimation", decimation}}, samples, kMid);
-                const std::size_t outputs = samples / decimation;
-                const std::size_t mid     = gr::blocks::filter::detail::mapDelayedOffset(kMid, 1ULL, decimation, twice);
-                const std::string label   = std::format("M = {}, {} inputs", decimation, samples);
+                const TaggedRun     got     = decimation == 1U ? runTagged<BasicFilter<float>>(settings, samples, kMid) : runTagged<BasicDecimatingFilter<float>>(settings, samples, kMid);
+                const TaggedRun     ref     = runTagged<FirFilter<float>>({{"taps", taps}, {"decimation", decimation}}, samples, kMid);
+                const std::size_t   outputs = samples / decimation;
+                const std::uint64_t mid     = gr::blocks::filter::detail::mapDelayedOffset(kMid, 1ULL, decimation, twice);
+                const std::string   label   = std::format("M = {}, {} inputs", decimation, samples);
 
                 expect(got.ran && ref.ran);
                 expect(eq(got.samples, outputs)) << label << ": every output, and none past the last input";
                 expect(that % (got.endIndex == std::optional<std::size_t>{outputs})) << label << ": the stream ends one past the last output";
-                expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{mid})) << label << ": the trigger on the delayed sample";
-                expect(that % (got.sampleOffsetsOf("trigger_name") == std::vector<std::size_t>{mid})) << label << ": where a sample-by-sample consumer sees it";
+                expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{static_cast<std::size_t>(mid)})) << label << ": the trigger on the delayed sample";
+                expect(that % (got.sampleOffsetsOf("trigger_name") == std::vector<std::size_t>{static_cast<std::size_t>(mid)})) << label << ": where a sample-by-sample consumer sees it";
                 for (const std::string_view key : {"trigger_time", "trigger_meta_info", "tx_eob"}) {
                     expect(that % (got.offsetsOf(key) == std::vector<std::size_t>{outputs})) << label << ": " << key << " past the end at the end-of-stream index";
                     expect(that % got.sampleOffsetsOf(key).empty()) << label << ": " << key << " on no sample";
