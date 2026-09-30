@@ -13,8 +13,8 @@
 
 namespace gr::blocks::fileio::test {
 
-// a new directory under the temporary directory, unique because it is created rather than named: a name already
-// taken is retried with new randomness
+// A new directory under the temporary directory. The directory is unique because creating it fails on a name
+// already taken, and a taken name is retried with new randomness.
 [[nodiscard]] inline std::filesystem::path createTemporaryDirectory(std::string_view prefix, std::size_t maxAttempts = 128UZ) {
     std::random_device random;
     for (std::size_t attempt = 0UZ; attempt < maxAttempts; ++attempt) {
@@ -30,8 +30,8 @@ namespace gr::blocks::fileio::test {
     throw std::runtime_error(std::format("no free name for a '{}' directory in {} attempts", prefix, maxAttempts));
 }
 
-// sets the working directory to a new temporary directory, and restores it and removes the directory on exit; a
-// failure of either is printed on standard error
+// Sets the working directory to a new temporary directory. On exit it restores the working directory and removes
+// the new one, and prints a failure of either on standard error.
 struct ScopedWorkingDirectory {
     std::filesystem::path previous  = std::filesystem::current_path();
     std::filesystem::path directory = createTemporaryDirectory("gr4-fileio-cwd");

@@ -11,7 +11,7 @@ enum class Mode { overwrite, append, multi };
 
 namespace detail {
 
-// the directory of a file name: its parent path, or the working directory for a bare name such as "tone.f32"
+// the parent path of a file name, or the working directory for a bare name such as "tone.f32"
 [[nodiscard]] inline std::filesystem::path parentDirectory(const std::filesystem::path& filePath) { return filePath.has_parent_path() ? filePath.parent_path() : std::filesystem::current_path(); }
 
 inline void ensureDirectoryExists(const std::filesystem::path& filePath) {

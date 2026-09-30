@@ -235,9 +235,10 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
         _failed          = true;
     }
 
-    // Throws when there is nothing to read: in multi mode the directory cannot be listed or no file name in it holds
-    // the base name; the reader refuses the uri or cannot open a local file. A failure the reader meets later, any
-    // failure of an HTTP read and a header that is not valid WAV end the stream with ERROR during the run.
+    // Throws when there is nothing to read. That is when, in multi mode, the directory cannot be listed or no file
+    // name in it holds the base name, or when the reader refuses the uri or cannot open a local file. A failure the
+    // reader meets later, any failure of an HTTP read and a header that is not valid WAV end the stream with ERROR
+    // during the run.
     void start() {
         sample_rate  = 0.f;
         num_channels = 0U;
@@ -270,8 +271,8 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
         if (auto opened = openFile(); !opened) {
             throw gr::exception(opened.error().message, opened.error().sourceLocation);
         }
-        // the reader's first message follows its open of a local file; an HTTP read waits on the network and is
-        // left to processBulk()
+        // The reader's first message comes after it opens a local file. An HTTP read waits on the network and is
+        // left to processBulk().
         if (localFile) {
             if (const auto error = pollHeader(true)) {
                 throw gr::exception(error->message, error->sourceLocation);
@@ -450,7 +451,7 @@ private:
         }
     }
 
-    // starts a reader on the next file of the set; the reader opens the file on the I/O thread pool
+    // Starts a reader on the next file of the set. The reader opens the file on the I/O thread pool.
     [[nodiscard]] std::expected<void, gr::Error> openFile() {
         resetFileState();
 
@@ -713,8 +714,8 @@ In multi mode, rotates to a new timestamped file when max_bytes_per_file is reac
 
     using gr::Block<WavSink<T>>::Block;
 
-    // throws when the uri is empty or the file does not open; a rotation in multi mode that cannot open its next file
-    // ends the stream with ERROR during the run
+    // Throws when the uri is empty or the file does not open. In multi mode, a rotation that cannot open its next file
+    // ends the stream with ERROR during the run.
     void start() {
         total_samples_written = 0U;
         _fileCounter          = 0U;
