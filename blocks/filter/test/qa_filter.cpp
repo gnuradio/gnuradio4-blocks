@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <format>
+#include <initializer_list>
 #include <optional>
 #include <span>
 #include <string>
@@ -14,6 +15,7 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/meta/UncertainValue.hpp>
 
 #include <gnuradio-4.0/algorithm/filter/FilterDesign.hpp>
@@ -25,6 +27,11 @@
 #include <gnuradio-4.0/testing/TestSpans.hpp>
 
 #include "StreamEndSink.hpp"
+
+/// @brief A tag key outside the framework's default tags: a block that forwards a tag through the framework's key filter
+/// drops it, and a block that forwards every key of a tag keeps it.
+constexpr std::string_view kNonDefaultKey = "private_key";
+static_assert(std::ranges::find(gr::tag::kDefaultTags, kNonDefaultKey) == gr::tag::kDefaultTags.end());
 
 /// @brief One sample through the `processBulk` of @p block.
 template<typename TBlock, typename T>
@@ -47,7 +54,7 @@ struct TaggedRun {
 };
 
 /// @brief Run @p nSamples through a block of type @p TBlock made with @p settings: a trigger name at input @p mid, a
-/// trigger time on the next-to-last input, and trigger information with a burst end on the last.
+/// trigger time on the next-to-last input, and trigger information with a burst end and `kNonDefaultKey` on the last.
 template<typename TBlock>
 [[nodiscard]] TaggedRun runTagged(gr::property_map settings, gr::Size_t nSamples, std::size_t mid) {
     using namespace gr::blocks::testing;
@@ -55,7 +62,7 @@ template<typename TBlock>
     auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", nSamples}, {"mark_tag", false}});
     source._tags.emplace_back(mid, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("mid")}});
     source._tags.emplace_back(nSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_time"}, std::uint64_t{1}}});
-    source._tags.emplace_back(nSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}, {gr::property_map::key_type{"tx_eob"}, true}});
+    source._tags.emplace_back(nSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}, {gr::property_map::key_type{"tx_eob"}, true}, {gr::property_map::key_type{kNonDefaultKey}, std::string("last")}});
     auto& block = graph.emplaceBlock<TBlock>(std::move(settings));
     auto  sinks = gr::blocks::filter::testing::connectEndSinks<float>(graph, block);
 
@@ -408,7 +415,7 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
         expect(that % (got.endIndex == std::optional<std::size_t>{std::size_t{kSamples}})) << "the stream ends one past the last output";
         expect(that % (got.offsetsOf("trigger_name") == std::vector<std::size_t>{kMid + 15UZ})) << "the trigger on the delayed sample";
         expect(that % (got.sampleOffsetsOf("trigger_name") == std::vector<std::size_t>{kMid + 15UZ})) << "where a sample-by-sample consumer sees it";
-        for (const std::string_view key : {"trigger_time", "trigger_meta_info", "tx_eob"}) {
+        for (const std::string_view key : std::initializer_list<std::string_view>{"trigger_time", "trigger_meta_info", "tx_eob", kNonDefaultKey}) {
             expect(that % (got.offsetsOf(key) == std::vector<std::size_t>{std::size_t{kSamples}})) << std::format("{} past the end at the end-of-stream index", key);
             expect(that % got.sampleOffsetsOf(key).empty()) << std::format("{} on no sample", key);
         }
@@ -468,16 +475,16 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
         // a FirFilter at M = 4 publishes the tags on the last inputs at index 250, where no sample is; fir_filter, and
         // BasicFilter in IIR mode through the framework's key filter, pass them to their own end-of-stream index
         namespace filter_test = gr::blocks::filter::testing;
-        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
+        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{kNonDefaultKey}, std::string("last")}}}};
         const gr::property_map     upstream{{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}};
 
         const auto fir = filter_test::runChained<FirFilter<float>, fir_filter<float>>(upstream, {{"b", std::vector<float>(31UZ, 1.0f / 31.0f)}}, 1000U, tags);
-        filter_test::expectAtStreamEnd(fir, 250UZ, {"trigger_name", "tx_eob"}, "fir_filter");
+        filter_test::expectAtStreamEnd(fir, 250UZ, {"trigger_name", kNonDefaultKey}, "fir_filter");
         expect(eq(fir.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "fir_filter: a tag inside the stream reaches a sample";
 
         const auto iir = filter_test::runChained<FirFilter<float>, BasicFilter<float>>(upstream, {{"filter_type", std::string("IIR")}, {"f_low", 100.0f}, {"sample_rate", 1000.0f}}, 1000U, tags);
         filter_test::expectAtStreamEnd(iir, 250UZ, {"trigger_name"}, "BasicFilter, IIR");
-        expect(that % iir.offsetsOf("tx_eob").empty()) << "BasicFilter, IIR: the framework's key filter drops a key it does not forward";
+        expect(that % iir.offsetsOf(kNonDefaultKey).empty()) << "BasicFilter, IIR: the framework's key filter drops a key outside the default tags";
     };
 
     "BasicDecimatingFilter in IIR mode publishes the tags of its partial last chunk at the end-of-stream index"_test = [] {
@@ -493,7 +500,7 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
             expect(that % (got.offsetsOf(key) == std::vector<std::size_t>{200UZ})) << std::format("{} at the end-of-stream index", key);
             expect(that % got.sampleOffsetsOf(key).empty()) << std::format("{} on no sample", key);
         }
-        expect(that % got.offsetsOf("tx_eob").empty()) << "the framework's key filter drops a key it does not forward";
+        expect(that % got.offsetsOf(kNonDefaultKey).empty()) << "the framework's key filter drops a key outside the default tags";
     };
 
     "Decimator publishes the tags of its partial last chunk at the end-of-stream index"_test = [] {
@@ -507,7 +514,7 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
             expect(that % (got.offsetsOf(key) == std::vector<std::size_t>{200UZ})) << std::format("{} at the end-of-stream index", key);
             expect(that % got.sampleOffsetsOf(key).empty()) << std::format("{} on no sample", key);
         }
-        expect(that % got.offsetsOf("tx_eob").empty()) << "the framework's key filter drops a key it does not forward";
+        expect(that % got.offsetsOf(kNonDefaultKey).empty()) << "the framework's key filter drops a key outside the default tags";
         expect(eq(got.sampleOffsetsOf("trigger_name").size(), 1UZ)) << "a tag inside the stream reaches a sample";
     };
 
@@ -515,10 +522,10 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
         // a FirFilter at M = 4 publishes the tags on the last inputs at index 250, where no sample is; the Decimator at
         // 5 passes them through the framework's key filter to its end-of-stream index, 50
         namespace filter_test = gr::blocks::filter::testing;
-        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
+        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{kNonDefaultKey}, std::string("last")}}}};
         const auto                 run = filter_test::runChained<FirFilter<float>, Decimator<float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}}, {{"decim", gr::Size_t{5}}}, 1000U, tags);
         filter_test::expectAtStreamEnd(run, 50UZ, {"trigger_name"}, "FirFilter at M = 4, then Decimator at 5");
-        expect(that % run.offsetsOf("tx_eob").empty()) << "the framework's key filter drops a key it does not forward";
+        expect(that % run.offsetsOf(kNonDefaultKey).empty()) << "the framework's key filter drops a key outside the default tags";
         expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
     };
 

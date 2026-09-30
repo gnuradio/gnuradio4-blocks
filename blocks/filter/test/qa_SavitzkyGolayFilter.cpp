@@ -729,7 +729,7 @@ const boost::ut::suite<"SavitzkyGolayFilter tag placement"> sgTagPlacementTests 
             if (c.lag == 0UZ) { // the causal fit makes an output for the last input, which carries its tags
                 expect(eq(sinks->end._samples.size(), std::size_t{kSamples})) << label << ": every output, and none past the last input";
                 expect(that % (sinks->end.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": the tag on the last input on the last output";
-                expect(that % (gr::blocks::filter::testing::offsetsOf(sinks->samples._tags, "tx_eob") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": the burst end with it, a key the framework would drop";
+                expect(that % (gr::blocks::filter::testing::offsetsOf(sinks->samples._tags, "tx_eob") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": the burst end tag on the last sample, whatever keys the core forwards";
             } else {
                 gr::blocks::filter::testing::expectAtStreamEnd(*sinks, kSamples, {"trigger_meta_info", "tx_eob"}, label);
             }
