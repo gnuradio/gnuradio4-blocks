@@ -496,6 +496,32 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
         expect(that % got.offsetsOf("tx_eob").empty()) << "the framework's key filter drops a key it does not forward";
     };
 
+    "Decimator publishes the tags of its partial last chunk at the end-of-stream index"_test = [] {
+        // at a decimation of 5 a stream of 1003 ends in a partial chunk of 3 inputs, which holds both end tags; they
+        // leave through the framework's key filter one past the 200 outputs
+        const TaggedRun got = runTagged<Decimator<float>>({{"decim", gr::Size_t{5}}}, kSamples + 3U, kMid);
+        expect(got.ran);
+        expect(eq(got.samples, 200UZ)) << "the whole chunks' outputs";
+        expect(that % (got.endIndex == std::optional<std::size_t>{200UZ})) << std::format("the stream ends one past the last output, tags seen: {}", gr::blocks::filter::testing::describe(got.tags));
+        for (const std::string_view key : {"trigger_time", "trigger_meta_info"}) {
+            expect(that % (got.offsetsOf(key) == std::vector<std::size_t>{200UZ})) << std::format("{} at the end-of-stream index", key);
+            expect(that % got.sampleOffsetsOf(key).empty()) << std::format("{} on no sample", key);
+        }
+        expect(that % got.offsetsOf("tx_eob").empty()) << "the framework's key filter drops a key it does not forward";
+        expect(eq(got.sampleOffsetsOf("trigger_name").size(), 1UZ)) << "a tag inside the stream reaches a sample";
+    };
+
+    "Decimator passes the tags an upstream block leaves at its end-of-stream index to its own"_test = [] {
+        // a FirFilter at M = 4 publishes the tags on the last inputs at index 250, where no sample is; the Decimator at
+        // 5 passes them through the framework's key filter to its end-of-stream index, 50
+        namespace filter_test = gr::blocks::filter::testing;
+        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
+        const auto                 run = filter_test::runChained<FirFilter<float>, Decimator<float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}}, {{"decim", gr::Size_t{5}}}, 1000U, tags);
+        filter_test::expectAtStreamEnd(run, 50UZ, {"trigger_name"}, "FirFilter at M = 4, then Decimator at 5");
+        expect(that % run.offsetsOf("tx_eob").empty()) << "the framework's key filter drops a key it does not forward";
+        expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
+    };
+
     "under a stop request the epilogue of fir_filter publishes nothing, and a call publishes its outputs' tags"_test = [] {
         // 5 equal taps delay by 2: the trigger on input 9 maps to output 11, past the 10 outputs of its call and among
         // the 4 outputs of the next 4 inputs
