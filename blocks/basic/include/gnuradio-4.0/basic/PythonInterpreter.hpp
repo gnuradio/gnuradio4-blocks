@@ -52,6 +52,8 @@ inline PyObject* NoneObj  = Py_None;
 
 constexpr inline bool isPyDict(const PyObject* obj) { return PyDict_Check(obj); }
 
+constexpr inline bool isPyString(const PyObject* obj) { return PyUnicode_Check(obj); }
+
 constexpr inline void PyDecRef(PyObject* obj) { // wrapper to isolate unsafe warning on C-API casts
     Py_XDECREF(obj);
 }

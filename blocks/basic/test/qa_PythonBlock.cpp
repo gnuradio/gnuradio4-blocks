@@ -416,6 +416,32 @@ def process_bulk(ins, outs):
         expect(eq(runLibraryBlock<std::int32_t>("gr::blocks::basic::PythonBlock<int32>", pythonScript), std::vector<std::int32_t>{0, 2, 4, 6, 8}));
         expect(eq(runLibraryBlock<float>("gr::blocks::basic::PythonBlock<float32>", pythonScript), std::vector<float>{0.f, 2.f, 4.f, 6.f, 8.f}));
     };
+
+    "setSettings refuses a key or a value that is not a string"_test = [] {
+        // the script records the message of each refusal under a string key
+        std::string pythonScript = R"(def process_bulk(ins, outs):
+    for entry, record in (({"n": 1}, "refused_value"), ({2: "two"}, "refused_key")):
+        try:
+            this_block.setSettings(entry)
+        except TypeError as error:
+            this_block.setSettings({record: str(error)})
+    for i in range(len(ins)):
+        outs[i][:] = ins[i]
+)";
+
+        PythonBlock<float> myBlock({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}});
+        myBlock.init(myBlock.progress); // needed for unit-test only when executed outside a Scheduler/Graph
+        std::vector<float>                  in{1.f};
+        std::vector<float>                  out(1UZ);
+        std::vector<std::span<const float>> ins{in};
+        std::vector<std::span<float>>       outs{out};
+        expect(myBlock.processBulk(std::span(ins), std::span(outs)) == gr::work::Status::OK);
+
+        const auto& settings = myBlock.getSettings();
+        expect(settings.contains("refused_value") && settings.at("refused_value").contains("'n': 1")) << "a value that is not a string raises a TypeError naming its key";
+        expect(settings.contains("refused_key") && settings.at("refused_key").contains("entry 2:")) << "a key that is not a string raises a TypeError naming the key";
+        expect(!settings.contains("n")) << "a refused entry is not stored";
+    };
 };
 
 int main() { /* tests are statically executed */ }

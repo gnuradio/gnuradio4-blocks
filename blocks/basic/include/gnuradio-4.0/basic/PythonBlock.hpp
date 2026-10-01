@@ -340,9 +340,15 @@ PyObject* PythonBlock_SetSettings_Template(PyObject* /*self*/, PyObject* args) {
     PyObject *                                                   key, *value;
     Py_ssize_t                                                   pos = 0;
     while (PyDict_Next(settingsDict, &pos, &key, &value)) {
+        if (!gr::python::isPyString(key) || !gr::python::isPyString(value)) {
+            return PyErr_Format(PyExc_TypeError, "setSettings takes string keys and values, not the entry %R: %R", key, value);
+        }
         const char* keyStr   = PyUnicode_AsUTF8(key);
         const char* valueStr = PyUnicode_AsUTF8(value);
-        newSettings[keyStr]  = valueStr;
+        if (keyStr == nullptr || valueStr == nullptr) {
+            return nullptr; // the Python error names the string that has no UTF-8 form
+        }
+        newSettings[keyStr] = valueStr;
     }
 
     myBlock->setSettings(newSettings);
