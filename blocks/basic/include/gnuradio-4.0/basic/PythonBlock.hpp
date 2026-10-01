@@ -35,6 +35,18 @@ The interpreter lock is free between calls, and a call from any thread takes it 
 The interpreter is finalized once, at process exit, when a block initialized it. Destroying a block releases only that
 block's Python objects.
 
+The map 'script_parameters' passes its entries to 'process_bulk' as keyword arguments, for example to
+'def process_bulk(ins, outs, factor=1.0)'. Each value arrives as None, bool, int, float, complex or str, a map as a dict,
+and a tensor of rank one as a list. Each call receives its own copy of the values.
+The block binds the map to the signature of 'process_bulk' when it loads the script and when the map changes.
+A change replaces the whole map, applies at the block's next work call and keeps the script's global state.
+A tag changes the map only on a block built without it.
+A map that does not fit the signature or holds a value without a Python form puts the block in its error state at init.
+At run time the block keeps the previous map and reports the refusal on its message port.
+A script change at run time resets the script's state. When the new 'process_bulk' refuses the map in force, the block
+reports the refusal at the change, and each later call fails until the map or the script changes.
+An empty map calls 'process_bulk(ins, outs)'.
+
 Usage Example:
 @code
 #include <gnuradio-4.0/PythonBlock.hpp>
@@ -97,7 +109,12 @@ myBlock.processBulk(ins, outs);
     A<gr::Size_t, "n_outputs", Visible, Doc<"number of inputs">, Limits<1U, 32U>> n_outputs    = 0U;
     std::string                                                                   pythonScript = "";
 
-    GR_MAKE_REFLECTABLE(PythonBlock, inputs, outputs, n_inputs, n_outputs, pythonScript);
+    A<property_map, "script_parameters", Doc<"keyword arguments of process_bulk, replaced whole by each change">> script_parameters{};
+
+    GR_MAKE_REFLECTABLE(PythonBlock, inputs, outputs, n_inputs, n_outputs, pythonScript, script_parameters);
+
+    /// the name under which the block's module holds the keyword arguments of 'process_bulk'
+    static constexpr const char* kScriptParametersName = "__script_parameters__";
 
     PyModuleDef*        _moduleDefinitions = myBlockPythonDefinitions<T>();
     python::Interpreter _interpreter{this, _moduleDefinitions};
@@ -184,6 +201,25 @@ this_block = PythonBlockWrapper(capsule))p",
                 },
                 pythonScript);
         }
+
+        if (new_settings.contains("pythonScript") || new_settings.contains("script_parameters")) {
+            std::string refusal;
+            _interpreter.invoke([this, &refusal] { refusal = bindScriptParameters(); }, pythonScript);
+            if (refusal.empty()) {
+                return;
+            }
+            const std::string message = std::format("{}(aka. {})::settingsChanged(...) - script_parameters refused: {}", this->unique_name, this->name, refusal);
+            if (this->state() == lifecycle::State::IDLE) {
+                throw gr::exception(message);
+            }
+            // at run time the block keeps the previous map, and the settings and a saved graph report the map in force
+            if (const auto previous = old_settings.find("script_parameters"); previous != old_settings.end()) {
+                if (const auto* map = previous->second.get_if<property_map>(); map != nullptr) {
+                    script_parameters = *map;
+                }
+            }
+            this->emitErrorMessage("settingsChanged(...)", message);
+        }
     }
 
     const poc_property_map& getSettings() const {
@@ -225,6 +261,55 @@ this_block = PythonBlockWrapper(capsule))p",
     // clang-format on
 
 private:
+    /// Converts 'script_parameters' to keyword arguments, binds them to the signature of 'process_bulk' and stores them in
+    /// the module for later calls. Returns the reason for a refusal and leaves the stored arguments as they were. Returns
+    /// an empty string on success, and when no script is loaded yet. The caller holds the interpreter lock.
+    std::string bindScriptParameters() {
+        python::PyObjectGuard function(PyObject_GetAttrString(_interpreter.getModule(), "process_bulk"));
+        if (!function) {
+            PyErr_Clear();
+            return {};
+        }
+        auto converted = python::toPyObject(script_parameters.value, "script_parameters");
+        if (!converted) {
+            return converted.error();
+        }
+        python::PyObjectGuard keywords(*converted);
+        python::PyObjectGuard inspect(PyImport_ImportModule("inspect"));
+        python::PyObjectGuard signatureOf(inspect ? PyObject_GetAttrString(inspect, "signature") : nullptr);
+        python::PyObjectGuard signature(signatureOf ? PyObject_CallOneArg(signatureOf, function) : nullptr);
+        python::PyObjectGuard bind(signature ? PyObject_GetAttrString(signature, "bind") : nullptr);
+        python::PyObjectGuard positional(bind ? PyTuple_Pack(2, python::NoneObj, python::NoneObj) : nullptr);
+        python::PyObjectGuard bound(positional ? PyObject_Call(bind, positional, keywords) : nullptr);
+        if (!bound) {
+            const std::string     error = python::takeCurrentPythonError();
+            python::PyObjectGuard parameters(signature ? PyObject_Str(signature) : nullptr);
+            const char*           text = parameters ? PyUnicode_AsUTF8(parameters) : nullptr;
+            PyErr_Clear();
+            return std::format("{} does not fit process_bulk{}: {}", pmt::Value(script_parameters.value), text != nullptr ? text : "(...)", error);
+        }
+        if (PyDict_SetItemString(_interpreter.getDictionary(), kScriptParametersName, keywords) != 0) {
+            return python::takeCurrentPythonError();
+        }
+        return {};
+    }
+
+    /// Returns a deep copy of the stored keyword arguments, or null when there are none. A script that changes a list or
+    /// a dict it receives changes only its own copy. The caller holds the interpreter lock.
+    PyObject* copyScriptParameters() {
+        PyObject* stored = PyDict_GetItemString(_interpreter.getDictionary(), kScriptParametersName); // borrowed reference
+        if (stored == nullptr || PyDict_Size(stored) == 0) {
+            return nullptr;
+        }
+        python::PyObjectGuard copyModule(PyImport_ImportModule("copy"));
+        python::PyObjectGuard deepcopy(copyModule ? PyObject_GetAttrString(copyModule, "deepcopy") : nullptr);
+        PyObject*             copy = deepcopy ? PyObject_CallOneArg(deepcopy, stored) : nullptr;
+        if (copy == nullptr) {
+            python::throwCurrentPythonError(std::format("{}(aka. {}) - failed to copy script_parameters", this->unique_name, this->name), std::source_location::current(), pythonScript);
+        }
+        return copy;
+    }
+
     /// Calls the script's function if it defines one. The lock is held until the function's result is released.
     void callOptionalFunction(std::string_view functionName) {
         python::PyGILGuard lock;
@@ -247,7 +332,8 @@ private:
         PyTuple_SetItem(pyArgs, 0, pIns);
         PyTuple_SetItem(pyArgs, 1, pOuts);
 
-        if (python::PyObjectGuard pyValue = _interpreter.invokeFunction("process_bulk", pyArgs); !pyValue) {
+        python::PyObjectGuard keywords(copyScriptParameters());
+        if (python::PyObjectGuard pyValue = _interpreter.invokeFunction("process_bulk", pyArgs, keywords); !pyValue) {
             python::throwCurrentPythonError(std::format("{}(aka. {})::callPythonFunction(..) Python function call failed", this->unique_name, this->name), std::source_location::current(), pythonScript);
         }
     }

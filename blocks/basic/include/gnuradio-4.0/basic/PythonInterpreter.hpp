@@ -24,12 +24,15 @@
 #include <complex>
 #include <cstdint>
 #include <exception>
+#include <expected>
+#include <optional>
 #include <regex>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 
 #include <gnuradio-4.0/Message.hpp>
@@ -190,6 +193,12 @@ inline void throwCurrentPythonError(std::string_view msg, std::source_location l
     throw gr::exception(std::format("{}\nPython error: {}\n{}", msg, toString(exception), toLineCountAnnotated(pythonCode, min, max, marker)), location);
 }
 
+/// Clears the raised Python exception and returns its representation.
+[[nodiscard]] inline std::string takeCurrentPythonError() {
+    PyObjectGuard exception(PyErr_GetRaisedException());
+    return exception ? toString(exception) : std::string("<unknown exception>");
+}
+
 [[nodiscard]] inline std::string getDictionary(std::string_view moduleName) {
     PyObject* module = PyDict_GetItemString(PyImport_GetModuleDict(), moduleName.data());
     if (module == nullptr) {
@@ -249,6 +258,116 @@ constexpr inline PyObject* toPyArray(T* arrayData, std::initializer_list<std::si
         PyArray_CLEARFLAGS(reinterpret_cast<PyArrayObject*>(npArray), NPY_ARRAY_WRITEABLE);
     }
     return npArray;
+}
+
+[[nodiscard]] inline std::expected<PyObject*, std::string> toPyObject(const pmt::Value::Map& map, std::string_view key);
+[[nodiscard]] inline std::expected<PyObject*, std::string> toPyObject(const pmt::Value& value, std::string_view key);
+
+namespace detail {
+/// returns a new reference, or null with a Python error set
+template<typename T>
+[[nodiscard]] PyObject* toPyScalar(const T& value) {
+    if constexpr (std::is_same_v<T, bool>) { // before the integers: a Python bool is an int
+        return PyBool_FromLong(value ? 1L : 0L);
+    } else if constexpr (std::is_same_v<T, std::pmr::string>) {
+        return PyUnicode_FromStringAndSize(value.data(), static_cast<Py_ssize_t>(value.size()));
+    } else if constexpr (std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>) {
+        return PyComplex_FromDoubles(static_cast<double>(value.real()), static_cast<double>(value.imag()));
+    } else if constexpr (std::is_floating_point_v<T>) {
+        return PyFloat_FromDouble(static_cast<double>(value));
+    } else if constexpr (std::is_signed_v<T>) {
+        return PyLong_FromLongLong(static_cast<long long>(value));
+    } else {
+        return PyLong_FromUnsignedLongLong(static_cast<unsigned long long>(value));
+    }
+}
+
+[[nodiscard]] inline std::unexpected<std::string> conversionFailed(std::string_view key) {
+    PyErr_Clear();
+    return std::unexpected(std::format("'{}' could not be converted to a Python object", key));
+}
+
+template<typename T>
+[[nodiscard]] std::expected<PyObject*, std::string> toPyList(const Tensor<T>& tensor, std::string_view key) {
+    if (tensor.rank() > 1UZ) {
+        return std::unexpected(std::format("'{}' is a tensor of rank {}, and a Python list takes a rank of one", key, tensor.rank()));
+    }
+    PyObjectGuard list(PyList_New(static_cast<Py_ssize_t>(tensor.size())));
+    if (!list) {
+        return conversionFailed(key);
+    }
+    Py_ssize_t index = 0;
+    for (const auto& element : tensor) {
+        PyObject* item = nullptr;
+        if constexpr (std::is_same_v<T, pmt::Value>) {
+            auto converted = toPyObject(element, std::format("{}[{}]", key, index));
+            if (!converted) {
+                return std::unexpected(converted.error());
+            }
+            item = *converted;
+        } else {
+            item = toPyScalar(static_cast<T>(element));
+        }
+        if (item == nullptr) {
+            return conversionFailed(key);
+        }
+        PyList_SetItem(list, index++, item); // steals the reference
+    }
+    return list.release();
+}
+} // namespace detail
+
+/// Converts a map to a new Python dict whose entries are converted as by the overload for a value.
+[[nodiscard]] inline std::expected<PyObject*, std::string> toPyObject(const pmt::Value::Map& map, std::string_view key) {
+    PyObjectGuard dict(PyDict_New());
+    if (!dict) {
+        return detail::conversionFailed(key);
+    }
+    for (const auto& [entryKey, entry] : map) {
+        const std::string name(entryKey);
+        auto              converted = toPyObject(entry, std::format("{}.{}", key, name));
+        if (!converted) {
+            return std::unexpected(converted.error());
+        }
+        PyObjectGuard item(*converted);
+        if (PyDict_SetItemString(dict, name.c_str(), item) != 0) {
+            return detail::conversionFailed(key);
+        }
+    }
+    return dict.release();
+}
+
+/// Converts a value to a new Python object: None, bool, int, float, complex or str, a dict for a map, and a list for a
+/// tensor of rank one. A value without such a form returns an error that names its place: 'key' for the value itself,
+/// 'key.name' for a map entry and 'key[i]' for a list element. A tensor of rank two or more has no such form.
+[[nodiscard]] inline std::expected<PyObject*, std::string> toPyObject(const pmt::Value& value, std::string_view key) {
+    if (value.is_monostate()) {
+        PyIncRef(NoneObj);
+        return NoneObj;
+    }
+    if (const auto* map = value.get_if<pmt::Value::Map>(); map != nullptr) {
+        return toPyObject(*map, key);
+    }
+    if (const auto* list = value.get_if<Tensor<pmt::Value>>(); list != nullptr) {
+        return detail::toPyList(*list, key);
+    }
+    std::optional<std::expected<PyObject*, std::string>> converted;
+    auto                                                 convertAs = [&value, key, &converted]<typename T>() {
+        if (converted.has_value()) {
+            return;
+        }
+        if (const T* scalar = value.get_if<T>(); scalar != nullptr) {
+            PyObject* object = detail::toPyScalar(*scalar);
+            converted        = object != nullptr ? std::expected<PyObject*, std::string>(object) : detail::conversionFailed(key);
+        } else if (const auto* tensor = value.get_if<Tensor<T>>(); tensor != nullptr) {
+            converted = detail::toPyList(*tensor, key);
+        }
+    };
+    [&convertAs]<typename... Ts>(std::type_identity<std::tuple<Ts...>>) { (convertAs.template operator()<Ts>(), ...); }(std::type_identity<std::tuple<bool, std::int8_t, std::int16_t, std::int32_t, std::int64_t, std::uint8_t, std::uint16_t, std::uint32_t, std::uint64_t, float, double, std::complex<float>, std::complex<double>, std::pmr::string>>{});
+    if (converted.has_value()) {
+        return *converted;
+    }
+    return std::unexpected(std::format("'{}' holds a type without a Python form", key));
 }
 
 template<typename T>
@@ -408,8 +527,10 @@ public:
         }
     }
 
+    /// Calls the module's function with the positional arguments in the tuple 'functionArguments' and the keyword
+    /// arguments in the dict 'keywordArguments'. Either may be null for none.
     template<EnforceFunction forced = EnforceFunction::MANDATORY>
-    python::PyObjectGuard invokeFunction(std::string_view functionName, PyObject* functionArguments = nullptr, std::source_location location = std::source_location::current()) {
+    python::PyObjectGuard invokeFunction(std::string_view functionName, PyObject* functionArguments = nullptr, PyObject* keywordArguments = nullptr, std::source_location location = std::source_location::current()) {
         PyGILGuard localGuard;
         const bool hasFunction = PyObject_HasAttrString(getModule(), functionName.data());
         if constexpr (forced == EnforceFunction::MANDATORY) {
@@ -422,7 +543,8 @@ public:
             }
         }
         python::PyObjectGuard pyFunc(PyObject_GetAttrString(getModule(), functionName.data()));
-        return python::PyObjectGuard(PyObject_CallObject(pyFunc, functionArguments));
+        python::PyObjectGuard noArguments(functionArguments == nullptr ? PyTuple_New(0) : nullptr);
+        return python::PyObjectGuard(PyObject_Call(pyFunc, functionArguments != nullptr ? functionArguments : noArguments.get(), keywordArguments));
     }
 };
 

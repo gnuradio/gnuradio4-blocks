@@ -6,10 +6,18 @@
 
 #include <gnuradio-4.0/GrBasicBlocks.hpp>
 #include <gnuradio-4.0/Graph.hpp>
+#include <gnuradio-4.0/Graph_yaml_importer.hpp>
+#include <gnuradio-4.0/PluginLoader.hpp>
 
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
+
+#include <atomic>
+#include <chrono>
+#include <limits>
+#include <memory>
+#include <thread>
 
 namespace {
 /// runs five samples through a Python block the block library's registration makes
@@ -35,6 +43,80 @@ std::vector<T> runLibraryBlock(std::string_view typeName, const std::string& pyt
     }
     expect(sched.runAndWait().has_value());
     return {sink._samples.begin(), sink._samples.end()};
+}
+
+/// makes the block library, a ramp source and a collecting sink loadable from a graph file
+void registerGraphFileBlocks() {
+    using namespace gr::blocks::testing;
+    static const bool registered = [] {
+        gr::BlockRegistry& registry = gr::globalBlockRegistry();
+        gr::blocklib::initGrBasicBlocks(registry);
+        return registry.insert<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>("=qa::RampSource") && registry.insert<TagSink<float, ProcessFunction::USE_PROCESS_BULK>>("=qa::CollectingSink");
+    }();
+    boost::ut::expect(registered) << "the test blocks reach the global registry";
+}
+
+/// the counts a FactorSink shares with the test thread
+struct FactorProbe {
+    static constexpr std::size_t kNone = std::numeric_limits<std::size_t>::max();
+
+    std::atomic<std::size_t> nSamples{0UZ};
+    std::atomic<std::size_t> firstScaled{kNone}; ///< index of the first sample that is its index times '_after'
+    std::atomic<std::size_t> nUnexpected{0UZ};   ///< samples that fit neither factor in force
+};
+
+/// Checks a ramp scaled by one factor and then by another: sample i is i * _before up to the first sample that is
+/// i * _after, and every sample from there on is i * _after.
+template<typename T>
+struct FactorSink : gr::Block<FactorSink<T>> {
+    gr::PortIn<T> in;
+
+    GR_MAKE_REFLECTABLE(FactorSink, in);
+
+    std::shared_ptr<FactorProbe> _probe = std::make_shared<FactorProbe>();
+    T                            _before{2};
+    T                            _after{5};
+
+    gr::work::Status processBulk(gr::InputSpanLike auto& input) {
+        FactorProbe& probe = *_probe;
+        std::size_t  index = probe.nSamples.load(std::memory_order_relaxed);
+        for (const T sample : input) {
+            const T    ramp   = static_cast<T>(index);
+            const bool scaled = probe.firstScaled.load(std::memory_order_relaxed) != FactorProbe::kNone;
+            if (!scaled && sample == ramp * _before) {
+                // the first factor is still in force
+            } else if (!scaled && sample == ramp * _after) {
+                probe.firstScaled.store(index, std::memory_order_relaxed);
+            } else if (!scaled || sample != ramp * _after) {
+                probe.nUnexpected.fetch_add(1UZ, std::memory_order_relaxed);
+            }
+            ++index;
+        }
+        probe.nSamples.store(index, std::memory_order_release);
+        return gr::work::Status::OK;
+    }
+};
+
+/// waits until 'condition' holds; the time limit ends only a run that has already failed
+template<typename Condition>
+bool awaitCondition(Condition condition) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!condition()) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+
+/// runs 'in' once through a block with one input and one output
+std::vector<float> runOnce(gr::blocks::basic::PythonBlock<float>& block, std::vector<float> in) {
+    std::vector<float>                  out(in.size());
+    std::vector<std::span<const float>> ins{in};
+    std::vector<std::span<float>>       outs{out};
+    boost::ut::expect(block.processBulk(std::span(ins), std::span(outs)) == gr::work::Status::OK);
+    return out;
 }
 } // namespace
 
@@ -415,6 +497,273 @@ def process_bulk(ins, outs):
 )";
         expect(eq(runLibraryBlock<std::int32_t>("gr::blocks::basic::PythonBlock<int32>", pythonScript), std::vector<std::int32_t>{0, 2, 4, 6, 8}));
         expect(eq(runLibraryBlock<float>("gr::blocks::basic::PythonBlock<float32>", pythonScript), std::vector<float>{0.f, 2.f, 4.f, 6.f, 8.f}));
+    };
+
+    "script parameters from a graph file survive a save and a load"_test = [] {
+        registerGraphFileBlocks();
+        gr::PluginLoader& loader = gr::globalPluginLoader();
+
+        // the script asserts the Python type of each parameter
+        const std::string document = R"yaml(blocks:
+  - id: qa::RampSource
+    parameters:
+      name: src
+      n_samples_max: 5
+      mark_tag: false
+  - id: gr::blocks::basic::PythonBlock<float32>
+    parameters:
+      name: py
+      n_inputs: 1
+      n_outputs: 1
+      script_parameters: {factor: 3, label: x, on: true}
+      pythonScript: |
+        def process_bulk(ins, outs, factor, label, on):
+            assert type(factor) is int and type(label) is str and on is True, (factor, label, on)
+            for i in range(len(ins)):
+                outs[i][:] = ins[i] * factor
+  - id: qa::CollectingSink
+    parameters:
+      name: sink
+      n_samples_expected: 5
+connections:
+  - [src, 0, py, [0, 0]]
+  - [py, [0, 0], sink, 0]
+)yaml";
+
+        auto findBlock = [](const gr::Graph& graph, std::string_view name) -> gr::BlockModel* {
+            for (const auto& block : graph.blocks()) {
+                if (block->name() == name) {
+                    return block.get();
+                }
+            }
+            return nullptr;
+        };
+        auto runGraph = [&findBlock](gr::meta::indirect<gr::Graph> graph) -> std::vector<float> {
+            gr::BlockModel* sink = findBlock(*graph, "sink");
+            if (sink == nullptr) {
+                return {};
+            }
+            gr::scheduler::Simple sched;
+            if (!sched.exchange(std::move(graph)).has_value()) {
+                return {};
+            }
+            if (auto ran = sched.runAndWait(); !ran) {
+                std::println(stderr, "graph run failed: {}", ran.error().message);
+                return {};
+            }
+            const auto& samples = static_cast<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>*>(sink->raw())->_samples;
+            return {samples.begin(), samples.end()};
+        };
+        const gr::property_map expected{{"factor", std::int64_t{3}}, {"label", std::string("x")}, {"on", true}};
+
+        auto              loaded = gr::loadGrc(loader, document);
+        const std::string saved  = gr::saveGrc(loader, *loaded);
+        expect(eq(runGraph(std::move(loaded)), std::vector<float>{0.f, 3.f, 6.f, 9.f, 12.f})) << "the graph file's parameters reach process_bulk";
+
+        auto            reloaded = gr::loadGrc(loader, saved);
+        gr::BlockModel* python   = findBlock(*reloaded, "py");
+        expect(python != nullptr) << saved;
+        if (python != nullptr) {
+            const auto parameters = python->settings().get("script_parameters");
+            expect(parameters.has_value() && *parameters == gr::pmt::Value(expected)) << std::format("the saved graph keeps each parameter and its type:\n{}", saved);
+        }
+        expect(eq(runGraph(std::move(reloaded)), std::vector<float>{0.f, 3.f, 6.f, 9.f, 12.f})) << "the saved graph runs alike";
+    };
+
+    "a settings message changes the parameters of a running script"_test = [] {
+        // the script counts its loads and its calls; a change of the map alone does not run the script again
+        std::string pythonScript = R"(loads = globals().get("loads", 0) + 1
+calls = 0
+calls_at_change = 0
+
+def process_bulk(ins, outs, factor):
+    global calls, calls_at_change
+    calls += 1
+    if factor == 5 and calls_at_change == 0:
+        calls_at_change = calls
+    this_block.setSettings({"loads": str(loads), "calls": str(calls), "calls_at_change": str(calls_at_change)})
+    for i in range(len(ins)):
+        outs[i][:] = ins[i] * factor
+)";
+
+        using namespace gr::blocks::testing;
+        using enum gr::lifecycle::State;
+        Graph graph;
+        auto& src   = graph.emplaceBlock<TagSource<float>>({{"n_samples_max", 0U}, {"mark_tag", false}});
+        auto& block = graph.emplaceBlock<PythonBlock<float>>({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}, {"script_parameters", gr::property_map{{"factor", 2}}}});
+        auto& sink  = graph.emplaceBlock<FactorSink<float>>();
+        expect(graph.connect(src, "out", block, "inputs#0").has_value());
+        expect(graph.connect(block, "outputs#0", sink, "in").has_value());
+        const std::shared_ptr<FactorProbe> probe = sink._probe;
+
+        gr::scheduler::Simple<gr::scheduler::ExecutionPolicy::multiThreaded> sched;
+        expect(sched.exchange(std::move(graph)).has_value());
+        gr::MsgPortOut toScheduler;
+        expect(toScheduler.connect(sched.msgIn).has_value());
+        expect(sched.changeStateTo(INITIALISED).has_value());
+        expect(sched.changeStateTo(RUNNING).has_value());
+
+        expect(awaitCondition([&probe] { return probe->nSamples.load(std::memory_order_acquire) > 0UZ; })) << "the graph runs";
+        gr::sendMessage<gr::message::Command::Set>(toScheduler, block.unique_name, gr::block::property::kSetting, {{"script_parameters", gr::property_map{{"factor", 5}}}});
+        const bool changed = awaitCondition([&probe] { return probe->firstScaled.load(std::memory_order_relaxed) != FactorProbe::kNone; });
+        expect(changed) << "the new factor reaches the output";
+        if (changed) {
+            // one call produces at most one buffer of samples, so these samples include later calls
+            const std::size_t later = probe->firstScaled.load(std::memory_order_relaxed) + 4UZ * gr::graph::defaultMinBufferSize(true);
+            expect(awaitCondition([&probe, later] { return probe->nSamples.load(std::memory_order_acquire) > later; })) << "the graph runs on after the change";
+        }
+        expect(sched.changeStateTo(REQUESTED_STOP).has_value());
+        expect(awaitCondition([&sched] { return sched.state() == STOPPED; })) << "the graph stops";
+
+        expect(eq(probe->nUnexpected.load(), 0UZ)) << "each sample is its index times 2 before the change and times 5 after it";
+        const auto& settings = block.getSettings();
+        auto        count    = [&settings](const std::string& key) { return settings.contains(key) ? std::stoul(settings.at(key)) : 0UL; };
+        expect(eq(count("loads"), 1UL)) << "the script ran once";
+        expect(gt(count("calls_at_change"), 1UL)) << "the script was called before the change";
+        expect(gt(count("calls"), count("calls_at_change"))) << "the call counter kept rising after the change";
+    };
+
+    "a tag changes the script parameters at its sample"_test = [] {
+        // a tag updates a setting the block was not constructed with, so the factor starts as the script's default
+        std::string pythonScript = R"(def process_bulk(ins, outs, factor=2):
+    for i in range(len(ins)):
+        outs[i][:] = ins[i] * factor
+)";
+
+        using namespace gr::blocks::testing;
+        Graph graph;
+        auto& src   = graph.emplaceBlock<TagSource<float>>({{"n_samples_max", 100U}, {"mark_tag", false}});
+        auto& block = graph.emplaceBlock<PythonBlock<float>>({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}});
+        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_expected", 100U}});
+        src._tags   = {gr::Tag{50UZ, {{"script_parameters", gr::property_map{{"factor", 5}}}}}};
+        expect(graph.connect(src, "out", block, "inputs#0").has_value());
+        expect(graph.connect(block, "outputs#0", sink, "in").has_value());
+
+        gr::scheduler::Simple sched;
+        expect(sched.exchange(std::move(graph)).has_value());
+        expect(sched.runAndWait().has_value());
+
+        std::vector<float> expected(100UZ);
+        for (std::size_t i = 0UZ; i < expected.size(); ++i) {
+            expected[i] = static_cast<float>(i) * (i < 50UZ ? 2.f : 5.f);
+        }
+        expect(eq(sink._samples, expected)) << "the factor changes at the tagged sample";
+    };
+
+    "an empty script_parameters map keeps the two-argument call"_test = [] {
+        auto makeAndRun = [](const std::string& pythonScript) {
+            PythonBlock<float> myBlock({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}});
+            myBlock.init(myBlock.progress); // needed for unit-test only when executed outside a Scheduler/Graph
+            const auto parameters = myBlock.settings().get("script_parameters");
+            expect(parameters.has_value() && parameters->is_map() && parameters->get_if<gr::property_map>()->empty()) << "the block declares an empty map by default";
+            return runOnce(myBlock, {1.f, 2.f, 3.f});
+        };
+
+        expect(eq(makeAndRun(R"(def process_bulk(ins, outs):
+    for i in range(len(ins)):
+        outs[i][:] = ins[i] * 2
+)"),
+            std::vector<float>{2.f, 4.f, 6.f}))
+            << "a script that takes two arguments";
+        expect(eq(makeAndRun(R"(def process_bulk(ins, outs, factor=3):
+    for i in range(len(ins)):
+        outs[i][:] = ins[i] * factor
+)"),
+            std::vector<float>{3.f, 6.f, 9.f}))
+            << "a script whose third argument has a default";
+    };
+
+    "script parameters that process_bulk does not take are refused at init"_test = [] {
+        // with a default for 'factor', the script runs and sets its flag wherever the block calls it
+        const std::string pythonScript = R"(def process_bulk(ins, outs, factor=1):
+    this_block.setSettings({"ran": "yes"})
+    for i in range(len(ins)):
+        outs[i][:] = ins[i] * factor
+)";
+        auto              initError    = [](const gr::property_map& parameters, const std::string& script) {
+            PythonBlock<float> myBlock({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", script}, {"script_parameters", parameters}});
+            try {
+                myBlock.settings().init();
+                std::ignore = myBlock.settings().applyStagedParameters(); // needed for unit-test only when executed outside a Scheduler/Graph
+            } catch (const std::exception& ex) {
+                return std::string(ex.what());
+            }
+            return std::string{};
+        };
+
+        const std::string unknownKey = initError({{"gain", 2}}, pythonScript);
+        expect(unknownKey.contains("gain")) << std::format("a key process_bulk does not take is refused by name: '{}'", unknownKey);
+
+        const std::string grid = initError({{"grid", gr::pmt::Value(gr::Tensor<float>(std::vector<std::size_t>{2UZ, 2UZ}))}}, R"(def process_bulk(ins, outs, **parameters):
+    for i in range(len(ins)):
+        outs[i][:] = ins[i]
+)");
+        expect(grid.contains("grid")) << std::format("a value with no Python form is refused by name: '{}'", grid);
+
+        using namespace gr::blocks::testing;
+        Graph graph;
+        auto& src   = graph.emplaceBlock<TagSource<float>>({{"n_samples_max", 5U}, {"mark_tag", false}});
+        auto& block = graph.emplaceBlock<PythonBlock<float>>({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}, {"script_parameters", gr::property_map{{"gain", 2}}}});
+        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_expected", 5U}});
+        expect(graph.connect(src, "out", block, "inputs#0").has_value());
+        expect(graph.connect(block, "outputs#0", sink, "in").has_value());
+
+        gr::scheduler::Simple sched;
+        std::string           reported;
+        if (sched.exchange(std::move(graph)).has_value()) {
+            if (auto ran = sched.runAndWait(); !ran) {
+                reported = ran.error().message;
+            }
+        }
+        expect(reported.contains("gain")) << std::format("the graph run fails and names the key: '{}'", reported);
+        expect(!block.getSettings().contains("ran")) << "the script is never called";
+    };
+
+    "a refused change at run time keeps the previous parameters"_test = [] {
+        std::string            pythonScript = R"(def process_bulk(ins, outs, factor):
+    for i in range(len(ins)):
+        outs[i][:] = ins[i] * factor
+)";
+        const gr::property_map previous{{"factor", 2}};
+
+        PythonBlock<float> myBlock({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}, {"script_parameters", previous}});
+        myBlock.init(myBlock.progress); // needed for unit-test only when executed outside a Scheduler/Graph
+        gr::MsgPortIn fromBlock;
+        expect(myBlock.msgOut.connect(fromBlock).has_value());
+        expect(eq(runOnce(myBlock, {1.f, 2.f, 3.f}), std::vector<float>{2.f, 4.f, 6.f}));
+
+        expect(myBlock.settings().setStaged({{"script_parameters", gr::property_map{{"gain", 2}}}}).empty()) << "the block declares script_parameters";
+        bool throws = false;
+        try {
+            std::ignore = myBlock.settings().applyStagedParameters();
+        } catch (const std::exception& ex) {
+            throws = true;
+            std::println(stderr, "applyStagedParameters() threw: {}", ex.what());
+        }
+        expect(!throws) << "a refusal at run time is reported, not thrown";
+
+        const auto parameters = myBlock.settings().get("script_parameters");
+        expect(parameters.has_value() && *parameters == gr::pmt::Value(previous)) << "the settings report the previous map";
+        expect(eq(runOnce(myBlock, {1.f, 2.f, 3.f}), std::vector<float>{2.f, 4.f, 6.f})) << "the script keeps the previous factor";
+
+        auto       messages = fromBlock.streamReader().get();
+        const bool reported = std::ranges::any_of(messages, [](const gr::Message& message) { return !message.data.has_value() && message.data.error().message.contains("gain"); });
+        std::ignore         = messages.consume(messages.size());
+        expect(reported) << "the block reports the refused key on its message port";
+    };
+
+    "a script's change to a list parameter stays within one call"_test = [] {
+        std::string        pythonScript = R"(def process_bulk(ins, outs, history):
+    this_block.setSettings({"seen": str(len(history))})
+    history.append(0)
+    for i in range(len(ins)):
+        outs[i][:] = ins[i]
+)";
+        PythonBlock<float> myBlock({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}, {"script_parameters", gr::property_map{{"history", std::vector<std::int64_t>{1}}}}});
+        myBlock.init(myBlock.progress); // needed for unit-test only when executed outside a Scheduler/Graph
+        std::ignore = runOnce(myBlock, {1.f});
+        std::ignore = runOnce(myBlock, {1.f});
+        expect(myBlock.getSettings().contains("seen") && myBlock.getSettings().at("seen") == "1") << "each call receives the list as the map holds it";
     };
 
     "setSettings refuses a key or a value that is not a string"_test = [] {
