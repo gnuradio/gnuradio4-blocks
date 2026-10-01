@@ -465,12 +465,13 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         constexpr double       kAfter  = 1.0;
         const gr::property_map settings{{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, 0.5)}};
 
-        // 300 samples, so the output input 80 lands on after the prototype's delay of about 72 inputs is produced
+        // 300 samples, enough to produce the output that input 80 lands on after the prototype's delay of about 72
+        // inputs
         const std::vector<float>   x = noise<float>(300UZ, 0x9E3779B97F4A7C15ULL);
         const std::vector<gr::Tag> tags{gr::Tag{80UZ, tagWithRate(0, kRateIn)}};
 
-        // The probe: a span of 100 is visible from the first call and one output slot is free, so the call consumes a
-        // prefix far short of input 80 and the tag is still waiting when `rate` changes under it.
+        // The probe sees a span of 100 from the first call, with one free output slot. The call consumes a prefix far
+        // short of input 80. The tag still waits when `rate` changes.
         ArbitraryRateResampler<float> probe = makeResampler<float>(settings);
         AsyncRun<float>               probeRun{std::span<const float>(x), std::span<const gr::Tag>(tags)};
         probeRun.call(probe, 100UZ, 1UZ);
@@ -513,13 +514,13 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
     };
 
     "a tag moves whole by the delay, its rate with its trigger, and a retune arrives on the delayed sample"_test = [] {
-        // a tag describes the sample it sits on: the opening tag leaves whole on the output nearest the prototype's delay
-        // at the interpolated rate, and a retune at input 100 on the output nearest 100*L plus the delay
+        // The opening tag leaves with all its keys on the output nearest the prototype's delay at the interpolated
+        // rate. A retune at input 100 leaves on the output nearest 100*L plus the delay.
         constexpr std::size_t    kBank     = 32UZ;
         const std::vector<float> prototype = prototypeFor(kBank, 0.5);
         for (const double rate : {0.5, 1.7}) {
             ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", rate}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototype}});
-            gr::property_map              opening; // a source's opening tag: the stream's rate and the trigger of its first sample
+            gr::property_map              opening; // a source's opening tag, with the stream's rate and the trigger of its first sample
             opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
             opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
             gr::property_map retune; // a mid-stream retune
@@ -539,8 +540,8 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
     };
 
     "a tag whose delayed output lies past the end of the stream leaves at the end-of-stream index"_test = [] {
-        // the prototype delays by more than two inputs: a trigger and a burst end on the last two inputs lie past the last
-        // output, and both leave at the end-of-stream index, one past it, below unity and above it
+        // The prototype delays by more than two inputs. A trigger and a burst end on the last two inputs lie past the
+        // last output, below unity and above it. Both leave at the end-of-stream index, one past that output.
         constexpr std::size_t kBank    = 32UZ;
         constexpr gr::Size_t  kSamples = 1000U;
         for (const double rate : {0.5, 1.7}) {
@@ -567,8 +568,8 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
     };
 
     "a tag on an input whose call makes no output leaves at the end-of-stream index"_test = [] {
-        // at a rate of 0.5 the last of 1001 inputs completes no output: the source hands it over alone with its burst
-        // end, and the call that takes it makes nothing
+        // At a rate of 0.5 the last of 1001 inputs completes no output. The source passes it alone with its burst end,
+        // and the call that takes it makes no output.
         constexpr std::size_t    kBank     = 32UZ;
         constexpr gr::Size_t     kSamples  = 1001U;
         const std::vector<float> prototype = prototypeFor(kBank, 0.5);
@@ -595,8 +596,8 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
     };
 
     "tags an upstream block leaves at its end-of-stream index pass to this block's end-of-stream index"_test = [] {
-        // a FirFilter at M = 4 publishes the trigger and the burst end on the last inputs at index 250, where no sample
-        // is; the resampler at a rate of 0.5 passes them to its own end-of-stream index
+        // A FirFilter at M = 4 publishes the trigger and the burst end on the last inputs at index 250, where no sample
+        // is. The resampler at a rate of 0.5 passes them to its own end-of-stream index.
         constexpr std::size_t      kBank = 32UZ;
         const gr::property_map     settings{{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, 0.5)}};
         const std::size_t          outputs = makeResampler<float>(settings).outputsFor(250UZ);
@@ -607,8 +608,8 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
     };
 
     "a stop request publishes no held tag and makes no output"_test = [] {
-        // the prototype delays by more than two inputs: the trigger on the last of 100 inputs lies past the outputs of
-        // its call, and the epilogue under a stop request over 20 more inputs makes nothing
+        // The prototype delays by more than two inputs. The trigger on the last of 100 inputs lies past the outputs of
+        // its call. The epilogue under a stop request over 20 more inputs makes nothing.
         constexpr std::size_t         kBank = 32UZ;
         ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, 0.5)}});
         const std::vector<float>      input(120UZ, 1.0f);
@@ -654,7 +655,8 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
             expect(eq(peakIndex(std::span<const float>(got.samples)), want)) << std::format("r = 0.5: the impulse at input {} peaks on output {}", at, want);
         }
 
-        // Above unity the outputs fall between the input samples: the tag lands on the output nearest the delayed position.
+        // Above unity the outputs fall between the input samples. The tag lands on the output nearest the delayed
+        // position.
         const std::vector<float>      wide  = prototypeFor(kBank, 1.0);
         ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", 1.7}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", wide}});
         constexpr std::size_t         kAt   = 50UZ;
@@ -670,8 +672,8 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
     };
 
     "an asymmetric supplied prototype moves its tags by the centroid of its energy"_test = [] {
-        // a bank of one at a rate of one is a plain FIR filter: a lone tap at 3 of 5 delays by 3, not the 2 the length
-        // alone gives
+        // A bank of one at a rate of one is a plain FIR filter. A lone tap at 3 of 5 delays by 3, where the length
+        // alone gives 2.
         ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", 1.0}, {"bank_size", 1U}, {"taps", std::vector<float>{0.0f, 0.0f, 0.0f, 1.0f, 0.0f}}});
         expect(eq(block.groupDelaySamples(), 3.0));
 

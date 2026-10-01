@@ -50,7 +50,7 @@ namespace gr::blocks::filter::testing {
 /**
  * @brief Records every sample and every tag of its input, the tags at the stream's end-of-stream index included.
  *
- * A tag at the index one past the last sample rides no sample, and a sample-by-sample consumer never sees it. This sink
+ * A tag at the index one past the last sample sits on no sample. A sample-by-sample consumer never sees it. This sink
  * reads its input's tag ring when the stream ends and records every tag there, the `end_of_stream` tag among them.
  */
 template<typename T>
@@ -158,8 +158,8 @@ template<typename TUpstream, typename TBlock>
 }
 
 /**
- * @brief Expect a stream of @p outputs samples at both sinks of @p sinks, ending at index @p outputs, with each tag
- * carrying one of @p keys at that end-of-stream index and on no sample.
+ * @brief Expect a stream of @p outputs samples at both sinks of @p sinks, ending at index @p outputs. Each tag that
+ * carries one of @p keys sits at that end-of-stream index and on no sample.
  */
 template<typename T>
 void expectAtStreamEnd(const EndSinks<T>& sinks, std::size_t outputs, std::initializer_list<std::string_view> keys, std::string_view label = {}) {
@@ -186,9 +186,9 @@ inline void expectAtStreamEnd(const EndRun& run, std::size_t outputs, std::initi
 }
 
 /**
- * @brief A test output span that holds the tags placed on it and hands on the first `tagsPublished` of them, as the
- * framework's output span does when it is released. A block withdraws the tags it placed by setting `tagsPublished`
- * to 0.
+ * @brief A test output span that holds the tags placed on it and passes on the first `tagsPublished` of them. The
+ * framework's output span does the same when it is released. A block withdraws the tags it placed by setting
+ * `tagsPublished` to 0.
  */
 template<typename T>
 struct StagedOutputSpan : gr::blocks::testing::span::OutputSpan<T> {
@@ -203,7 +203,7 @@ struct StagedOutputSpan : gr::blocks::testing::span::OutputSpan<T> {
         ++tagsPublished;
     }
 
-    /// @brief The tags the span hands on when it is released.
+    /// @brief The tags the span passes on when it is released.
     [[nodiscard]] std::vector<gr::Tag> released() const { return {staged.begin(), staged.begin() + static_cast<std::ptrdiff_t>(tagsPublished)}; }
 };
 
@@ -223,10 +223,10 @@ struct StopRun {
 };
 
 /**
- * @brief Hand @p block one call over @p head, which carries @p tags, then a stop request, then what @p at names over
+ * @brief Give @p block one call over @p head, which carries @p tags. A stop request follows, then what @p at names over
  * @p tail. The framework stops a block at a stop request before any epilogue. It runs the epilogue or the rest of a
- * call under the request only when the stop arrives during that call. The block makes @p outChunk outputs for every
- * @p inChunk inputs, and both spans hold whole chunks. A call's outputs are those the framework publishes for it.
+ * call under the request only when the stop arrives during that call. The block makes @p outChunk outputs for every @p
+ * inChunk inputs, and both spans hold whole chunks. A call's outputs are those the framework publishes for it.
  */
 template<typename TBlock>
 [[nodiscard]] StopRun runIntoStop(TBlock& block, std::span<const float> head, std::span<const float> tail, std::span<const gr::Tag> tags, std::size_t inChunk, std::size_t outChunk, AtStop at = AtStop::Epilogue) {
@@ -263,9 +263,9 @@ template<typename TBlock>
 }
 
 /**
- * @brief Expect a block that @p make returns, run into a stop request, to hold its tag of @p key past the call before
- * the stop, to publish nothing from the epilogue under the stop, and to publish the tag once on an output of the call
- * under the stop.
+ * @brief Run a block that @p make returns into a stop request and check its tag of @p key. The block holds the tag past
+ * the call before the stop. Its epilogue under the stop publishes nothing. The call under the stop publishes the tag
+ * once, on one of its outputs.
  */
 template<typename TMake>
 void expectStopCost(TMake&& make, std::span<const float> head, std::span<const float> tail, std::span<const gr::Tag> tags, std::size_t inChunk, std::size_t outChunk, std::string_view key) {

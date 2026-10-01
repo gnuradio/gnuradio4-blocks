@@ -45,13 +45,11 @@ this block hands it. `D = 1` designs no taps and is a bit-exact pass-through. Ch
 rebuilds the ladder, with a discontinuity at the seam; only a `decimation` change moves the tag map's origin, a
 redesign at the same rate leaving the alignment alone.
 
-Every forwarded tag moves whole by the ladder's delay `d`, its `sample_rate`, `frequency` or `context` keys as much as a
-trigger, a burst edge or a time stamp, because a tag describes the sample it sits on: a tag on input `i` leaves on
-output `round((i + d) / D)`, the sample that carries the energy of input `i`. Over real samples `d` is
-`groupDelaySamples()`. Over complex samples the halving stages run as a halfband cascade, which samples each halving's
-output one sample of that stage's input rate early; there `d` is `groupDelaySamples()` less `2^k - 1` for `k` halvings.
-A tag keeps the output it was given when it crossed, whatever rebuild follows. A tag whose output lies past the
-stream's last output leaves at the end-of-stream index, one past that output. )"">;
+Each tag moves with all its keys by the ladder's delay `d`. A tag on input `i` leaves on output `round((i + d) / D)`.
+Over real samples `d` is `groupDelaySamples()`. Over complex samples the halving stages run as a halfband cascade. The
+cascade samples each halving's output one sample of that stage's input rate early. For `k` halvings `d` is then
+`groupDelaySamples()` less `2^k - 1`. A tag keeps the output it was given when it crossed, through any later rebuild. A
+tag whose output lies past the stream's last output leaves at the end-of-stream index, one past that output. )"">;
 
     PortIn<T>  in;
     PortOut<T> out;
@@ -174,14 +172,13 @@ stream's last output leaves at the end-of-stream index, one past that output. )"
     }
 
     /**
-     * @brief Place every input tag, all its keys together, on the output sample that carries its input sample's energy,
-     * from the current phase origin.
+     * @brief Place each input tag with all its keys on the output that carries its input sample's energy, from the
+     * current phase origin.
      *
-     * Input `i` maps to output `round((i + d) / D)`, `d` being the path's delay and a half rounding up, from the total
-     * decimation and never stage by stage. A tag whose output is not in this call is held and published by the call
-     * that produces that output. A tag is placed once, when it crosses, under the delay and the decimation in force
-     * then. A rebuild moves no held tag, and a tag that crosses after one is never placed ahead of a tag held from
-     * before it. Tags therefore leave in the order they arrived. A tag held past the stream's last output leaves at the
+     * Input `i` maps to output `round((i + d) / D)`, where `d` is the path's delay. A half rounds up. The map uses the
+     * total decimation `D` in one step. A tag whose output a later call makes is held for that call. A tag is placed
+     * once, when it crosses, under the delay and the decimation in force then. A later rebuild leaves every held tag
+     * where it is. Tags leave in the order they arrived. A tag held past the stream's last output leaves at the
      * end-of-stream index.
      *
      * This replaces the framework's forwarding rather than adjusting it, and it is also where a `decimation` change takes
@@ -234,9 +231,8 @@ stream's last output leaves at the end-of-stream index, one past that output. )"
             outputSpans);
     }
 
-    /// @brief The stream's last whole input chunks, and every held tag: a tag past their outputs leaves at the
-    /// end-of-stream index, with the tags the input holds past its last sample. Under a stop request the epilogue
-    /// publishes nothing.
+    /// @brief Make as many of the outputs of the stream's last input as the output span holds, and publish every held
+    /// tag, at the end-of-stream index for a tag past the last output.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
         if (detail::dropAtStop(*this, _tags, output)) {

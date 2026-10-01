@@ -294,7 +294,7 @@ const boost::ut::suite<"DesignedFilter"> designedFilterTests = [] {
             expect(eq(peakIndex(std::span<const float>(got.samples)), want)) << std::format("M = {}: the impulse at input {} peaks on output {}", m, at, want);
         }
 
-        // a complex band-pass is a modulated low-pass: its magnitude stays symmetric and its delay (N-1)/2
+        // A complex band-pass is a modulated low-pass. Its magnitude stays symmetric, and its delay stays (N-1)/2.
         auto band = make<CF, CF>({{"profile", std::string("complex_bandpass")}, {"sample_rate", 96000.f}, {"cutoff", 5000.0}, {"high_cutoff", 15000.0}, {"taps", gr::Size_t(41)}});
         expect(eq(band.groupDelaySamples(), static_cast<double>(kDelay)));
         std::vector<CF> z(240UZ, CF{});
@@ -304,8 +304,8 @@ const boost::ut::suite<"DesignedFilter"> designedFilterTests = [] {
         expect(that % (banded.offsetsOf("tag0") == std::vector<std::size_t>{79UZ}));
         expect(eq(peakIndex(std::span<const CF>(banded.samples)), 79UZ));
 
-        // a Hilbert transformer has no center tap: the tag sits on the zero between the two equal peaks, the output
-        // that pairs with the input delayed by (N-1)/2
+        // A Hilbert transformer has no center tap. The tag sits on the zero between the two equal peaks. That output
+        // pairs with the input delayed by (N-1)/2.
         auto hilbert = make<float, float>({{"profile", std::string("hilbert")}, {"sample_rate", 48000.f}, {"taps", gr::Size_t(31)}});
         expect(eq(hilbert.groupDelaySamples(), 15.0));
         std::vector<float> h(240UZ, 0.0f);

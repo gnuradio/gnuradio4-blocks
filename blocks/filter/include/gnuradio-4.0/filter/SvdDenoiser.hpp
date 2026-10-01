@@ -36,10 +36,9 @@ Singular values are kept if ALL criteria are satisfied:
 - σ_i ≥ absolute_threshold
 - cumulative energy ≤ energy_fraction × total energy
 
-The output lags the input by `max((window_size-1)/2, hop-1)` samples, `hop` being the SVD recomputation interval in
-samples. Every tag moves whole, every key with it, by that lag: a tag on input `i` leaves on output `i + lag`, the
-output that estimates input `i`. A tag whose output lies past the stream's last output leaves at the end-of-stream
-index, one past that output.
+The output lags the input by `max((window_size-1)/2, hop-1)` samples, where `hop` is the SVD recomputation interval in
+samples. Each tag moves with all its keys by that lag. A tag on input `i` leaves on output `i + lag`. A tag whose
+output lies past the stream's last output leaves at the end-of-stream index, one past that output.
 )"">; // clang-format off
 
     using RealT = gr::meta::fundamental_base_value_type_t<T>;
@@ -103,8 +102,9 @@ public:
 
     [[nodiscard]] std::size_t tagDecimation() const noexcept { return 1UZ; }
 
-    /// @brief The lag in half samples. Each SVD computation serves the next `hop` outputs from index `W-1-lag` of its
-    /// window, oldest first; that index is `W-1-(W-1)/2`, or `W-hop` where a hop reaches past the window's middle.
+    /// @brief The lag in half samples. Each SVD computation serves the next `hop` outputs, starting at index `W-1-lag`
+    /// of its window counted from the oldest sample. That index is `W-1-(W-1)/2`, or `W-hop` when a hop reaches past
+    /// the window's middle.
     [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept {
         const std::uint64_t window = _state.windowSize();
         const std::uint64_t hop    = _state.hopSize();

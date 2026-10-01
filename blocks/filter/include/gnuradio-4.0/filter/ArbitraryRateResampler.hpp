@@ -45,13 +45,12 @@ pass-through.
 
 A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the rate of the stream this block hands it.
 
-Every forwarded tag moves whole by the prototype's delay `d`, its `sample_rate`, `frequency` or `context` keys as much
-as a trigger, a burst edge or a time stamp, because a tag describes the sample it sits on. `d` is in samples of the
-interpolated rate `L*fs_in`: a tag on input `i` leaves on the output nearest the interpolated position `i*L + d`, the
-sample that carries the energy of input `i`. A designed or other symmetric prototype of `N` taps delays by `(N-1)/2`. An
-asymmetric supplied prototype moves its tags by the centroid of its energy, rounded to the whole interpolated sample. A
-tag is placed when its sample is consumed and keeps that output whatever rate change or rebuild follows. A tag whose
-output lies past the stream's last output leaves at the end-of-stream index, one past that output. )"">;
+Each tag moves with all its keys by the prototype's delay `d`. `d` is in samples of the interpolated rate `L*fs_in`. A
+tag on input `i` leaves on the output nearest `i*L + d`. A designed or other symmetric prototype of `N` taps delays by
+`(N-1)/2`. An asymmetric supplied prototype moves its tags by the centroid of its energy, rounded to the whole
+interpolated sample. A tag is placed when its sample is consumed and keeps that output through any later rate change or
+rebuild. A tag whose output lies past the stream's last output leaves at the end-of-stream index, one past that output.
+)"">;
 
     PortIn<T, Async>  in;
     PortOut<T, Async> out;
@@ -107,7 +106,7 @@ output lies past the stream's last output leaves at the end-of-stream index, one
     /// @brief `B`, the taps one arm holds — the wrap term included, so a dot product is this long.
     [[nodiscard]] std::size_t tapsPerArm() const noexcept { return _resampler->tapsPerArm(); }
     [[nodiscard]] std::size_t bankSize() const noexcept { return _bankSize; }
-    /// @brief The delay every forwarded tag moves by, in input samples: `(N-1)/(2L)` for a symmetric prototype.
+    /// @brief The delay every forwarded tag moves by, in input samples. It is `(N-1)/(2L)` for a symmetric prototype.
     [[nodiscard]] double         groupDelaySamples() const noexcept { return 0.5 * static_cast<double>(_twiceDelay) / static_cast<double>(_bankSize); }
     [[nodiscard]] std::size_t    outputsFor(std::size_t nInput) const noexcept { return _resampler->outputsFor(nInput); }
     [[nodiscard]] std::size_t    inputsFor(std::size_t nOutput) const noexcept { return _resampler->inputsFor(nOutput); }
@@ -206,9 +205,8 @@ output lies past the stream's last output leaves at the end-of-stream index, one
         return work::Status::OK;
     }
 
-    /// @brief The stream's last samples, and every held tag: a tag past the stream's last output leaves at the
-    /// end-of-stream index, with the tags on input the call leaves and past the last sample. Under a stop request the
-    /// epilogue publishes nothing.
+    /// @brief Make as many of the outputs of the stream's last input as the output span holds, and publish every held
+    /// tag, at the end-of-stream index for a tag past the last output.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& inSpan, TOutput& outSpan) {
         if (detail::dropAtStop(*this, _tags, outSpan)) {
@@ -240,7 +238,7 @@ private:
         }
     }
 
-    /// @brief The inputs of @p available a call takes and the outputs they make, the outputs no more than @p room.
+    /// @brief The inputs a call takes of @p available and the outputs they make, at most @p room outputs.
     [[nodiscard]] std::pair<std::size_t, std::size_t> fitToRoom(std::size_t available, std::size_t room) const {
         std::size_t nIn  = available;
         std::size_t made = _resampler->outputsFor(nIn);
@@ -268,9 +266,9 @@ private:
     /**
      * @brief Place the tags of the samples this call consumes at their output offsets, under the regime in force now.
      *
-     * Input `i` maps to the output nearest the interpolated position `i*L + d`, `d` being the prototype's delay and a
-     * half rounding up, all the tag's keys together. A tag whose sample is consumed after a rate change or a rebuild is
-     * never placed ahead of a tag held from before it. Tags therefore leave in the order they arrived.
+     * Each tag moves with all its keys. Input `i` maps to the output nearest the interpolated position `i*L + d`, where
+     * `d` is the prototype's delay. A half rounds up. Tags leave in the order they arrived, also across a rate change
+     * or a rebuild.
      *
      * A tag's mapping is committed here, where its sample is consumed, and not where the tag first becomes visible.
      * An `Async` port is presented every sample it holds and the block consumes a prefix of them, so a tag past that

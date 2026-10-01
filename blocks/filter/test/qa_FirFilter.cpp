@@ -434,13 +434,13 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
     };
 
     "a tag moves whole by the delay, its rate with its trigger, and a retune arrives on the delayed sample"_test = [] {
-        // a tag describes the sample it sits on: the opening tag leaves whole on the output that carries input 0's
-        // energy, 15 samples later for 31 symmetric taps, and a retune at input 100 on the output of input 115
+        // 31 symmetric taps delay by 15. The opening tag leaves with all its keys on the output that carries input
+        // 0's energy. A retune at input 100 leaves on the output of input 115.
         const std::vector<float> h      = gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0);
         constexpr std::size_t    kDelay = 15UZ;
         for (const std::size_t m : {1UZ, 4UZ}) {
             FirFilter<float, float> block = makeFir<float, float>({{"taps", h}, {"decimation", static_cast<gr::Size_t>(m)}});
-            gr::property_map        opening; // a source's opening tag: the stream's rate and the trigger of its first sample
+            gr::property_map        opening; // a source's opening tag, with the stream's rate and the trigger of its first sample
             opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
             opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
             gr::property_map retune; // a mid-stream retune
@@ -459,8 +459,8 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
     };
 
     "a tag leaves on the output that carries its sample's energy"_test = [] {
-        // a symmetric set of 31 taps delays by 15 input samples, so input i lands on output (i + 15) / M; each input
-        // below is one whose delayed position is a whole output, and a call takes 64 inputs
+        // A symmetric set of 31 taps delays by 15 input samples, so input i lands on output (i + 15) / M. The delayed
+        // position of each input below is a whole output. A call takes 64 inputs.
         const std::vector<float> h      = gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0);
         constexpr std::size_t    kDelay = 15UZ;
         constexpr std::size_t    kChunk = 64UZ;
@@ -481,15 +481,15 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
 
             expect(that % (got.offsetsOf("tag0") == std::vector<std::size_t>{want})) << std::format("M = {}: input {} leaves on output {} and on no other", m, at, want);
             expect(eq(peakIndex(std::span<const float>(got.samples)), want)) << std::format("M = {}: the impulse at input {} peaks on output {}", m, at, want);
-            if (at + m >= kChunk) { // the tag rides the first call's last output group
+            if (at + m >= kChunk) { // the tag is in the first call's last output group
                 expect(ge(want, kChunk / m)) << "the delayed output belongs to a later call than the tag's input";
             }
         }
     };
 
     "an even-length set delays by a half sample, and the half rounds up"_test = [] {
-        // {1, 2, 2, 1} delays by 1.5: the impulse at 63 comes out 1, 2, 2, 1 on outputs 63 to 66, and the tag goes to the
-        // later of the two equal peaks, in the call after the one that carried it
+        // {1, 2, 2, 1} delays by 1.5. The impulse at 63 comes out 1, 2, 2, 1 on outputs 63 to 66. The tag goes to
+        // output 65, the later of the two equal peaks, in the call after the one that carried it.
         FirFilter<float, float> block = makeFir<float, float>({{"taps", std::vector<float>{1.0f, 2.0f, 2.0f, 1.0f}}, {"decimation", 1U}});
         expect(eq(block.groupDelaySamples(), 1.5));
 
@@ -507,8 +507,8 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
             std::vector<float> taps;
             std::size_t        delay; // where the impulse comes out largest
         };
-        // a lone tap at 5 of 9 is a pure delay of 5, not the 4 the length alone gives; {4, 2, 1} has its centroid at 2/7
-        // and delays by none
+        // A lone tap at 5 of 9 is a pure delay of 5, where the length alone gives 4. {4, 2, 1} has its centroid at 2/7
+        // and delays by 0.
         const Row rows[] = {{{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f}, 5UZ}, {{4.0f, 2.0f, 1.0f}, 0UZ}};
         for (const Row& row : rows) {
             FirFilter<float, float> block = makeFir<float, float>({{"taps", row.taps}, {"decimation", 1U}});
@@ -525,8 +525,8 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
     };
 
     "a tag whose delayed output lies past the end of the stream leaves at the end-of-stream index"_test = [] {
-        // 31 taps delay by 15: input 900 leaves on output 915 / M, and a trigger at input 990 and a burst end at input
-        // 999 lie past the last output, and both leave at the end-of-stream index, one past it
+        // 31 taps delay by 15. Input 900 leaves on output 915 / M. A trigger at input 990 and a burst end at input 999
+        // lie past the last output. Both leave at the end-of-stream index, one past that output.
         constexpr gr::Size_t kSamples = 1000U;
         for (const gr::Size_t m : {1U, 4U}) {
             gr::Graph graph;
@@ -552,8 +552,8 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
     };
 
     "a tag on the partial last chunk leaves at the end-of-stream index"_test = [] {
-        // at M = 4 the last 3 of 1003 inputs are no whole chunk and make no output, as they make none on a stream without
-        // tags: a trigger and a burst end on them leave one past the last output the 250 whole chunks make
+        // At M = 4 the last 3 of 1003 inputs form no whole chunk and make no output, as on a stream without tags. A
+        // trigger and a burst end on them leave one past the last output of the 250 whole chunks.
         constexpr gr::Size_t  kSamples = 1003U;
         constexpr std::size_t kOutputs = 250UZ;
         gr::Graph             graph;
@@ -573,8 +573,9 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
     };
 
     "tags an upstream block leaves at its end-of-stream index pass to this block's end-of-stream index"_test = [] {
-        // the first filter holds the trigger and the burst end on the last inputs past its 250 outputs and publishes them
-        // at index 250, where no sample is; the second, at M = 2, passes them to its own end-of-stream index, 125
+        // The first filter holds the trigger and the burst end on the last inputs past its 250 outputs. It publishes
+        // them at index 250, where no sample is. The second filter at M = 2 passes them to its own end-of-stream
+        // index, 125.
         const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
         const std::vector<float>   taps = gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0);
         const auto                 run  = filter_test::runChained<FirFilter<float, float>, FirFilter<float, float>>({{"taps", taps}, {"decimation", 4U}}, {{"taps", taps}, {"decimation", 2U}}, 1000U, tags);
@@ -583,8 +584,8 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
     };
 
     "under a stop request the epilogue publishes nothing, and a call publishes its outputs' tags"_test = [] {
-        // 31 taps delay by 15: the trigger on input 39 maps to output 14 at M = 4, past the 10 outputs of its call and
-        // among the 10 outputs of the next 40 inputs
+        // 31 taps delay by 15. At M = 4 the trigger on input 39 maps to output 14. That output lies past the 10 outputs
+        // of its call and among the 10 outputs of the next 40 inputs.
         const std::vector<float>   input(80UZ, 1.0f);
         const std::vector<gr::Tag> tags{{39UZ, tagKey(0)}};
         filter_test::expectStopCost([] { return makeFir<float, float>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}}); }, std::span<const float>(input).first(40UZ), std::span<const float>(input).subspan(40UZ), tags, 4UZ, 1UZ, "tag0");
@@ -604,7 +605,7 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         std::ignore = block.settings().applyStagedParameters();
         expect(eq(block.groupDelaySamples(), 2.0));
 
-        // under the new delay input 201 maps to 203, ahead of the held tag, and input 250 to 252
+        // Under the new delay input 201 maps to 203, ahead of the held tag. Input 250 maps to 252.
         const std::vector<gr::Tag> late{gr::Tag{201UZ, tagKey(1)}, gr::Tag{250UZ, tagKey(2)}};
         const auto                 tail = test::runDecimating<float>(block, std::span<const float>(x).subspan(200UZ), 50UZ, 1UZ, std::span<const gr::Tag>(late), 200UZ, 200UZ);
         expect(that % (tail.offsetsOf("tag0") == std::vector<std::size_t>{210UZ})) << "held across the change, at the output it crossed with";
@@ -620,8 +621,8 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
     };
 
     "an epilogue short of output room publishes the tags past its outputs at the end-of-stream index"_test = [] {
-        // twelve trailing inputs make three outputs at M = 4, and the epilogue's span holds one: the tag for output 1
-        // and the tag held for output 3 both lie past the one output made, and both leave at index 1, in order
+        // Twelve trailing inputs make three outputs at M = 4, and the epilogue's span holds one. The tag for output 1
+        // and the tag held for output 3 both lie past the one output made. Both leave at index 1, in order.
         FirFilter<float, float>              block = makeFir<float, float>({{"taps", std::vector<float>{1.0f}}, {"decimation", 4U}});
         const std::vector<float>             input(12UZ, 1.0f);
         const std::vector<gr::Tag>           tags{{4UZ, tagKey(0)}, {11UZ, tagKey(1)}};
@@ -703,8 +704,8 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
     };
 
     "a decimator consumes every chunk it is given, a tag held past the call among them"_test = [] {
-        // 31 taps delay by 15: the trigger on the last of 40 inputs maps to output 14 at M = 4, past the 10 outputs its
-        // call makes, and the call still makes all 10 and consumes all 40 inputs
+        // 31 taps delay by 15. At M = 4 the trigger on the last of 40 inputs maps to output 14, past the 10 outputs its
+        // call makes. The call still makes all 10 outputs and consumes all 40 inputs.
         constexpr gr::Size_t  kDecimation = 4U;
         constexpr std::size_t kChunks     = 10UZ;
         constexpr std::size_t kInputs     = kChunks * kDecimation;

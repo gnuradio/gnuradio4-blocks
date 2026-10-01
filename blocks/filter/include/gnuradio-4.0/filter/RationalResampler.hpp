@@ -43,13 +43,11 @@ Single-stage only: 48 kHz to 44.1 kHz is `147/160` after reduction and costs 588
 ratio change also moves the tag map's origin, everything else leaving the alignment alone. A forwarded `sample_rate`
 tag is multiplied by `L/M`, so downstream reads the rate of the stream this block hands it.
 
-Every forwarded tag moves whole by the filter's delay `d`, its `sample_rate`, `frequency` or `context` keys as much as a
-trigger, a burst edge or a time stamp, because a tag describes the sample it sits on. `d` is in samples of the
-interpolated rate: a tag on input `i` leaves on output `round((i*L + d) / M)`, the sample that carries the energy of
-input `i`. A designed or other symmetric prototype of `N` taps delays by `(N-1)/2`. An asymmetric supplied prototype
-moves its tags by the centroid of its energy, rounded to the whole interpolated sample. A tag keeps the output it was
-given when it crossed, whatever rebuild follows. A tag whose output lies past the stream's last output leaves at the
-end-of-stream index, one past that output. )"">;
+Each tag moves with all its keys by the filter's delay `d`. `d` is in samples of the interpolated rate `L*fs_in`. A
+tag on input `i` leaves on output `round((i*L + d) / M)`. A designed or other symmetric prototype of `N` taps delays by
+`(N-1)/2`. An asymmetric supplied prototype moves its tags by the centroid of its energy, rounded to the whole
+interpolated sample. A tag keeps the output it was given when it crossed, through any later rebuild. A tag whose output
+lies past the stream's last output leaves at the end-of-stream index, one past that output. )"">;
 
     PortIn<T>  in;
     PortOut<T> out;
@@ -107,8 +105,8 @@ end-of-stream index, one past that output. )"">;
         std::uint64_t      l         = interpolation;
         std::uint64_t      m         = decimation;
 
-        // supplied taps were designed against L*fs_in, and a reduced L would be a different interpolated rate: only a
-        // designed prototype reduces the ratio, and supplied taps at a reducible ratio cost gcd(L, M) times the branches
+        // Supplied taps were designed against L*fs_in, and a reduced L is a different interpolated rate. Only a
+        // designed prototype reduces the ratio. Supplied taps at a reducible ratio cost gcd(L, M) times the branches.
         if (prototype.empty()) {
             const std::uint64_t g = std::gcd(l, m);
             l /= g;
@@ -130,13 +128,12 @@ end-of-stream index, one past that output. )"">;
     }
 
     /**
-     * @brief Place every input tag, all its keys together, on the output sample that carries its input sample's energy,
-     * from the current phase origin.
+     * @brief Place each input tag with all its keys on the output that carries its input sample's energy, from the
+     * current phase origin.
      *
-     * Input `i` maps to output `round((i*L + d) / M)`, `d` being the prototype's delay at the interpolated rate and a
-     * half rounding up. A tag whose output is not in this call is held and published by the call that produces that
-     * output. A tag is placed once, when it crosses, under the delay and the ratio in force then. A rebuild moves no
-     * held tag, and a tag that crosses after one is never placed ahead of a tag held from before it. Tags therefore
+     * Input `i` maps to output `round((i*L + d) / M)`, where `d` is the prototype's delay at the interpolated rate. A
+     * half rounds up. A tag whose output a later call makes is held for that call. A tag is placed once, when it
+     * crosses, under the delay and the ratio in force then. A later rebuild leaves every held tag where it is. Tags
      * leave in the order they arrived. A tag held past the stream's last output leaves at the end-of-stream index.
      *
      * This replaces the framework's forwarding rather than adjusting it: the default publishes a tag at the output
@@ -190,9 +187,8 @@ end-of-stream index, one past that output. )"">;
             outputSpans);
     }
 
-    /// @brief The stream's last whole input chunks, and every held tag: a tag past their outputs leaves at the
-    /// end-of-stream index, with the tags the input holds past its last sample. Under a stop request the epilogue
-    /// publishes nothing.
+    /// @brief Make as many of the outputs of the stream's last input as the output span holds, and publish every held
+    /// tag, at the end-of-stream index for a tag past the last output.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
         if (detail::dropAtStop(*this, _tags, output)) {

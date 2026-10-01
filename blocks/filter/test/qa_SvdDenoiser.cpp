@@ -318,7 +318,7 @@ const boost::ut::suite<"SvdDenoiser tag placement"> svdTagPlacementTests = [] {
     using namespace gr::blocks::testing;
 
     "a tag leaves on the output that estimates its input"_test = [] {
-        // with every singular value kept the estimate is the input itself: the impulse the source puts under the tag
+        // With every singular value kept the estimate is the input itself. The impulse the source puts under the tag
         // arrives on the lagged output. A window of 64 at the default hop lags by 31. A window of 16 whose hop is the
         // whole window lags by 15, where the library's delay() reads 7.
         constexpr gr::Size_t  kSamples = 200U;
