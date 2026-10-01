@@ -107,13 +107,12 @@ struct FirFilterCore {
     void coreMarkReorigin() noexcept { _reorigin = true; }
 
     /**
-     * @brief Place every input tag, all its keys together, on the output sample that carries its input sample's energy,
-     * from the current phase origin.
+     * @brief Place each input tag with all its keys on the output that carries its input sample's energy, from the
+     * current phase origin.
      *
-     * Input `i` maps to output `round((i + d) / M)`, `d` being the taps' delay and a half rounding up. A tag whose
-     * output is not in this call is held and published by the call that produces that output. A tag is placed once,
-     * when it crosses, under the delay and the decimation in force then. A taps or decimation change moves no held tag,
-     * and a tag that crosses after one is never placed ahead of a tag held from before it. Tags therefore leave in the
+     * Input `i` maps to output `round((i + d) / M)`, where `d` is the taps' delay. A half rounds up. A tag whose output
+     * a later call makes is held for that call. A tag is placed once, when it crosses, under the delay and the
+     * decimation in force then. A later taps or decimation change leaves every held tag where it is. Tags leave in the
      * order they arrived. A tag held past the stream's last output leaves at the end-of-stream index.
      *
      * This replaces the framework's forwarding rather than adjusting it, and it is also where a `decimation` change
@@ -166,9 +165,8 @@ struct FirFilterCore {
             outputSpans);
     }
 
-    /// @brief The stream's last whole input chunks, and every held tag: a tag past their outputs leaves at the
-    /// end-of-stream index, with the tags the input holds past its last sample. Under a stop request the epilogue
-    /// publishes nothing.
+    /// @brief Make as many of the outputs of the stream's last input as the output span holds, and publish every held
+    /// tag, at the end-of-stream index for a tag past the last output.
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
         if (dropAtStop(self(), _tags, output)) {
@@ -226,14 +224,13 @@ struct FirFilter : Block<FirFilter<TSample, TTap>, Resampling<1UZ, 1UZ, false>>,
 combinations exist. There is no design path - taps come from `gr::filter::fir::design` - and an empty `taps` throws rather
 than becoming a pass-through; a pass-through is `taps = {1}`.
 
-A taps change preserves the input/output alignment exactly; changing `decimation` moves the phase origin. Every
-forwarded tag moves whole by the filter's delay `d`, its `sample_rate`, `frequency` or `context` keys as much as a
-trigger, a burst edge or a time stamp, because a tag describes the sample it sits on: a tag on input `i` leaves on
-output `round((i + d) / decimation)`, the sample that carries the energy of input `i`. A symmetric or antisymmetric tap
-set delays by `(N-1)/2`. An asymmetric set moves its tags by the centroid of its energy, rounded to the whole input
-sample. A tag keeps the output it was given when it crossed, whatever taps or decimation change follows. A tag whose
-output lies past the stream's last output leaves at the end-of-stream index, one past that output. A forwarded
-`sample_rate` tag is divided by the decimation, so downstream reads the rate of the stream this block hands it. )"">;
+A taps change preserves the input/output alignment exactly; changing `decimation` moves the phase origin. Each tag
+moves with all its keys by the filter's delay `d`. A tag on input `i` leaves on output `round((i + d) / decimation)`.
+A symmetric or antisymmetric tap set delays by `(N-1)/2`. An asymmetric set moves its tags by the centroid of its
+energy, rounded to the whole input sample. A tag keeps the output it was given when it crossed, through any later taps
+or decimation change. A tag whose output lies past the stream's last output leaves at the end-of-stream index, one past
+that output. A forwarded `sample_rate` tag is divided by the decimation, so downstream reads the rate of the stream this
+block hands it. )"">;
 
     PortIn<TSample> in;
     PortOut<TOut>   out;
@@ -256,7 +253,8 @@ output lies past the stream's last output leaves at the end-of-stream index, one
 
     void start() { this->coreStart(std::span<const TTap>(taps.value), decimation); }
 
-    /// @brief The delay every forwarded tag moves by, in input samples: `(N-1)/2` for a symmetric or antisymmetric set, the energy centroid otherwise.
+    /// @brief The delay every forwarded tag moves by, in input samples. It is `(N-1)/2` for a symmetric or
+    /// antisymmetric set and the energy centroid otherwise.
     [[nodiscard]] double groupDelaySamples() const noexcept { return 0.5 * static_cast<double>(detail::twiceTapDelay(std::span<const TTap>(taps.value))); }
 
     [[nodiscard]] std::size_t tapCount() const noexcept { return taps.value.size(); }

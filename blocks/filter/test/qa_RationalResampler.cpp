@@ -319,12 +319,12 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
     };
 
     "a tag moves whole by the delay, its rate with its trigger, and a retune arrives on the delayed sample"_test = [] {
-        // a tag describes the sample it sits on: the opening tag leaves whole on output round(d / M), d being the
-        // prototype's delay at the interpolated rate, and a retune at input 100 on output round((100*L + d) / M)
+        // The opening tag leaves with all its keys on output round(d / M), where d is the prototype's delay at the
+        // interpolated rate. A retune at input 100 leaves on output round((100*L + d) / M).
         for (const auto& [l, m] : {std::pair<gr::Size_t, gr::Size_t>{3U, 2U}, std::pair<gr::Size_t, gr::Size_t>{1U, 4U}}) {
             RationalResampler<float> block = makeResampler<float>({{"interpolation", l}, {"decimation", m}});
             const std::size_t        twice = narrowIndex<std::size_t>(std::llround(2.0 * block.groupDelaySamples() * static_cast<double>(l)));
-            gr::property_map         opening; // a source's opening tag: the stream's rate and the trigger of its first sample
+            gr::property_map         opening; // a source's opening tag, with the stream's rate and the trigger of its first sample
             opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
             opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
             gr::property_map retune; // a mid-stream retune
@@ -370,8 +370,8 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
     };
 
     "an asymmetric supplied prototype moves its tags by the centroid of its energy"_test = [] {
-        // a lone tap at 4 of 6 at 2/1 is a delay of four interpolated samples, not the 2.5 the length alone gives:
-        // input i comes out on output 2i + 4
+        // A lone tap at 4 of 6 at 2/1 delays by four interpolated samples, where the length alone gives 2.5. Input i
+        // comes out on output 2i + 4.
         RationalResampler<float> block = makeResampler<float>({{"interpolation", 2U}, {"decimation", 1U}, {"taps", std::vector<float>{0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f}}});
         expect(eq(block.groupDelaySamples(), 2.0)) << "four interpolated samples are two input samples";
 
@@ -384,7 +384,7 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
     };
 
     "a ratio change moves no held tag, and a later tag never lands ahead of it"_test = [] {
-        // a lone tap at 20 delays by 20 at 1/1: input 95 is held for output 115
+        // A lone tap at 20 delays by 20 at 1/1. Input 95 is held for output 115.
         std::vector<float> lone(21UZ, 0.0f);
         lone.back()                    = 1.0f;
         RationalResampler<float> block = makeResampler<float>({{"interpolation", 1U}, {"decimation", 1U}, {"taps", lone}});
@@ -395,8 +395,8 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
         const auto                 head = runChunks<float>(block, std::span<const float>(x).first(100UZ), 10UZ, std::span<const gr::Tag>(early));
         expect(that % head.offsetsOf("t0").empty()) << "output 115 is not produced by the first 100 inputs";
 
-        // 3/2 with a unit tap and no delay, from the new origin input 100 / output 100: input 102 maps to output 103,
-        // ahead of the held tag, and input 140 to output 160
+        // The ratio is 3/2 with a unit tap and no delay, from the new origin at input 100 and output 100. Input 102
+        // maps to output 103, ahead of the held tag. Input 140 maps to output 160.
         std::ignore = block.settings().setStaged({{"interpolation", 3U}, {"decimation", 2U}, {"taps", std::vector<float>{1.0f}}});
         std::ignore = block.settings().applyStagedParameters();
         expect(eq(block.groupDelaySamples(), 0.0));
@@ -483,8 +483,8 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
     };
 
     "a tag whose delayed output lies past the end of the stream leaves at the end-of-stream index"_test = [] {
-        // the designed 3/2 prototype delays by more than two inputs: a trigger and a burst end on the last two inputs lie
-        // past the last output, and both leave at the end-of-stream index, one past it
+        // The designed 3/2 prototype delays by more than two inputs. A trigger and a burst end on the last two inputs
+        // lie past the last output. Both leave at the end-of-stream index, one past that output.
         constexpr gr::Size_t  kSamples = 1000U;
         constexpr std::size_t kOutputs = 1500UZ; // 1000 inputs at 3/2
         gr::Graph             graph;
@@ -505,8 +505,8 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
     };
 
     "a tag on the partial last chunk leaves at the end-of-stream index"_test = [] {
-        // at 147/160 the last 50 of 16050 inputs are no whole chunk and make no output, as they make none on a stream
-        // without tags: a trigger and a burst end on them leave one past the last output the 100 whole chunks make
+        // At 147/160 the last 50 of 16050 inputs form no whole chunk and make no output, as on a stream without tags. A
+        // trigger and a burst end on them leave one past the last output of the 100 whole chunks.
         constexpr gr::Size_t  kSamples = 16050U;
         constexpr std::size_t kOutputs = 14700UZ;
         static_assert(kSamples % 160U != 0U && kSamples / 160U * 147U == kOutputs);
@@ -531,8 +531,8 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
     };
 
     "tags an upstream block leaves at its end-of-stream index pass to this block's end-of-stream index"_test = [] {
-        // a FirFilter at M = 4 publishes the trigger and the burst end on the last inputs at index 250, where no sample
-        // is; the 3/2 resampler passes them to its own end-of-stream index, 375
+        // A FirFilter at M = 4 publishes the trigger and the burst end on the last inputs at index 250, where no sample
+        // is. The 3/2 resampler passes them to its own end-of-stream index, 375.
         const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
         const auto                 run = filter_test::runChained<gr::blocks::filter::FirFilter<float, float>, RationalResampler<float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}}, {{"interpolation", 3U}, {"decimation", 2U}}, 1000U, tags);
         filter_test::expectAtStreamEnd(run, 375UZ, {"trigger_name", "tx_eob"}, "M = 4, then 3/2");
@@ -540,8 +540,8 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
     };
 
     "under a stop request the epilogue publishes nothing, and a call publishes its outputs' tags"_test = [] {
-        // the designed 3/2 prototype delays by more than two inputs and less than 400: the trigger on input 39 lies past
-        // the 60 outputs of its call and among the 600 outputs of the next 400 inputs
+        // The designed 3/2 prototype delays by more than two inputs and less than 400. The trigger on input 39 lies
+        // past the 60 outputs of its call. It lies among the 600 outputs of the next 400 inputs.
         const auto                 make = [] { return makeResampler<float>({{"interpolation", 3U}, {"decimation", 2U}}); };
         const std::vector<float>   input(440UZ, 1.0f);
         const std::vector<gr::Tag> tags{{39UZ, tagKey(0)}};

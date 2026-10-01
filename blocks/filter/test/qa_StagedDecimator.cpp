@@ -153,9 +153,10 @@ template<typename T>
 }
 
 /**
- * @brief The delay of the running path in input samples, read off the block's ladder: `((N_i - 1)/2) * p_{i-1}` summed over
- * the stages, less one sample of each halving stage's input rate over complex samples, where the halfband cascade
- * samples a halving's output early.
+ * @brief The delay of the running path in input samples, read off the block's ladder.
+ *
+ * The delay is `((N_i - 1)/2) * p_{i-1}` summed over the stages. Over complex samples the halfband cascade samples each
+ * halving's output early, and the delay is less by one sample of each halving stage's input rate.
  */
 template<typename T>
 [[nodiscard]] std::uint64_t pathDelay(const StagedDecimator<T>& block) {
@@ -478,12 +479,12 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
     };
 
     "a tag moves whole by the delay, its rate with its trigger, and a retune arrives on the delayed sample"_test = [] {
-        // a tag describes the sample it sits on: the opening tag leaves whole on the output of the path's delay alone,
-        // and a retune at input 3*D on the output of 3*D plus the delay
+        // The opening tag leaves with all its keys on the output of the path's delay alone. A retune at input 3*D
+        // leaves on the output of 3*D plus the delay.
         for (const gr::Size_t decimation : {8U, 10U}) {
             StagedDecimator<float> block = makeBlock<float>({{"decimation", decimation}});
             const std::uint64_t    delay = pathDelay(block);
-            gr::property_map       opening; // a source's opening tag: the stream's rate and the trigger of its first sample
+            gr::property_map       opening; // a source's opening tag, with the stream's rate and the trigger of its first sample
             opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
             opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
             gr::property_map retune; // a mid-stream retune
@@ -502,8 +503,9 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
     };
 
     "a tag leaves on the output that carries its sample's energy"_test = []<typename T>() {
-        // Input i lands on output (i + d) / D, d being the path's delay. Each input below is the one in the second call's
-        // last output group whose delayed position is a whole output, so the output it lands on belongs to a later call.
+        // Input i lands on output (i + d) / D, where d is the path's delay. Each input below is the one in the second
+        // call's last output group whose delayed position is a whole output. The output it lands on belongs to a later
+        // call.
         constexpr std::size_t kChunkOutputs = 4UZ;
         for (const gr::Size_t decimation : {8U, 10U}) {
             const std::size_t   d     = static_cast<std::size_t>(decimation);
@@ -648,7 +650,7 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(that % (head.offsetsOf("tag0") == std::vector<std::size_t>{})) << "its output is not produced yet, so it is held";
 
         const std::size_t stages = block.stages();
-        std::ignore              = block.settings().setStaged({{"ripple_db", 0.04f}}); // a rebuild key that leaves the rate, and so the tag map's origin, alone
+        std::ignore              = block.settings().setStaged({{"ripple_db", 0.04f}}); // a rebuild key that changes neither the rate nor the tag map's origin
         std::ignore              = block.settings().applyStagedParameters();
         expect(eq(block.stages(), stages));
 
@@ -658,8 +660,8 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
     };
 
     "a tag whose delayed output lies past the end of the stream leaves at the end-of-stream index"_test = [] {
-        // the D = 8 ladder delays by more than two inputs: a trigger and a burst end on the last two inputs lie past the
-        // last output, and both leave at the end-of-stream index, one past it
+        // The D = 8 ladder delays by more than two inputs. A trigger and a burst end on the last two inputs lie past
+        // the last output. Both leave at the end-of-stream index, one past that output.
         constexpr gr::Size_t  kSamples = 8000U;
         constexpr std::size_t kOutputs = 1000UZ; // 8000 inputs at D = 8
         gr::Graph             graph;
@@ -680,8 +682,8 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
     };
 
     "a tag on the partial last chunk leaves at the end-of-stream index"_test = [] {
-        // at D = 8 the last 5 of 8005 inputs are no whole chunk and make no output, as they make none on a stream without
-        // tags: a trigger and a burst end on them leave one past the last output the 1000 whole chunks make
+        // At D = 8 the last 5 of 8005 inputs form no whole chunk and make no output, as on a stream without tags. A
+        // trigger and a burst end on them leave one past the last output of the 1000 whole chunks.
         constexpr gr::Size_t  kSamples = 8005U;
         constexpr std::size_t kOutputs = 1000UZ;
         gr::Graph             graph;
@@ -704,8 +706,8 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
     };
 
     "tags an upstream block leaves at its end-of-stream index pass to this block's end-of-stream index"_test = [] {
-        // a FirFilter at M = 4 publishes the trigger and the burst end on the last inputs at index 250, where no sample
-        // is; the D = 2 ladder passes them to its own end-of-stream index, 125
+        // A FirFilter at M = 4 publishes the trigger and the burst end on the last inputs at index 250, where no sample
+        // is. The D = 2 ladder passes them to its own end-of-stream index, 125.
         const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
         const auto                 run = filter_test::runChained<FirFilter<float, float>, StagedDecimator<float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}}, {{"decimation", 2U}}, 1000U, tags);
         filter_test::expectAtStreamEnd(run, 125UZ, {"trigger_name", "tx_eob"}, "M = 4, then D = 2");
@@ -713,8 +715,8 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
     };
 
     "under a stop request the epilogue publishes nothing, and a call publishes its outputs' tags"_test = [] {
-        // the D = 8 ladder delays by more than two inputs and less than 800: the trigger on input 79 lies past the 10
-        // outputs of its call and among the 100 outputs of the next 800 inputs
+        // The D = 8 ladder delays by more than two inputs and less than 800. The trigger on input 79 lies past the 10
+        // outputs of its call. It lies among the 100 outputs of the next 800 inputs.
         const auto                 make = [] { return makeBlock<float>({{"decimation", 8U}}); };
         const std::vector<float>   input(880UZ, 1.0f);
         const std::vector<gr::Tag> tags{{79UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("last")}}}};

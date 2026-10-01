@@ -696,8 +696,9 @@ const boost::ut::suite<"SavitzkyGolayFilter tag placement"> sgTagPlacementTests 
     using namespace gr::blocks::testing;
 
     "a tag leaves on the output whose fit is evaluated at its input, an even window included"_test = [] {
-        // the fit sits at index (W-1)/2 of the window, oldest first: the output lags by W-1-(W-1)/2, which is 5 for a
-        // window of 10 as for 11, and 0 in the causal alignment; the impulse the source puts under the tag peaks there
+        // The fit sits at index (W-1)/2 of the window, counted from the oldest sample. The output lags by W-1-(W-1)/2,
+        // which is 5 for a window of 10 and for 11, and 0 in the causal alignment. The impulse the source puts under
+        // the tag peaks there.
         constexpr gr::Size_t  kSamples = 200U;
         constexpr std::size_t kAt      = 50UZ;
         struct Case {

@@ -28,8 +28,8 @@
 
 #include "StreamEndSink.hpp"
 
-/// @brief A tag key outside the framework's default tags: a block that forwards a tag through the framework's key filter
-/// drops it, and a block that forwards every key of a tag keeps it.
+/// @brief A tag key outside the framework's default tags. A block that forwards a tag through the framework's key
+/// filter drops it. A block that forwards every key of a tag keeps it.
 constexpr std::string_view kNonDefaultKey = "private_key";
 static_assert(std::ranges::find(gr::tag::kDefaultTags, kNonDefaultKey) == gr::tag::kDefaultTags.end());
 
@@ -41,7 +41,8 @@ template<typename TBlock, typename T>
     return output;
 }
 
-/// @brief What two sinks see of a tagged stream that passed one block: every tag, and the tags on samples alone.
+/// @brief What two sinks see of a tagged stream after one block. One sink records every tag, and the other only the
+/// tags on samples.
 struct TaggedRun {
     bool                       ran     = false;
     std::size_t                samples = 0UZ;
@@ -53,8 +54,9 @@ struct TaggedRun {
     [[nodiscard]] std::vector<std::size_t> sampleOffsetsOf(std::string_view key) const { return gr::blocks::filter::testing::offsetsOf(sampleTags, key); }
 };
 
-/// @brief Run @p nSamples through a block of type @p TBlock made with @p settings: a trigger name at input @p mid, a
-/// trigger time on the next-to-last input, and trigger information with a burst end and `kNonDefaultKey` on the last.
+/// @brief Run @p nSamples through a block of type @p TBlock made with @p settings. Input @p mid carries a trigger name,
+/// and the next-to-last input a trigger time. The last input carries trigger information with a burst end and
+/// `kNonDefaultKey`.
 template<typename TBlock>
 [[nodiscard]] TaggedRun runTagged(gr::property_map settings, gr::Size_t nSamples, std::size_t mid) {
     using namespace gr::blocks::testing;
@@ -405,8 +407,8 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
     constexpr std::size_t kLast    = kSamples - 1UZ;
 
     "fir_filter moves a tag by its delay as FirFilter does, and a tag past the end leaves at the end-of-stream index"_test = [] {
-        // 31 equal taps delay by 15: the trigger at input 100 leaves on output 115, the tags on the last two inputs one
-        // past the last output
+        // 31 equal taps delay by 15. The trigger at input 100 leaves on output 115. The tags on the last two inputs
+        // leave one past the last output.
         const std::vector<float> taps(31UZ, 1.0f / 31.0f);
         const TaggedRun          got = runTagged<fir_filter<float>>({{"b", taps}}, kSamples, kMid);
         const TaggedRun          ref = runTagged<FirFilter<float>>({{"taps", taps}}, kSamples, kMid);
@@ -472,8 +474,9 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
     };
 
     "tags an upstream block leaves at its end-of-stream index pass to fir_filter's and BasicFilter's end-of-stream index"_test = [] {
-        // a FirFilter at M = 4 publishes the tags on the last inputs at index 250, where no sample is; fir_filter, and
-        // BasicFilter in IIR mode through the framework's key filter, pass them to their own end-of-stream index
+        // A FirFilter at M = 4 publishes the tags on the last inputs at index 250, where no sample is. The fir_filter
+        // passes them to its own end-of-stream index. BasicFilter in IIR mode passes them there through the framework's
+        // key filter.
         namespace filter_test = gr::blocks::filter::testing;
         const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{kNonDefaultKey}, std::string("last")}}}};
         const gr::property_map     upstream{{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}};
@@ -488,8 +491,8 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
     };
 
     "BasicDecimatingFilter in IIR mode publishes the tags of its partial last chunk at the end-of-stream index"_test = [] {
-        // at M = 5 a stream of 1003 ends in a partial chunk of 3 inputs, which holds both end tags; the framework
-        // forwards them from no call, and they leave through its key filter one past the 200 outputs
+        // At M = 5 a stream of 1003 ends in a partial chunk of 3 inputs, which holds both end tags. No call forwards
+        // them. They leave through the framework's key filter, one past the 200 outputs.
         gr::property_map settings{{"filter_type", std::string("IIR")}, {"f_low", 100.0f}, {"sample_rate", 1000.0f}};
         settings.insert_or_assign(gr::property_map::key_type{"decimate"}, gr::Size_t{5});
         const TaggedRun got = runTagged<BasicDecimatingFilter<float>>(settings, kSamples + 3U, kMid);
@@ -504,8 +507,8 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
     };
 
     "Decimator publishes the tags of its partial last chunk at the end-of-stream index"_test = [] {
-        // at a decimation of 5 a stream of 1003 ends in a partial chunk of 3 inputs, which holds both end tags; they
-        // leave through the framework's key filter one past the 200 outputs
+        // At a decimation of 5 a stream of 1003 ends in a partial chunk of 3 inputs, which holds both end tags. They
+        // leave through the framework's key filter, one past the 200 outputs.
         const TaggedRun got = runTagged<Decimator<float>>({{"decim", gr::Size_t{5}}}, kSamples + 3U, kMid);
         expect(got.ran);
         expect(eq(got.samples, 200UZ)) << "the whole chunks' outputs";
@@ -519,8 +522,8 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
     };
 
     "Decimator passes the tags an upstream block leaves at its end-of-stream index to its own"_test = [] {
-        // a FirFilter at M = 4 publishes the tags on the last inputs at index 250, where no sample is; the Decimator at
-        // 5 passes them through the framework's key filter to its end-of-stream index, 50
+        // A FirFilter at M = 4 publishes the tags on the last inputs at index 250, where no sample is. The Decimator at
+        // 5 passes them through the framework's key filter to its end-of-stream index, 50.
         namespace filter_test = gr::blocks::filter::testing;
         const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{kNonDefaultKey}, std::string("last")}}}};
         const auto                 run = filter_test::runChained<FirFilter<float>, Decimator<float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}}, {{"decim", gr::Size_t{5}}}, 1000U, tags);
@@ -530,8 +533,8 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
     };
 
     "under a stop request the epilogue of fir_filter publishes nothing, and a call publishes its outputs' tags"_test = [] {
-        // 5 equal taps delay by 2: the trigger on input 9 maps to output 11, past the 10 outputs of its call and among
-        // the 4 outputs of the next 4 inputs
+        // 5 equal taps delay by 2. The trigger on input 9 maps to output 11. That output lies past the 10 outputs of
+        // its call and among the 4 outputs of the next 4 inputs.
         namespace filter_test = gr::blocks::filter::testing;
         const auto make       = [] {
             fir_filter<float> block({{"b", std::vector<float>(5UZ, 0.2f)}});
@@ -547,8 +550,8 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
     };
 
     "a switch from FIR to IIR publishes the held tag ahead of the next call's tags"_test = [] {
-        // the FIR design delays the trigger on input 99 past the first call's 100 outputs; the second call runs in IIR
-        // mode and starts on a tag, which the framework places on output 100: the held trigger leaves there too
+        // The FIR design delays the trigger on input 99 past the first call's 100 outputs. The second call runs in IIR
+        // mode and starts on a tag, which the framework places on output 100. The held trigger leaves there too.
         namespace test = gr::blocks::testing::span;
         BasicFilter<float> block;
         block.filter_type       = FilterType::FIR;

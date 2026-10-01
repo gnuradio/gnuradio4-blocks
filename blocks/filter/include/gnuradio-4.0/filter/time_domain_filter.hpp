@@ -44,10 +44,10 @@ struct fir_filter : Block<fir_filter<T>>, detail::DelayedTagFilter<fir_filter<T>
 The transfer function of an FIR filter is given by:
 H(z) = b[0] + b[1]*z^-1 + b[2]*z^-2 + ... + b[N]*z^-N
 
-Every tag moves whole, every key with it, by the filter's delay `d`: a tag on input `i` leaves on output `i + d`, a half
-rounding up, the sample that carries the energy of input `i`. A symmetric or antisymmetric set of `N+1` coefficients
-delays by `N/2`. An asymmetric set moves its tags by the centroid of its energy, rounded to the whole sample. A tag
-whose output lies past the stream's last output leaves at the end-of-stream index, one past that output.
+Each tag moves with all its keys by the filter's delay `d`. A tag on input `i` leaves on output `i + d`, with a half
+rounded up. A symmetric or antisymmetric set of `N+1` coefficients delays by `N/2`. An asymmetric set moves its tags by
+the centroid of its energy, rounded to the whole sample. A tag whose output lies past the stream's last output leaves at
+the end-of-stream index, one past that output.
 )"">;
     PortIn<T>  in;
     PortOut<T> out;
@@ -67,7 +67,8 @@ whose output lies past the stream's last output leaves at the end-of-stream inde
 
     [[nodiscard]] std::size_t tagDecimation() const noexcept { return 1UZ; }
 
-    /// @brief The delay every forwarded tag moves by, in half samples: `N` for a symmetric set of `N+1` coefficients.
+    /// @brief The delay every forwarded tag moves by, in half samples. The value is `N` for a symmetric set of `N+1`
+    /// coefficients.
     [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept { return detail::twiceTapDelay(std::span<const T>(b.data(), b.size())); }
 
     void filterSamples(std::span<const T> input, std::span<T> output) noexcept {
@@ -181,11 +182,11 @@ struct BasicFilterProto : Block<BasicFilterProto<T, Args...>, Args...>, detail::
 This block implements a digital filter which can be configured as either FIR or IIR,
 with selectable filter type (low-pass, high-pass, band-pass, band-stop), and supports resampling.
 
-In FIR mode every tag moves whole, every key with it, by the designed filter's delay `d`, `(N-1)/2` for its `N`
-coefficients: a tag on input `i` leaves on output `round((i + d) / M)`, the sample that carries the energy of input `i`.
-`M` is the decimation of `BasicDecimatingFilter` and 1 for `BasicFilter`. A tag whose output lies past the stream's last
-output leaves at the end-of-stream index, one past that output. In IIR mode the framework places the tags and forwards
-its auto-forward keys alone: an IIR response has no single delay.
+In FIR mode each tag moves with all its keys by the designed filter's delay `d`, which is `(N-1)/2` for its `N`
+coefficients. A tag on input `i` leaves on output `round((i + d) / M)`. `M` is the decimation of `BasicDecimatingFilter`
+and 1 for `BasicFilter`. A tag whose output lies past the stream's last output leaves at the end-of-stream index, one
+past that output. In IIR mode the framework places the tags and forwards only its auto-forward keys. An IIR response has
+no single delay.
 )"">;
     using ValueType   = meta::fundamental_base_value_type_t<T>;
 
@@ -251,7 +252,7 @@ its auto-forward keys alone: an IIR response has no single delay.
         }
     }
 
-    /// @brief Input samples per output: `decimate` where the block resamples, 1 otherwise.
+    /// @brief Input samples per output. It is `decimate` where the block resamples and 1 otherwise.
     [[nodiscard]] std::size_t tagDecimation() const noexcept {
         if constexpr (TParent::ResamplingControl::kIsConst) {
             return 1UZ;
@@ -260,7 +261,7 @@ its auto-forward keys alone: an IIR response has no single delay.
         }
     }
 
-    /// @brief The FIR design's delay in half input samples; an IIR design has none.
+    /// @brief The FIR design's delay in half input samples, or no value for an IIR design.
     [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept {
         if (filter_type == FilterType::FIR) {
             return _twiceFirDelay;
@@ -300,9 +301,9 @@ This block implements a decimator for downsampling (dropping) input data by a
 configurable factor. Filtering is not included in this implementation so expect
 aliasing and sub-sampling related effects.
 
-The framework places the tags and forwards its auto-forward keys alone. A stream whose length is no multiple of the
-factor ends in a partial chunk, which makes no output. The tags on that chunk, and those an upstream block publishes
-past the last input, leave at the end-of-stream index, one past the last output.
+The framework places the tags and forwards only its auto-forward keys. A stream whose length is not a multiple of the
+factor ends in a partial chunk, which makes no output. The tags on that chunk leave at the end-of-stream index, one past
+the last output. So do the tags past the last input sample.
 )"">;
 
     PortIn<T>  in;
@@ -319,7 +320,7 @@ past the last input, leave at the end-of-stream index, one past the last output.
     /// @brief Input samples per output, `decim`.
     [[nodiscard]] std::size_t tagDecimation() const noexcept { return static_cast<std::size_t>(decim); }
 
-    /// @brief No delay: the framework places the tags.
+    /// @brief No delay. The framework places the tags.
     [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept { return std::nullopt; }
 
     void filterSamples(std::span<const T> input, std::span<T> output) noexcept {

@@ -35,14 +35,12 @@ Applies local polynomial smoothing/differentiation to streaming scalar data.
 Filter coefficients are computed using SVD-based least-squares fitting.
 
 Alignment modes, by the value of `alignment`:
-- the default value, and every value other than `Causal`: the fit is evaluated at the middle of the window, at the
-  older of the two middle samples for an even window, and the output lags the input by ceil((window_size-1)/2)
-  samples; linear-phase for an odd window
+- every value other than `Causal`, the default included: the fit is at the window's middle sample, the older one for
+  an even window. The output lags by ceil((window_size-1)/2) samples. An odd window is linear-phase.
 - `Causal`: past-only window, minimal latency, non-linear phase
 
-Every tag moves whole, every key with it, by that lag, 0 for `Causal`: a tag on input `i` leaves on output `i + lag`,
-the sample whose fit is evaluated at input `i`. A tag whose output lies past the stream's last output leaves at the
-end-of-stream index, one past that output.
+Each tag moves with all its keys by that lag, which is 0 for `Causal`. A tag on input `i` leaves on output `i + lag`.
+A tag whose output lies past the stream's last output leaves at the end-of-stream index, one past that output.
 )"">; // clang-format off
 
     PortIn<T>  in;
@@ -94,8 +92,8 @@ public:
 
     [[nodiscard]] std::size_t tagDecimation() const noexcept { return 1UZ; }
 
-    /// @brief The lag in half samples. The centered fit is evaluated at index `(W-1)/2` of the window, oldest first,
-    /// `W-1-(W-1)/2` samples behind the newest.
+    /// @brief The lag in half samples. The centered fit is evaluated at index `(W-1)/2` of the window, counted from the
+    /// oldest sample. That index is `W-1-(W-1)/2` samples behind the newest.
     [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept {
         if (_state.alignment() == algorithm::savitzky_golay::Alignment::Causal) {
             return 0ULL;

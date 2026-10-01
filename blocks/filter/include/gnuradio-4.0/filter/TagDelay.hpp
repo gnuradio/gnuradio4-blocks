@@ -23,11 +23,11 @@ namespace gr::blocks::filter::detail {
  *
  * The centroid `sum(k*|h[k]|^2) / sum(|h[k]|^2)` equals the group delay averaged over frequency with `|H|^2` as the
  * weight. A symmetric or antisymmetric set has the constant group delay `(N-1)/2`, and its centroid is exactly that. An
- * asymmetric set has no single group delay, and its centroid is the sample its energy arrives at: `k` for a lone tap at
+ * asymmetric set has no single group delay. Its centroid is the sample its energy arrives at, `k` for a lone tap at
  * `k`.
  *
  * The result is doubled because a linear-phase set of even length delays by a half sample. A centroid within a
- * thousandth of that half-sample grid is snapped to it; float rounding in a designed set moves the centroid by far
+ * thousandth of that half-sample grid is snapped to it. Float rounding in a designed set moves the centroid by far
  * less. Any other centroid is rounded to the nearest whole sample. A set with no energy has no delay.
  */
 template<typename TTap>
@@ -56,9 +56,9 @@ template<typename TTap>
 /**
  * @brief The output offset of input offset @p offset delayed by `twiceDelay / 2` samples at the interpolated rate.
  *
- * `floor((offset*L + twiceDelay/2) / M + 1/2)`: the delayed position is rounded once to the nearest output sample, a
- * half rounding up. At a zero delay this is `gr::filter::mapResampledOffset`, and it splits @p offset into `q*M + r`
- * the same way, so it holds wherever `2*M*L + twiceDelay` fits in 64 bits.
+ * The result is `floor((offset*L + twiceDelay/2) / M + 1/2)`. The delayed position is rounded once to the nearest
+ * output sample, and a half rounds up. At a zero delay this is `gr::filter::mapResampledOffset`. It splits @p offset
+ * into `q*M + r` the same way, so the result is exact wherever `2*M*L + twiceDelay` fits in 64 bits.
  */
 [[nodiscard]] constexpr std::uint64_t mapDelayedOffset(std::uint64_t offset, std::uint64_t interpolation, std::uint64_t decimation, std::uint64_t twiceDelay) noexcept {
     const std::uint64_t q = offset / decimation;
@@ -66,16 +66,16 @@ template<typename TTap>
     return q * interpolation + (2ULL * r * interpolation + twiceDelay + decimation) / (2ULL * decimation);
 }
 
-/// @brief Tags waiting for their output, as (output offset, tag), in output order.
+/// @brief Tags waiting for their output, as (output offset, tag) pairs in output order.
 using HeldTags = std::vector<std::pair<std::uint64_t, property_map>>;
 
 /**
- * @brief Hold @p tag for output @p delayed, never ahead of @p latest, the output of the last held tag, which this
- * advances.
+ * @brief Hold @p tag for output @p delayed, or for @p latest when that is later. @p latest is the output of the last
+ * held tag, and this call advances it.
  *
- * A tag describes the sample it sits on. Every key moves with it: a trigger, a burst edge and a time stamp as much
- * as a `sample_rate`, a `frequency` or a `context`. Tags therefore leave in the order they arrived, and @p held stays
- * in output order.
+ * A tag describes the sample it sits on, so all its keys move with it. A `sample_rate`, `frequency` or `context` key
+ * moves the same way as a trigger, a burst edge or a time stamp. Tags leave in the order they arrived, and @p held
+ * stays in output order.
  */
 inline void holdTag(HeldTags& held, std::uint64_t& latest, std::uint64_t delayed, property_map tag) {
     latest = std::max(latest, delayed);
@@ -87,13 +87,13 @@ inline void holdTag(HeldTags& held, std::uint64_t& latest, std::uint64_t delayed
  *
  * A tag leaves on the output that carries its input sample's energy, up to the block's delay past its input. The block
  * makes no output past its last input. A tag on one of the last inputs therefore lies past every output. A block that
- * takes more than one input per output also meets a partial last chunk: the framework hands those inputs to the
- * block's epilogue alone, and they make no output. When the stream ends, every tag still held leaves at the
- * end-of-stream index, one past the last output, where the framework publishes its `end_of_stream` tag. The tags the
- * framework leaves on the input past the last sample the block consumed leave there too. No tag moves onto an earlier
- * output, and the block keeps no input back to make an output for it. A stop request ends no stream. The framework
- * stops a block at a stop request without running its epilogue, except in the two cases `dropAtStop` names, and the
- * tags the block holds are lost with the samples they ride on.
+ * takes more than one input per output can also end on a partial chunk. The framework passes that chunk to the block's
+ * epilogue alone, and it makes no output. When the stream ends, every tag still held leaves at the end-of-stream index,
+ * one past the last output. The framework publishes its `end_of_stream` tag at that index. The tags left on the input
+ * past the last sample the block consumed leave there too. No tag moves onto an earlier output, and the block holds
+ * back no input to make an output for a tag. A stop request ends no stream. At a stop request the framework stops the
+ * block without running its epilogue, except in the two cases `dropAtStop` names. The held tags are dropped with their
+ * samples.
  */
 struct TagDelayLine {
     static constexpr std::uint64_t kStreamEnd = std::numeric_limits<std::uint64_t>::max(); ///< the output of a tag held for the end-of-stream index
@@ -109,7 +109,7 @@ struct TagDelayLine {
 
     /**
      * @brief Hold the tags of the first @p processedIn samples of @p span that no earlier call took, each on the output
-     * @p place returns for its input offset. @p place may rewrite the tag it is handed, and a tag it empties is dropped.
+     * @p place returns for its input offset. @p place may rewrite the tag. A tag it leaves empty is dropped.
      */
     template<typename TSpan, typename TPlace>
     void take(TSpan& span, std::size_t processedIn, TPlace&& place) {
@@ -134,9 +134,8 @@ struct TagDelayLine {
 
     /**
      * @brief Hold for the end-of-stream index every tag in the tag ring of @p in at or past input offset @p from, each
-     * rewritten by @p rewrite. The ring holds those tags when no call consumed their samples, or when they sit past the
-     * last input sample, where a block upstream publishes the tags it held past its own end. The `end_of_stream` key
-     * stays behind, since the framework publishes its own.
+     * rewritten by @p rewrite. The ring holds such a tag when no call consumed its sample. It also holds the tags past
+     * the last input sample. The `end_of_stream` key is removed, since the framework publishes its own.
      */
     template<typename TPort, typename TRewrite>
     void takeRemainder(TPort& in, std::uint64_t from, TRewrite&& rewrite) {
@@ -163,7 +162,7 @@ struct TagDelayLine {
 
     /**
      * @brief Publish on @p span the held tags whose output lies among its first @p made outputs, and hold the rest.
-     * With @p streamEnds every held tag leaves, and a tag whose output lies past those outputs leaves at the index
+     * With @p streamEnds every held tag leaves. A tag whose output lies past those outputs then leaves at the index
      * after them, the end-of-stream index.
      */
     template<typename TSpan>
@@ -187,14 +186,14 @@ struct TagDelayLine {
 };
 
 /**
- * @brief Whether @p block runs its epilogue under a stop request. If so, drop every tag @p tags holds, withdraw the
- * tags already placed on @p output, and publish no output there.
+ * @brief Whether @p block runs its epilogue under a stop request. If so, drop every tag @p tags holds and withdraw the
+ * tags already placed on @p output. Publish no output there.
  *
- * The framework stops a block at a stop request before any epilogue. It still runs the epilogue under one when the
- * stop arrives after the call's lifecycle check, or when no output is connected. The epilogue then publishes nothing:
- * no sample, no held tag, and no tag placed on its span ahead of it, the forwarding's tags and the framework's
- * forwarded settings tag alike. A call's forwarding checks no state, and its tags leave with the outputs the framework
- * publishes for the call.
+ * The framework stops a block at a stop request before any epilogue. It still runs the epilogue under one when the stop
+ * arrives after the call's lifecycle check, or when no output is connected. The epilogue then publishes no sample, no
+ * held tag and no tag placed on its span before it. That includes the forwarding's tags and the framework's forwarded
+ * settings tag. A call's forwarding checks no state. Its tags leave with the outputs the framework publishes for the
+ * call.
  */
 template<typename TBlock, typename TOutput>
 [[nodiscard]] bool dropAtStop(const TBlock& block, TagDelayLine& tags, TOutput& output) {
@@ -209,15 +208,16 @@ template<typename TBlock, typename TOutput>
 }
 
 /**
- * @brief The tag placement of a synchronous block that filters sample by sample and decimates by one or more: a tag
- * leaves on the output that carries its input sample's energy, and a tag held past the stream's last output leaves at
+ * @brief The tag placement of a synchronous block that filters sample by sample and decimates by `M >= 1`.
+ *
+ * A tag leaves on the output that carries its input sample's energy. A tag held past the stream's last output leaves at
  * the end-of-stream index.
  *
- * `TDerived` has the input port `in` and provides `tagDecimation()`, the input samples per output;
- * `twiceTagDelay()`, the delay in half input samples, or no value where the framework places the tags; and
- * `filterSamples(input, output)`, which filters whole input chunks into their outputs. A tag on input `i` leaves whole,
- * every key with it, on output `round((i + d) / M)`, a half rounding up, and keeps that output whatever delay or
- * decimation change follows. A `sample_rate` key is divided by `M` as the tag is taken in.
+ * `TDerived` has the input port `in` and provides three functions. `tagDecimation()` returns the input samples per
+ * output. `twiceTagDelay()` returns the delay in half input samples, or no value when the framework places the tags.
+ * `filterSamples(input, output)` filters whole input chunks into their outputs. A tag on input `i` leaves on output
+ * `round((i + d) / M)`, and a half rounds up. The tag keeps that output through any later delay or decimation change. A
+ * `sample_rate` key is divided by `M` when the tag is taken in.
  */
 template<typename TDerived, typename TIn, typename TOut>
 struct DelayedTagFilter {
@@ -241,8 +241,8 @@ struct DelayedTagFilter {
 
     /**
      * @brief Hold each tag for its delayed output and publish those this call makes. Without a delay, the framework's
-     * own forwarding runs. The tags still held from a delay in force before leave on the call's first output, ahead of
-     * every tag the framework forwards.
+     * own forwarding runs. Tags still held from an earlier delay then leave on the call's first output, ahead of every
+     * tag the framework forwards.
      */
     template<typename TInputSpans, typename TOutputSpans>
     void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
@@ -306,10 +306,11 @@ struct DelayedTagFilter {
     }
 
     /**
-     * @brief The stream's last whole input chunks, and every held tag: a tag past their outputs leaves at the
-     * end-of-stream index, with the tags the input holds past its last sample. Without a delay the epilogue makes no
-     * output, and the tags the framework forwards from no call, those of a partial last chunk among them, leave at the
-     * end-of-stream index through the framework's key filter. Under a stop request the epilogue publishes nothing.
+     * @brief Make as many of the outputs of the stream's last input as the output span holds, and publish every held
+     * tag, at the end-of-stream index for a tag past the last output.
+     *
+     * Without a delay the epilogue makes no output. The tags that no call forwarded leave at the end-of-stream index
+     * through the framework's key filter. The tags of a partial last chunk are among them.
      */
     template<InputSpanLike TInput, OutputSpanLike TOutput>
     [[nodiscard]] work::Status processEpilogue(TInput& input, TOutput& output) {
