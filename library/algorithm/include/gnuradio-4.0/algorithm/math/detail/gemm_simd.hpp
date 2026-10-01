@@ -221,6 +221,24 @@ struct SmallGemm {
     }
 };
 
+/// Returns the transpose of a rank-2 tensor as a contiguous tensor, conjugated when `conjugate` is set.
+template<bool conjugate, typename T, TensorLike TensorIn>
+gr::Tensor<T> transposedCopy(const TensorIn& tensor) {
+    const std::size_t rows = tensor.extent(0);
+    const std::size_t cols = tensor.extent(1);
+    gr::Tensor<T>     result({cols, rows});
+    for (std::size_t i = 0UZ; i < rows; ++i) {
+        for (std::size_t j = 0UZ; j < cols; ++j) {
+            if constexpr (conjugate) {
+                result[j, i] = std::conj(tensor[i, j]);
+            } else {
+                result[j, i] = tensor[i, j];
+            }
+        }
+    }
+    return result;
+}
+
 /**
  * @brief General Matrix-Matrix Multiplication: C = alpha * op(A) * op(B) + beta * C
  */
@@ -235,19 +253,36 @@ void gemm(ExecutionPolicy&& /*policy*/, TensorC& C, const TensorA& A, const Tens
         throw std::runtime_error("gemm requires contiguous tensors");
     }
 
-    constexpr auto apply_transpose = []<TransposeOp trans, TensorOf<T> Tensor>(const Tensor& tensor) {
-        using ConstVal = std::add_const_t<typename tensor_traits<Tensor>::value_type>;
+    static_assert(TransA != TransposeOp::Dynamic && TransB != TransposeOp::Dynamic, "gemm: TransposeOp::Dynamic is not supported; pass NoTrans, Trans or ConjTrans");
 
-        if constexpr (trans == TransposeOp::NoTrans) {
-            return TensorView<ConstVal>(tensor);
+    // Both kernels read op(A) through the indexing operator, so a transposed A is a stride-swapped
+    // view. They read each row of op(B) through a pointer with unit stride, so a transposed B is
+    // copied into a contiguous temporary. A conjugated transpose is copied on either side; for a
+    // real element type it equals the plain transpose.
+    constexpr bool conjugate = gr::meta::complex_like<T>;
+    using ConstView          = TensorView<const T>;
+    gr::Tensor<T> A_copy;
+    gr::Tensor<T> B_copy;
+
+    auto A_op = [&] {
+        if constexpr (TransA == TransposeOp::NoTrans) {
+            return ConstView(A);
+        } else if constexpr (TransA == TransposeOp::ConjTrans && conjugate) {
+            A_copy = transposedCopy<true, T>(A);
+            return ConstView(A_copy);
         } else {
-            auto tmp = tensor.transpose();
-            return TensorView<ConstVal>(tmp);
+            auto view = A.transpose();
+            return ConstView(view);
         }
-    };
-
-    auto A_op = apply_transpose.template operator()<TransA>(A);
-    auto B_op = apply_transpose.template operator()<TransB>(B);
+    }();
+    auto B_op = [&] {
+        if constexpr (TransB == TransposeOp::NoTrans) {
+            return ConstView(B);
+        } else {
+            B_copy = transposedCopy<(TransB == TransposeOp::ConjTrans && conjugate), T>(B);
+            return ConstView(B_copy);
+        }
+    }();
 
     const auto A_ext = A_op.extents();
     const auto B_ext = B_op.extents();

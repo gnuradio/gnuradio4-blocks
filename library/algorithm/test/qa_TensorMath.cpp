@@ -1661,4 +1661,165 @@ const boost::ut::suite<"Level G: Helper Functions"> _level7_helpers = [] {
     };
 };
 
+template<gr::math::TransposeOp opA, gr::math::TransposeOp opB, typename T>
+concept GemmAccepts = requires(gr::Tensor<T>& C, const gr::Tensor<T>& A, const gr::Tensor<T>& B) { gr::math::gemm<opA, opB>(C, A, B); };
+
+template<gr::math::TransposeOp opA, typename T>
+concept GemvAccepts = requires(gr::Tensor<T>& y, const gr::Tensor<T>& A, const gr::Tensor<T>& x) { gr::math::gemv<opA>(y, A, x); };
+
+const boost::ut::suite<"Level 3b: GEMM operand forms against worked values"> _level4b_gemm_forms = [] {
+    using namespace boost::ut;
+    using namespace boost::ut::literals;
+    using gr::Tensor;
+    using namespace gr::math;
+    using enum TransposeOp;
+    using C64 = std::complex<double>;
+
+    // A (2x3) and B (3x2) with complex entries; the product A * B worked by hand:
+    //   C[0,0] = (1+i)*1 + 2*(2-i) + (-i)*(1+i) = 6 - 2i
+    //   C[0,1] = (1+i)*i + 2*0     + (-i)*1     = -1
+    //   C[1,0] = 0*1     + (1-i)*(2-i) + 3*(1+i) = 4
+    //   C[1,1] = 0*i     + (1-i)*0     + 3*1     = 3
+    const std::vector<C64> aValues{{1, 1}, {2, 0}, {0, -1}, {0, 0}, {1, -1}, {3, 0}};
+    const std::vector<C64> bValues{{1, 0}, {0, 1}, {2, -1}, {0, 0}, {1, 1}, {1, 0}};
+    const std::vector<C64> product{{6, -2}, {-1, 0}, {4, 0}, {3, 0}};
+
+    auto matrix = [](std::size_t rows, std::size_t cols, const std::vector<C64>& values) {
+        Tensor<C64> M({rows, cols});
+        std::ranges::copy(values, M.begin());
+        return M;
+    };
+    auto expectProduct = [&product](const Tensor<C64>& C, std::string_view form) {
+        expect(eq(C.extent(0), 2UZ) && eq(C.extent(1), 2UZ)) << form;
+        for (std::size_t k = 0UZ; k < product.size(); ++k) {
+            expect(std::abs(C.data()[k] - product[k]) < 1e-12) << form << "element" << k << C.data()[k].real() << C.data()[k].imag();
+        }
+    };
+
+    "complex A * B"_test = [&] {
+        const Tensor<C64> A = matrix(2, 3, aValues);
+        const Tensor<C64> B = matrix(3, 2, bValues);
+        Tensor<C64>       C({2UZ, 2UZ});
+        gemm(C, A, B);
+        expectProduct(C, "NoTrans, NoTrans");
+    };
+
+    "transposed right operand reads along the right stride"_test = [&] {
+        const Tensor<C64> A  = matrix(2, 3, aValues);
+        const Tensor<C64> Bt = transpose(matrix(3, 2, bValues)); // stored as B^T, 2x3
+        Tensor<C64>       C({2UZ, 2UZ});
+        gemm<NoTrans, Trans>(C, A, Bt);
+        expectProduct(C, "NoTrans, Trans");
+    };
+
+    "conjugate-transposed right operand is conjugated"_test = [&] {
+        const Tensor<C64> A  = matrix(2, 3, aValues);
+        const Tensor<C64> Bh = conjTranspose(matrix(3, 2, bValues)); // stored as B^H, 2x3
+        Tensor<C64>       C({2UZ, 2UZ});
+        gemm<NoTrans, ConjTrans>(C, A, Bh);
+        expectProduct(C, "NoTrans, ConjTrans");
+    };
+
+    "conjugate-transposed left operand is conjugated"_test = [&] {
+        const Tensor<C64> Ah = conjTranspose(matrix(2, 3, aValues)); // stored as A^H, 3x2
+        const Tensor<C64> B  = matrix(3, 2, bValues);
+        Tensor<C64>       C({2UZ, 2UZ});
+        gemm<ConjTrans, NoTrans>(C, Ah, B);
+        expectProduct(C, "ConjTrans, NoTrans");
+    };
+
+    "both operands conjugate-transposed"_test = [&] {
+        const Tensor<C64> Ah = conjTranspose(matrix(2, 3, aValues));
+        const Tensor<C64> Bh = conjTranspose(matrix(3, 2, bValues));
+        Tensor<C64>       C({2UZ, 2UZ});
+        gemm<ConjTrans, ConjTrans>(C, Ah, Bh);
+        expectProduct(C, "ConjTrans, ConjTrans");
+    };
+
+    "Trans on a complex operand does not conjugate"_test = [&] {
+        const Tensor<C64> At = transpose(matrix(2, 3, aValues)); // stored as A^T, 3x2
+        const Tensor<C64> Bt = transpose(matrix(3, 2, bValues));
+        Tensor<C64>       C({2UZ, 2UZ});
+        gemm<Trans, Trans>(C, At, Bt);
+        expectProduct(C, "Trans, Trans");
+    };
+
+    "real transposed right operand, cache-blocked kernel"_test = [] {
+        // B(k, j) = k - j and A(i, k) = 1, so C(i, j) = sum_k (k - j) = K(K-1)/2 - K j for every row i.
+        constexpr std::size_t M = 3UZ, K = 160UZ, N = 136UZ;
+        Tensor<double>        A({M, K});
+        Tensor<double>        Bt({N, K}); // stored as B^T
+        A.fill(1.0);
+        for (std::size_t j = 0UZ; j < N; ++j) {
+            for (std::size_t k = 0UZ; k < K; ++k) {
+                Bt[j, k] = static_cast<double>(k) - static_cast<double>(j);
+            }
+        }
+        Tensor<double> C({M, N});
+        gemm<NoTrans, Trans>(C, A, Bt);
+        bool allMatch = true;
+        for (std::size_t i = 0UZ; i < M; ++i) {
+            for (std::size_t j = 0UZ; j < N; ++j) {
+                const double expected = static_cast<double>(K * (K - 1UZ) / 2UZ) - static_cast<double>(K * j);
+                allMatch              = allMatch && C[i, j] == expected;
+            }
+        }
+        expect(allMatch) << "C(i, j) = K(K-1)/2 - K j";
+    };
+
+    "real 2x3 by 3x2 with transposed and conjugate-transposed operands"_test = [] {
+        Tensor<float> A({2UZ, 3UZ});
+        A = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+        Tensor<float> Bt({2UZ, 3UZ}); // B = [[7, 8], [9, 10], [11, 12]] stored transposed
+        Bt = {7.0f, 9.0f, 11.0f, 8.0f, 10.0f, 12.0f};
+        const std::array<float, 4> expected{58.0f, 64.0f, 139.0f, 154.0f};
+        Tensor<float>              C({2UZ, 2UZ});
+        gemm<NoTrans, Trans>(C, A, Bt);
+        expect(std::ranges::equal(C, expected)) << "NoTrans, Trans";
+        C.fill(0.0f);
+        gemm<NoTrans, ConjTrans>(C, A, Bt);
+        expect(std::ranges::equal(C, expected)) << "NoTrans, ConjTrans";
+    };
+
+    "Dynamic is refused at compile time"_test = [] {
+        static_assert(GemmAccepts<NoTrans, ConjTrans, double>);
+        static_assert(!GemmAccepts<Dynamic, NoTrans, double>);
+        static_assert(!GemmAccepts<NoTrans, Dynamic, double>);
+        static_assert(GemvAccepts<ConjTrans, double>);
+        static_assert(!GemvAccepts<Dynamic, double>);
+    };
+
+    "abs returns the magnitudes"_test = [] {
+        Tensor<C64> z({3UZ});
+        z                      = {C64{3, 4}, C64{-1, 0}, C64{0, -2}};
+        const Tensor<C64> zAbs = TensorOps<C64>::abs(z);
+        expect(eq(zAbs.size(), 3UZ));
+        expect(zAbs[0] == C64{5, 0} && zAbs[1] == C64{1, 0} && zAbs[2] == C64{2, 0});
+
+        Tensor<float> r({3UZ});
+        r                        = {-2.5f, 0.0f, 3.0f};
+        const Tensor<float> rAbs = TensorOps<float>::abs(r);
+        expect(rAbs[0] == 2.5f && rAbs[1] == 0.0f && rAbs[2] == 3.0f);
+    };
+
+    "sign, clip and the Hadamard members return their results"_test = [] {
+        Tensor<float> a({4UZ});
+        a = {-2.0f, 0.0f, 3.0f, 8.0f};
+        Tensor<float> b({4UZ});
+        b = {4.0f, 5.0f, 2.0f, -4.0f};
+
+        const Tensor<float> aSign = TensorOps<float>::sign(a);
+        expect(aSign[0] == -1.0f && aSign[1] == 0.0f && aSign[2] == 1.0f && aSign[3] == 1.0f);
+
+        const Tensor<float> aClip = TensorOps<float>::clip(a, -1.0f, 4.0f);
+        expect(aClip[0] == -1.0f && aClip[1] == 0.0f && aClip[2] == 3.0f && aClip[3] == 4.0f);
+
+        const Tensor<float> hadamard = TensorOps<float>::multiply_elementwise(a, b);
+        expect(hadamard[0] == -8.0f && hadamard[1] == 0.0f && hadamard[2] == 6.0f && hadamard[3] == -32.0f);
+
+        const Tensor<float> quotient = TensorOps<float>::divide_elementwise(a, b);
+        expect(quotient[0] == -0.5f && quotient[1] == 0.0f && quotient[2] == 1.5f && quotient[3] == -2.0f);
+    };
+};
+
 int main() { /* tests are automatically registered and executed */ return 0; }

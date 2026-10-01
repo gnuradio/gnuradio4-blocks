@@ -80,7 +80,7 @@ enum class TransposeOp : std::int8_t {
     NoTrans   = 0, /// no transpose
     Trans     = 1, /// transpose
     ConjTrans = 2, /// conjugated transpose
-    Dynamic   = -1 /// runtime decision (not yet implemented)
+    Dynamic   = -1 /// runtime decision, refused at compile time by gemm and gemv
 };
 
 enum class MatrixSize : std::int8_t {
@@ -222,9 +222,9 @@ struct TensorOps {
         // the transparent functors return the promoted operand type, which narrows on write-back for sub-int T
         constexpr auto multiply = [](const T& x, const T& y) { return static_cast<T>(x * y); };
 #if defined(__GLIBCXX__) && !defined(__ACPP__)
-        std::ranges::transform(std::execution::unseq, self, other.begin(), self.begin(), multiply);
+        std::transform(std::execution::unseq, self.begin(), self.end(), other.begin(), self.begin(), multiply);
 #else
-        std::ranges::transform(self, other.begin(), self.begin(), multiply);
+        std::ranges::transform(self, other, self.begin(), multiply);
 #endif
         return self;
     }
@@ -242,9 +242,9 @@ struct TensorOps {
         // the transparent functors return the promoted operand type, which narrows on write-back for sub-int T
         constexpr auto divide = [](const T& x, const T& y) { return static_cast<T>(x / y); };
 #if defined(__GLIBCXX__) && !defined(__ACPP__)
-        std::ranges::transform(std::execution::unseq, self, other.begin(), self.begin(), divide);
+        std::transform(std::execution::unseq, self.begin(), self.end(), other.begin(), self.begin(), divide);
 #else
-        std::ranges::transform(self, other.begin(), self.begin(), divide);
+        std::ranges::transform(self, other, self.begin(), divide);
 #endif
         return self;
     }
@@ -388,7 +388,7 @@ struct TensorOps {
 
     [[maybe_unused]] static constexpr TensorType& clip_inplace(TensorType& self, const T& min_val, const T& max_val) {
 #if defined(__GLIBCXX__) && !defined(__ACPP__)
-        std::ranges::transform(std::execution::unseq, self, self.begin(), [min_val, max_val](const T& x) { return std::clamp(x, min_val, max_val); });
+        std::transform(std::execution::unseq, self.begin(), self.end(), self.begin(), [min_val, max_val](const T& x) { return std::clamp(x, min_val, max_val); });
 #else
         std::ranges::transform(self, self.begin(), [min_val, max_val](const T& x) { return std::clamp(x, min_val, max_val); });
 #endif
@@ -410,10 +410,11 @@ struct TensorOps {
             }
         };
 #if defined(__GLIBCXX__) && !defined(__ACPP__)
-        std::ranges::transform(std::execution::unseq, self, result.begin(), abs);
+        std::transform(std::execution::unseq, self.begin(), self.end(), result.begin(), abs);
 #else
         std::ranges::transform(self, result.begin(), abs);
 #endif
+        return result;
     }
 
     [[nodiscard]] static constexpr TensorType sign(const TensorType& self) {
@@ -428,7 +429,7 @@ struct TensorOps {
             return T{0};
         };
 #if defined(__GLIBCXX__) && !defined(__ACPP__)
-        std::ranges::transform(std::execution::unseq, self, result.begin(), sign);
+        std::transform(std::execution::unseq, self.begin(), self.end(), result.begin(), sign);
 #else
         std::ranges::transform(self, result.begin(), sign);
 #endif
@@ -1009,10 +1010,14 @@ namespace gr::math {
  * @param alpha Scalar multiplier for A*B (default: 1)
  * @param beta Scalar multiplier for C (default: 0)
  *
+ * A transposed or conjugate-transposed B is copied into a contiguous temporary first, as is a
+ * conjugate-transposed complex A. TransposeOp::Dynamic does not satisfy the constraint.
+ *
  * @throws dimension_mismatch If dimensions are incompatible
  * @throws std::runtime_error If tensors are not contiguous
  */
 template<TransposeOp TransA = TransposeOp::NoTrans, TransposeOp TransB = TransposeOp::NoTrans, ExecutionPolicy Policy, typename T, TensorOf<T> TensorC, TensorOf<T> TensorA, TensorOf<T> TensorB>
+requires(TransA != TransposeOp::Dynamic && TransB != TransposeOp::Dynamic)
 void gemm(Policy&& policy, TensorC& C, const TensorA& A, const TensorB& B, T alpha = T{1}, T beta = T{0}) {
     if (C.size() == 0 || A.size() == 0 || B.size() == 0) {
         return; // nothing to compute for empty tensors
@@ -1025,6 +1030,7 @@ void gemm(Policy&& policy, TensorC& C, const TensorA& A, const TensorB& B, T alp
 }
 
 template<TransposeOp TransA = TransposeOp::NoTrans, TransposeOp TransB = TransposeOp::NoTrans, TensorLike TensorC, TensorLike TensorA, TensorLike TensorB, typename T = TensorC::value_type>
+requires(TransA != TransposeOp::Dynamic && TransB != TransposeOp::Dynamic)
 void gemm(TensorC& C, const TensorA& A, const TensorB& B, T alpha = T{1}, T beta = T{0}) { // simplified interface: C = A * B & auto-detect policy version
     gemm<TransA, TransB>(cpu_policy{}, C, A, B, alpha, beta);
 }
@@ -1047,6 +1053,7 @@ void gemm(TensorC& C, const TensorA& A, const TensorB& B, T alpha = T{1}, T beta
  * @param beta Scalar multiplier for y (default: 0)
  */
 template<TransposeOp TransA = TransposeOp::NoTrans, ExecutionPolicy Policy, typename T, TensorOf<T> TensorY, TensorOf<T> TensorA, TensorOf<T> TensorX>
+requires(TransA != TransposeOp::Dynamic)
 void gemv(Policy&& policy, TensorY& y, const TensorA& A, const TensorX& x, T alpha = T{1}, T beta = T{0}) {
     if (y.size() == 0 || A.size() == 0 || x.size() == 0) {
         return; // nothing to compute for empty tensors
@@ -1059,6 +1066,7 @@ void gemv(Policy&& policy, TensorY& y, const TensorA& A, const TensorX& x, T alp
 }
 
 template<TransposeOp TransA = TransposeOp::NoTrans, TensorLike TensorY, TensorLike TensorA, TensorLike TensorX, typename T = TensorY::value_type>
+requires(TransA != TransposeOp::Dynamic)
 void gemv(TensorY& y, const TensorA& A, const TensorX& x, T alpha = T{1}, T beta = T{0}) { // simplified: y = A * x && auto-detect policy version
     gemv<TransA>(cpu_policy{}, y, A, x, alpha, beta);
 }

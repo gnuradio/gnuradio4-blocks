@@ -285,6 +285,8 @@ void gemv(ExecutionPolicy&& /*policy*/, TensorY& y, const TensorA& A, const Tens
         throw std::runtime_error("gemv: x and y must be 1D");
     }
 
+    static_assert(TransA != TransposeOp::Dynamic, "gemv: TransposeOp::Dynamic is not supported; pass NoTrans, Trans or ConjTrans");
+
     // check dimensions and dispatch based on transpose flag
     if constexpr (TransA == TransposeOp::NoTrans) {
         const auto A_ext = A.extents();
