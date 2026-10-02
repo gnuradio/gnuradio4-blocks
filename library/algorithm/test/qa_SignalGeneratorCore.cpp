@@ -5,9 +5,18 @@
 #include <cstdint>
 #include <limits>
 #include <print>
+#include <type_traits>
 #include <vector>
 
 #include <gnuradio-4.0/algorithm/signal/SignalGeneratorCore.hpp>
+
+// A complex output computes in its own real scalar. Every real output, integer or floating, computes in double.
+static_assert(gr::signal::detail::is_complex_v<std::complex<float>> && gr::signal::detail::is_complex_v<std::complex<double>>);
+static_assert(!gr::signal::detail::is_complex_v<float> && !gr::signal::detail::is_complex_v<double> && !gr::signal::detail::is_complex_v<std::int16_t>);
+static_assert(gr::signal::detail::is_complex<std::complex<float>>::value && !gr::signal::detail::is_complex<float>::value);
+static_assert(std::is_same_v<gr::signal::detail::compute_float_t<std::complex<float>>, float> && std::is_same_v<gr::signal::detail::compute_float_t<std::complex<double>>, double>);
+static_assert(std::is_same_v<gr::signal::detail::compute_float_t<float>, double> && std::is_same_v<gr::signal::detail::compute_float_t<double>, double>);
+static_assert(std::is_same_v<gr::signal::detail::compute_float_t<std::int8_t>, double> && std::is_same_v<gr::signal::detail::compute_float_t<std::uint64_t>, double>);
 
 using namespace boost::ut;
 

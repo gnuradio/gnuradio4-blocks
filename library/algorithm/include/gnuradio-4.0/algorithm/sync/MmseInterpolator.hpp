@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <gnuradio-4.0/algorithm/filter/FilterDesign.hpp>
+#include <gnuradio-4.0/algorithm/math/SampleType.hpp>
 
 /**
  * @brief The minimum-mean-square-error fractional-delay interpolator, generated in closed form from
@@ -99,19 +100,12 @@ namespace gr::sync {
 
 /// @brief The sample types an interpolation is written for. Taps are `float` in every case.
 template<typename T>
-concept InterpolatorSample = std::is_same_v<T, float> || std::is_same_v<T, double> || std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>;
+concept InterpolatorSample = gr::math::RealOrComplexSample<T>;
 
 namespace detail {
 
 template<typename T>
-struct InterpolatorScalar {
-    using type = T;
-};
-
-template<typename T>
-struct InterpolatorScalar<std::complex<T>> {
-    using type = T;
-};
+using InterpolatorScalar = gr::math::RealScalarOf<T>;
 
 /**
  * @brief `LDL^T` of a small symmetric positive-definite matrix, factored once and solved many times.

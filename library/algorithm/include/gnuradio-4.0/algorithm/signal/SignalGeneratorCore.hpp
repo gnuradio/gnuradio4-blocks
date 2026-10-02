@@ -8,6 +8,7 @@
 #include <span>
 #include <type_traits>
 
+#include <gnuradio-4.0/algorithm/math/SampleType.hpp>
 #include <gnuradio-4.0/algorithm/signal/NoiseGenerator.hpp>
 #include <gnuradio-4.0/algorithm/signal/ToneGenerator.hpp>
 
@@ -18,24 +19,14 @@ enum class SignalType : int { Const, Sin, Cos, Square, Saw, Triangle, FastSin, F
 namespace detail {
 
 template<typename T>
-struct is_complex : std::false_type {};
-template<typename F>
-struct is_complex<std::complex<F>> : std::true_type {};
+using is_complex = std::bool_constant<gr::math::RealScalarOf<T>::isComplex>;
 template<typename T>
 inline constexpr bool is_complex_v = is_complex<T>::value;
 
 // Computation float type: double for all scalar types, base type for complex
 template<typename T>
 struct compute_float {
-    using type = double;
-};
-template<>
-struct compute_float<std::complex<float>> {
-    using type = float;
-};
-template<>
-struct compute_float<std::complex<double>> {
-    using type = double;
+    using type = std::conditional_t<gr::math::RealScalarOf<T>::isComplex, gr::math::RealScalarOfT<T>, double>;
 };
 template<typename T>
 using compute_float_t = typename compute_float<T>::type;

@@ -10,9 +10,17 @@
 #include <print>
 #include <random>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 #include <gnuradio-4.0/algorithm/sync/MmseInterpolator.hpp>
+
+// The interpolator takes exactly the two real and two complex floating-point types, and computes in their real scalar.
+static_assert(gr::sync::InterpolatorSample<float> && gr::sync::InterpolatorSample<double>);
+static_assert(gr::sync::InterpolatorSample<std::complex<float>> && gr::sync::InterpolatorSample<std::complex<double>>);
+static_assert(!gr::sync::InterpolatorSample<int> && !gr::sync::InterpolatorSample<long double> && !gr::sync::InterpolatorSample<std::complex<long double>>);
+static_assert(std::is_same_v<gr::sync::detail::InterpolatorScalar<float>::type, float> && std::is_same_v<gr::sync::detail::InterpolatorScalar<double>::type, double>);
+static_assert(std::is_same_v<gr::sync::detail::InterpolatorScalar<std::complex<float>>::type, float> && std::is_same_v<gr::sync::detail::InterpolatorScalar<std::complex<double>>::type, double>);
 
 namespace {
 

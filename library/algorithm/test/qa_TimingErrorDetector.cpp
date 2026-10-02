@@ -8,9 +8,17 @@
 #include <numbers>
 #include <print>
 #include <random>
+#include <type_traits>
 #include <vector>
 
 #include <gnuradio-4.0/algorithm/sync/TimingErrorDetector.hpp>
+
+// The detectors take exactly the two real and two complex floating-point types, and compute in their real scalar.
+static_assert(gr::sync::TimingSample<float> && gr::sync::TimingSample<double>);
+static_assert(gr::sync::TimingSample<std::complex<float>> && gr::sync::TimingSample<std::complex<double>>);
+static_assert(!gr::sync::TimingSample<int> && !gr::sync::TimingSample<long double> && !gr::sync::TimingSample<std::complex<long double>>);
+static_assert(std::is_same_v<gr::sync::detail::TimingScalarT<float>, float> && std::is_same_v<gr::sync::detail::TimingScalarT<double>, double>);
+static_assert(std::is_same_v<gr::sync::detail::TimingScalarT<std::complex<float>>, float> && std::is_same_v<gr::sync::detail::TimingScalarT<std::complex<double>>, double>);
 
 namespace {
 

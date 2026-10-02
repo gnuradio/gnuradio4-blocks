@@ -7,6 +7,8 @@
 #include <numbers>
 #include <type_traits>
 
+#include <gnuradio-4.0/algorithm/math/SampleType.hpp>
+
 /**
  * @brief The timing error detectors as pure kernels.
  *
@@ -82,7 +84,7 @@ namespace gr::sync {
 
 /// @brief The sample types a detector kernel is written for.
 template<typename T>
-concept TimingSample = std::is_same_v<T, float> || std::is_same_v<T, double> || std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>;
+concept TimingSample = gr::math::RealOrComplexSample<T>;
 
 /// @brief Which detector, chosen once at construction and never per symbol.
 enum class TimingDetector { MuellerMuller, ModifiedMuellerMuller, ZeroCrossing, Gardner, EarlyLate, SignalTimesSlopeMl, SignumTimesSlopeMl };
@@ -119,14 +121,7 @@ struct TimingDetectorTraits {
 namespace detail {
 
 template<typename T>
-struct TimingScalar {
-    using type = T;
-};
-
-template<typename T>
-struct TimingScalar<std::complex<T>> {
-    using type = T;
-};
+using TimingScalar = gr::math::RealScalarOf<T>;
 
 template<TimingSample T>
 using TimingScalarT = typename TimingScalar<T>::type;
