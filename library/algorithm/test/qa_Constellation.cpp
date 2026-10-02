@@ -223,9 +223,9 @@ const boost::ut::suite<"constellation"> constellationTests = [] {
         compare(C::qam(16UZ), qam16, "16QAM");
 
         expect(approx(C::bpsk().minimumDistance(), 2.0, 1.0e-9));
-        expect(approx(C::qpsk().minimumDistance(), 1.414213562, 1.0e-9));
-        expect(approx(C::psk8().minimumDistance(), 0.765366865, 1.0e-9));
-        expect(approx(C::qam(16UZ).minimumDistance(), 0.632455532, 1.0e-9));
+        expect(approx(C::qpsk().minimumDistance(), std::numbers::sqrt2, 1.0e-9)) << "neighbors a quarter turn apart on the unit circle";
+        expect(approx(C::psk8().minimumDistance(), 2.0 * std::sin(std::numbers::pi / 8.0), 1.0e-9)) << "the chord of an eighth of a turn";
+        expect(approx(C::qam(16UZ).minimumDistance(), 2.0 / std::sqrt(10.0), 1.0e-9)) << "levels +-1 and +-3, mean energy 10 before scaling to one";
 
         std::size_t index = 0UZ;
         for (const C& constellation : theSixConstellations()) {
