@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 
 #include <gnuradio-4.0/algorithm/fec/Golay.hpp>
@@ -37,8 +38,10 @@ using gr::fec::golay24Decode;
 using gr::fec::golay24Encode;
 using gr::fec::golayCosetTableIsBijective;
 using gr::fec::GolayResult;
+using gr::fec::golaySyndrome;
 using gr::fec::kGolayCorrectable;
 using gr::fec::kGolayGenerator;
+using gr::fec::kGolayInfoBits;
 using gr::fec::kGolayParityBits;
 
 } // namespace
@@ -58,6 +61,24 @@ const boost::ut::suite<"golay"> golayTests = [] {
             }
         }
         expect(eq(poly, 0U)) << "the generator divides x^23 - 1";
+    };
+
+    "gf2Remainder divides as the long division above does"_test = [] {
+        using gr::fec::gf2Remainder;
+        constexpr auto kDegree = static_cast<unsigned>(kGolayParityBits);
+        expect(eq(gf2Remainder((1U << 23) | 1U, 24U, kGolayGenerator, kDegree), std::uint64_t{0})) << "x^23 + 1 is a multiple of the generator";
+        expect(eq(gf2Remainder(kGolayGenerator, 12U, kGolayGenerator, kDegree), std::uint64_t{0})) << "and so is the generator";
+        expect(eq(gf2Remainder(1U << kDegree, 12U, kGolayGenerator, kDegree), std::uint64_t{kGolayGenerator ^ (1U << kDegree)})) << "x^11 leaves the generator's lower terms";
+
+        std::size_t misses = 0UZ;
+        for (std::uint32_t info = 0U; info < (1U << kGolayInfoBits); ++info) {
+            const std::uint32_t cw = golay23Encode(static_cast<std::uint16_t>(info));
+            misses += gf2Remainder(cw, 23U, kGolayGenerator, kDegree) != 0U ? 1UZ : 0UZ;
+            for (unsigned k = 0U; k < 23U; ++k) {
+                misses += golaySyndrome(cw ^ (1U << k)) != gf2Remainder(1U << k, 23U, kGolayGenerator, kDegree) ? 1UZ : 0UZ;
+            }
+        }
+        expect(eq(misses, 0UZ)) << "every codeword is a multiple, and a one-bit error's syndrome is that bit's remainder";
     };
 
     "the minimum weight of the code, enumerated"_test = [] {

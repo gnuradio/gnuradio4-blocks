@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <gnuradio-4.0/algorithm/fec/Gf2Polynomial.hpp>
+
 /**
  * The binary Golay codes, in the three forms P25 Phase 1 transmits (TIA-102.BAAA).
  *
@@ -47,15 +49,7 @@ inline constexpr std::size_t kGolayParityBits = 11UZ;
 inline constexpr unsigned kGolayCorrectable = 3U;
 
 /// Reduce a 23-bit word modulo the generator, leaving the 11-bit syndrome.
-[[nodiscard]] inline constexpr std::uint32_t golaySyndrome(std::uint32_t word) noexcept {
-    std::uint32_t r = word & 0x7FFFFFU;
-    for (int bit = 22; bit >= static_cast<int>(kGolayParityBits); --bit) {
-        if ((r >> bit) & 1U) {
-            r ^= kGolayGenerator << (bit - static_cast<int>(kGolayParityBits));
-        }
-    }
-    return r;
-}
+[[nodiscard]] inline constexpr std::uint32_t golaySyndrome(std::uint32_t word) noexcept { return static_cast<std::uint32_t>(gf2Remainder(word & 0x7FFFFFU, 23U, kGolayGenerator, static_cast<unsigned>(kGolayParityBits))); }
 
 /// Encode 12 information bits systematically, the information in bits 22..11.
 [[nodiscard]] inline constexpr std::uint32_t golay23Encode(std::uint16_t info) noexcept {

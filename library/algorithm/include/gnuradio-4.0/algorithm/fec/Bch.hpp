@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <vector>
 
+#include <gnuradio-4.0/algorithm/fec/Gf2Polynomial.hpp>
+
 /**
  * The binary BCH(63,16,23) code, the one protecting P25 Phase 1's network identifier
  * (TIA-102.BAAA).
@@ -143,13 +145,7 @@ struct Bch63Gf64Tables {
     constexpr std::uint64_t generator = bch63GeneratorPoly();
 
     const std::uint64_t shifted = static_cast<std::uint64_t>(info) << kBch63ParityBits;
-    std::uint64_t       rem     = shifted;
-    for (unsigned i = kBch63Length - 1U; i >= kBch63ParityBits; --i) {
-        if (((rem >> i) & 1U) != 0U) {
-            rem ^= (generator << (i - kBch63ParityBits));
-        }
-    }
-    return shifted | (rem & ((1ULL << kBch63ParityBits) - 1U));
+    return shifted | gf2Remainder(shifted, kBch63Length, generator, kBch63ParityBits);
 }
 
 /// Every codeword, indexed by its information word. Half a megabyte, built once.
@@ -347,13 +343,7 @@ struct Bch15 {
     /// information, and the bits below it the remainder of the information polynomial over the generator.
     [[nodiscard]] static constexpr std::uint16_t encode(std::uint16_t info) noexcept {
         const unsigned shifted = (static_cast<unsigned>(info) & ((1U << kInfoBits) - 1U)) << kParityBits;
-        unsigned       rem     = shifted;
-        for (unsigned i = kLength - 1U; i >= kParityBits; --i) {
-            if (((rem >> i) & 1U) != 0U) {
-                rem ^= (static_cast<unsigned>(kGenerator) << (i - kParityBits));
-            }
-        }
-        return static_cast<std::uint16_t>(shifted | (rem & ((1U << kParityBits) - 1U)));
+        return static_cast<std::uint16_t>(shifted | gf2Remainder(shifted, kLength, kGenerator, kParityBits));
     }
 
     /// Every codeword, indexed by its information word, built at compile time.
