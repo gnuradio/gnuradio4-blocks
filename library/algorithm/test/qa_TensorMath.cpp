@@ -1822,4 +1822,128 @@ const boost::ut::suite<"Level 3b: GEMM operand forms against worked values"> _le
     };
 };
 
+template<typename T>
+[[nodiscard]] T conjugateOf(T value) {
+    if constexpr (gr::meta::complex_like<T>) {
+        return std::conj(value);
+    } else {
+        return value;
+    }
+}
+
+template<typename T>
+[[nodiscard]] gr::Tensor<T> matrixOf(std::size_t rows, std::size_t cols, std::initializer_list<T> values) {
+    gr::Tensor<T> M({rows, cols});
+    std::ranges::copy(values, M.begin());
+    return M;
+}
+
+/// C = X * op(W) by the definition, with W stored as op(W) transposed: C(i, j) = sum over k of X(i, k) * W(j, k), with W conjugated when `conjugate` is set.
+template<bool conjugate, typename T>
+[[nodiscard]] gr::Tensor<T> productWithTransposed(const gr::Tensor<T>& X, const gr::Tensor<T>& W) {
+    gr::Tensor<T> C({X.extent(0), W.extent(0)});
+    for (std::size_t i = 0UZ; i < X.extent(0); ++i) {
+        for (std::size_t j = 0UZ; j < W.extent(0); ++j) {
+            T sum{};
+            for (std::size_t k = 0UZ; k < X.extent(1); ++k) {
+                sum += X[i, k] * (conjugate ? conjugateOf(W[j, k]) : W[j, k]);
+            }
+            C[i, j] = sum;
+        }
+    }
+    return C;
+}
+
+template<typename T>
+[[nodiscard]] bool sameEntries(const gr::Tensor<T>& actual, const gr::Tensor<T>& expected) {
+    using Real = decltype(std::abs(T{}));
+    const Real tolerance{Real(1e-5)};
+    return std::ranges::equal(actual.extents(), expected.extents()) && std::ranges::equal(actual, expected, [tolerance](T a, T b) { return std::abs(a - b) <= tolerance; });
+}
+
+const boost::ut::suite<"Level 3c: GEMM with a transposed right operand, square and non-square"> _level4c_gemm_transposed = [] {
+    using namespace boost::ut;
+    using namespace boost::ut::literals;
+    using gr::Tensor;
+    using namespace gr::math;
+    using enum TransposeOp;
+
+    "3x2 by the transposed 2x2 identity returns the left operand"_test = []<typename T> {
+        const Tensor<T> X = matrixOf<T>(3, 2, {T{1}, T{2}, T{3}, T{-4}, T{5}, T{6}});
+        const Tensor<T> I = matrixOf<T>(2, 2, {T{1}, T{0}, T{0}, T{1}});
+        Tensor<T>       C({3UZ, 2UZ});
+        gemm<NoTrans, Trans>(C, X, I);
+        expect(sameEntries(C, X)) << "Trans";
+        C.fill(T{7});
+        gemm<NoTrans, ConjTrans>(C, X, I);
+        expect(sameEntries(C, X)) << "ConjTrans";
+    } | std::tuple<float, double, std::complex<float>, std::complex<double>>{};
+
+    "complex 3x2 by the transposed 2x2 identity returns the left operand"_test = []<typename T> {
+        const Tensor<T> X = matrixOf<T>(3, 2, {T{1, 1}, T{2, -1}, T{4, -4}, T{0, 3}, T{-2, 5}, T{1, 0}});
+        const Tensor<T> I = matrixOf<T>(2, 2, {T{1}, T{0}, T{0}, T{1}});
+        Tensor<T>       C({3UZ, 2UZ});
+        gemm<NoTrans, Trans>(C, X, I);
+        expect(sameEntries(C, X)) << "Trans";
+        C.fill(T{7});
+        gemm<NoTrans, ConjTrans>(C, X, I);
+        expect(sameEntries(C, X)) << "ConjTrans";
+    } | std::tuple<std::complex<float>, std::complex<double>>{};
+
+    "complex 3x2 by a transposed 2x2 against values worked by hand"_test = []<typename T> {
+        // X = [[1+i, 2], [-i, 3], [1, 1-i]] and W = [[1, 2i], [3, -1]].
+        // X * W^T: column 0 is X(i,0) + 2i X(i,1), column 1 is 3 X(i,0) - X(i,1).
+        // X * W^H: column 0 is X(i,0) - 2i X(i,1), column 1 as for W^T.
+        const Tensor<T> X  = matrixOf<T>(3, 2, {T{1, 1}, T{2, 0}, T{0, -1}, T{3, 0}, T{1, 0}, T{1, -1}});
+        const Tensor<T> W  = matrixOf<T>(2, 2, {T{1, 0}, T{0, 2}, T{3, 0}, T{-1, 0}});
+        const Tensor<T> XT = matrixOf<T>(3, 2, {T{1, 5}, T{1, 3}, T{0, 5}, T{-3, -3}, T{3, 2}, T{2, 1}});
+        const Tensor<T> XH = matrixOf<T>(3, 2, {T{1, -3}, T{1, 3}, T{0, -7}, T{-3, -3}, T{-1, -2}, T{2, 1}});
+        Tensor<T>       C({3UZ, 2UZ});
+        gemm<NoTrans, Trans>(C, X, W);
+        expect(sameEntries(C, XT)) << "Trans";
+        expect(sameEntries(XT, productWithTransposed<false>(X, W))) << "the worked values agree with the definition";
+        gemm<NoTrans, ConjTrans>(C, X, W);
+        expect(sameEntries(C, XH)) << "ConjTrans";
+        expect(sameEntries(XH, productWithTransposed<true>(X, W))) << "the worked values agree with the definition";
+    } | std::tuple<std::complex<float>, std::complex<double>>{};
+
+    "real 3x2 by a transposed 2x2 against values worked by hand"_test = []<typename T> {
+        // X = [[1, 2], [0, 3], [1, 1]] and W = [[1, 2], [3, -1]]; X * W^T has rows (5, 1), (6, -3), (3, 2).
+        const Tensor<T> X  = matrixOf<T>(3, 2, {T{1}, T{2}, T{0}, T{3}, T{1}, T{1}});
+        const Tensor<T> W  = matrixOf<T>(2, 2, {T{1}, T{2}, T{3}, T{-1}});
+        const Tensor<T> XT = matrixOf<T>(3, 2, {T{5}, T{1}, T{6}, T{-3}, T{3}, T{2}});
+        Tensor<T>       C({3UZ, 2UZ});
+        gemm<NoTrans, Trans>(C, X, W);
+        expect(sameEntries(C, XT)) << "Trans";
+        C.fill(T{7});
+        gemm<NoTrans, ConjTrans>(C, X, W);
+        expect(sameEntries(C, XT)) << "ConjTrans equals Trans for a real element type";
+    } | std::tuple<float, double>{};
+
+    "3x2 by a transposed 4x2 matches the definition"_test = []<typename T> {
+        // W is stored 4x2, so op(W) is 2x4 and C is 3x4.
+        using Real = decltype(std::abs(T{}));
+        Tensor<T> X({3UZ, 2UZ});
+        Tensor<T> W({4UZ, 2UZ});
+        for (std::size_t k = 0UZ; k < X.size(); ++k) {
+            X.data()[k] = T{static_cast<Real>(k) - Real{2}};
+        }
+        for (std::size_t k = 0UZ; k < W.size(); ++k) {
+            W.data()[k] = T{static_cast<Real>(3 * k % 5) - Real{1}};
+        }
+        if constexpr (gr::meta::complex_like<T>) {
+            for (std::size_t k = 0UZ; k < W.size(); ++k) {
+                W.data()[k] += T{Real{0}, static_cast<Real>(k % 3) - Real{1}};
+                X.data()[k % X.size()] += T{0, 1};
+            }
+        }
+        Tensor<T> C({3UZ, 4UZ});
+        gemm<NoTrans, Trans>(C, X, W);
+        expect(sameEntries(C, productWithTransposed<false>(X, W))) << "Trans";
+        gemm<NoTrans, ConjTrans>(C, X, W);
+        expect(sameEntries(C, productWithTransposed<true>(X, W))) << "ConjTrans";
+        expect(!sameEntries(productWithTransposed<true>(X, W), productWithTransposed<false>(X, W)) || !gr::meta::complex_like<T>) << "the two forms differ for a complex element type";
+    } | std::tuple<float, double, std::complex<float>, std::complex<double>>{};
+};
+
 int main() { /* tests are automatically registered and executed */ return 0; }
