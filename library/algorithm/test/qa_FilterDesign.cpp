@@ -8,6 +8,7 @@
 #include <numbers>
 #include <numeric>
 #include <stdexcept>
+#include <tuple>
 #include <vector>
 
 #include <gnuradio-4.0/algorithm/filter/FilterDesign.hpp>
@@ -153,6 +154,49 @@ const boost::ut::suite<"FIR lowpass design"> filterDesignTests = [] {
         expect(that % !found.ok) << "a windowed design always has some passband ripple";
         expect(eq(found.taps, 101UZ)) << "the longest length tried is reported";
         expect(gt(found.scan.rippleDb, 0.0));
+    };
+
+    "shortestOddLength walks to the shortest accepted odd length from either side"_test = [] {
+        constexpr std::size_t kShortest = 41UZ;
+        std::size_t           calls     = 0UZ;
+        const auto            accepts   = [&calls](std::size_t n) {
+            ++calls;
+            return n >= kShortest;
+        };
+
+        expect(eq(shortestOddLength(30UZ, 501UZ, accepts), kShortest)) << "an even start below the answer is made odd and walks up";
+        expect(eq(shortestOddLength(61UZ, 501UZ, accepts), kShortest)) << "a start above the answer walks down";
+        expect(eq(shortestOddLength(kShortest, 501UZ, accepts), kShortest));
+        expect(eq(shortestOddLength(1UZ, 501UZ, [](std::size_t) { return true; }), 1UZ)) << "an accepted start at or below five is kept";
+        expect(eq(shortestOddLength(99UZ, 501UZ, [](std::size_t) { return true; }), 5UZ)) << "the walk down stops at five";
+        expect(eq(shortestOddLength(11UZ, 20UZ, [](std::size_t) { return false; }), 21UZ)) << "with nothing accepted, the first odd length past the limit";
+
+        calls       = 0UZ;
+        std::ignore = shortestOddLength(61UZ, 501UZ, accepts);
+        expect(eq(calls, (61UZ - kShortest) / 2UZ + 2UZ)) << "one call at the start, one per step down, and the refused step";
+    };
+
+    "searchLowpass is shortestOddLength over the grid reading"_test = [] {
+        constexpr double passEdge    = 0.20;
+        constexpr double stopEdge    = 0.25;
+        constexpr double attenDb     = 60.0;
+        constexpr double maxRippleDb = 0.1;
+        constexpr double cutoff      = 0.5 * (passEdge + stopEdge);
+
+        const auto delivers = [&](std::size_t n) {
+            const LowpassScan r = scanLowpass(kaiserLowpass(n, cutoff, attenDb), passEdge, stopEdge);
+            return r.stopbandDb <= -attenDb && r.rippleDb <= maxRippleDb;
+        };
+        expect(eq(searchLowpass(passEdge, stopEdge, attenDb, maxRippleDb, 501).taps, shortestOddLength(kaiserLength(attenDb, stopEdge - passEdge), 501UZ, delivers)));
+    };
+
+    "scanEdges is scanBand over the stopband and over the passband"_test = [] {
+        const std::vector<float> taps  = kaiserLowpass(87, 0.125, 60.0);
+        const LowpassScan        edges = scanEdges(taps, 0.10, 0.15);
+
+        expect(eq(edges.stopbandDb, scanBand(taps, 0.15, 0.5).peakDb()));
+        expect(eq(edges.rippleDb, scanBand(taps, 0.0, 0.10).rippleDb()));
+        expect(ge(edges.stopbandDb, scanLowpass(taps, 0.10, 0.15).stopbandDb)) << "the exact edge never reads better than the grid";
     };
 
     "oddLength rounds up and respects the floor"_test = [] {

@@ -58,7 +58,11 @@ struct ChannelizerDesignKey {
     [[nodiscard]] bool operator==(const ChannelizerDesignKey&) const = default;
 };
 
-[[nodiscard]] inline std::pair<double, double> channelizerEdgeScan(const std::vector<float>& taps, double passEdge, double stopEdge) { return {gr::filter::fir::design::scanBand(taps, stopEdge, 0.5, gr::filter::fir::design::kDesignGrid).peakDb(), gr::filter::fir::design::scanBand(taps, 0., passEdge, gr::filter::fir::design::kDesignGrid).rippleDb()}; }
+/// @brief `fir::design::scanEdges` on the design grid, as a pair of stopband peak and passband ripple, in dB.
+[[nodiscard]] inline std::pair<double, double> channelizerEdgeScan(const std::vector<float>& taps, double passEdge, double stopEdge) {
+    const gr::filter::fir::design::LowpassScan scan = gr::filter::fir::design::scanEdges(taps, passEdge, stopEdge);
+    return {scan.stopbandDb, scan.rippleDb};
+}
 
 } // namespace detail
 

@@ -251,21 +251,11 @@ struct PolyphaseDesignKey {
     [[nodiscard]] bool operator==(const PolyphaseDesignKey&) const = default;
 };
 
-/**
- * @brief What a candidate delivers, with both band edges evaluated exactly rather than off the grid.
- *
- * `fir::design::scanLowpass` reads its grid only, deliberately: it is what `fir::design::searchLowpass`
- * compares lengths with, and changing it would change every length that search has returned. That
- * reading is adequate while the grid resolves the response, and it is not adequate here, because a
- * resampler's transition band narrows with `max(l, m)` while the grid does not follow. The stopband
- * peak sits at the stop edge, at the foot of the transition, where the response is steepest, so a
- * grid that never lands on the stated edge flatters the design by however far the nearest grid point
- * has fallen. Measured at the default `2^15` grid: a 903-tap design for `1/25` reads -60.00 dB and
- * is truly -59.42 dB, and a 5767-tap design for `147/160` reads -60.01 dB and is truly -59.19 dB.
- * Both would be accepted for a 60 dB request. `fir::design::scanBand` evaluates the stated edges as well
- * as the grid for this reason.
- */
-[[nodiscard]] inline std::pair<double, double> polyphaseEdgeScan(const std::vector<float>& taps, double passEdge, double stopEdge, std::size_t grid) { return {fir::design::scanBand(taps, stopEdge, 0.5, grid).peakDb(), fir::design::scanBand(taps, 0.0, passEdge, grid).rippleDb()}; }
+/// @brief `fir::design::scanEdges` as a pair of stopband peak and passband ripple, in dB.
+[[nodiscard]] inline std::pair<double, double> polyphaseEdgeScan(const std::vector<float>& taps, double passEdge, double stopEdge, std::size_t grid) {
+    const fir::design::LowpassScan scan = fir::design::scanEdges(taps, passEdge, stopEdge, grid);
+    return {scan.stopbandDb, scan.rippleDb};
+}
 
 /**
  * @brief The shortest odd length that measurably delivers, with the -6 dB point stated rather than implied.
@@ -284,14 +274,7 @@ struct PolyphaseDesignKey {
         return stopbandDb <= -attenuationDb && rippleDb <= maxRippleDb;
     };
 
-    std::size_t use = fir::design::kaiserLength(attenuationDb, stopEdge - passEdge) | 1UZ;
-    while (use < maxTaps && !delivers(use)) {
-        use += 2UZ; // two at a time keeps the length odd, which keeps the group delay a whole sample
-    }
-    while (use > 5UZ && delivers(use - 2UZ)) {
-        use -= 2UZ;
-    }
-    return use;
+    return fir::design::shortestOddLength(fir::design::kaiserLength(attenuationDb, stopEdge - passEdge), maxTaps, delivers);
 }
 
 } // namespace detail

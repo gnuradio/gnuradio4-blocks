@@ -237,13 +237,7 @@ struct ShiftedQuotient {
         return stopbandDb <= -attenuationDb && rippleDb <= maxRippleDb;
     };
 
-    std::size_t use = fir::design::kaiserLength(attenuationDb, stopEdge - passEdge) | 1UZ;
-    while (use < maxTaps && !delivers(use)) {
-        use += 2;
-    }
-    while (use > 5 && delivers(use - 2)) {
-        use -= 2;
-    }
+    const std::size_t use = fir::design::shortestOddLength(fir::design::kaiserLength(attenuationDb, stopEdge - passEdge), maxTaps, delivers);
 
     ResamplerDesign out;
     out.taps                               = fir::design::kaiserLowpass(use, cutoff, attenuationDb);

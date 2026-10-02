@@ -473,6 +473,20 @@ struct BandLevels {
 }
 
 /**
+ * @brief The stopband peak from @p stopEdge to Nyquist and the ripple from DC to @p passEdge, both
+ *        read by `scanBand`, so both stated edges are evaluated exactly as well as on the grid.
+ *
+ * A design whose transition band narrows while the grid stays fixed reads this in place of
+ * `scanLowpass`. `scanBand` states the bias of a grid-only reading at a band edge.
+ */
+[[nodiscard]] inline LowpassScan scanEdges(const std::vector<float>& taps, double passEdge, double stopEdge, std::size_t grid = kDesignGrid) {
+    LowpassScan s;
+    s.stopbandDb = scanBand(taps, stopEdge, 0.5, grid).peakDb();
+    s.rippleDb   = scanBand(taps, 0.0, passEdge, grid).rippleDb();
+    return s;
+}
+
+/**
  * @brief |B| over the usable band of a Hilbert transformer, `[lowEdge, 0.5 - lowEdge]`.
  *
  * A Hilbert transformer is structurally zero at DC and at Nyquist, and the passband is what lies
@@ -509,6 +523,26 @@ struct BandLevels {
     return out;
 }
 
+/**
+ * @brief The shortest odd length that @p delivers accepts, searched from @p start.
+ *
+ * The length walks up two taps at a time until @p delivers accepts it or it reaches @p maxTaps, and
+ * then walks down while the next shorter length is still accepted, never below five. @p start is
+ * made odd first. The result is the first odd length at or past @p maxTaps when no shorter length is
+ * accepted.
+ */
+template<typename Delivers>
+[[nodiscard]] std::size_t shortestOddLength(std::size_t start, std::size_t maxTaps, Delivers&& delivers) {
+    std::size_t use = start | 1UZ;
+    while (use < maxTaps && !delivers(use)) {
+        use += 2UZ;
+    }
+    while (use > 5UZ && delivers(use - 2UZ)) {
+        use -= 2UZ;
+    }
+    return use;
+}
+
 /// @brief The shortest odd length whose measured response meets the target, and what it delivers.
 struct LowpassSearch {
     std::size_t taps = 0UZ;
@@ -540,13 +574,7 @@ struct LowpassSearch {
         return r.stopbandDb <= -attenDb && r.rippleDb <= maxRippleDb;
     };
 
-    std::size_t use = kaiserLength(attenDb, stopEdge - passEdge) | 1UZ;
-    while (use < maxTaps && !delivers(use)) {
-        use += 2UZ;
-    }
-    while (use > 5UZ && delivers(use - 2UZ)) {
-        use -= 2UZ;
-    }
+    const std::size_t use = shortestOddLength(kaiserLength(attenDb, stopEdge - passEdge), maxTaps, delivers);
 
     out.taps = use;
     out.scan = scanLowpass(kaiserLowpass(use, cutoff, attenDb), passEdge, stopEdge, grid);
