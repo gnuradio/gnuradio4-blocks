@@ -1051,6 +1051,9 @@ void gemm(TensorC& C, const TensorA& A, const TensorB& B, T alpha = T{1}, T beta
  * @param x Input vector [N] or [M] if A transposed
  * @param alpha Scalar multiplier for A*x (default: 1)
  * @param beta Scalar multiplier for y (default: 0)
+ *
+ * A complex element type goes through a scalar kernel in every transpose form, and ConjTrans
+ * conjugates a complex A. TransposeOp::Dynamic does not satisfy the constraint.
  */
 template<TransposeOp TransA = TransposeOp::NoTrans, ExecutionPolicy Policy, typename T, TensorOf<T> TensorY, TensorOf<T> TensorA, TensorOf<T> TensorX>
 requires(TransA != TransposeOp::Dynamic)

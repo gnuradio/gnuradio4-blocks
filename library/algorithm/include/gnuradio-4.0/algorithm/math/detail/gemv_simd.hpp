@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <complex>
 #include <concepts>
 #include <cstring>
 #include <memory>
@@ -275,6 +276,51 @@ struct SimpleGemv {
     }
 };
 
+/// GEMV without SIMD for any element type: y = alpha * op(A) * x + beta * y, where op(A) is A, its transpose or its conjugate transpose.
+template<TransposeOp TransA, typename T>
+struct ScalarGemv {
+    template<typename ATensor, typename XTensor, typename YTensor>
+    static void compute(const ATensor& A, const XTensor& x, YTensor& y, T alpha, T beta) {
+        const std::size_t rows = A.extents()[0];
+        const std::size_t cols = A.extents()[1];
+        const std::size_t M    = TransA == TransposeOp::NoTrans ? rows : cols;
+
+        if (beta == T{0}) {
+            std::fill_n(&y[0], M, T{0});
+        } else if (beta != T{1}) {
+            for (std::size_t i = 0; i < M; ++i) {
+                y[i] *= beta;
+            }
+        }
+
+        if (alpha == T{0}) {
+            return;
+        }
+
+        if constexpr (TransA == TransposeOp::NoTrans) {
+            for (std::size_t i = 0; i < rows; ++i) {
+                T dot{0};
+                for (std::size_t j = 0; j < cols; ++j) {
+                    dot += A[i, j] * x[j];
+                }
+                y[i] += alpha * dot;
+            }
+        } else { // row i of A adds alpha * x[i] times that row, conjugated for ConjTrans, to y
+            for (std::size_t i = 0; i < rows; ++i) {
+                const T x_i = alpha * x[i];
+                for (std::size_t j = 0; j < cols; ++j) {
+                    if constexpr (TransA == TransposeOp::ConjTrans && gr::meta::complex_like<T>) {
+                        y[j] += std::conj(A[i, j]) * x_i;
+                    } else {
+                        y[j] += A[i, j] * x_i;
+                    }
+                }
+            }
+        }
+    }
+};
+
+/// Dispatches to the SIMD kernels for an arithmetic element type and to ScalarGemv for a complex one.
 template<TransposeOp TransA = TransposeOp::NoTrans, typename ExecutionPolicy, TensorLike TensorY, TensorLike TensorA, TensorLike TensorX, typename T = typename TensorY::value_type>
 requires TensorOf<TensorY, T> && TensorOf<TensorA, T> && TensorOf<TensorX, T>
 void gemv(ExecutionPolicy&& /*policy*/, TensorY& y, const TensorA& A, const TensorX& x, T alpha = T{1}, T beta = T{0}) {
@@ -299,7 +345,9 @@ void gemv(ExecutionPolicy&& /*policy*/, TensorY& y, const TensorA& A, const Tens
 
         const std::size_t N = A_ext[1];
 
-        if (N <= 64) {
+        if constexpr (gr::meta::complex_like<T>) {
+            ScalarGemv<TransA, T>::compute(A, x, y, alpha, beta);
+        } else if (N <= 64) {
             SimpleGemv<T>::compute(A, x, y, alpha, beta);
         } else {
             GemvNoTrans<T>::compute(A, x, y, alpha, beta);
@@ -315,7 +363,11 @@ void gemv(ExecutionPolicy&& /*policy*/, TensorY& y, const TensorA& A, const Tens
             throw std::runtime_error("gemv: incompatible dimensions for y = A^T*x");
         }
 
-        GemvTrans<T>::compute(A, x, y, alpha, beta);
+        if constexpr (gr::meta::complex_like<T>) {
+            ScalarGemv<TransA, T>::compute(A, x, y, alpha, beta);
+        } else { // a real conjugate transpose equals the plain transpose
+            GemvTrans<T>::compute(A, x, y, alpha, beta);
+        }
     }
 }
 

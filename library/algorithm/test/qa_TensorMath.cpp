@@ -1946,4 +1946,115 @@ const boost::ut::suite<"Level 3c: GEMM with a transposed right operand, square a
     } | std::tuple<float, double, std::complex<float>, std::complex<double>>{};
 };
 
+/// y = alpha * op(A) * x + beta * y by the definition, with op(A) = A, A^T or A^H.
+template<gr::math::TransposeOp op, typename T>
+[[nodiscard]] gr::Tensor<T> gemvByDefinition(const gr::Tensor<T>& A, const gr::Tensor<T>& x, const gr::Tensor<T>& y, T alpha, T beta) {
+    const bool    transposed = op != gr::math::TransposeOp::NoTrans;
+    const bool    conjugated = op == gr::math::TransposeOp::ConjTrans;
+    gr::Tensor<T> result({y.size()});
+    for (std::size_t i = 0UZ; i < y.size(); ++i) {
+        T sum{};
+        for (std::size_t k = 0UZ; k < x.size(); ++k) {
+            const T a = transposed ? A[k, i] : A[i, k];
+            sum += (conjugated ? conjugateOf(a) : a) * x[k];
+        }
+        result[i] = alpha * sum + beta * y[i];
+    }
+    return result;
+}
+
+const boost::ut::suite<"Level 2b: GEMV over a complex element type"> _level3b_gemv_complex = [] {
+    using namespace boost::ut;
+    using namespace boost::ut::literals;
+    using gr::Tensor;
+    using namespace gr::math;
+    using enum TransposeOp;
+
+    // A = [[1+i, 2, -i], [0, 1-i, 3]], stored 2x3.
+    //   A x   with x = (1, i, 1+i): (1+i) + 2i + (1-i) = 2+2i and i(1-i) + 3(1+i) = 4+4i.
+    //   A^T x with x = (1, i):      (1+i), 2 + i(1-i) = 3+i and -i + 3i = 2i.
+    //   A^H x with x = (1, i):      (1-i), 2 + i(1+i) = 1+i and  i + 3i = 4i.
+    "each transpose form against values worked by hand"_test = []<typename T> {
+        const Tensor<T> A = matrixOf<T>(2, 3, {T{1, 1}, T{2, 0}, T{0, -1}, T{0, 0}, T{1, -1}, T{3, 0}});
+        Tensor<T>       x3({3UZ});
+        x3 = {T{1, 0}, T{0, 1}, T{1, 1}};
+        Tensor<T> x2({2UZ});
+        x2 = {T{1, 0}, T{0, 1}};
+
+        Tensor<T> y2({2UZ});
+        y2.fill(T{7, 7});
+        gemv(y2, A, x3);
+        expect(y2[0] == T{2, 2} && y2[1] == T{4, 4}) << "NoTrans";
+
+        Tensor<T> y3({3UZ});
+        y3.fill(T{7, 7});
+        gemv<Trans>(y3, A, x2);
+        expect(y3[0] == T{1, 1} && y3[1] == T{3, 1} && y3[2] == T{0, 2}) << "Trans does not conjugate";
+
+        y3.fill(T{7, 7});
+        gemv<ConjTrans>(y3, A, x2);
+        expect(y3[0] == T{1, -1} && y3[1] == T{1, 1} && y3[2] == T{0, 4}) << "ConjTrans conjugates";
+    } | std::tuple<std::complex<float>, std::complex<double>>{};
+
+    "complex alpha and beta scale the product and the prior output"_test = []<typename T> {
+        // y = 2 A x + i y0 with y0 = (1, 1) and A x = (2+2i, 4+4i): (4+5i, 8+9i).
+        const Tensor<T> A = matrixOf<T>(2, 3, {T{1, 1}, T{2, 0}, T{0, -1}, T{0, 0}, T{1, -1}, T{3, 0}});
+        Tensor<T>       x({3UZ});
+        x = {T{1, 0}, T{0, 1}, T{1, 1}};
+        Tensor<T> y({2UZ});
+        y.fill(T{1, 0});
+        gemv(y, A, x, T{2, 0}, T{0, 1});
+        expect(y[0] == T{4, 5} && y[1] == T{8, 9});
+    } | std::tuple<std::complex<float>, std::complex<double>>{};
+
+    "a long complex operand matches the definition in each transpose form"_test = []<typename T> {
+        // 40 x 80 exceeds the widths at which the real kernels switch to SIMD in both directions.
+        using Real              = typename T::value_type;
+        constexpr std::size_t M = 40UZ, N = 80UZ;
+        Tensor<T>             A({M, N});
+        for (std::size_t i = 0UZ; i < M; ++i) {
+            for (std::size_t j = 0UZ; j < N; ++j) {
+                A[i, j] = T{static_cast<Real>((i + 2 * j) % 7) - Real{3}, static_cast<Real>((3 * i + j) % 5) - Real{2}};
+            }
+        }
+        auto vectorOf = [](std::size_t n, std::size_t phase) {
+            Tensor<T> v({n});
+            for (std::size_t k = 0UZ; k < n; ++k) {
+                v[k] = T{static_cast<Real>((k + phase) % 4) - static_cast<Real>(1.5), static_cast<Real>((2 * k + phase) % 3) - Real{1}};
+            }
+            return v;
+        };
+        const T alpha{static_cast<Real>(0.5), Real{-1}};
+        const T beta{Real{2}, static_cast<Real>(0.5)};
+
+        Tensor<T>       yN = vectorOf(M, 1UZ);
+        const Tensor<T> eN = gemvByDefinition<NoTrans>(A, vectorOf(N, 0UZ), yN, alpha, beta);
+        gemv(yN, A, vectorOf(N, 0UZ), alpha, beta);
+        expect(sameEntries(yN, eN)) << "NoTrans";
+
+        Tensor<T>       yT = vectorOf(N, 2UZ);
+        const Tensor<T> eT = gemvByDefinition<Trans>(A, vectorOf(M, 3UZ), yT, alpha, beta);
+        gemv<Trans>(yT, A, vectorOf(M, 3UZ), alpha, beta);
+        expect(sameEntries(yT, eT)) << "Trans";
+
+        Tensor<T>       yH = vectorOf(N, 2UZ);
+        const Tensor<T> eH = gemvByDefinition<ConjTrans>(A, vectorOf(M, 3UZ), yH, alpha, beta);
+        gemv<ConjTrans>(yH, A, vectorOf(M, 3UZ), alpha, beta);
+        expect(sameEntries(yH, eH)) << "ConjTrans";
+        expect(!sameEntries(eH, eT)) << "the conjugated and plain transposes differ on this operand";
+    } | std::tuple<std::complex<float>, std::complex<double>>{};
+
+    "a real ConjTrans equals Trans"_test = [] {
+        const Tensor<double> A = matrixOf<double>(2, 3, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+        Tensor<double>       x({2UZ});
+        x = {1.0, -1.0};
+        Tensor<double> yT({3UZ});
+        Tensor<double> yH({3UZ});
+        gemv<Trans>(yT, A, x);
+        gemv<ConjTrans>(yH, A, x);
+        expect(yT[0] == -3.0 && yT[1] == -3.0 && yT[2] == -3.0);
+        expect(std::ranges::equal(yT, yH));
+    };
+};
+
 int main() { /* tests are automatically registered and executed */ return 0; }
