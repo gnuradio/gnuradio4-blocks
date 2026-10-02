@@ -123,6 +123,11 @@ void fillSymmetric(ContainerType& container, std::size_t n, TShape&& shape) {
 }
 } // namespace detail
 
+/// @brief The shape parameter `create` uses for a window type when it is given NaN; zero for a window without one.
+using detail::defaultParameter;
+/// @brief Throws `std::invalid_argument` where @p param is outside the window type's range; `create` applies the same check.
+using detail::validateParameter;
+
 /**
  * @brief Creates in-place a window function (mathematically aka. 'apodisation function') of a specified type and size.
  *

@@ -556,6 +556,14 @@ const boost::ut::suite<"FFT algorithms and window functions"> windowTests = [] {
         for (const auto& [window, windowName] : magic_enum::enum_entries<gr::algorithm::window::Type>()) {
             expect(nothrow([window] { std::ignore = create<double>(window, 64UZ); })) << std::format("{} accepts a NaN parameter", windowName);
         }
+
+        for (const auto& [window, windowName] : magic_enum::enum_entries<gr::algorithm::window::Type>()) {
+            const double shape = gr::algorithm::window::defaultParameter<double>(window);
+            expect(nothrow([window, shape] { gr::algorithm::window::validateParameter<double>(window, shape); })) << std::format("{} accepts its own default", windowName);
+            expect(eq(shape, gr::algorithm::window::detail::defaultParameter<double>(window))) << std::format("{} has one default under both names", windowName);
+            expect(std::ranges::equal(create<double>(window, 64UZ), create<double>(window, 64UZ, shape))) << std::format("{} with NaN is {} with its default", windowName, windowName);
+        }
+        expect(throws<std::invalid_argument>([] { gr::algorithm::window::validateParameter<double>(Tukey, 1.1); })) << "the public check refuses what create refuses";
         expect(std::ranges::equal(create<double>(Kaiser, 64UZ), create<double>(Kaiser, 64UZ, 1.6))) << "Kaiser defaults to beta = 1.6";
         expect(std::ranges::equal(create<double>(Tukey, 64UZ), create<double>(Tukey, 64UZ, 0.5))) << "Tukey defaults to alpha = 0.5";
         expect(std::ranges::equal(create<double>(Gaussian, 64UZ), create<double>(Gaussian, 64UZ, 0.4))) << "Gaussian defaults to sigma = 0.4";
