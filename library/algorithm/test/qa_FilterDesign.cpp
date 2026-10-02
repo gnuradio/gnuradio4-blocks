@@ -289,6 +289,12 @@ const boost::ut::suite<"FIR lowpass design"> filterDesignTests = [] {
 
         const BandLevels point = scanBand(taps, 0.125, 0.125);
         expect(approx(20.0 * std::log10(point.maxMag), -6.0206, 0.01)) << "a band of zero width is the design's own cutoff, 6 dB down";
+
+        const BandLevels silent{};
+        expect(eq(silent.peakDb(), gr::math::kDbFloor)) << "a band of zero response reads at the dB floor";
+        expect(eq(silent.rippleDb(), 0.)) << "and has no ripple";
+        const BandLevels nulled{.minMag = 0.0, .maxMag = 1.0};
+        expect(eq(nulled.rippleDb(), -gr::math::kDbFloor)) << "a band that reaches a null spans unity down to the floor";
     };
 
     "a fixed-shape window's length buys transition width, not attenuation"_test = [] {

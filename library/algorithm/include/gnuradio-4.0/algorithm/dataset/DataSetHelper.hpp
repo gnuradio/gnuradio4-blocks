@@ -3,6 +3,7 @@
 
 #include <expected>
 
+#include <gnuradio-4.0/algorithm/math/Decibel.hpp>
 #include <gnuradio-4.0/algorithm/math/UncertainValue.hpp>
 
 namespace gr::dataset {
@@ -162,16 +163,16 @@ std::vector<T> getSubArrayCopy(const DataSet<T>& ds, std::size_t indexMin, std::
 
 template<typename T, typename TValue = gr::meta::fundamental_base_value_type_t<T>>
 [[nodiscard]] constexpr T tenLog10(T x) noexcept {
-    if (std::abs(gr::value(x)) <= T(0)) {
-        return -std::numeric_limits<TValue>::infinity();
+    if (gr::value(x) < static_cast<TValue>(gr::math::kDbFloorPower)) {
+        return T(static_cast<TValue>(gr::math::kDbFloor));
     }
     return T(10) * gr::math::log10(x); // 10 * log10(x)
 }
 
 template<typename T, typename TValue = gr::meta::fundamental_base_value_type_t<T>>
 [[nodiscard]] constexpr T decibel(T x) noexcept {
-    if (std::abs(gr::value(x)) <= T(0)) {
-        return -std::numeric_limits<TValue>::infinity();
+    if (gr::value(x) < static_cast<TValue>(gr::math::kDbFloorAmplitude)) {
+        return T(static_cast<TValue>(gr::math::kDbFloor));
     }
     return T(20) * gr::math::log10(x); // 20 * log10(x)
 }

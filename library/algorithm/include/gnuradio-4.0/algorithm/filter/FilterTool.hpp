@@ -30,6 +30,7 @@
 #include <gnuradio-4.0/HistoryBuffer.hpp>
 #include <gnuradio-4.0/Message.hpp>
 #include <gnuradio-4.0/algorithm/fourier/window.hpp>
+#include <gnuradio-4.0/algorithm/math/Decibel.hpp>
 #include <gnuradio-4.0/algorithm/math/UncertainValue.hpp>
 #include <gnuradio-4.0/meta/formatter.hpp>
 
@@ -415,7 +416,7 @@ template<Frequency frequencyType, ResponseType responseType, std::floating_point
         if constexpr (responseType == ResponseType::Magnitude) {
             response *= std::abs(numerator / denominator);
         } else if constexpr (responseType == ResponseType::MagnitudeDB) {
-            response += static_cast<T>(20) * std::log10(std::abs(numerator / denominator));
+            response += gr::math::amplitudeToDb(std::abs(numerator / denominator));
         } else if constexpr (responseType == ResponseType::Phase) {
             response += (std::arg(numerator) - std::arg(denominator));
         } else if constexpr (responseType == ResponseType::PhaseDegrees) {
@@ -523,7 +524,7 @@ template<Frequency frequencyType, ResponseType responseType>
     if constexpr (responseType == ResponseType::Magnitude) {
         return value.gain * std::abs(product_over_range(value.zeros) / product_over_range(value.poles));
     } else if constexpr (responseType == ResponseType::MagnitudeDB) {
-        return 20.0 * std::log10(std::abs(value.gain * std::abs(product_over_range(value.zeros) / product_over_range(value.poles))));
+        return gr::math::amplitudeToDb(std::abs(value.gain * std::abs(product_over_range(value.zeros) / product_over_range(value.poles))));
     } else if constexpr (responseType == ResponseType::Phase) {
         return std::arg(C{value.gain}) + std::arg(product_over_range(value.zeros)) - std::arg(product_over_range(value.poles));
     } else {

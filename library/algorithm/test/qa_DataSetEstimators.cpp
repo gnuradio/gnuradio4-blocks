@@ -153,9 +153,12 @@ const boost::ut::suite<"DSP helper"> _dspHelper = [] {
             expect(approx(tenLog10(value_t(1)), value_t(0), value_t(1e-3f))) << "10 * log10(1) should be 0";
             expect(approx(tenLog10(value_t(0.1)), value_t(-10), value_t(1e-3f))) << "10 * log10(0.1) should be -10";
 
-            // edge cases
-            expect(!gr::math::isfinite(tenLog10(value_t(0)))) << std::format("tenLog10<{}>(0) = {} should be -inf", typeName, tenLog10(value_t(0)));
-            expect(!gr::math::isfinite(tenLog10(value_t(-1)))) << std::format("tenLog10<{}>(-1) = {} should be -inf", typeName, tenLog10(value_t(-1)));
+            // a ratio at or below zero, or below the power floor, reads as the dB floor
+            const value_t floorDb(gr::math::kDbFloor);
+            expect(approx(tenLog10(value_t(0)), floorDb, value_t(1e-3f))) << std::format("tenLog10<{}>(0) = {} should be the dB floor", typeName, tenLog10(value_t(0)));
+            expect(approx(tenLog10(value_t(-1)), floorDb, value_t(1e-3f))) << std::format("tenLog10<{}>(-1) = {} should be the dB floor", typeName, tenLog10(value_t(-1)));
+            expect(approx(tenLog10(value_t(gr::math::kDbFloorPower / 10.)), floorDb, value_t(1e-3f))) << "a ratio below the floor reads as the floor";
+            expect(approx(tenLog10(value_t(gr::math::kDbFloorPower)), floorDb, value_t(1e-2f))) << "the floor ratio itself is -300 dB";
         };
 
         "decibel"_test = [] {
@@ -163,9 +166,12 @@ const boost::ut::suite<"DSP helper"> _dspHelper = [] {
             expect(approx(decibel(value_t(1)), value_t(0), value_t(1e-3f))) << "20 * log10(1) should be 0";
             expect(approx(decibel(value_t(0.1)), value_t(-20), value_t(1e-3f))) << "20 * log10(0.1) should be -20";
 
-            // edge cases
-            expect(!gr::math::isfinite(decibel(value_t(0)))) << "decibel(0) should be -inf";
-            expect(!gr::math::isfinite(decibel(value_t(-1)))) << "20 * log10(-1) should return -inf";
+            // an amplitude at or below zero, or below the amplitude floor, reads as the dB floor
+            const value_t floorDb(gr::math::kDbFloor);
+            expect(approx(decibel(value_t(0)), floorDb, value_t(1e-3f))) << "decibel(0) should be the dB floor";
+            expect(approx(decibel(value_t(-1)), floorDb, value_t(1e-3f))) << "decibel(-1) should be the dB floor";
+            expect(approx(decibel(value_t(gr::math::kDbFloorAmplitude / 10.)), floorDb, value_t(1e-3f))) << "an amplitude below the floor reads as the floor";
+            expect(approx(decibel(value_t(gr::math::kDbFloorAmplitude)), floorDb, value_t(1e-2f))) << "the floor amplitude itself is -300 dB";
         };
 
         "inverseDecibel"_test = [] {

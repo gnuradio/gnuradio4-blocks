@@ -16,6 +16,7 @@
 
 #include <gnuradio-4.0/algorithm/filter/FilterTool.hpp>
 #include <gnuradio-4.0/algorithm/fourier/window.hpp>
+#include <gnuradio-4.0/algorithm/math/Decibel.hpp>
 
 /**
  * @brief Windowed-sinc FIR design, and measurement of what a design delivers.
@@ -415,7 +416,7 @@ struct LowpassScan {
     const std::size_t half = grid / 2UZ;
     for (std::size_t i = 0UZ; i <= half; ++i) {
         const double f  = static_cast<double>(i) / static_cast<double>(grid);
-        const double db = 20.0 * std::log10(std::max(mag[i], 1.0e-300));
+        const double db = gr::math::amplitudeToDb(mag[i]);
         if (f <= passEdge) {
             passMax = std::max(passMax, db);
             passMin = std::min(passMin, db);
@@ -433,9 +434,9 @@ struct BandLevels {
     double maxMag = 0.0;
 
     /// @brief The worst level in the band, in dB; the figure a stopband is judged by.
-    [[nodiscard]] double peakDb() const { return 20.0 * std::log10(std::max(maxMag, 1.0e-300)); }
+    [[nodiscard]] double peakDb() const { return gr::math::amplitudeToDb(maxMag); }
     /// @brief Peak to trough across the band, in dB; the figure a passband is judged by.
-    [[nodiscard]] double rippleDb() const { return 20.0 * std::log10(std::max(maxMag, 1.0e-300) / std::max(minMag, 1.0e-300)); }
+    [[nodiscard]] double rippleDb() const { return gr::math::amplitudeToDb(maxMag) - gr::math::amplitudeToDb(minMag); }
 };
 
 /**

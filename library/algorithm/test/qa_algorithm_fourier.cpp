@@ -1,11 +1,16 @@
+#include <algorithm>
 #include <array>
 #include <cassert>
+#include <cmath>
+#include <complex>
 #include <format>
 #include <limits>
 #include <numbers>
 #include <numeric>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
+#include <vector>
 
 #include <boost/ut.hpp>
 
@@ -199,6 +204,20 @@ const boost::ut::suite<"FFT algorithms and window functions"> windowTests = [] {
             expect(approx(static_cast<double>(fullSpectrum[peakIndex]), expectedAmplitude / 2., tolerance)) << std::format("{} full spectrum splits the amplitude over the mirrored pair", type_name<T>());
         }
     } | AllTypesToTest{};
+
+    "an empty bin reads in dB at the stated floor"_test = []<typename T>() {
+        using Precision = typename T::value_type;
+        std::vector<T> bins(8UZ, T{0, 0});
+        bins[1UZ]          = T{4, 0}; // full-spectrum level 4/8, half-spectrum level 2*4/8
+        const auto full    = gr::algorithm::fft::computeMagnitudeSpectrum(bins, {}, {.outputInDb = true});
+        const auto half    = gr::algorithm::fft::computeMagnitudeSpectrum(bins, {}, {.computeHalfSpectrum = true, .outputInDb = true});
+        const auto floorDb = static_cast<Precision>(gr::math::kDbFloor);
+        expect(eq(full[0UZ], floorDb)) << "a zero bin reads as the floor, not as an infinity";
+        expect(eq(half[2UZ], floorDb));
+        expect(approx(full[1UZ], Precision(20) * std::log10(Precision(0.5)), Precision(1e-5f)));
+        expect(approx(half[1UZ], Precision(0), Precision(1e-5f)));
+        expect(std::ranges::all_of(full, [](Precision v) { return std::isfinite(v); }));
+    } | std::tuple<std::complex<float>, std::complex<double>>{};
 
     "FFT algo pattern tests"_test = []<typename T>() {
         using InType = T::InType;

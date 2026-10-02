@@ -10,6 +10,8 @@
 #include <format>
 #include <ranges>
 
+#include <gnuradio-4.0/algorithm/math/Decibel.hpp>
+
 namespace gr::algorithm::fft {
 
 struct ConfigMagnitude {
@@ -35,10 +37,8 @@ auto computeMagnitudeSpectrum(const TContainerIn& fftIn, TContainerOut&& magOut 
         const bool folded = halfSpectrum && k != 0UZ && k != N / 2UZ;
         const auto scale{(folded ? PrecisionType(2.) : PrecisionType(1.)) / static_cast<PrecisionType>(N)};
         const auto mag{std::hypot(c.real(), c.imag()) * scale};
-        if (outputInDb && mag > PrecisionType(0)) { // avoids log of zero
-            return PrecisionType(20.) * std::log10(mag);
-        } else if (outputInDb) {
-            return std::numeric_limits<PrecisionType>::lowest(); // represents -infinity in dB
+        if (outputInDb) {
+            return gr::math::amplitudeToDb(mag);
         }
         return mag;
     };
