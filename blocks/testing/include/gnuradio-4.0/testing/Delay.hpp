@@ -12,7 +12,7 @@ namespace gr::blocks::testing {
 
 GR_REGISTER_BLOCK(gr::blocks::testing::Delay, [T], [float])
 
-// NoTagPropagation: a pure pass-through must forward every input tag, not just the auto-forward keys
+// Under NoTagPropagation the framework forwards nothing. The block republishes every input tag itself.
 template<typename T>
 struct Delay : Block<Delay<T>, NoTagPropagation> {
     using clock = std::chrono::steady_clock;

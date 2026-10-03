@@ -168,10 +168,10 @@ struct Marker {
     gr::pmt::Value value;
 };
 
-/// Six keys at five offsets; the first five are `gr::tag::kDefaultTags`, `t0` is not and is what a default-forwarding
-/// neighbor drops. The table is a function-local static rather than a namespace-scope one: a `pmt::Value` holding a
-/// string owns memory from the polymorphic resource, the suites run from the unit-test runner's destructor, and a
-/// table destroyed earlier in that sequence leaves those values dangling.
+/// Six keys at five offsets. The first five are `gr::tag::kDefaultTags`, and `t0` is not. The table is a function-local
+/// static rather than a namespace-scope one: a `pmt::Value` holding a string owns memory from the polymorphic resource,
+/// the suites run from the unit-test runner's destructor, and a table destroyed earlier in that sequence leaves those
+/// values dangling.
 [[nodiscard]] const std::array<Marker, 6UZ>& markers() {
     static const std::array<Marker, 6UZ> table{{
         {"trigger_name", 0UZ, gr::pmt::Value(std::string("alpha"))},
@@ -340,14 +340,14 @@ const boost::ut::suite<"SampleDelay"> sampleDelayTests = [] {
         }
     };
 
-    "the non-reserved key survives this block and not its neighbor"_test = [] {
+    "the non-reserved key survives this block and its neighbor"_test = [] {
         const std::vector<std::size_t> alone = markersThrough(7U, false);
         expect(eq(alone[5UZ], markers()[5UZ].at + 7UZ)) << "a block doing its own forwarding republishes what it saw";
 
         const std::vector<std::size_t> behind = markersThrough(7U, true);
-        expect(eq(behind[5UZ], kAbsent)) << "and the next default-forwarding block drops it, which is the seam";
+        expect(eq(behind[5UZ], markers()[5UZ].at + 7UZ)) << "and the next default-forwarding block keeps every key at its offset";
         for (std::size_t which = 0UZ; which < 5UZ; ++which) {
-            expect(neq(behind[which], kAbsent)) << std::format("the reserved key {} still gets through", markers()[which].key);
+            expect(eq(behind[which], markers()[which].at + 7UZ)) << std::format("the reserved key {} leaves at its offset", markers()[which].key);
         }
     };
 

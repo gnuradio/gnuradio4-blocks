@@ -26,7 +26,7 @@ namespace gr::blocks::digital {
 GR_REGISTER_BLOCK(gr::blocks::digital::ConstellationDecoder, [T], [float])
 
 template<std::floating_point F>
-struct ConstellationDecoder : Block<ConstellationDecoder<F>, UnfilteredTagPropagation> {
+struct ConstellationDecoder : Block<ConstellationDecoder<F>> {
     using Description = Doc<R""(
 @brief The hard decision: the label of the constellation point nearest each input sample.
 
@@ -173,7 +173,7 @@ precondition. `max_log` is the default and needs no transcendental; it is exact 
 GR_REGISTER_BLOCK(gr::blocks::digital::ConstellationEncoder, [T], [float])
 
 template<std::floating_point F>
-struct ConstellationEncoder : Block<ConstellationEncoder<F>, UnfilteredTagPropagation> {
+struct ConstellationEncoder : Block<ConstellationEncoder<F>> {
     using Description = Doc<R""(
 @brief The point for each input symbol: the modulator's map from labels to the complex plane.
 
@@ -221,7 +221,7 @@ The block is one symbol in, one symbol out, so every input tag key passes throug
 
 GR_REGISTER_BLOCK(gr::blocks::digital::SymbolMap)
 
-struct SymbolMap : Block<SymbolMap, UnfilteredTagPropagation> {
+struct SymbolMap : Block<SymbolMap> {
     using Description = Doc<R""(
 @brief A byte permutation: `out[n] = map[in[n]]`.
 

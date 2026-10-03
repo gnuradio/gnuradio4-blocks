@@ -240,7 +240,7 @@ struct Marker {
     gr::pmt::Value value;
 };
 
-/// Six reserved keys and one the default forwarder filters, two of them sharing an input offset. The array is held
+/// Six reserved keys and one outside the auto-forward set, two of them sharing an input offset. The array is held
 /// inside the function so that it outlives no test: a namespace-scope value owning pmr storage is destroyed in an
 /// order the test runner does not fix, and the runner walks the suites from its own destructor.
 [[nodiscard]] const std::array<Marker, 7>& markers() {
@@ -637,14 +637,14 @@ const boost::ut::suite<"RepackBits"> repackBitsTests = [] {
         expect(eq(graphSampleCount({{"bits_in", 8U}, {"bits_out", 3U}}, 6U), 16UZ)) << "six bytes are 48 bits, exactly 16 symbols and no remainder";
     };
 
-    "every key is forwarded, and a default-forwarding neighbor does not forward them all"_test = [] {
+    "every key is forwarded, here and by a default-forwarding neighbor"_test = [] {
         const std::vector<std::size_t> throughRepack = markerOffsets<RepackBits>({{"bits_in", 8U}, {"bits_out", 8U}}, 128U);
         for (std::size_t which = 0UZ; which < markers().size(); ++which) {
             expect(eq(throughRepack[which], markers()[which].at)) << std::format("key '{}' survives at its own offset, the map being the identity at 8/8", markers()[which].key);
         }
 
         const std::vector<std::size_t> throughNeighbor = markerOffsets<TagMonitor<std::uint8_t, ProcessFunction::USE_PROCESS_BULK>>({{"name", "TagMonitor"}}, 128U);
-        expect(neq(throughNeighbor.back(), markers().back().at)) << "the default forwarder keeps only the reserved keys, so 'private_key' does not survive it";
+        expect(eq(throughNeighbor.back(), markers().back().at)) << "the default forwarder keeps 'private_key' at its own offset";
     };
 
     "a tag map is placed at the offsets a rate change puts it at"_test = [] {

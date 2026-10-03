@@ -293,7 +293,7 @@ GR_REGISTER_BLOCK(gr::blocks::digital::AdditiveScrambler, [T], [ std::uint8_t, g
 
 template<typename T>
 requires std::same_as<T, std::uint8_t> || std::same_as<T, DataSet<std::uint8_t>>
-struct AdditiveScrambler : std::conditional_t<std::same_as<T, std::uint8_t>, Block<AdditiveScrambler<T>, UnfilteredTagPropagation>, Block<AdditiveScrambler<T>>> {
+struct AdditiveScrambler : Block<AdditiveScrambler<T>> {
     using Description = Doc<R""(
 @brief XORs the stream with a free-running LFSR sequence, so that what goes on the air looks like noise whatever the data is.
 
@@ -424,7 +424,7 @@ being an involution with no status to report.
 
 GR_REGISTER_BLOCK(gr::blocks::digital::MultiplicativeScrambler)
 
-struct MultiplicativeScrambler : Block<MultiplicativeScrambler, UnfilteredTagPropagation> {
+struct MultiplicativeScrambler : Block<MultiplicativeScrambler> {
     using Description = Doc<R""(
 @brief Feeds the transmitted bits back through the shift register: `out[k] = in[k] XOR f(out, k)`.
 
@@ -515,7 +515,7 @@ consumed, and `sample_rate` leaves with the value it arrived with.
 
 GR_REGISTER_BLOCK(gr::blocks::digital::MultiplicativeDescrambler)
 
-struct MultiplicativeDescrambler : Block<MultiplicativeDescrambler, UnfilteredTagPropagation> {
+struct MultiplicativeDescrambler : Block<MultiplicativeDescrambler> {
     using Description = Doc<R""(
 @brief Feeds the received bits forward through the shift register: `out[k] = in[k] XOR f(in, k)`.
 
