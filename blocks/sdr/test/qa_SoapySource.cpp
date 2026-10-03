@@ -1,11 +1,9 @@
 #include <boost/ut.hpp>
 
-#include <array>
 #include <complex>
 #include <stdexcept>
 #include <vector>
 
-#include <gnuradio-4.0/common/USBDevice.hpp>
 #include <gnuradio-4.0/meta/formatter.hpp>
 
 #if defined(__clang__)
@@ -33,29 +31,6 @@ namespace gr::blocks::sdr {
 static_assert(std::is_constructible_v<SoapySource<std::complex<float>>, gr::property_map>, "SoapySource not default constructible w/ property_map");
 static_assert(std::is_constructible_v<SoapySimpleSource<std::complex<float>>, gr::property_map>, "SoapySource not default constructible w/ property_map");
 } // namespace gr::blocks::sdr
-
-namespace {
-// reset RTL-SDR USB devices between test suites to avoid PLL lock failures
-// (the RTL-SDR driver segfaults in readStream if the PLL doesn't lock)
-inline void resetRtlSdrUsbDevices() {
-#if defined(__linux__)
-    auto devices = gr::blocks::common::enumerateUSBDevices(std::array{
-        gr::blocks::common::USBDeviceId{0x0BDA, 0x2832, "RTL2832U"},
-        gr::blocks::common::USBDeviceId{0x0BDA, 0x2838, "RTL2838UHIDIR"},
-        gr::blocks::common::USBDeviceId{0x0BDA, 0x2840, "RTL2840"},
-    });
-    for (const auto& dev : devices) {
-        gr::blocks::common::USBDevice usbDev;
-        if (auto r = usbDev.open(dev); r) {
-            std::ignore = usbDev.reset();
-        }
-    }
-    if (!devices.empty()) {
-        std::this_thread::sleep_for(std::chrono::seconds(3));
-    }
-#endif
-}
-} // namespace
 
 const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
     using namespace boost::ut;
@@ -278,8 +253,6 @@ const boost::ut::suite<"Soapy Block API "> soapyBlockAPI = [] {
         // conditionally enable visual tests outside the CI
         boost::ext::ut::cfg<override> = {.tag = {"rtlsdr", "lime"}};
     }
-
-    resetRtlSdrUsbDevices();
 
     // create and return a watchdog thread and its control flag
     using TDuration = std::chrono::duration<std::chrono::steady_clock::rep, std::chrono::steady_clock::period>;
