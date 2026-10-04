@@ -85,12 +85,13 @@ inline void steerLoop(const property_map& source, TLoop& loop, std::uint64_t& ig
  * keys inside a trigger's `trigger_meta_info` steer it and ride on, and everything else rides through at its own offset.
  *
  * A detector states a burst's estimates inside the trigger's own map, where the framework keeps a trigger's additional
- * information. Across a block that fails `gr::block::kUnfilteredTagPropagationAdmissible` for `Resampling<>`,
- * `Stride<>` or an asynchronous port, or that declares `FilteredTagPropagation`, the framework forwards only the keys
- * of `gr::tag::kDefaultTags` and the block's own settings. A `NoTagPropagation` block forwards nothing through the
- * framework, and a `forwardTags()` override forwards what it writes. The trigger's map carries the estimates across a
- * block that forwards only those keys. Those estimates are read but not taken out: the map describes the trigger, and
- * the framer and the symbol synchronizer downstream read it too.
+ * information. The framework forwards only the keys of `gr::tag::kDefaultTags` and the block's own settings across a
+ * block that fails `gr::block::kUnfilteredTagPropagationAdmissible`, unless the block declares `NoTagPropagation` or
+ * writes `forwardTags()`. A `NoTagPropagation` block forwards nothing through the framework, and a `forwardTags()`
+ * override forwards what it writes. A block that lists `phase_est` or `freq_est` in `DroppedTagKeys` drops that key at
+ * the top level and inside `trigger_meta_info`. The trigger's map carries the estimates across a block that forwards
+ * only the keys of `gr::tag::kDefaultTags`. Those estimates are read but not taken out: the map describes the trigger,
+ * and the framer and the symbol synchronizer downstream read it too.
  * A top-level key is a directive addressed to this block, is applied after the trigger's and is consumed.
  *
  * Payloads are validated before they reach the loop — an unchecked phase would reach a subtractive wrap
