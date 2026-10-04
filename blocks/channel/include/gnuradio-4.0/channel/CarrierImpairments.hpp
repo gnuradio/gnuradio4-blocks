@@ -30,10 +30,12 @@ GR_REGISTER_BLOCK(gr::blocks::channel::FrequencyOffset, [T], [std::complex<float
  * This block models an impairment, so the stream's nominal center frequency is unchanged and a passing
  * `gr::tag::FREQUENCY` is forwarded untouched. `Rotator` retunes that tag instead, because rotating on purpose
  * moves what the stream is centered on; the two blocks differ in exactly that contract.
+ *
+ * The block drops the `freq_est` and `phase_est` tag keys. The offset changes the carrier frequency and phase they state.
  */
 template<typename T>
 requires std::is_same_v<T, std::complex<float>>
-struct FrequencyOffset : gr::Block<FrequencyOffset<T>> {
+struct FrequencyOffset : gr::Block<FrequencyOffset<T>, gr::DroppedTagKeys<"freq_est", "phase_est">> {
     using Description = Doc<R""(
 @brief Carrier frequency offset with optional linear drift.
 
@@ -103,10 +105,12 @@ GR_REGISTER_BLOCK(gr::blocks::channel::PhaseNoise, [T], [std::complex<float>])
  * at 20 dB/decade. Shaped spectra — flicker, noise floors, multi-pole skirts — wait for a consumer.
  *
  * A rotation cannot change magnitude, so the block preserves the signal's power exactly.
+ *
+ * The block drops the `phase_est` tag key. The random walk changes the carrier phase the key states.
  */
 template<typename T>
 requires std::is_same_v<T, std::complex<float>>
-struct PhaseNoise : gr::Block<PhaseNoise<T>> {
+struct PhaseNoise : gr::Block<PhaseNoise<T>, gr::DroppedTagKeys<"phase_est">> {
     using Description = Doc<R""(
 @brief Wiener (random-walk) oscillator phase noise.
 
@@ -200,10 +204,12 @@ GR_REGISTER_BLOCK(gr::blocks::channel::IqImbalance, [T], [std::complex<float>])
  * only the interpretation of the parameters differs, and the block's position in the graph states which is
  * meant. The image-rejection ratio `|alpha|^2 / |beta|^2` is closed form, which makes the model its own
  * check: `imageRejectionDb()` reports what the settings imply and QA measures the spectrum against it.
+ *
+ * The block drops the `phase_est` tag key. `alpha` rotates the signal by its own argument.
  */
 template<typename T>
 requires std::is_same_v<T, std::complex<float>>
-struct IqImbalance : gr::Block<IqImbalance<T>> {
+struct IqImbalance : gr::Block<IqImbalance<T>, gr::DroppedTagKeys<"phase_est">> {
     using Description = Doc<R""(
 @brief Quadrature amplitude/phase imbalance, one block for the transmitter and receiver seats alike.
 
