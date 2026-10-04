@@ -7,6 +7,7 @@
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
+#include <gnuradio-4.0/testing/PerformanceMonitor.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
@@ -156,6 +157,24 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
             expect(eq(sink._nSamplesProduced, kStart + N));
         };
     }
+
+    "a custom key crosses PerformanceMonitor onto its rate output"_test = [] {
+        constexpr gr::Size_t N = 16U;
+        Graph                g;
+        auto&                src = g.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>(property_map{{"n_samples_max", N}, {"mark_tag", false}});
+        src._tags                = {Tag{0UZ, property_map{{"record_id", std::string("r0")}}}};
+        auto& monitor            = g.emplaceBlock<PerformanceMonitor<float>>(property_map{{"evaluate_perf_rate", gr::Size_t{1U}}, {"publish_rate", 1e9f}});
+        auto& sink               = g.emplaceBlock<TagSink<double, ProcessFunction::USE_PROCESS_BULK>>();
+        expect(g.connect<"out", "in">(src, monitor).has_value());
+        expect(g.connect<"outRate", "in">(monitor, sink).has_value());
+
+        gr::scheduler::Simple sched;
+        expect(sched.exchange(std::move(g)).has_value());
+        expect(sched.runAndWait().has_value());
+
+        const auto nCarrying = std::ranges::count_if(sink._tags, [](const Tag& tag) { return tag.map.contains("record_id"); });
+        expect(eq(nCarrying, 1)) << "the monitor declares no tag policy and forwards a key outside the auto-forward set";
+    };
 };
 
 int main() { /* not needed for UT */ }
