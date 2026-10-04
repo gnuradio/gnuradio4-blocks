@@ -32,6 +32,17 @@ template<std::integral T>
 struct SafeOp<T, std::divides<T>> {
     [[nodiscard]] constexpr T operator()(const T& a, const T& b) const noexcept { return b == T{} ? T{} : static_cast<T>(a / b); }
 };
+
+template<typename T, typename op>
+inline constexpr bool kMultiplicative = std::same_as<op, std::multiplies<T>> || std::same_as<op, std::divides<T>>;
+
+/// A complex constant factor rotates the carrier by its argument. Its block drops `phase_est`.
+template<typename T, typename op>
+using ConstOpDroppedKeys = std::conditional_t<kMultiplicative<T, op> && gr::meta::complex_like<T>, DroppedTagKeys<"phase_est">, DroppedTagKeys<>>;
+
+/// A product or a quotient of two streams mixes their carriers. Its block drops `freq_est` and `phase_est`.
+template<typename T, typename op>
+using MultiPortOpDroppedKeys = std::conditional_t<kMultiplicative<T, op>, DroppedTagKeys<"freq_est", "phase_est">, DroppedTagKeys<>>;
 } // namespace detail
 
 GR_REGISTER_BLOCK("gr::blocks::math::AddConst", gr::blocks::math::AddConst, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
@@ -40,7 +51,7 @@ GR_REGISTER_BLOCK("gr::blocks::math::MultiplyConst", gr::blocks::math::MultiplyC
 GR_REGISTER_BLOCK("gr::blocks::math::DivideConst", gr::blocks::math::DivideConst, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
 
 template<typename T, typename op>
-struct MathOpImpl : Block<MathOpImpl<T, op>> {
+struct MathOpImpl : Block<MathOpImpl<T, op>, detail::ConstOpDroppedKeys<T, op>> {
     PortIn<T>  in{};
     PortOut<T> out{};
     T          value = detail::defaultValue<T>();
@@ -89,7 +100,7 @@ GR_REGISTER_BLOCK("gr::blocks::math::Divide", gr::blocks::math::Divide, [T], [ u
 
 template<typename T, typename op>
 requires gr::arithmetic_or_complex_like<gr::meta::fundamental_base_value_type_t<T>>
-struct MathOpMultiPortImpl : Block<MathOpMultiPortImpl<T, op>> {
+struct MathOpMultiPortImpl : Block<MathOpMultiPortImpl<T, op>, detail::MultiPortOpDroppedKeys<T, op>> {
     using Description = Doc<R""(@brief Math block combining multiple inputs into a single output with a given operation
 
     Depending on the operator op this block computes:

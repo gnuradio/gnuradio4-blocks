@@ -21,6 +21,15 @@ const boost::ut::suite<"multiply and divide tests"> multiplyDivide = [] {
     } | kArithmeticTypes;
 
     "Divide by a zero divisor yields zero for integral types"_test = []<typename T>(const T&) { test_block<T, Divide<T>>({.inputs = {gr::Tensor<T>(gr::data_from, {6, 8, 10, 12}), gr::Tensor<T>(gr::data_from, {2, 0, 5, 0})}, .output = gr::Tensor<T>(gr::data_from, {3, 0, 2, 0})}); } | std::tuple<uint8_t, int16_t, int32_t>();
+
+    "a product or a quotient of streams drops the carrier estimates, a sum forwards them"_test = [] {
+        using C = std::complex<float>;
+        const std::vector<std::string_view> keys{"freq_est", "phase_est", "burst_id"};
+        const gr::property_map              oneInput{{"n_inputs", gr::Size_t{1U}}};
+        expect(keysCrossing<C, Multiply<C>>(keys, oneInput, "in#0") == std::set<std::string, std::less<>>{"burst_id"}) << "Multiply";
+        expect(keysCrossing<C, Divide<C>>(keys, oneInput, "in#0") == std::set<std::string, std::less<>>{"burst_id"}) << "Divide";
+        expect(keysCrossing<C, Add<C>>(keys, oneInput, "in#0") == std::set<std::string, std::less<>>{"burst_id", "freq_est", "phase_est"}) << "Add";
+    };
 };
 
 int main() { /* not needed for UT */ }
