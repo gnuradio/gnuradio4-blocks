@@ -10,6 +10,7 @@
 #include <numbers>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <gnuradio-4.0/Graph.hpp>
@@ -571,6 +572,25 @@ const boost::ut::suite<"DifferentialCoding"> differentialCodingTests = [] {
             expect(eq(decoded[which], kMarkers[which].at)) << std::format("decoder tag '{}'", kMarkers[which].key);
             expect(eq(phased[which], kMarkers[which].at)) << std::format("phasor tag '{}'", kMarkers[which].key);
         }
+    };
+
+    "the phasor drops the carrier estimate keys and forwards the rest"_test = [] {
+        gr::Graph graph;
+        auto&     source = graph.emplaceBlock<TagSource<CF, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 400U}, {"mark_tag", false}});
+        source._tags.emplace_back(100UZ, gr::property_map{{"freq_est", 0.01f}, {"phase_est", 0.5f}, {"private_key", std::string("carried")}});
+        auto& phasor = graph.emplaceBlock<DifferentialPhasor<float>>({});
+        auto& sink   = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+        expect(graph.connect<"out", "in">(source, phasor).has_value());
+        expect(graph.connect<"out", "in">(phasor, sink).has_value());
+
+        gr::scheduler::Simple scheduler;
+        expect(scheduler.exchange(std::move(graph)).has_value());
+        expect(scheduler.runAndWait().has_value());
+
+        const auto carrying = [&sink](std::string_view key) { return std::ranges::count_if(sink._tags, [key](const gr::Tag& tag) { return tag.map.contains(key); }); };
+        expect(eq(carrying("private_key"), 1)) << "an unrelated key crosses";
+        expect(eq(carrying("freq_est"), 0)) << "freq_est stops at the phasor";
+        expect(eq(carrying("phase_est"), 0)) << "phase_est stops at the phasor";
     };
 };
 
