@@ -232,7 +232,7 @@ The block is 1:1, so every input tag key passes through at its own offset.
 GR_REGISTER_BLOCK(gr::blocks::digital::DifferentialPhasor, [T], [float])
 
 template<std::floating_point T>
-struct DifferentialPhasor : Block<DifferentialPhasor<T>> {
+struct DifferentialPhasor : Block<DifferentialPhasor<T>, DroppedTagKeys<"freq_est", "phase_est">> {
     using Description = Doc<R""(
 @brief Differences the phase in the signal domain: `y[n] = x[n] * conj(x[n-1])`.
 
@@ -244,7 +244,8 @@ There is no normalization: the output magnitude is `|x[n]| * |x[n-1]|`, a produc
 decides on angle and does not care; anything that decides on radius needs an AGC between it and this block. The first
 output is `x[0] * conj(0)`, exactly `0` by a stated rule; `reset()` restores it.
 
-The block is 1:1, so every input tag key passes through at its own offset.
+The block is 1:1, and every input tag key passes through at its own offset except `freq_est` and `phase_est`. The
+differencing removes the carrier frequency and phase those two keys state.
 )"">;
 
     PortIn<std::complex<T>>  in;
