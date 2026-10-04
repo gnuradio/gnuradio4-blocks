@@ -288,7 +288,7 @@ const boost::ut::suite<"FIR lowpass design"> filterDesignTests = [] {
         expect(lt(band.peakDb() - plain.stopbandDb, 0.5)) << "and only by the response's move over one grid step";
 
         const BandLevels point = scanBand(taps, 0.125, 0.125);
-        expect(approx(20.0 * std::log10(point.maxMag), -6.0206, 0.01)) << "a band of zero width is the design's own cutoff, 6 dB down";
+        expect(approx(20.0 * std::log10(point.maxMag), 20.0 * std::log10(0.5), 0.01)) << "a band of zero width is the design's own cutoff, 6 dB down";
 
         const BandLevels silent{};
         expect(eq(silent.peakDb(), gr::math::kDbFloor)) << "a band of zero response reads at the dB floor";
