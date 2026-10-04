@@ -41,10 +41,13 @@ GR_REGISTER_BLOCK(gr::blocks::channel::FadingChannel, [T], [std::complex<float>]
  * applied to the taps already running, and each oscillator keeps the phase it has reached, so sweeping `max_doppler`
  * or `sample_rate` moves the channel on from the gain it is at instead of stepping it. `powers_db` and `k_factor`
  * scale that gain, which is what those two ask for.
+ *
+ * The block drops the `freq_est`, `phase_est`, `time_est` and `clock_est` tag keys. The taps change the carrier phase
+ * and frequency, and the delays move the symbol timing those keys state.
  */
 template<typename T>
 requires std::is_same_v<T, std::complex<float>>
-struct FadingChannel : gr::Block<FadingChannel<T>> {
+struct FadingChannel : gr::Block<FadingChannel<T>, gr::DroppedTagKeys<"freq_est", "phase_est", "time_est", "clock_est">> {
     using Description = Doc<R""(
 @brief Rayleigh or Rician time-varying multipath, Clarke sum-of-sinusoids.
 
