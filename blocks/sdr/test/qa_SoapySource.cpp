@@ -1,8 +1,13 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
 #include <array>
 #include <complex>
+#include <cstdlib>
+#include <set>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include <gnuradio-4.0/common/USBDevice.hpp>
@@ -35,6 +40,23 @@ static_assert(std::is_constructible_v<SoapySimpleSource<std::complex<float>>, gr
 } // namespace gr::blocks::sdr
 
 namespace {
+/// true when GR_SDR_TEST_HARDWARE=1 asks for the host's SoapySDR modules and the radios they open
+bool hardwareRequested() {
+    const char* value = std::getenv("GR_SDR_TEST_HARDWARE");
+    return value != nullptr && std::string_view(value) == "1";
+}
+
+/// Without GR_SDR_TEST_HARDWARE=1, SOAPY_SDR_ROOT names an empty directory and SOAPY_SDR_PLUGIN_PATH the loopback
+/// module's directory. SoapySDR then loads the loopback module alone. The flag is initialized ahead of the suites below.
+const bool kHardwareRequested = [] {
+    const bool requested = hardwareRequested();
+    if (!requested) {
+        setenv("SOAPY_SDR_ROOT", GR_SDR_TEST_SOAPY_EMPTY_ROOT, 1);
+        setenv("SOAPY_SDR_PLUGIN_PATH", GR_SDR_TEST_SOAPY_MODULE_DIR, 1);
+    }
+    return requested;
+}();
+
 // reset RTL-SDR USB devices between test suites to avoid PLL lock failures
 // (the RTL-SDR driver segfaults in readStream if the PLL doesn't lock)
 inline void resetRtlSdrUsbDevices() {
@@ -54,6 +76,50 @@ inline void resetRtlSdrUsbDevices() {
         std::this_thread::sleep_for(std::chrono::seconds(3));
     }
 #endif
+}
+
+/// driver keys of the hardware cases, each case tagged with its key
+constexpr std::array<std::string_view, 2UZ> kHardwareCaseDrivers{"rtlsdr", "lime"};
+
+/// devices listed by one `Device::enumerate()` call, shared by every suite
+const gr::blocks::sdr::soapy::KwargsList& enumeratedDevices() {
+    static const gr::blocks::sdr::soapy::KwargsList devices = gr::blocks::sdr::soapy::Device::enumerate();
+    return devices;
+}
+
+std::set<std::string> enumeratedDrivers() {
+    std::set<std::string> drivers;
+    for (const auto& device : enumeratedDevices()) {
+        if (auto it = device.find("driver"); it != device.end()) {
+            drivers.insert(it->second);
+        }
+    }
+    return drivers;
+}
+
+/// true when the hardware cases run: GR_SDR_TEST_HARDWARE=1 is set and DISABLE_SENSITIVE_TESTS is not
+bool hardwareCasesRun() { return kHardwareRequested && std::getenv("DISABLE_SENSITIVE_TESTS") == nullptr; }
+
+/// drivers the Basic API test opens, the loopback always and the others only when the hardware cases run
+std::set<std::string> basicApiDrivers(const std::set<std::string>& drivers, bool withHardware) {
+    std::set<std::string> selected;
+    for (const auto& driver : drivers) {
+        if (withHardware || driver.starts_with("loopback")) {
+            selected.insert(driver);
+        }
+    }
+    return selected;
+}
+
+/// Tags of the hardware cases whose driver is in `drivers`. A case whose driver is absent is skipped.
+std::vector<std::string_view> hardwareCaseTags(const std::set<std::string>& drivers) {
+    std::vector<std::string_view> tags;
+    for (std::string_view driver : kHardwareCaseDrivers) {
+        if (drivers.contains(std::string(driver))) {
+            tags.push_back(driver);
+        }
+    }
+    return tags;
 }
 } // namespace
 
@@ -76,17 +142,20 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
                 std::print("  Module: {}\n", module);
             }
         }
+        if (!kHardwareRequested) { // every module SoapySDR lists lies in the loopback module's directory
+            for (const auto& module : modules) {
+                expect(module.starts_with(GR_SDR_TEST_SOAPY_MODULE_DIR "/")) << std::format("{} lies outside the loopback module's directory", module);
+            }
+        }
     };
 
-    std::set<std::string> availableDeviceDriver; // alt = {"rtlsdr"};
-    "available devices"_test = [&availableDeviceDriver] {
-        KwargsList devices = Device::enumerate();
+    "available devices"_test = [] {
+        const KwargsList& devices = enumeratedDevices();
 
         std::println("Detected devices:");
         std::size_t count = 0UZ;
         for (const auto& device : devices) {
             std::println("   Found device #{}: [{}]", count++, gr::join(device, ", "));
-            availableDeviceDriver.insert(device.at("driver"));
         }
 
         if (devices.empty()) {
@@ -94,7 +163,8 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
             return;
         }
     };
-    std::println("Detected available devices: [{}]", gr::join(availableDeviceDriver, ", "));
+    const std::set<std::string> availableDeviceDriver = basicApiDrivers(enumeratedDrivers(), hardwareCasesRun());
+    std::println("Basic API test drivers: [{}]", gr::join(availableDeviceDriver, ", "));
 
     "Basic API test"_test =
         [](std::string deviceDriver) {
@@ -237,6 +307,12 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
                     expect(device.setSampleRate(SOAPY_SDR_RX, 0, 44'100.).has_value());
                 }
                 expect(device.setCenterFrequency(SOAPY_SDR_RX, 0, 107'000'000.).has_value());
+                if (deviceDriver.starts_with("loopback")) {
+                    // The loopback forwards TX samples by default and this case writes none. In rx_only it generates a tone.
+                    // Its timed read returns a timeout at once for a buffer longer than the poll timeout. The case reads untimed.
+                    expect(device.writeSetting("device_mode", "rx_only").has_value());
+                    expect(device.writeSetting("simulate_timing", "false").has_value());
+                }
                 auto streamResult = device.setupStream<TValueType, SOAPY_SDR_RX>();
                 expect(streamResult.has_value()) << "setupStream must succeed";
                 if (!streamResult) {
@@ -274,12 +350,36 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
 const boost::ut::suite<"Soapy Block API "> soapyBlockAPI = [] {
     using namespace boost::ut;
 
-    if (std::getenv("DISABLE_SENSITIVE_TESTS") == nullptr) {
-        // conditionally enable visual tests outside the CI
-        boost::ext::ut::cfg<override> = {.tag = {"rtlsdr", "lime"}};
-    }
+    "the Basic API test opens a hardware driver only when the hardware cases run"_test = [] {
+        expect(basicApiDrivers({"loopback", "rtlsdr"}, false) == std::set<std::string>{"loopback"});
+        expect(basicApiDrivers({"lime", "loopback", "rtlsdr"}, true) == std::set<std::string>{"lime", "loopback", "rtlsdr"});
+        expect(basicApiDrivers({}, true).empty());
+    };
 
-    resetRtlSdrUsbDevices();
+    "hardware case tags follow the enumerated drivers"_test = [] {
+        expect(hardwareCaseTags({}).empty());
+        expect(hardwareCaseTags({"loopback"}).empty());
+        expect(hardwareCaseTags({"loopback", "rtlsdr"}) == std::vector<std::string_view>{"rtlsdr"});
+        expect(hardwareCaseTags({"lime", "loopback", "rtlsdr"}) == std::vector<std::string_view>{"rtlsdr", "lime"});
+    };
+
+    // a hardware case runs only with GR_SDR_TEST_HARDWARE=1, without DISABLE_SENSITIVE_TESTS, and when enumeration lists
+    // its driver
+    if (!kHardwareRequested) {
+        std::println("hardware cases skipped: GR_SDR_TEST_HARDWARE=1 runs them against the host's modules and radios");
+    } else if (std::getenv("DISABLE_SENSITIVE_TESTS") == nullptr) {
+        const std::vector<std::string_view> tags = hardwareCaseTags(enumeratedDrivers());
+        for (std::string_view driver : kHardwareCaseDrivers) {
+            if (!std::ranges::contains(tags, driver)) {
+                std::println("no {} device found, its case skipped", driver);
+            }
+        }
+        boost::ext::ut::cfg<override> = {.tag = tags};
+
+        if (std::ranges::contains(tags, std::string_view{"rtlsdr"})) {
+            resetRtlSdrUsbDevices();
+        }
+    }
 
     // create and return a watchdog thread and its control flag
     using TDuration = std::chrono::duration<std::chrono::steady_clock::rep, std::chrono::steady_clock::period>;

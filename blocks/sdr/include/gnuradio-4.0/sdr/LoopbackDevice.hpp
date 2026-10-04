@@ -61,7 +61,10 @@ enum class DeviceMode { Loopback, RxOnly, TxOnly };
  *  - configurable N channels with per-channel models (default: passthrough)
  *  - sample format conversion: CF32 <-> CS16 <-> CU8
  *  - optional rate-limited readStream (simulate_timing, default on for rxOnly)
- *  - pluggable channel model via setChannelModel() or Soapy writeSetting()
+ *  - pluggable channel model via setChannelModel() or Soapy writeSetting().
+ *    For a key that getSettingInfo(direction, channel) lists,
+ *    readSetting(direction, channel, key) returns the value last written since
+ *    the channel's model was replaced, or else the key's listed default
  *  - built-in models: passthrough, attenuation, AWGN, delay, composable chain
  *  - max_write_samples=N caps every writeStream to N samples, so a caller sees
  *    the short writes a real device produces (0, the default, accepts the lot)
@@ -248,6 +251,8 @@ class LoopbackDevice : public SoapySDR::Device {
     using RxWriter = decltype(std::declval<RxBuffer>().new_writer());
     using RxReader = decltype(std::declval<RxBuffer>().new_reader());
 
+    using SettingValues = std::map<std::string, std::string>;
+
     enum class SampleFormat { cf32, cs16, cu8 };
 
     // per-instance sentinel addresses for stream handles (valid pointers, never dereferenced)
@@ -263,7 +268,7 @@ class LoopbackDevice : public SoapySDR::Device {
     struct ChannelState {
         double                        frequency  = 100e6;
         double                        sampleRate = 1e6;
-        double                        bandwidth  = 0.0;
+        double                        bandwidth  = 1e6; // a value listBandwidths() holds
         std::map<std::string, double> elementGains;
         bool                          gainMode      = false;
         double                        ppmCorrection = 0.0;
@@ -277,8 +282,16 @@ class LoopbackDevice : public SoapySDR::Device {
         RxWriter                      rxWriter;
         RxReader                      rxReader;
         std::vector<CF32>             txScratch; // pre-allocated for non-CF32 TX format conversion
+        SettingValues                 settings;  // the keys channelSettingInfo() lists and their values
 
-        explicit ChannelState(std::size_t bufferSize) : rxBuffer(bufferSize), rxWriter(rxBuffer.new_writer()), rxReader(rxBuffer.new_reader()) {}
+        explicit ChannelState(std::size_t bufferSize) : rxBuffer(bufferSize), rxWriter(rxBuffer.new_writer()), rxReader(rxBuffer.new_reader()) { resetSettings(); }
+
+        /// every listed key back at its listed default, as a newly set model has them
+        void resetSettings() {
+            for (const auto& info : channelSettingInfo()) {
+                settings[info.key] = info.value;
+            }
+        }
     };
 
     std::size_t                                          _instanceId      = 0UZ;
@@ -399,6 +412,7 @@ public:
         }
         for (auto& ch : _channels) {
             ch->model = model;
+            ch->resetSettings();
         }
     }
 
@@ -411,6 +425,7 @@ public:
         }
         if (channel < _numChannels) {
             _channels[channel]->model = std::move(model);
+            _channels[channel]->resetSettings();
         }
     }
 
@@ -894,9 +909,15 @@ public:
             }
             return;
         }
+        if (_txStreamActive.load(std::memory_order_acquire)) {
+            return; // the channel models are fixed while TX is active
+        }
         auto model = modelFromSetting(key, value);
         if (model.process) {
             setChannelModel(std::move(model));
+        }
+        for (auto& ch : _channels) {
+            holdChannelSetting(*ch, key, value);
         }
     }
 
@@ -939,13 +960,24 @@ public:
         if (channel >= _numChannels) {
             return;
         }
+        if (_txStreamActive.load(std::memory_order_acquire)) {
+            return; // the channel models are fixed while TX is active
+        }
         auto model = modelFromSetting(key, value);
         if (model.process) {
             setChannelModel(channel, std::move(model));
         }
+        holdChannelSetting(*_channels[channel], key, value);
     }
 
-    std::string readSetting(const int /*direction*/, const size_t /*channel*/, const std::string& /*key*/) const override { return ""; }
+    std::string readSetting(const int /*direction*/, const size_t channel, const std::string& key) const override {
+        if (channel >= _numChannels) {
+            return "";
+        }
+        const auto& settings = _channels[channel]->settings;
+        auto        it       = settings.find(key);
+        return it != settings.end() ? it->second : std::string{};
+    }
 
     SoapySDR::ArgInfo getSettingInfoByKey(const std::string& key) const {
         for (const auto& info : getSettingInfo()) {
@@ -965,7 +997,10 @@ public:
         return {};
     }
 
-    SoapySDR::ArgInfoList getSettingInfo(const int /*direction*/, const size_t /*channel*/) const override {
+    SoapySDR::ArgInfoList getSettingInfo(const int /*direction*/, const size_t /*channel*/) const override { return channelSettingInfo(); }
+
+    /// per-channel settings with the value each channel starts with
+    static SoapySDR::ArgInfoList channelSettingInfo() {
         SoapySDR::ArgInfoList infos;
         {
             SoapySDR::ArgInfo info;
@@ -1171,6 +1206,12 @@ private:
             return SampleFormat::cu8;
         }
         return SampleFormat::cf32;
+    }
+
+    static void holdChannelSetting(ChannelState& state, const std::string& key, const std::string& value) {
+        if (auto it = state.settings.find(key); it != state.settings.end()) {
+            it->second = value;
+        }
     }
 
     static ChannelModel modelFromSetting(const std::string& key, const std::string& value) {

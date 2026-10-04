@@ -1,6 +1,8 @@
 #include <boost/ut.hpp>
 
 #include <complex>
+#include <cstdlib>
+#include <string>
 #include <vector>
 
 #include <gnuradio-4.0/sdr/SoapyRaiiWrapper.hpp>
@@ -9,7 +11,25 @@ using namespace boost::ut;
 using namespace gr::blocks::sdr;
 using CF32 = std::complex<float>;
 
+namespace {
+/// SOAPY_SDR_ROOT names an empty directory and SOAPY_SDR_PLUGIN_PATH the loopback module's directory. SoapySDR then loads
+/// the loopback module alone. The flag is initialized ahead of the suites below.
+[[maybe_unused]] const bool kConfined = [] {
+    setenv("SOAPY_SDR_ROOT", GR_SDR_TEST_SOAPY_EMPTY_ROOT, 1);
+    setenv("SOAPY_SDR_PLUGIN_PATH", GR_SDR_TEST_SOAPY_MODULE_DIR, 1);
+    return true;
+}();
+} // namespace
+
 const boost::ut::suite<"SoapyRaiiWrapper module loading"> moduleTests = [] {
+    "every listed module lies in the loopback module's directory"_test = [] {
+        const std::vector<std::string> modules = soapy::getSoapySDRModules();
+        expect(!modules.empty()) << "the loopback module is listed";
+        for (const auto& module : modules) {
+            expect(module.starts_with(GR_SDR_TEST_SOAPY_MODULE_DIR "/")) << module;
+        }
+    };
+
     "loopback module is discoverable"_test = [] {
         auto modules = soapy::getSoapySDRModules();
         bool found   = false;
