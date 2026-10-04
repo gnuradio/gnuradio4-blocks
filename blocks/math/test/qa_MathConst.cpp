@@ -3,6 +3,8 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/math/Math.hpp>
 
+#include "MathTestHelpers.hpp"
+
 const boost::ut::suite<"constant math tests"> constantMath = [] {
     using namespace boost::ut;
     using namespace gr;
@@ -54,6 +56,15 @@ const boost::ut::suite<"constant math tests"> constantMath = [] {
         MultiplyConst<std::complex<double>> multiply(property_map{{"value", std::complex<double>{2.0, 0.0}}});
         multiply.init(multiply.progress);
         expect(eq(multiply.processOne(std::complex<double>{1.0, 1.0}), std::complex<double>{2.0, 2.0}));
+    };
+
+    "a complex constant factor drops phase_est, a real one and an offset forward it"_test = [] {
+        using C = std::complex<float>;
+        const std::vector<std::string_view> keys{"freq_est", "phase_est", "burst_id"};
+        expect(keysCrossing<C, MultiplyConst<C>>(keys, {{"value", C(0.f, 1.f)}}, "in") == std::set<std::string, std::less<>>{"burst_id", "freq_est"}) << "MultiplyConst<complex>";
+        expect(keysCrossing<C, DivideConst<C>>(keys, {{"value", C(0.f, 1.f)}}, "in") == std::set<std::string, std::less<>>{"burst_id", "freq_est"}) << "DivideConst<complex>";
+        expect(keysCrossing<float, MultiplyConst<float>>(keys, {{"value", 2.f}}, "in") == std::set<std::string, std::less<>>{"burst_id", "freq_est", "phase_est"}) << "MultiplyConst<float>";
+        expect(keysCrossing<C, AddConst<C>>(keys, {{"value", C(1.f, 1.f)}}, "in") == std::set<std::string, std::less<>>{"burst_id", "freq_est", "phase_est"}) << "AddConst<complex>";
     };
 };
 
