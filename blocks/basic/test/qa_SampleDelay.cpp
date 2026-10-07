@@ -18,13 +18,11 @@
 #include <gnuradio-4.0/Scheduler.hpp>
 
 #include <gnuradio-4.0/basic/SampleDelay.hpp>
-#include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 namespace {
 
 using gr::blocks::basic::SampleDelay;
-using gr::blocks::testing::Copy;
 using gr::testing::ProcessFunction;
 using gr::testing::TagSink;
 using gr::testing::TagSource;
@@ -168,10 +166,10 @@ struct Marker {
     gr::pmt::Value value;
 };
 
-/// Six keys at five offsets; the first five are `gr::tag::kDefaultTags`, `t0` is not and is what a default-forwarding
-/// neighbor drops. The table is a function-local static rather than a namespace-scope one: a `pmt::Value` holding a
-/// string owns memory from the polymorphic resource, the suites run from the unit-test runner's destructor, and a
-/// table destroyed earlier in that sequence leaves those values dangling.
+/// Six keys at five offsets; the first five are `gr::tag::kDefaultTags` and `t0` is not. The table is a function-local
+/// static rather than a namespace-scope one: a `pmt::Value` holding a string owns memory from the polymorphic resource,
+/// the suites run from the unit-test runner's destructor, and a table destroyed earlier in that sequence leaves those
+/// values dangling.
 [[nodiscard]] const std::array<Marker, 6UZ>& markers() {
     static const std::array<Marker, 6UZ> table{{
         {"trigger_name", 0UZ, gr::pmt::Value(std::string("alpha"))},
@@ -199,7 +197,18 @@ constexpr std::size_t kAbsent = std::numeric_limits<std::size_t>::max();
     return offsets;
 }
 
-/// @brief Run the markers through a SampleDelay, optionally followed by a default-forwarding neighbor.
+/// @brief A copy that forwards every key of every tag at the offset the tag arrived at.
+template<typename T>
+struct EveryKeyCopy : gr::Block<EveryKeyCopy<T>, gr::UnfilteredTagPropagation> {
+    gr::PortIn<T>  in;
+    gr::PortOut<T> out;
+
+    GR_MAKE_REFLECTABLE(EveryKeyCopy, in, out);
+
+    [[nodiscard]] constexpr T processOne(T input) const noexcept { return input; }
+};
+
+/// @brief Run the markers through a SampleDelay, optionally followed by an EveryKeyCopy.
 [[nodiscard]] std::vector<std::size_t> markersThrough(gr::Size_t delay, bool withNeighbor) {
     gr::Graph graph;
     auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 8000U}, {"mark_tag", false}});
@@ -211,7 +220,7 @@ constexpr std::size_t kAbsent = std::numeric_limits<std::size_t>::max();
 
     boost::ut::expect(graph.connect<"out", "in">(source, block).has_value());
     if (withNeighbor) {
-        auto& neighbor = graph.emplaceBlock<Copy<float>>();
+        auto& neighbor = graph.emplaceBlock<EveryKeyCopy<float>>();
         boost::ut::expect(graph.connect<"out", "in">(block, neighbor).has_value());
         boost::ut::expect(graph.connect<"out", "in">(neighbor, sink).has_value());
     } else {
@@ -340,14 +349,13 @@ const boost::ut::suite<"SampleDelay"> sampleDelayTests = [] {
         }
     };
 
-    "the non-reserved key survives this block and not its neighbor"_test = [] {
+    "the non-reserved key survives this block and a neighbor that forwards every key"_test = [] {
         const std::vector<std::size_t> alone = markersThrough(7U, false);
         expect(eq(alone[5UZ], markers()[5UZ].at + 7UZ)) << "a block doing its own forwarding republishes what it saw";
 
         const std::vector<std::size_t> behind = markersThrough(7U, true);
-        expect(eq(behind[5UZ], kAbsent)) << "and the next default-forwarding block drops it, which is the seam";
-        for (std::size_t which = 0UZ; which < 5UZ; ++which) {
-            expect(neq(behind[which], kAbsent)) << std::format("the reserved key {} still gets through", markers()[which].key);
+        for (std::size_t which = 0UZ; which < markers().size(); ++which) {
+            expect(eq(behind[which], markers()[which].at + 7UZ)) << std::format("key {} leaves the neighbor at its delayed offset", markers()[which].key);
         }
     };
 
