@@ -25,7 +25,6 @@
 #include <gnuradio-4.0/digital/AccessCodeCorrelator.hpp>
 #include <gnuradio-4.0/digital/CrcBlocks.hpp>
 #include <gnuradio-4.0/digital/PacketFramer.hpp>
-#include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 #include <gnuradio-4.0/testing/TestSpans.hpp>
 
@@ -271,6 +270,16 @@ struct Collector : gr::Block<Collector<TItem>> {
         std::ignore = inSpan.consume(inSpan.size());
         return gr::work::Status::OK;
     }
+};
+
+/// @brief A copy that forwards every key of every tag at the offset the tag arrived at.
+template<typename TItem>
+struct EveryKeyCopy : gr::Block<EveryKeyCopy<TItem>, gr::UnfilteredTagPropagation> {
+    gr::PortIn<TItem>  in;
+    gr::PortOut<TItem> out;
+    GR_MAKE_REFLECTABLE(EveryKeyCopy, in, out);
+
+    [[nodiscard]] TItem processOne(const TItem& item) const { return item; }
 };
 
 } // namespace
@@ -1017,8 +1026,9 @@ const boost::ut::suite<"DataSetToPacket under the scheduler"> schedulerTests = [
         expect(eq(sink._tags.size(), 0UZ)) << "and no tag arrives on the packet port";
     };
 
-    // Runtime half: discard_reason rides a tag, so it survives a direct connection and one hop kills it
-    "a rejection reason reaches a sink on reject and does not survive one ordinary block"_test = [] {
+    // Runtime half: discard_reason is a key of the tag at the refused record's index, on a direct connection and
+    // behind a block that forwards every key
+    "a rejection reason reaches a sink on reject, directly and through a block that forwards every key"_test = [] {
         const auto rejections = [](bool intervening) {
             std::vector<Record<std::uint8_t>> records;
             Record<std::uint8_t>              noSignals = makePacketRecord<std::uint8_t>(4UZ);
@@ -1036,7 +1046,7 @@ const boost::ut::suite<"DataSetToPacket under the scheduler"> schedulerTests = [
             expect(graph.connect<"out", "in">(source, convert).has_value());
             expect(graph.connect<"out", "in">(convert, packets).has_value());
             if (intervening) {
-                auto& hop = graph.emplaceBlock<gr::blocks::testing::Copy<gr::DataSet<std::uint8_t>>>();
+                auto& hop = graph.emplaceBlock<EveryKeyCopy<gr::DataSet<std::uint8_t>>>();
                 expect(graph.connect<"reject", "in">(convert, hop).has_value());
                 expect(graph.connect<"out", "in">(hop, refused).has_value());
             } else {
@@ -1046,16 +1056,16 @@ const boost::ut::suite<"DataSetToPacket under the scheduler"> schedulerTests = [
             gr::scheduler::Simple scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
-            return std::pair<std::size_t, std::size_t>{refused._items.size(), offsetsOf(std::span<const Tag>(refused._tags), "discard_reason").size()};
+            return std::pair<std::size_t, std::vector<std::size_t>>{refused._items.size(), offsetsOf(std::span<const Tag>(refused._tags), "discard_reason")};
         };
 
         const auto [directRecords, directReasons] = rejections(false);
         expect(eq(directRecords, 1UZ)) << "the refused record leaves by the reject port";
-        expect(eq(directReasons, 1UZ)) << "with its reason on a tag beside it";
+        expect(that % (directReasons == std::vector{0UZ})) << "with its reason on a tag beside it";
 
         const auto [hoppedRecords, hoppedReasons] = rejections(true);
         expect(eq(hoppedRecords, 1UZ)) << "the record itself survives the hop";
-        expect(eq(hoppedReasons, 0UZ)) << "discard_reason is not a reserved key, so the default forwarder drops it";
+        expect(that % (hoppedReasons == directReasons)) << "and its reason crosses the hop at the record's index";
     };
 };
 

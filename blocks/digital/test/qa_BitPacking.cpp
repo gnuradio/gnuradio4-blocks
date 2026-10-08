@@ -28,7 +28,6 @@ using gr::blocks::digital::UnpackBits;
 using gr::blocks::testing::span::InputSpan;
 using gr::blocks::testing::span::OutputSpan;
 using gr::testing::ProcessFunction;
-using gr::testing::TagMonitor;
 using gr::testing::TagSink;
 using gr::testing::TagSource;
 
@@ -240,7 +239,7 @@ struct Marker {
     gr::pmt::Value value;
 };
 
-/// Six reserved keys and one the default forwarder filters, two of them sharing an input offset. The array is held
+/// Six reserved keys and one unreserved key, two of them sharing an input offset. The array is held
 /// inside the function so that it outlives no test: a namespace-scope value owning pmr storage is destroyed in an
 /// order the test runner does not fix, and the runner walks the suites from its own destructor.
 [[nodiscard]] const std::array<Marker, 7>& markers() {
@@ -256,11 +255,11 @@ struct Marker {
     return kMarkers;
 }
 
+constexpr std::size_t kAbsent = static_cast<std::size_t>(-1);
+
 /// @brief Run @p TBlock between a tagging source and a tag sink, and report where every marker came out.
 template<typename TBlock>
 [[nodiscard]] std::vector<std::size_t> markerOffsets(gr::property_map settings, gr::Size_t samples) {
-    constexpr std::size_t kAbsent = static_cast<std::size_t>(-1);
-
     gr::Graph graph;
     auto&     source = graph.emplaceBlock<TagSource<std::uint8_t, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", samples}, {"mark_tag", false}});
     for (const Marker& marker : markers()) {
@@ -305,9 +304,27 @@ template<typename TBlock>
     return sink._samples.size();
 }
 
+/**
+ * @brief A copy with the bit-packing blocks' `Resampling<>` declaration and no `forwardTags()`.
+ *
+ * The framework forwards its tags. On a block declaring `Resampling<>` the framework keeps only the reserved keys.
+ */
+struct RateDeclaredCopy : gr::Block<RateDeclaredCopy, gr::Resampling<1UZ, 1UZ, false>> {
+    gr::PortIn<std::uint8_t>  in;
+    gr::PortOut<std::uint8_t> out;
+
+    GR_MAKE_REFLECTABLE(RateDeclaredCopy, in, out);
+
+    [[nodiscard]] gr::work::Status processBulk(gr::InputSpanLike auto& inSpan, gr::OutputSpanLike auto& outSpan) {
+        std::ranges::copy(inSpan, outSpan.begin());
+        return gr::work::Status::OK;
+    }
+};
+
 static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<RepackBits>, "a declared rate changer that writes its own tag map must not claim offset identity");
 static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<PackBits>);
 static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<UnpackBits>);
+static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<RateDeclaredCopy>);
 
 } // namespace qa_bit_packing
 
@@ -637,14 +654,17 @@ const boost::ut::suite<"RepackBits"> repackBitsTests = [] {
         expect(eq(graphSampleCount({{"bits_in", 8U}, {"bits_out", 3U}}, 6U), 16UZ)) << "six bytes are 48 bits, exactly 16 symbols and no remainder";
     };
 
-    "every key is forwarded, and a default-forwarding neighbor does not forward them all"_test = [] {
+    "every key is forwarded, and the framework's forwarder on the same declaration keeps only the reserved keys"_test = [] {
         const std::vector<std::size_t> throughRepack = markerOffsets<RepackBits>({{"bits_in", 8U}, {"bits_out", 8U}}, 128U);
         for (std::size_t which = 0UZ; which < markers().size(); ++which) {
             expect(eq(throughRepack[which], markers()[which].at)) << std::format("key '{}' survives at its own offset, the map being the identity at 8/8", markers()[which].key);
         }
 
-        const std::vector<std::size_t> throughNeighbor = markerOffsets<TagMonitor<std::uint8_t, ProcessFunction::USE_PROCESS_BULK>>({{"name", "TagMonitor"}}, 128U);
-        expect(neq(throughNeighbor.back(), markers().back().at)) << "the default forwarder keeps only the reserved keys, so 'private_key' does not survive it";
+        const std::vector<std::size_t> throughControl = markerOffsets<RateDeclaredCopy>({}, 128U);
+        for (std::size_t which = 0UZ; which + 1UZ < markers().size(); ++which) {
+            expect(eq(throughControl[which], markers()[which].at)) << std::format("reserved key '{}' crosses the framework's forwarder at its own offset", markers()[which].key);
+        }
+        expect(eq(throughControl.back(), kAbsent)) << "the framework's forwarder drops 'private_key'";
     };
 
     "a tag map is placed at the offsets a rate change puts it at"_test = [] {
