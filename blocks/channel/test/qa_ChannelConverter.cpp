@@ -12,6 +12,9 @@
 #include <gnuradio-4.0/algorithm/rng/Xoshiro256pp.hpp>
 #include <gnuradio-4.0/channel/Nonlinearity.hpp>
 #include <gnuradio-4.0/channel/Quantizer.hpp>
+#include <gnuradio-4.0/testing/NullSources.hpp>
+
+#include "EstimateKeys.hpp"
 
 namespace {
 
@@ -171,6 +174,14 @@ const boost::ut::suite<"converter models"> converterTests = [] {
         expect(throws([] { std::ignore = configured<Quantizer<float>>({{"bits", gr::Size_t(1)}}); }));
         expect(throws([] { std::ignore = configured<Quantizer<float>>({{"bits", gr::Size_t(25)}}); }));
         expect(throws([] { std::ignore = configured<Quantizer<float>>({{"full_scale", 0.0}}); }));
+    };
+
+    "the nonlinearity drops phase_est and forwards an unrelated key"_test = [] {
+        using gr::blocks::channel::test::keysCrossing;
+        using gr::blocks::channel::test::keysOtherThan;
+
+        expect(keysCrossing<gr::testing::Copy<C>>() == keysOtherThan({})) << "every test key crosses a block that drops none";
+        expect(keysCrossing<Nonlinearity<C>>({{"model", "Saleh"}}) == keysOtherThan({"phase_est"}));
     };
 };
 

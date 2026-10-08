@@ -7,9 +7,18 @@
 #include <numbers>
 #include <print>
 #include <span>
+#include <string_view>
 #include <vector>
 
+#include <gnuradio-4.0/Graph.hpp>
+#include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/channel/CarrierImpairments.hpp>
+#include <gnuradio-4.0/sync/LoopCommon.hpp>
+#include <gnuradio-4.0/sync/Pll.hpp>
+#include <gnuradio-4.0/testing/NullSources.hpp>
+#include <gnuradio-4.0/testing/TagMonitors.hpp>
+
+#include "EstimateKeys.hpp"
 
 namespace {
 
@@ -50,6 +59,46 @@ template<typename Block>
         std::ignore         = block.processBulk(input.subspan(i, n), std::span<C>(out.data() + i, n));
     }
     return out;
+}
+
+/// the carrier loop's estimates and output for one run of source -> TMiddle -> PllCarrierTracking
+struct LoopRun {
+    std::vector<float> frequency; ///< rad/sample, after each sample's update
+    std::vector<float> phase;     ///< rad, in force on each sample
+    std::vector<C>     derotated;
+};
+
+template<typename TMiddle>
+[[nodiscard]] LoopRun runIntoLoop(std::span<const C> input, std::vector<gr::Tag> tags, gr::property_map middleSettings = {}) {
+    using gr::testing::ProcessFunction;
+
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<gr::testing::TagSource<C, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(input.size())}, {"values", gr::Tensor<C>(input.begin(), input.end())}, {"sample_rate", 1.f}, {"mark_tag", false}});
+    source._tags     = std::move(tags);
+
+    auto& middle        = graph.emplaceBlock<TMiddle>(std::move(middleSettings));
+    auto& loop          = graph.emplaceBlock<gr::blocks::sync::PllCarrierTracking>({});
+    auto& outSink       = graph.emplaceBlock<gr::testing::TagSink<C, ProcessFunction::USE_PROCESS_BULK>>({});
+    auto& frequencySink = graph.emplaceBlock<gr::testing::TagSink<float, ProcessFunction::USE_PROCESS_BULK>>({});
+    auto& phaseSink     = graph.emplaceBlock<gr::testing::TagSink<float, ProcessFunction::USE_PROCESS_BULK>>({});
+    boost::ut::expect(graph.connect<"out", "in">(source, middle).has_value());
+    boost::ut::expect(graph.connect<"out", "in">(middle, loop).has_value());
+    boost::ut::expect(graph.connect<"out", "in">(loop, outSink).has_value());
+    boost::ut::expect(graph.connect<"freq", "in">(loop, frequencySink).has_value());
+    boost::ut::expect(graph.connect<"phase", "in">(loop, phaseSink).has_value());
+
+    gr::scheduler::Simple scheduler;
+    boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
+    boost::ut::expect(scheduler.runAndWait().has_value());
+    return {std::vector<float>(frequencySink._samples.begin(), frequencySink._samples.end()), std::vector<float>(phaseSink._samples.begin(), phaseSink._samples.end()), std::vector<C>(outSink._samples.begin(), outSink._samples.end())};
+}
+
+[[nodiscard]] float meanOf(std::span<const float> values) {
+    double sum = 0.;
+    for (const float value : values) {
+        sum += static_cast<double>(value);
+    }
+    return values.empty() ? 0.f : static_cast<float>(sum / static_cast<double>(values.size()));
 }
 
 } // namespace
@@ -225,6 +274,69 @@ const boost::ut::suite<"carrier impairments"> carrierTests = [] {
             again[k] = second.processOne(input[k]);
         }
         expect(out == again) << "a stateless map must not depend on sample order";
+    };
+
+    "each impairment drops the estimate keys it invalidates and forwards an unrelated key"_test = [] {
+        using gr::blocks::channel::test::keysCrossing;
+        using gr::blocks::channel::test::keysOtherThan;
+        using gr::blocks::sync::kFreqEstKey;
+        using gr::blocks::sync::kPhaseEstKey;
+
+        static_assert(std::ranges::equal(FrequencyOffset<C>::DroppedTagKeysControl::kKeys, std::array{kFreqEstKey, kPhaseEstKey}), "the dropped keys are the loop family's own");
+        static_assert(std::ranges::equal(PhaseNoise<C>::DroppedTagKeysControl::kKeys, std::array{kPhaseEstKey}));
+        static_assert(std::ranges::equal(IqImbalance<C>::DroppedTagKeysControl::kKeys, std::array{kPhaseEstKey}));
+        static_assert(gr::block::kUnfilteredTagPropagationAdmissible<FrequencyOffset<C>> && gr::block::kUnfilteredTagPropagationAdmissible<PhaseNoise<C>> && gr::block::kUnfilteredTagPropagationAdmissible<IqImbalance<C>>);
+
+        expect(keysCrossing<gr::testing::Copy<C>>() == keysOtherThan({})) << "every test key crosses a block that drops none";
+        expect(keysCrossing<FrequencyOffset<C>>({{"frequency_offset", 0.01}}) == keysOtherThan({kFreqEstKey, kPhaseEstKey})) << "FrequencyOffset";
+        expect(keysCrossing<PhaseNoise<C>>({{"linewidth", 0.001}}) == keysOtherThan({kPhaseEstKey})) << "PhaseNoise";
+        expect(keysCrossing<IqImbalance<C>>({{"phase_imbalance", 0.04}}) == keysOtherThan({kPhaseEstKey})) << "IqImbalance";
+    };
+
+    "a stale freq_est stops at a frequency offset, and the loop behind it acquires on its own"_test = [] {
+        constexpr std::size_t      kSamples = 4096UZ;
+        constexpr double           kInput   = 0.002; // cycles/sample
+        constexpr double           kOffset  = 0.003; // cycles/sample, at sample_rate 1
+        const float                stale    = static_cast<float>(kTwoPi * kInput);
+        const float                truth    = static_cast<float>(kTwoPi * (kInput + kOffset));
+        const auto                 input    = tone(kSamples, kInput);
+        const auto                 shifted  = tone(kSamples, kInput + kOffset);
+        const std::vector<gr::Tag> estimate{gr::Tag{0UZ, gr::property_map{{gr::property_map::key_type{gr::blocks::sync::kFreqEstKey}, stale}}}};
+
+        const LoopRun relayed = runIntoLoop<gr::testing::Copy<C>>(std::span<const C>(shifted), estimate);
+        expect(eq(relayed.frequency.size(), kSamples));
+        expect(approx(relayed.frequency[0UZ], stale, 1e-3f)) << "a block that forwards the key steers the loop to the stale estimate";
+
+        const gr::property_map offsetSettings{{"frequency_offset", kOffset}};
+        const LoopRun          tagged   = runIntoLoop<FrequencyOffset<C>>(std::span<const C>(input), estimate, offsetSettings);
+        const LoopRun          untagged = runIntoLoop<FrequencyOffset<C>>(std::span<const C>(input), {}, offsetSettings);
+        expect(eq(tagged.frequency.size(), kSamples));
+        expect(gt(std::abs(tagged.frequency[0UZ] - stale), 0.5f * std::abs(truth - stale))) << "the loop starts away from the stale estimate";
+        expect(tagged.frequency == untagged.frequency && tagged.derotated == untagged.derotated) << "the loop runs as it does with no tag at all";
+        expect(approx(meanOf(std::span<const float>(tagged.frequency).last(512UZ)), truth, 1e-3f)) << "and settles on the shifted carrier";
+    };
+
+    "a stale phase_est stops at phase noise, and the loop behind it acquires on its own"_test = [] {
+        constexpr std::size_t      kSamples = 4096UZ;
+        constexpr float            kStale   = 2.f; // rad, far from the carrier's phase
+        const auto                 input    = tone(kSamples, 0.);
+        const std::vector<gr::Tag> estimate{gr::Tag{16UZ, gr::property_map{{gr::property_map::key_type{gr::blocks::sync::kPhaseEstKey}, kStale}}}};
+
+        const LoopRun relayed = runIntoLoop<gr::testing::Copy<C>>(std::span<const C>(input), estimate);
+        expect(eq(relayed.phase.size(), kSamples));
+        expect(approx(relayed.phase[16UZ], kStale, 1e-6f)) << "a block that forwards the key sets the loop phase to the stale estimate";
+
+        const gr::property_map noiseSettings{{"linewidth", 1e-4}, {"seed", std::uint64_t{7U}}};
+        const LoopRun          tagged   = runIntoLoop<PhaseNoise<C>>(std::span<const C>(input), estimate, noiseSettings);
+        const LoopRun          untagged = runIntoLoop<PhaseNoise<C>>(std::span<const C>(input), {}, noiseSettings);
+        expect(eq(tagged.phase.size(), kSamples));
+        expect(gt(std::abs(tagged.phase[16UZ] - kStale), 1.f)) << "the loop phase stays away from the stale estimate";
+        expect(tagged.phase == untagged.phase && tagged.derotated == untagged.derotated) << "the loop runs as it does with no tag at all";
+        float worst = 0.f;
+        for (const C& sample : std::span<const C>(tagged.derotated).last(512UZ)) {
+            worst = std::max(worst, std::abs(std::arg(sample)));
+        }
+        expect(lt(worst, 0.5f)) << "and tracks the noisy carrier";
     };
 };
 

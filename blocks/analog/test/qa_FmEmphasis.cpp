@@ -134,6 +134,9 @@ template<typename TIn, typename TOut, typename TBlock>
     return offsets;
 }
 
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<FmDeemphasis<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
+static_assert(gr::block::kUnfilteredTagPropagationAdmissible<FmPreemphasis<float>>);
+
 } // namespace
 
 const boost::ut::suite<"FmEmphasis"> fmEmphasisTests = [] {

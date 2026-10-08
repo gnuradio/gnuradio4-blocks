@@ -89,7 +89,7 @@ inline void checkEmphasisTau(double tau) {
 GR_REGISTER_BLOCK(gr::blocks::analog::FmDeemphasis, [T], [float])
 
 template<std::floating_point T>
-struct FmDeemphasis : Block<FmDeemphasis<T>, UnfilteredTagPropagation> {
+struct FmDeemphasis : Block<FmDeemphasis<T>> {
     using Description = Doc<R""(
 @brief FM de-emphasis: the receive half of the emphasis pair, a single-pole RC lowpass.
 
@@ -158,7 +158,7 @@ The block is 1:1, so every input tag key passes through at its own offset, `samp
 GR_REGISTER_BLOCK(gr::blocks::analog::FmPreemphasis, [T], [float])
 
 template<std::floating_point T>
-struct FmPreemphasis : Block<FmPreemphasis<T>, UnfilteredTagPropagation> {
+struct FmPreemphasis : Block<FmPreemphasis<T>> {
     using Description = Doc<R""(
 @brief FM pre-emphasis: the transmit half of the emphasis pair, a 6 dB/octave rise that flattens at a high corner.
 

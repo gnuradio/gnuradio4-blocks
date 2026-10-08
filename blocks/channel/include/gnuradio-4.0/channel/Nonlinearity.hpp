@@ -34,10 +34,13 @@ GR_REGISTER_BLOCK(gr::blocks::channel::Nonlinearity, [T], [std::complex<float>])
  *
  * Both are closed forms, so the equation is the oracle: QA checks the block against it at a table of
  * amplitudes. `input_backoff_db` pre-scales the input so an operating point states itself.
+ *
+ * The block drops the `phase_est` tag key. The Saleh AM/PM conversion rotates the carrier by an amount that depends on
+ * the envelope.
  */
 template<typename T>
 requires std::is_same_v<T, std::complex<float>>
-struct Nonlinearity : gr::Block<Nonlinearity<T>> {
+struct Nonlinearity : gr::Block<Nonlinearity<T>, gr::DroppedTagKeys<"phase_est">> {
     using Description = Doc<R""(
 @brief Memoryless amplifier nonlinearity (Rapp SSPA or Saleh TWTA).
 

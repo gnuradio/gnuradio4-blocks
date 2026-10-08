@@ -3,6 +3,12 @@
 
 #include <boost/ut.hpp>
 
+#include <functional>
+#include <set>
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include <gnuradio-4.0/math/Math.hpp>
 
 #include <gnuradio-4.0/Graph.hpp>
@@ -37,6 +43,39 @@ void test_block(const TestParameters<T> p) {
     }
     expect(sched.runAndWait().has_value()) << "Failed to run graph: No value";
     expect(std::ranges::equal(sink._samples, p.output)) << std::format("Failed to validate block output: Expected {} but got {} for input {}", p.output, sink._samples, p.inputs);
+}
+
+/// @brief The keys among @p keys that reach a sink behind @p BlockUnderTest, its input port named @p inputPort.
+template<typename T, typename BlockUnderTest>
+[[nodiscard]] std::set<std::string, std::less<>> keysCrossing(const std::vector<std::string_view>& keys, gr::property_map settings, const std::string& inputPort) {
+    using namespace gr::blocks::testing;
+
+    gr::property_map tagMap;
+    for (std::string_view key : keys) {
+        tagMap.insert_or_assign(gr::property_map::key_type{key}, 0.5f);
+    }
+
+    gr::Graph graph;
+    auto&     src = graph.emplaceBlock<TagSource<T>>({{"n_samples_max", gr::Size_t{64U}}, {"mark_tag", false}});
+    src._tags     = {gr::Tag{0UZ, tagMap}, gr::Tag{32UZ, tagMap}};
+    auto& block   = graph.emplaceBlock<BlockUnderTest>(std::move(settings));
+    auto& sink    = graph.emplaceBlock<TagSink<T, ProcessFunction::USE_PROCESS_BULK>>();
+    boost::ut::expect(graph.connect(src, std::string("out"), block, inputPort).has_value());
+    boost::ut::expect(graph.connect(block, std::string("out"), sink, std::string("in")).has_value());
+
+    gr::scheduler::Simple sched;
+    boost::ut::expect(sched.exchange(std::move(graph)).has_value());
+    boost::ut::expect(sched.runAndWait().has_value());
+
+    std::set<std::string, std::less<>> crossed;
+    for (const gr::Tag& tag : sink._tags) {
+        for (std::string_view key : keys) {
+            if (tag.map.contains(key)) {
+                crossed.emplace(key);
+            }
+        }
+    }
+    return crossed;
 }
 
 template<typename T>
