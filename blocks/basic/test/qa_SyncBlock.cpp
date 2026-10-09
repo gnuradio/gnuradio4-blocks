@@ -2,6 +2,7 @@
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/basic/SyncBlock.hpp>
+#include <gnuradio-4.0/testing/SettingsLimits.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 #include <format>
@@ -106,6 +107,24 @@ const boost::ut::suite SyncBlockTests = [] {
     using namespace gr;
     using namespace gr::blocks::basic;
     using namespace gr::blocks::testing;
+
+    "SyncBlock defaults lie inside their limits"_test = [] {
+        const SyncBlock<int> block;
+        const auto           outside = settingsOutsideLimits(block);
+        expect(outside.empty()) << std::format("settings outside their limits: {}", outside);
+        expect(eq(block.inputs.size(), static_cast<std::size_t>(block.n_ports)));
+        expect(eq(block.outputs.size(), static_cast<std::size_t>(block.n_ports)));
+        expect(eq(block._nDroppedSamples.size(), static_cast<std::size_t>(block.n_ports)));
+    };
+
+    "SyncBlock given its default port count keeps that many ports"_test = [] {
+        const gr::Size_t nDefault = SyncBlock<int>{}.n_ports;
+        SyncBlock<int>   block({{"n_ports", nDefault}});
+        block.init(block.progress);
+        expect(eq(block.inputs.size(), static_cast<std::size_t>(nDefault)));
+        expect(eq(block.outputs.size(), static_cast<std::size_t>(nDefault)));
+        expect(eq(block._nDroppedSamples.size(), static_cast<std::size_t>(nDefault)));
+    };
 
     "SyncBlock basic test"_test = [] {
         runTest({                                                                                                                   //

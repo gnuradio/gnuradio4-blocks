@@ -9,6 +9,7 @@
 
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
+#include <gnuradio-4.0/testing/SettingsLimits.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 namespace {
@@ -72,6 +73,12 @@ const boost::ut::suite<"PythonBlock"> pythonBlockTests = [] {
     static_assert(gr::HasProcessBulkFunction<gr::blocks::basic::PythonBlock<std::int32_t>>);
     static_assert(gr::HasRequiredProcessFunction<gr::blocks::basic::PythonBlock<float>>);
     static_assert(gr::HasProcessBulkFunction<gr::blocks::basic::PythonBlock<float>>);
+
+    "defaults lie inside their limits"_test = [] {
+        const PythonBlock<float> block;
+        const auto               outside = gr::blocks::testing::settingsOutsideLimits(block);
+        expect(outside.empty()) << std::format("settings outside their limits: {}", outside);
+    };
 
     "nominal PoC"_test = [] {
         // Your Python script

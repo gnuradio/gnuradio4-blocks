@@ -122,11 +122,12 @@ New synchronization occurs with `s8`, prior samples (`s6-s7`) are NOT included t
 Note: We assume that desynchronization should not exceed the buffer size of the SyncBlock; if it does, the samples will be dropped.
 )"">;
 
-    std::vector<gr::PortIn<T, gr::Async>> inputs;
-    std::vector<gr::PortOut<T>>           outputs;
+    // The port vectors start at the default `n_ports`. `settingsChanged` resizes them only when the value changes.
+    std::vector<gr::PortIn<T, gr::Async>> inputs  = std::vector<gr::PortIn<T, gr::Async>>(1UZ);
+    std::vector<gr::PortOut<T>>           outputs = std::vector<gr::PortOut<T>>(1UZ);
 
     // settings
-    Annotated<gr::Size_t, "n_ports", gr::Visible, gr::Doc<"variable number of in/out ports">, gr::Limits<1U, 32U>> n_ports          = 0U;
+    Annotated<gr::Size_t, "n_ports", gr::Visible, gr::Doc<"variable number of in/out ports">, gr::Limits<1U, 32U>> n_ports          = 1U;
     Annotated<gr::Size_t, "max_history_size", Doc<"Max size of history">>                                          max_history_size = 32000U; // should be less than actual buffer size (better < 80%)
     Annotated<std::string, "filter", Doc<"trigger name filter">>                                                   filter           = "";
     Annotated<std::uint64_t, "tolerance", Doc<"trigger time tolerance [ns]">>                                      tolerance        = 5ULL;
@@ -134,7 +135,7 @@ Note: We assume that desynchronization should not exceed the buffer size of the 
     GR_MAKE_REFLECTABLE(SyncBlock, inputs, outputs, n_ports, max_history_size, filter, tolerance);
 
     bool                     _isStreamSynchronized = false;
-    std::vector<std::size_t> _nDroppedSamples{}; // number of dropped samples, to be sent with desynchronized tag
+    std::vector<std::size_t> _nDroppedSamples      = std::vector<std::size_t>(1UZ, 0UZ); // number of dropped samples, to be sent with desynchronized tag
 
     int _processBulkCounter = 0;
 

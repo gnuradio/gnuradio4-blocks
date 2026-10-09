@@ -93,8 +93,8 @@ myBlock.processBulk(ins, outs);
 
     std::vector<PortIn<T>>                                                        inputs{};
     std::vector<PortOut<T>>                                                       outputs{};
-    A<gr::Size_t, "n_inputs", Visible, Doc<"number of inputs">, Limits<1U, 32U>>  n_inputs     = 0U;
-    A<gr::Size_t, "n_outputs", Visible, Doc<"number of inputs">, Limits<1U, 32U>> n_outputs    = 0U;
+    A<gr::Size_t, "n_inputs", Visible, Doc<"number of inputs">, Limits<0U, 32U>>  n_inputs     = 0U;
+    A<gr::Size_t, "n_outputs", Visible, Doc<"number of inputs">, Limits<0U, 32U>> n_outputs    = 0U;
     std::string                                                                   pythonScript = "";
 
     GR_MAKE_REFLECTABLE(PythonBlock, inputs, outputs, n_inputs, n_outputs, pythonScript);

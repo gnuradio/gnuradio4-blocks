@@ -2,11 +2,27 @@
 
 #include "MathTestHelpers.hpp"
 
+#include <gnuradio-4.0/testing/SettingsLimits.hpp>
+
 const boost::ut::suite<"basic math tests"> basicMath = [] {
     using namespace boost::ut;
     using namespace gr;
     using namespace gr::blocks::math;
     constexpr auto kArithmeticTypes = std::tuple<uint8_t, int16_t, int32_t, float, std::complex<float>>();
+
+    "defaults lie inside their limits"_test = [] {
+        const Add<float> block;
+        const auto       outside = gr::blocks::testing::settingsOutsideLimits(block);
+        expect(outside.empty()) << std::format("settings outside their limits: {}", outside);
+        expect(eq(block.in.size(), static_cast<std::size_t>(block.n_inputs)));
+    };
+
+    "given its default input count keeps that many inputs"_test = [] {
+        const Size_t nDefault = Add<float>{}.n_inputs;
+        Add<float>   block({{"n_inputs", nDefault}});
+        block.init(block.progress);
+        expect(eq(block.in.size(), static_cast<std::size_t>(nDefault)));
+    };
 
     "Add"_test = []<typename T>(const T&) { //
         test_block<T, Add<T>>({

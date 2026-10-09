@@ -10,6 +10,7 @@
 #include <gnuradio-4.0/Scheduler.hpp>
 
 #include <gnuradio-4.0/basic/Selector.hpp>
+#include <gnuradio-4.0/testing/SettingsLimits.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 using namespace std::string_literals;
@@ -161,6 +162,12 @@ const boost::ut::suite SelectorTest = [] {
         expect(eq(block.inputs.size(), 4U));
         expect(eq(block.outputs.size(), 3U));
         expect(eq(block._internalMappingInOut.size(), 0U));
+    };
+
+    "Selector<T> defaults lie inside their limits"_test = [] {
+        const Selector<double> block;
+        const auto             outside = gr::blocks::testing::settingsOutsideLimits(block);
+        expect(outside.empty()) << std::format("settings outside their limits: {}", outside);
     };
 
     "basic Selector<T>"_test = [] {

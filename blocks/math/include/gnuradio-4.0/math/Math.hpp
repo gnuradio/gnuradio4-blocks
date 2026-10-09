@@ -102,11 +102,12 @@ struct MathOpMultiPortImpl : Block<MathOpMultiPortImpl<T, op>> {
     )"">;
 
     // ports
-    std::vector<PortIn<T>> in;
+    // The input vector starts at the default `n_inputs`. `settingsChanged` resizes it only when the value changes.
+    std::vector<PortIn<T>> in = std::vector<PortIn<T>>(1UZ);
     PortOut<T>             out;
 
     // settings
-    Annotated<gr::Size_t, "n_inputs", Visible, Doc<"Number of inputs">, Limits<1U, 32U>> n_inputs = 0U;
+    Annotated<gr::Size_t, "n_inputs", Visible, Doc<"Number of inputs">, Limits<1U, 32U>> n_inputs = 1U;
 
     GR_MAKE_REFLECTABLE(MathOpMultiPortImpl, in, out, n_inputs);
 
