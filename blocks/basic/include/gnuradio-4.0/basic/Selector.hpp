@@ -87,8 +87,8 @@ you can set the `backPressure` property to false.
     std::vector<PortOut<T, Async>>      outputs{};
 
     // settings
-    A<gr::Size_t, "n_inputs", Visible, Doc<"variable number of inputs">, Limits<1U, 32U>>                      n_inputs  = 0U;
-    A<gr::Size_t, "n_outputs", Visible, Doc<"variable number of inputs">, Limits<1U, 32U>>                     n_outputs = 0U;
+    A<gr::Size_t, "n_inputs", Visible, Doc<"variable number of inputs">, Limits<0U, 32U>>                      n_inputs  = 0U;
+    A<gr::Size_t, "n_outputs", Visible, Doc<"variable number of inputs">, Limits<0U, 32U>>                     n_outputs = 0U;
     A<Tensor<gr::Size_t>, "map_in", Visible, Doc<"input port index to route from">>                            map_in{}; // N.B. need two vectors since pmt_t doesn't support pairs (yet!?!)
     A<Tensor<gr::Size_t>, "map_out", Visible, Doc<"output port index to route to">>                            map_out{};
     A<bool, "back_pressure", Visible, Doc<"true: do not consume samples from un-routed ports">>                back_pressure       = false;
