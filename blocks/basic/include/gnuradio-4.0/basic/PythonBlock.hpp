@@ -38,10 +38,13 @@ block's Python objects.
 The map 'script_parameters' passes its entries to 'process_bulk' as keyword arguments, for example to
 'def process_bulk(ins, outs, factor=1.0)'. Each value arrives as None, bool, int, float, complex or str, a map as a dict,
 and a tensor of rank one as a list. Each call receives its own copy of the values.
+Each key of the map at any depth and each key of 'this_block.setSettings' matches [A-Za-z_][A-Za-z0-9_]*, the form
+of a setting name.
 The block binds the map to the signature of 'process_bulk' when it loads the script and when the map changes.
 A change replaces the whole map, applies at the block's next work call and keeps the script's global state.
 A tag changes the map only on a block built without it.
-A map that does not fit the signature or holds a value without a Python form puts the block in its error state at init.
+A map that does not fit the signature, holds another key or holds a value without a Python form puts the block in its
+error state at init.
 At run time the block keeps the previous map and reports the refusal on its message port.
 A script change at run time resets the script's state. When the new 'process_bulk' refuses the map in force, the block
 reports the refusal at the change, and each later call fails until the map or the script changes.
@@ -368,7 +371,7 @@ PyObject* PythonBlock_GetTag_Template(PyObject* /*self*/, PyObject* args) {
         return nullptr;
     }
     gr::blocks::basic::PythonBlock<T>* myBlock = getPythonBlockFromCapsule<T>(capsule);
-    return PyUnicode_FromString(myBlock->getTag().c_str());
+    return gr::python::toPyString(myBlock->getTag());
 }
 
 template<typename T>
@@ -384,29 +387,27 @@ PyObject* PythonBlock_GetSettings_Template(PyObject* /*self*/, PyObject* args) {
     }
     const auto& settings = myBlock->getSettings();
 
-    PyObject* dict = PyDict_New(); // returns owning reference
+    gr::python::PyObjectGuard dict(PyDict_New());
     if (!dict) {
-        return PyErr_NoMemory();
+        return nullptr;
     }
     try {
+        // PyDict_SetItem does not steal a reference, and the guards release both
         for (const auto& [key, value] : settings) {
-            gr::python::PyObjectGuard py_value(PyUnicode_FromString(value.c_str()));
-            if (!py_value) { // Failed to convert string to Python Unicode
-                gr::python::PyDecRef(dict);
-                return PyErr_NoMemory();
+            gr::python::PyObjectGuard name(gr::python::toPyString(key));
+            if (!name) {
+                return nullptr;
             }
-            // PyDict_SetItemString does not steal reference, so no need to decref py_value
-            if (PyDict_SetItemString(dict, key.c_str(), py_value) != 0) {
-                gr::python::PyDecRef(dict);
+            gr::python::PyObjectGuard item(gr::python::toPyString(value));
+            if (!item || PyDict_SetItem(dict, name, item) != 0) {
                 return nullptr;
             }
         }
     } catch (const std::exception& e) {
         PyErr_SetString(PyExc_RuntimeError, e.what());
-        gr::python::PyDecRef(dict);
         return nullptr;
     }
-    return dict;
+    return dict.release();
 }
 
 template<typename T>
@@ -429,12 +430,20 @@ PyObject* PythonBlock_SetSettings_Template(PyObject* /*self*/, PyObject* args) {
         if (!gr::python::isPyString(key) || !gr::python::isPyString(value)) {
             return PyErr_Format(PyExc_TypeError, "setSettings takes string keys and values, not the entry %R: %R", key, value);
         }
-        const char* keyStr   = PyUnicode_AsUTF8(key);
-        const char* valueStr = PyUnicode_AsUTF8(value);
-        if (keyStr == nullptr || valueStr == nullptr) {
+        Py_ssize_t  keySize = 0;
+        const char* keyStr  = PyUnicode_AsUTF8AndSize(key, &keySize);
+        if (keyStr == nullptr) {
             return nullptr; // the Python error names the string that has no UTF-8 form
         }
-        newSettings[keyStr] = valueStr;
+        if (!gr::python::isSettingName(std::string_view(keyStr, static_cast<std::size_t>(keySize)))) {
+            return PyErr_Format(PyExc_ValueError, "setSettings takes keys that match [A-Za-z_][A-Za-z0-9_]*, the form of a setting name, not %R", key);
+        }
+        Py_ssize_t  valueSize = 0;
+        const char* valueStr  = PyUnicode_AsUTF8AndSize(value, &valueSize);
+        if (valueStr == nullptr) {
+            return nullptr;
+        }
+        newSettings.insert_or_assign(std::string(keyStr, static_cast<std::size_t>(keySize)), std::string(valueStr, static_cast<std::size_t>(valueSize)));
     }
 
     myBlock->setSettings(newSettings);

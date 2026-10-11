@@ -118,6 +118,24 @@ std::vector<float> runOnce(gr::blocks::basic::PythonBlock<float>& block, std::ve
     boost::ut::expect(block.processBulk(std::span(ins), std::span(outs)) == gr::work::Status::OK);
     return out;
 }
+
+/// returns the message of the error that a block with 'parameters' and 'script' raises at init, or an empty string
+std::string initError(const gr::property_map& parameters, const std::string& script) {
+    gr::blocks::basic::PythonBlock<float> myBlock({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", script}, {"script_parameters", parameters}});
+    try {
+        myBlock.settings().init();
+        std::ignore = myBlock.settings().applyStagedParameters(); // needed for unit-test only when executed outside a Scheduler/Graph
+    } catch (const std::exception& ex) {
+        return std::string(ex.what());
+    }
+    return std::string{};
+}
+
+/// a script that takes any keyword arguments and passes its input through
+constexpr std::string_view kTakesAnyScript = R"(def process_bulk(ins, outs, **parameters):
+    for i in range(len(ins)):
+        outs[i][:] = ins[i]
+)";
 } // namespace
 
 const boost::ut::suite<"python::<C-API abstraction interfaces>"> pythonInterfaceTests = [] {
@@ -680,25 +698,16 @@ def process_bulk(ins, outs, factor):
     for i in range(len(ins)):
         outs[i][:] = ins[i] * factor
 )";
-        auto              initError    = [](const gr::property_map& parameters, const std::string& script) {
-            PythonBlock<float> myBlock({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", script}, {"script_parameters", parameters}});
-            try {
-                myBlock.settings().init();
-                std::ignore = myBlock.settings().applyStagedParameters(); // needed for unit-test only when executed outside a Scheduler/Graph
-            } catch (const std::exception& ex) {
-                return std::string(ex.what());
-            }
-            return std::string{};
-        };
 
         const std::string unknownKey = initError({{"gain", 2}}, pythonScript);
         expect(unknownKey.contains("gain")) << std::format("a key process_bulk does not take is refused by name: '{}'", unknownKey);
 
-        const std::string grid = initError({{"grid", gr::pmt::Value(gr::Tensor<float>(std::vector<std::size_t>{2UZ, 2UZ}))}}, R"(def process_bulk(ins, outs, **parameters):
-    for i in range(len(ins)):
-        outs[i][:] = ins[i]
-)");
+        const std::string takesAny(kTakesAnyScript);
+        const std::string grid = initError({{"grid", gr::pmt::Value(gr::Tensor<float>(std::vector<std::size_t>{2UZ, 2UZ}))}}, takesAny);
         expect(grid.contains("grid")) << std::format("a value with no Python form is refused by name: '{}'", grid);
+
+        const std::string notUtf8 = initError({{"options", gr::property_map{{"bad\xff", 1}}}}, takesAny);
+        expect(notUtf8.contains("script_parameters.options.bad")) << std::format("a nested key that is not UTF-8 is refused by its place: '{}'", notUtf8);
 
         using namespace gr::blocks::testing;
         Graph graph;
@@ -764,6 +773,101 @@ def process_bulk(ins, outs, factor):
         std::ignore = runOnce(myBlock, {1.f});
         std::ignore = runOnce(myBlock, {1.f});
         expect(myBlock.getSettings().contains("seen") && myBlock.getSettings().at("seen") == "1") << "each call receives the list as the map holds it";
+    };
+
+    "a script_parameters key that is not a setting name is refused by its place"_test = [] {
+        using namespace std::string_view_literals;
+        const gr::property_map nullKey{{"gain", 2}, {std::pmr::string("gain\0units"sv), std::string("dB")}};
+        expect(eq(nullKey.size(), 2UZ)) << "the map holds two keys";
+
+        const std::string                                           takesAny(kTakesAnyScript);
+        const std::vector<std::pair<gr::property_map, std::string>> refused{
+            {gr::property_map{{"options", nullKey}}, R"('script_parameters.options.gain\x00units')"},
+            {gr::property_map{{"gain-db", 2}}, "'script_parameters.gain-db'"},
+            {gr::property_map{{"options", gr::property_map{{"gain db", 2}}}}, "'script_parameters.options.gain db'"},
+            {gr::property_map{{"a", gr::property_map{{"b", gr::property_map{{"2gain", 2}}}}}}, "'script_parameters.a.b.2gain'"},
+        };
+        for (const auto& [parameters, place] : refused) {
+            const std::string error = initError(parameters, takesAny);
+            expect(error.contains(place) && error.contains("[A-Za-z_][A-Za-z0-9_]*")) << std::format("init refuses the key {} by its place: '{}'", place, error);
+        }
+
+        std::string            pythonScript = R"(def process_bulk(ins, outs, _gain, options):
+    this_block.setSettings({"received": repr((_gain, sorted(options.items())))})
+    for i in range(len(ins)):
+        outs[i][:] = ins[i]
+)";
+        const gr::property_map previous{{"_gain", 2}, {"options", gr::property_map{{"_units", std::string("dB")}}}};
+        PythonBlock<float>     myBlock({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}, {"script_parameters", previous}});
+        myBlock.init(myBlock.progress); // needed for unit-test only when executed outside a Scheduler/Graph
+        gr::MsgPortIn fromBlock;
+        expect(myBlock.msgOut.connect(fromBlock).has_value());
+        auto received = [&myBlock] {
+            std::ignore          = runOnce(myBlock, {1.f});
+            const auto& settings = myBlock.getSettings();
+            return settings.contains("received") ? settings.at("received") : std::string("<not called>");
+        };
+        expect(eq(received(), std::string("(2, [('_units', 'dB')])"))) << "keys with a leading underscore reach process_bulk";
+
+        expect(myBlock.settings().setStaged({{"script_parameters", gr::property_map{{"_gain", 3}, {"options", nullKey}}}}).empty()) << "the block declares script_parameters";
+        std::ignore           = myBlock.settings().applyStagedParameters();
+        const auto parameters = myBlock.settings().get("script_parameters");
+        expect(parameters.has_value() && *parameters == gr::pmt::Value(previous)) << "a change with such a key keeps the map in force";
+        expect(eq(received(), std::string("(2, [('_units', 'dB')])"))) << "process_bulk keeps the map in force";
+
+        auto       messages = fromBlock.streamReader().get();
+        const bool reported = std::ranges::any_of(messages, [](const gr::Message& message) { return !message.data.has_value() && message.data.error().message.contains(R"('script_parameters.options.gain\x00units')"); });
+        std::ignore         = messages.consume(messages.size());
+        expect(reported) << "the block reports the refused key by its place on its message port";
+    };
+
+    "setSettings takes only keys that are setting names"_test = [] {
+        using namespace std::string_view_literals;
+        // each refused call also holds the key 'gain', which the block stores only from a call it accepts
+        std::string pythonScript = R"(def process_bulk(ins, outs):
+    for index, key in enumerate(("gain\x00units", "gain-db", "gain db", "2gain")):
+        try:
+            this_block.setSettings({"gain": "1", key: "x"})
+        except ValueError as error:
+            this_block.setSettings({"refused_" + str(index): str(error)})
+    this_block.setSettings({"_gain": "2", "units": "dB\x00SPL"})
+    this_block.setSettings({"read_back": repr(this_block.getSettings()["units"])})
+    for i in range(len(ins)):
+        outs[i][:] = ins[i]
+)";
+
+        PythonBlock<float> myBlock({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}});
+        myBlock.init(myBlock.progress); // needed for unit-test only when executed outside a Scheduler/Graph
+        std::ignore                             = runOnce(myBlock, {1.f});
+        const auto&                    settings = myBlock.getSettings();
+        const std::vector<std::string> keys{R"('gain\x00units')", "'gain-db'", "'gain db'", "'2gain'"};
+        for (std::size_t index = 0UZ; index < keys.size(); ++index) {
+            const std::string record  = std::format("refused_{}", index);
+            const std::string message = settings.contains(record) ? settings.at(record) : std::string("<accepted>");
+            expect(message.contains(keys[index])) << std::format("setSettings raises a ValueError that names the key {}: {}", keys[index], message);
+        }
+        expect(!settings.contains("gain")) << "a refused call stores none of its entries";
+        expect(settings.contains("_gain") && settings.at("_gain") == "2") << "a key with a leading underscore is a setting name";
+        expect(settings.contains("units") && settings.at("units") == std::string("dB\0SPL"sv)) << "a value keeps the characters after a null character";
+        const std::string readBack = settings.contains("read_back") ? settings.at("read_back") : std::string("<not called>");
+        expect(eq(readBack, std::string(R"('dB\x00SPL')"))) << "getSettings returns the whole value";
+    };
+
+    "getTag returns the whole tag string"_test = [] {
+        using namespace std::string_view_literals;
+        std::string pythonScript = R"(def process_bulk(ins, outs):
+    this_block.setSettings({"tag": repr(this_block.getTag())})
+    for i in range(len(ins)):
+        outs[i][:] = ins[i]
+)";
+
+        PythonBlock<float> myBlock({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}});
+        myBlock.init(myBlock.progress); // needed for unit-test only when executed outside a Scheduler/Graph
+        myBlock._tag               = std::string("gain\0units"sv);
+        std::ignore                = runOnce(myBlock, {1.f});
+        const auto&       settings = myBlock.getSettings();
+        const std::string received = settings.contains("tag") ? settings.at("tag") : std::string("<not called>");
+        expect(eq(received, std::string(R"('gain\x00units')"))) << "the script receives the characters after the null character";
     };
 
     "setSettings refuses a key or a value that is not a string"_test = [] {

@@ -18,6 +18,7 @@
 #endif
 #include <Python.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <cctype>
@@ -260,6 +261,18 @@ constexpr inline PyObject* toPyArray(T* arrayData, std::initializer_list<std::si
     return npArray;
 }
 
+/// Returns a new Python str of every byte of 'text', null characters included. Returns null with a Python error set on
+/// a failure, for example for text that is not valid UTF-8.
+[[nodiscard]] inline PyObject* toPyString(std::string_view text) { return PyUnicode_FromStringAndSize(text.data(), static_cast<Py_ssize_t>(text.size())); }
+
+/// Returns true when 'name' matches [A-Za-z_][A-Za-z0-9_]*. A block's setting names and the reserved tag keys have this
+/// form.
+[[nodiscard]] constexpr bool isSettingName(std::string_view name) noexcept {
+    const auto isFirst = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; };
+    const auto isNext  = [&isFirst](char c) { return isFirst(c) || (c >= '0' && c <= '9'); };
+    return !name.empty() && isFirst(name.front()) && std::ranges::all_of(name.substr(1UZ), isNext);
+}
+
 [[nodiscard]] inline std::expected<PyObject*, std::string> toPyObject(const pmt::Value::Map& map, std::string_view key);
 [[nodiscard]] inline std::expected<PyObject*, std::string> toPyObject(const pmt::Value& value, std::string_view key);
 
@@ -270,7 +283,7 @@ template<typename T>
     if constexpr (std::is_same_v<T, bool>) { // before the integers: a Python bool is an int
         return PyBool_FromLong(value ? 1L : 0L);
     } else if constexpr (std::is_same_v<T, std::pmr::string>) {
-        return PyUnicode_FromStringAndSize(value.data(), static_cast<Py_ssize_t>(value.size()));
+        return toPyString(value);
     } else if constexpr (std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>) {
         return PyComplex_FromDoubles(static_cast<double>(value.real()), static_cast<double>(value.imag()));
     } else if constexpr (std::is_floating_point_v<T>) {
@@ -285,6 +298,22 @@ template<typename T>
 [[nodiscard]] inline std::unexpected<std::string> conversionFailed(std::string_view key) {
     PyErr_Clear();
     return std::unexpected(std::format("'{}' could not be converted to a Python object", key));
+}
+
+/// Returns 'text' with each backslash doubled and each byte outside printable ASCII written as \xNN.
+[[nodiscard]] inline std::string printable(std::string_view text) {
+    std::string result;
+    for (const char c : text) {
+        const auto byte = static_cast<unsigned char>(c);
+        if (c == '\\') {
+            result += "\\\\";
+        } else if (byte < 0x20 || byte > 0x7E) {
+            result += std::format("\\x{:02x}", byte);
+        } else {
+            result += c;
+        }
+    }
+    return result;
 }
 
 template<typename T>
@@ -318,20 +347,26 @@ template<typename T>
 } // namespace detail
 
 /// Converts a map to a new Python dict whose entries are converted as by the overload for a value.
+/// The converter refuses a key that does not match isSettingName with an error that names the key's place. In the
+/// place, a null character or another byte outside printable ASCII appears as \xNN.
 [[nodiscard]] inline std::expected<PyObject*, std::string> toPyObject(const pmt::Value::Map& map, std::string_view key) {
     PyObjectGuard dict(PyDict_New());
     if (!dict) {
         return detail::conversionFailed(key);
     }
     for (const auto& [entryKey, entry] : map) {
-        const std::string name(entryKey);
-        auto              converted = toPyObject(entry, std::format("{}.{}", key, name));
+        if (!isSettingName(entryKey)) {
+            return std::unexpected(std::format("the key '{}.{}' does not match [A-Za-z_][A-Za-z0-9_]*, the form of a setting name", key, detail::printable(entryKey)));
+        }
+        const std::string place     = std::format("{}.{}", key, entryKey);
+        auto              converted = toPyObject(entry, place);
         if (!converted) {
             return std::unexpected(converted.error());
         }
         PyObjectGuard item(*converted);
-        if (PyDict_SetItemString(dict, name.c_str(), item) != 0) {
-            return detail::conversionFailed(key);
+        PyObjectGuard name(detail::toPyScalar(entryKey));
+        if (!name || PyDict_SetItem(dict, name, item) != 0) {
+            return detail::conversionFailed(place);
         }
     }
     return dict.release();
