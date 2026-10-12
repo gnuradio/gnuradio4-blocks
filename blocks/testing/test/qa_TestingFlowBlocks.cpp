@@ -1,11 +1,15 @@
 #include <boost/ut.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <format>
 #include <limits>
+#include <thread>
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/testing/Delay.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/PerformanceMonitor.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
@@ -116,6 +120,32 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
             expect(eq(it->second.value_or(0.f), streamRate)) << "the monitor rewrote the sample rate it forwarded";
         }
         expect(eq(nSeen, 1UZ)) << std::format("the sample_rate tag did not cross the monitor, sink saw {} tags", sink._tags.size());
+    };
+
+    "Delay ends its hold when a stop is requested during it"_test = [] {
+        constexpr std::int64_t kHoldMs = 2000;
+        Graph                  g;
+        auto&                  src   = g.emplaceBlock<NullSource<float>>();
+        auto&                  delay = g.emplaceBlock<Delay<float>>(property_map{{"delay_ms", static_cast<std::uint32_t>(kHoldMs)}});
+        auto&                  sink  = g.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>();
+        expect(g.connect<"out", "in">(src, delay).has_value());
+        expect(g.connect<"out", "in">(delay, sink).has_value());
+
+        gr::scheduler::Simple sched;
+        expect(fatal(sched.exchange(std::move(g)).has_value()));
+        std::thread runner([&sched] { std::ignore = sched.runAndWait(); });
+
+        // the worker enters the hold once the Delay's input holds samples
+        while (delay.in.streamReader().available() == 0UZ) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        const auto requested = std::chrono::steady_clock::now();
+        sched.requestStop();
+        runner.join();
+        const std::int64_t stopMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - requested).count();
+
+        expect(lt(stopMs, kHoldMs / 2)) << std::format("the stop took {} ms of a {} ms hold", stopMs, kHoldMs);
+        expect(eq(sink._nSamplesProduced, 0ULL)) << "the hold passes nothing before it ends";
     };
 
     // Tag::index is a std::size_t; a 32-bit target cannot record an index past 2^32
