@@ -1,0 +1,24 @@
+#ifndef GNURADIO_EXAMPLE_GRAPHS_HPP
+#define GNURADIO_EXAMPLE_GRAPHS_HPP
+
+#include <array>
+#include <string_view>
+
+// Holds the text of every graph file in blocks/examples/graphs, embedded at configure time. A test that reads a graph
+// from here opens no file and runs where the source tree is not readable.
+
+namespace gr::examples {
+
+/// @brief One example graph: its file name and its text.
+struct ExampleGraph {
+    std::string_view fileName;
+    std::string_view text;
+};
+
+inline constexpr std::array kExampleGraphs{
+@GR4_EXAMPLE_GRAPH_ENTRIES@
+};
+
+} // namespace gr::examples
+
+#endif // GNURADIO_EXAMPLE_GRAPHS_HPP
