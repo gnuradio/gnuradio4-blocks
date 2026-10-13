@@ -1,0 +1,15 @@
+# A sink whose expected sample differs from the emitted one by more than its relative tolerance: 100.0
+# against 102.0 with a relative tolerance of 0.01. The run must end with an error naming sample 0. The
+# test registering this graph passes on the text of that error.
+blocks:
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source
+      values: [100.0]
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink
+      expected: [102.0]
+      relative_tolerance: 0.01
+connections:
+  - [source, out, sink, in]

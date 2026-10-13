@@ -1,0 +1,19 @@
+# A sink expecting the tag of key `mark` at sample 2 while the source publishes it at sample 1. The run
+# must end with an error naming both index lists. The test registering this graph passes on the text of
+# that error.
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source
+      values: [1.0, 2.0, 3.0, 4.0]
+      tag_indices: !!uint32 [1]
+      tag_map:
+        mark: frame
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink
+      expected: [1.0, 2.0, 3.0, 4.0]
+      tag_key: mark
+      tag_indices: !!uint32 [2]
+connections:
+  - [source, out, sink, in]

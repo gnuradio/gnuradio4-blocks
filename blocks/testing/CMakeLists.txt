@@ -17,6 +17,7 @@ gr_add_block_library(
   include/gnuradio-4.0/testing/ImChartMonitor.hpp
   include/gnuradio-4.0/testing/TagMonitors.hpp
   include/gnuradio-4.0/testing/Delay.hpp
+  include/gnuradio-4.0/testing/GraphTestBlocks.hpp
   include/gnuradio-4.0/testing/PerformanceMonitor.hpp
   include/gnuradio-4.0/testing/SettingsChangeRecorder.hpp
   LINK_LIBRARIES

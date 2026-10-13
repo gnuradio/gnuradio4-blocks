@@ -1,0 +1,30 @@
+# A source publishing one tag map at samples 1 and 4 into three sinks. The first sink expects the tags of
+# key `mark` at 1 and 4. The second expects no tag of key `absent`, which the source never publishes. The
+# third checks no tags. The run passes when every sink receives its samples and tags.
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source
+      values: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+      tag_indices: !!uint32 [4, 1]
+      tag_map:
+        mark: frame
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: marked
+      expected: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+      tag_key: mark
+      tag_indices: !!uint32 [1, 4]
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: unmarked
+      expected: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+      tag_key: absent
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: unchecked
+      expected: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+connections:
+  - [source, out, marked, in]
+  - [source, out, unmarked, in]
+  - [source, out, unchecked, in]

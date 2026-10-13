@@ -127,3 +127,91 @@ function(gr_pin_test_optimization TEST_NAME LEVEL)
   target_compile_options(${TEST_NAME} PRIVATE $<$<NOT:$<CONFIG:Debug>>:${LEVEL}>)
   set_target_properties(${TEST_NAME} PROPERTIES GR_QA_REDUCED_OPTIMIZATION OFF)
 endfunction()
+
+# gr_add_graph_test(<name> <graph.yaml> [PASS_REGULAR_EXPRESSION <regex>] [PLUGIN_DIRS <dir>...] [SET <setting>...])
+#
+# Registers a ctest case that runs the graph file through the rungraph of the core installation. The function looks for
+# rungraph in the bin subdirectory of each of the four directories above gnuradio4_DIR, then in the bin directory of
+# each CMAKE_PREFIX_PATH entry. The case passes when rungraph exits with 0. With PASS_REGULAR_EXPRESSION, the case
+# passes when the output matches the expression instead, for a graph that must end with an error. The plugin directories
+# are this build's testing plugin and each PLUGIN_DIRS entry, handed over in GNURADIO4_PLUGIN_DIRECTORIES. Each SET
+# entry, in the form block.key=value, becomes one --set argument. A relative graph path is read from the calling
+# directory. The case carries the label `graph`. Without rungraph, as with an Emscripten build of core, the function
+# registers no case, and the configure prints the directories it searched, once. The installed rungraph carries no run
+# path. The case puts the installation's library directory, two levels above gnuradio4_DIR, first in LD_LIBRARY_PATH.
+function(gr_add_graph_test TEST_NAME GRAPH)
+  cmake_parse_arguments(
+    PARSE_ARGV
+    2
+    _graphTest
+    ""
+    "PASS_REGULAR_EXPRESSION"
+    "PLUGIN_DIRS;SET")
+  # gnuradio4_DIR is <prefix>/<libdir>/cmake/gnuradio4, and <libdir> has one or two components.
+  set(_hints)
+  if(gnuradio4_DIR)
+    set(_parent "${gnuradio4_DIR}")
+    foreach(_level RANGE 1 4)
+      get_filename_component(_parent "${_parent}" DIRECTORY)
+      list(APPEND _hints "${_parent}/bin")
+    endforeach()
+  endif()
+  foreach(_prefix IN LISTS CMAKE_PREFIX_PATH)
+    list(APPEND _hints "${_prefix}/bin")
+  endforeach()
+  find_program(
+    _rungraph rungraph
+    HINTS ${_hints}
+    NO_DEFAULT_PATH NO_CACHE)
+  if(NOT _rungraph)
+    get_property(_reported GLOBAL PROPERTY GR_GRAPH_TESTS_SKIP_REPORTED)
+    if(NOT _reported)
+      list(
+        JOIN
+        _hints
+        ", "
+        _searched)
+      message(STATUS "gr_add_graph_test: no rungraph in ${_searched}; the graph-file tests are not registered")
+      set_property(GLOBAL PROPERTY GR_GRAPH_TESTS_SKIP_REPORTED TRUE)
+    endif()
+    return()
+  endif()
+  if(NOT TARGET GrTestingBlocksShared)
+    message(FATAL_ERROR "gr_add_graph_test(${TEST_NAME}): the testing plugin GrTestingBlocksShared is not built")
+  endif()
+  get_filename_component(
+    _graphFile
+    "${GRAPH}"
+    ABSOLUTE
+    BASE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  set(_pluginDirs "$<TARGET_FILE_DIR:GrTestingBlocksShared>" ${_graphTest_PLUGIN_DIRS})
+  list(
+    JOIN
+    _pluginDirs
+    ":"
+    _pluginPath)
+  set(_arguments --graph "${_graphFile}")
+  foreach(_setting IN LISTS _graphTest_SET)
+    list(
+      APPEND
+      _arguments
+      --set
+      "${_setting}")
+  endforeach()
+  set(_environment "GNURADIO4_PLUGIN_DIRECTORIES=set:${_pluginPath}")
+  if(gnuradio4_DIR)
+    get_filename_component(_libraryDir "${gnuradio4_DIR}/../.." ABSOLUTE)
+    list(APPEND _environment "LD_LIBRARY_PATH=path_list_prepend:${_libraryDir}")
+  endif()
+  add_test(NAME ${TEST_NAME} COMMAND "${_rungraph}" ${_arguments})
+  set_tests_properties(
+    ${TEST_NAME}
+    PROPERTIES ENVIRONMENT_MODIFICATION
+               "${_environment}"
+               LABELS
+               graph)
+  if(DEFINED _graphTest_PASS_REGULAR_EXPRESSION)
+    set_tests_properties(${TEST_NAME} PROPERTIES PASS_REGULAR_EXPRESSION "${_graphTest_PASS_REGULAR_EXPRESSION}")
+  endif()
+endfunction()

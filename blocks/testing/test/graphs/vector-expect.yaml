@@ -1,0 +1,87 @@
+# VectorSource into ExpectSink, one chain per registered type: each sink expects the values its source
+# emits, twice over, since each source repeats its values once. The run passes when every sink receives
+# exactly its expected samples. The complex chain carries a relative tolerance and the float64 chain an
+# absolute one, both wider than any difference the chain can produce.
+blocks:
+  - id: gr::blocks::testing::VectorSource<uint8>
+    parameters:
+      name: source_u8
+      values: [0, 1, 255]
+      repeat: !!uint32 2
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: sink_u8
+      expected: [0, 1, 255, 0, 1, 255]
+  - id: gr::blocks::testing::VectorSource<int16>
+    parameters:
+      name: source_i16
+      values: [-32768, 0, 32767]
+      repeat: !!uint32 2
+  - id: gr::blocks::testing::ExpectSink<int16>
+    parameters:
+      name: sink_i16
+      expected: [-32768, 0, 32767, -32768, 0, 32767]
+  - id: gr::blocks::testing::VectorSource<int32>
+    parameters:
+      name: source_i32
+      values: [-7, 0, 100000]
+      repeat: !!uint32 2
+  - id: gr::blocks::testing::ExpectSink<int32>
+    parameters:
+      name: sink_i32
+      expected: [-7, 0, 100000, -7, 0, 100000]
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32 [-1.5, 0.0, 2.25, .nan, .inf]
+      repeat: !!uint32 2
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_f32
+      expected: !!float32
+        - -1.5
+        - 0.0
+        - 2.25
+        - .nan
+        - .inf
+        - -1.5
+        - 0.0
+        - 2.25
+        - .nan
+        - .inf
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source_f64
+      values: [-1.5, 0.0, 1e300]
+      repeat: !!uint32 2
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink_f64
+      expected: [-1.5, 0.0, 1e300, -1.5, 0.0, 1e300]
+      tolerance: 1e-12
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: source_c32
+      values: !!complex32
+        - (1.0, -1.0)
+        - (0.0, 0.0)
+        - (-2.5, 3.0)
+      repeat: !!uint32 2
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: sink_c32
+      expected: !!complex32
+        - (1.0, -1.0)
+        - (0.0, 0.0)
+        - (-2.5, 3.0)
+        - (1.0, -1.0)
+        - (0.0, 0.0)
+        - (-2.5, 3.0)
+      relative_tolerance: 1e-6
+connections:
+  - [source_u8, out, sink_u8, in]
+  - [source_i16, out, sink_i16, in]
+  - [source_i32, out, sink_i32, in]
+  - [source_f32, out, sink_f32, in]
+  - [source_f64, out, sink_f64, in]
+  - [source_c32, out, sink_c32, in]
