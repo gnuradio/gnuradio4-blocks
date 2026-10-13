@@ -138,7 +138,9 @@ endfunction()
 # entry, in the form block.key=value, becomes one --set argument. A relative graph path is read from the calling
 # directory. The case carries the label `graph`. Without rungraph, as with an Emscripten build of core, the function
 # registers no case, and the configure prints the directories it searched, once. The installed rungraph carries no run
-# path. The case puts the installation's library directory, two levels above gnuradio4_DIR, first in LD_LIBRARY_PATH.
+# path. The case puts the installation's library directory, two levels above gnuradio4_DIR, first in the loader's search
+# path: DYLD_LIBRARY_PATH on macOS, LD_LIBRARY_PATH on other Unix systems. On Windows, core installs its libraries in
+# the bin directory beside rungraph, where the loader looks first.
 function(gr_add_graph_test TEST_NAME GRAPH)
   cmake_parse_arguments(
     PARSE_ARGV
@@ -200,9 +202,13 @@ function(gr_add_graph_test TEST_NAME GRAPH)
       "${_setting}")
   endforeach()
   set(_environment "GNURADIO4_PLUGIN_DIRECTORIES=set:${_pluginPath}")
-  if(gnuradio4_DIR)
+  if(gnuradio4_DIR AND NOT WIN32)
     get_filename_component(_libraryDir "${gnuradio4_DIR}/../.." ABSOLUTE)
-    list(APPEND _environment "LD_LIBRARY_PATH=path_list_prepend:${_libraryDir}")
+    if(APPLE)
+      list(APPEND _environment "DYLD_LIBRARY_PATH=path_list_prepend:${_libraryDir}")
+    else()
+      list(APPEND _environment "LD_LIBRARY_PATH=path_list_prepend:${_libraryDir}")
+    endif()
   endif()
   add_test(NAME ${TEST_NAME} COMMAND "${_rungraph}" ${_arguments})
   set_tests_properties(
