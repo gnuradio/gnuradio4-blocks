@@ -35,3 +35,24 @@ gr_add_graph_test(
   graphs/vector-expect-tags-mismatch.yaml
   PASS_REGULAR_EXPRESSION
   "tags with key 'mark' at \\[1\\], expected at \\[2\\]")
+gr_add_graph_test(
+  graph_testing_vector_expect_large_mismatch
+  graphs/vector-expect-large-mismatch.yaml
+  PASS_REGULAR_EXPRESSION
+  "sample 0 is -1\\.7e\\+308, expected 1\\.7e\\+308")
+gr_add_graph_test(graph_testing_vector_expect_large_mismatch_exit graphs/vector-expect-large-mismatch.yaml WILL_FAIL)
+gr_add_graph_test(
+  graph_testing_vector_expect_unit_mismatch
+  graphs/vector-expect-large-mismatch.yaml
+  PASS_REGULAR_EXPRESSION
+  "sample 0 is -1, expected 1"
+  SET
+  "source.values=[-1.0]"
+  "sink.expected=[1.0]")
+gr_add_graph_test(
+  graph_testing_vector_expect_unit_mismatch_exit
+  graphs/vector-expect-large-mismatch.yaml
+  WILL_FAIL
+  SET
+  "source.values=[-1.0]"
+  "sink.expected=[1.0]")

@@ -1,0 +1,17 @@
+# A float64 sink whose expected sample has the opposite sign of the emitted one: -1.7e308 against 1.7e308
+# with a relative tolerance of 1.1. The distance, 3.4e308, exceeds the accepted 1.87e308, and both exceed
+# the largest double. The run must end with an error naming sample 0 and a nonzero exit status. The tests
+# registering this graph pass on the text of that error and on the exit status, at this scale and with
+# the samples set to -1.0 and 1.0.
+blocks:
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source
+      values: [-1.7e308]
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink
+      expected: [1.7e308]
+      relative_tolerance: 1.1
+connections:
+  - [source, out, sink, in]

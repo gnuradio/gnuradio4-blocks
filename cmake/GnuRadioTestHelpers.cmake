@@ -128,27 +128,33 @@ function(gr_pin_test_optimization TEST_NAME LEVEL)
   set_target_properties(${TEST_NAME} PROPERTIES GR_QA_REDUCED_OPTIMIZATION OFF)
 endfunction()
 
-# gr_add_graph_test(<name> <graph.yaml> [PASS_REGULAR_EXPRESSION <regex>] [PLUGIN_DIRS <dir>...] [SET <setting>...])
+# gr_add_graph_test(<name> <graph> [PASS_REGULAR_EXPRESSION <regex>|WILL_FAIL] [PLUGIN_DIRS <dir>...] [SET <entry>...])
 #
 # Registers a ctest case that runs the graph file through the rungraph of the core installation. The function looks for
 # rungraph in the bin subdirectory of each of the four directories above gnuradio4_DIR, then in the bin directory of
 # each CMAKE_PREFIX_PATH entry. The case passes when rungraph exits with 0. With PASS_REGULAR_EXPRESSION, the case
-# passes when the output matches the expression instead, for a graph that must end with an error. The plugin directories
-# are this build's testing plugin and each PLUGIN_DIRS entry, handed over in GNURADIO4_PLUGIN_DIRECTORIES. Each SET
-# entry, in the form block.key=value, becomes one --set argument. A relative graph path is read from the calling
-# directory. The case carries the label `graph`. Without rungraph, as with an Emscripten build of core, the function
-# registers no case, and the configure prints the directories it searched, once. The installed rungraph carries no run
-# path. The case puts the installation's library directory, two levels above gnuradio4_DIR, first in the loader's search
-# path: DYLD_LIBRARY_PATH on macOS, LD_LIBRARY_PATH on other Unix systems. On Windows, core installs its libraries in
-# the bin directory beside rungraph, where the loader looks first.
+# passes when the output matches the expression instead, for a graph that must end with an error. With WILL_FAIL, the
+# case passes when rungraph exits with a nonzero status. ctest ignores the exit status of a case with
+# PASS_REGULAR_EXPRESSION. A graph that must end with a given error and a nonzero status takes two cases, one with each
+# keyword. The function refuses both keywords in one case. The plugin directories are this build's testing plugin and
+# each PLUGIN_DIRS entry, handed over in GNURADIO4_PLUGIN_DIRECTORIES. Each SET entry, in the form block.key=value,
+# becomes one --set argument. A relative graph path is read from the calling directory. The case carries the label
+# `graph`. Without rungraph, as with an Emscripten build of core, the function registers no case, and the configure
+# prints the directories it searched, once. The installed rungraph carries no run path. The case puts the installation's
+# library directory, two levels above gnuradio4_DIR, first in the loader's search path: DYLD_LIBRARY_PATH on macOS,
+# LD_LIBRARY_PATH on other Unix systems. On Windows, core installs its libraries in the bin directory beside rungraph,
+# where the loader looks first.
 function(gr_add_graph_test TEST_NAME GRAPH)
   cmake_parse_arguments(
     PARSE_ARGV
     2
     _graphTest
-    ""
+    "WILL_FAIL"
     "PASS_REGULAR_EXPRESSION"
     "PLUGIN_DIRS;SET")
+  if(_graphTest_WILL_FAIL AND DEFINED _graphTest_PASS_REGULAR_EXPRESSION)
+    message(FATAL_ERROR "gr_add_graph_test(${TEST_NAME}): WILL_FAIL and PASS_REGULAR_EXPRESSION do not combine")
+  endif()
   # gnuradio4_DIR is <prefix>/<libdir>/cmake/gnuradio4, and <libdir> has one or two components.
   set(_hints)
   if(gnuradio4_DIR)
@@ -219,5 +225,8 @@ function(gr_add_graph_test TEST_NAME GRAPH)
                graph)
   if(DEFINED _graphTest_PASS_REGULAR_EXPRESSION)
     set_tests_properties(${TEST_NAME} PROPERTIES PASS_REGULAR_EXPRESSION "${_graphTest_PASS_REGULAR_EXPRESSION}")
+  endif()
+  if(_graphTest_WILL_FAIL)
+    set_tests_properties(${TEST_NAME} PROPERTIES WILL_FAIL TRUE)
   endif()
 endfunction()

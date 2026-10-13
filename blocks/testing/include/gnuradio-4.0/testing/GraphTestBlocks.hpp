@@ -195,7 +195,7 @@ carries the key. A tag at the end-of-stream index, one past the last sample, has
             if (valueInf || referenceInf) {
                 return value == reference;
             }
-            return within(std::abs(std::complex<double>(value) - std::complex<double>(reference)), std::abs(std::complex<double>(reference)));
+            return within(std::complex<double>(value), std::complex<double>(reference));
         } else {
             if constexpr (std::floating_point<T>) {
                 if (std::isnan(value) || std::isnan(reference)) {
@@ -205,7 +205,7 @@ carries the key. A tag at the end-of-stream index, one past the last sample, has
                     return value == reference;
                 }
             }
-            return within(std::abs(asDouble(value) - asDouble(reference)), std::abs(asDouble(reference)));
+            return within(asDouble(value), asDouble(reference));
         }
     }
 
@@ -217,7 +217,25 @@ carries the key. A tag at the end-of-stream index, one past the last sample, has
         }
     }
 
-    [[nodiscard]] bool within(double distance, double magnitude) const { return distance <= tolerance.value + relative_tolerance.value * magnitude; }
+    /// Returns whether the distance between the samples is at most `tolerance + relative_tolerance * |reference|`.
+    /// With finite tolerances, the sink compares at a quarter of the scale when the distance or the bound exceeds
+    /// the largest double. At that scale the distance between two finite samples, real or complex, stays finite.
+    /// A bound that still exceeds the largest double then exceeds every such distance.
+    /// With a non-finite tolerance, the sink compares at full scale. A quarter of a subnormal expected sample can
+    /// round to zero, and an infinite relative tolerance times zero is NaN.
+    template<typename Sample>
+    [[nodiscard]] bool within(const Sample& value, const Sample& reference) const {
+        const double distance = std::abs(value - reference);
+        const double bound    = tolerance.value + relative_tolerance.value * std::abs(reference);
+        if (!std::isfinite(tolerance.value) || !std::isfinite(relative_tolerance.value)) {
+            return distance <= bound;
+        }
+        if (std::isfinite(distance) && std::isfinite(bound)) {
+            return distance <= bound;
+        }
+        constexpr double scale = 0.25;
+        return std::abs(value * scale - reference * scale) <= tolerance.value * scale + relative_tolerance.value * std::abs(reference * scale);
+    }
 };
 
 } // namespace gr::blocks::testing
