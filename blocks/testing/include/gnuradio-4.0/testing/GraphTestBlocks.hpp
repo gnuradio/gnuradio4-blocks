@@ -71,6 +71,7 @@ struct ExpectSink : Block<ExpectSink<T>> {
 
 A sample matches when its distance from the expected sample is at most
 `tolerance + relative_tolerance * |expected|`. A NaN matches a NaN, and an infinity matches the same infinity.
+A complex sample with an infinite part matches only an equal sample.
 The first sample that does not match ends the run with an error that names its index, its value and the
 expected value. A stream shorter than `expected` ends with an error that names both counts. A sample past the
 end of `expected` ends the run with an error that names its index.
@@ -189,7 +190,9 @@ carries the key. A tag at the end-of-stream index, one past the last sample, has
             if (valueNan || referenceNan) {
                 return valueNan && referenceNan;
             }
-            if (std::isinf(std::abs(value)) || std::isinf(std::abs(reference))) {
+            const bool valueInf     = std::isinf(value.real()) || std::isinf(value.imag());
+            const bool referenceInf = std::isinf(reference.real()) || std::isinf(reference.imag());
+            if (valueInf || referenceInf) {
                 return value == reference;
             }
             return within(std::abs(std::complex<double>(value) - std::complex<double>(reference)), std::abs(std::complex<double>(reference)));

@@ -1,7 +1,8 @@
 # Sinks whose expected samples differ from the emitted ones by less than the tolerance. The float64 sink
 # accepts 1.0 against 1.1 and 2.0 against 1.9 with an absolute tolerance of 0.15. The complex sink accepts
-# (100, 0) against (100.5, 0) with a relative tolerance of 0.01. The run passes when both sinks accept
-# every sample.
+# (100, 0) against (100.5, 0), (3.01, 3) against (3, 3) and (3.01e38, 3e38) against (3e38, 3e38) with a
+# relative tolerance of 0.01. The last pair's samples have a magnitude above the largest float32 and parts
+# below it. The run passes when both sinks accept every sample.
 blocks:
   - id: gr::blocks::testing::VectorSource<float64>
     parameters:
@@ -17,11 +18,15 @@ blocks:
       name: source_c32
       values: !!complex32
         - (100.0, 0.0)
+        - (3.01, 3.0)
+        - (3.01e38, 3.0e38)
   - id: gr::blocks::testing::ExpectSink<complex<float32>>
     parameters:
       name: sink_c32
       expected: !!complex32
         - (100.5, 0.0)
+        - (3.0, 3.0)
+        - (3.0e38, 3.0e38)
       relative_tolerance: 0.01
 connections:
   - [source_f64, out, sink_f64, in]
