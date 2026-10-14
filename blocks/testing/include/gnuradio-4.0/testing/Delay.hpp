@@ -2,6 +2,7 @@
 #define GNURADIO_TESTING_DELAY_HPP
 
 #include <chrono>
+#include <thread>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
@@ -12,6 +13,7 @@ namespace gr::blocks::testing {
 
 GR_REGISTER_BLOCK(gr::blocks::testing::Delay, [T], [float])
 
+// Holds the stream back for delay_ms after start(). The first call sleeps on the calling thread until the hold ends.
 // Under NoTagPropagation the framework forwards nothing. The block republishes every input tag itself.
 template<typename T>
 struct Delay : Block<Delay<T>, NoTagPropagation> {
@@ -28,11 +30,7 @@ struct Delay : Block<Delay<T>, NoTagPropagation> {
 
     gr::work::Status processBulk(InputSpanLike auto& input, OutputSpanLike auto& output) {
         if (_waiting) {
-            if (clock::now() - _start_time < std::chrono::milliseconds(delay_ms)) {
-                std::ignore = input.consume(0);
-                output.publish(0);
-                return work::Status::OK;
-            }
+            std::this_thread::sleep_until(_start_time + std::chrono::milliseconds(delay_ms));
             _waiting = false;
         }
 
