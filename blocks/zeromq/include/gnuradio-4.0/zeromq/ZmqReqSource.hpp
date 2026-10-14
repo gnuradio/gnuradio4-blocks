@@ -50,6 +50,9 @@ This block sends REQ requests and converts the returned ZMQ replies to type T.
 
     GR_MAKE_REFLECTABLE(ZmqReqSource, out, endpoint, timeout, bind, pass_tags, pmt_wire_format, linger, hwm, max_message_size);
 
+    // processBulk() waits on the socket for up to `timeout`. stop() ends that wait from another thread.
+    [[nodiscard]] constexpr bool isBlocking() const noexcept { return true; }
+
     void start() {
         detail::ZmqSocketTransport::require_nonnegative_timeout(timeout);
         clear_run_state();
