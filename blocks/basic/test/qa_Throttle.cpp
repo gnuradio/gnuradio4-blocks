@@ -18,6 +18,7 @@
 
 #include <gnuradio-4.0/basic/Throttle.hpp>
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
+#include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 #include <gnuradio-4.0/testing/TestSpans.hpp>
@@ -336,6 +337,36 @@ const boost::ut::suite<"Throttle"> throttleTests = [] {
             expect(eq(result.produced, 0UZ)) << "nothing is published at " << rate << " Hz";
             expect(eq(result.consumed, 0UZ)) << "and nothing is consumed";
         }
+    };
+
+    "a scheduler stop ends the wait of a call in progress"_test = [] {
+        // a call takes kChunk samples and waits until the last of them is due, kChunk / kRateHz after the start
+        constexpr gr::Size_t   kChunk  = 10U;
+        constexpr float        kRateHz = 2.f;
+        constexpr std::int64_t kCallMs = 5000;
+
+        gr::Graph graph;
+        auto&     source   = graph.emplaceBlock<gr::blocks::testing::NullSource<float>>();
+        auto&     throttle = graph.emplaceBlock<Throttle<float>>({{"sample_rate", kRateHz}, {"max_items_per_chunk", kChunk}, {"max_sleep_s", 0.05}});
+        auto&     sink     = graph.emplaceBlock<gr::blocks::testing::NullSink<float>>();
+        expect(graph.connect<"out", "in">(source, throttle).has_value());
+        expect(graph.connect<"out", "in">(throttle, sink).has_value());
+
+        gr::scheduler::Simple scheduler;
+        expect(fatal(scheduler.exchange(std::move(graph)).has_value()));
+        std::thread runner([&scheduler] { std::ignore = scheduler.runAndWait(); });
+
+        // the throttle consumes only after its wait. A whole chunk stays in its input while the call waits.
+        while (throttle.in.streamReader().available() < kChunk) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        const auto requested = Clock::now();
+        scheduler.requestStop();
+        runner.join();
+        const std::int64_t stopMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - requested).count();
+
+        expect(lt(stopMs, kCallMs / 2)) << std::format("the stop took {} ms of a {} ms call", stopMs, kCallMs);
+        expect(lt(throttle.paced(), std::uint64_t{kChunk})) << "the stop leaves the samples that are not due unconsumed";
     };
 
     "the conversion to the clock's tick is exact in range and saturates outside it"_test = [] {

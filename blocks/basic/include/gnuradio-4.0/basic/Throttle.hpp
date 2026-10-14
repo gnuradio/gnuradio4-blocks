@@ -53,6 +53,10 @@ The block is 1:1, so every input tag key passes through at its own offset, `samp
     double            _period = 1e-6; // seconds per sample, held in double so a long run does not drift on a rounded tick
     Clock::duration   _slice  = std::chrono::milliseconds(100);
 
+    // processBulk() waits until the last sample it takes is due. The wait reads the block's state between slices of
+    // max_sleep_s.
+    [[nodiscard]] constexpr bool isBlocking() const noexcept { return true; }
+
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         if (!(sample_rate > 0.f) || !std::isfinite(sample_rate)) {
             throw gr::exception(std::format("sample_rate must be positive and finite, got {}", sample_rate.value));
