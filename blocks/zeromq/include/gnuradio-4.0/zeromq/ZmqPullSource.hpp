@@ -48,6 +48,9 @@ public:
 
     GR_MAKE_REFLECTABLE(ZmqPullSource, out, endpoint, timeout, bind, pass_tags, pmt_wire_format, linger, hwm, max_message_size);
 
+    // processBulk() waits on the socket for up to `timeout`. stop() ends that wait from another thread.
+    [[nodiscard]] constexpr bool isBlocking() const noexcept { return true; }
+
     void start() {
         detail::ZmqSocketTransport::require_nonnegative_timeout(timeout);
         _pending_items.clear();
