@@ -8,8 +8,10 @@
 #include <gnuradio-4.0/HistoryBuffer.hpp>
 #include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/TriggerMatcher.hpp>
+#include <gnuradio-4.0/WaitStrategy.hpp>
 
 #include <any>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <deque>
@@ -22,7 +24,7 @@
 namespace gr::blocks::basic {
 
 enum class OverflowPolicy : std::uint8_t {
-    Backpressure = 0U, /// creates backpressure on the upstream flow-graph, guaranteeing reliable delivery at the expense of potential stalling: a consumer that stops polling stalls the scheduler thread the graph runs on, for as long as it stays away.
+    Backpressure = 0U, /// creates backpressure on the upstream flow-graph, guaranteeing reliable delivery at the expense of potential stalling: a consumer that stops polling stalls the scheduler thread the graph runs on until it polls again. A stop() ends a stall inside processBulk(), and the sink drops and counts what does not fit.
     Drop         = 1U, /// drop arriving samples to avoid blocking upstream flow-graph, potentially losing some data (e.g. UI use-case).
     /// the default: wait up to PollerConfig::backpressureTimeout for poller space and then drop and count as Drop does.
     /// Reliable for a consumer polling on any sane schedule, and one that stops polling cannot freeze the flow-graph.
@@ -80,9 +82,11 @@ inline std::size_t calculateNSamplesToProcess(std::size_t available, std::size_t
 
 // What a listener does when the poller's ring cannot take the data, carried from the PollerConfig
 // the poller was created with. A callback listener never waits, so Drop is the default.
+// A Backpressure wait for space ends once *stopRequested is set.
 struct BackpressureMode {
     OverflowPolicy           policy = OverflowPolicy::Drop;
     std::chrono::nanoseconds timeout{};
+    const std::atomic<bool>* stopRequested = nullptr;
 };
 
 template<typename TWriter>
@@ -104,14 +108,24 @@ template<typename TWriter>
     return false;
 }
 
-// How many of nWanted items the listener may hand to the poller now. Backpressure takes them all
-// and leaves the waiting to the caller's blocking reserve; BoundedBackpressure waits here for at
-// most mode.timeout and then reports only what fits, which is the caller's cue to drop and count;
-// Drop reports what fits right away.
+// Waits until the writer has room for nRequested items or *stopRequested is set. It spins as a
+// blocking reserve() does.
+template<typename TWriter>
+inline void awaitWriterSpaceUntilStopped(TWriter& writer, std::size_t nRequested, const std::atomic<bool>* stopRequested) {
+    SpinWait spinWait;
+    while (writer.available() < nRequested && (stopRequested == nullptr || !stopRequested->load(std::memory_order_acquire))) {
+        spinWait.spinOnce();
+    }
+}
+
+// How many of nWanted items the listener may hand to the poller now. Backpressure waits until the
+// poller has room or the sink's stop() sets the flag. BoundedBackpressure waits for at most
+// mode.timeout. Both then report only what fits, and a count below nWanted is the caller's cue to
+// drop and count the rest. Drop reports what fits right away.
 template<typename TWriter>
 [[nodiscard]] inline std::size_t publishableCount(TWriter& writer, std::size_t nWanted, BackpressureMode mode) {
-    if (mode.policy == OverflowPolicy::Backpressure) {
-        return nWanted;
+    if (mode.policy == OverflowPolicy::Backpressure && writer.available() < nWanted) {
+        awaitWriterSpaceUntilStopped(writer, nWanted, mode.stopRequested);
     }
     if (mode.policy == OverflowPolicy::BoundedBackpressure && writer.available() < nWanted) {
         std::ignore = awaitWriterSpace(writer, nWanted, mode.timeout);
@@ -559,6 +573,7 @@ This block type is mean for non-data set input streams. For input streams of typ
     bool                                          _listeners_finished = false;
     std::mutex                                    _listener_mutex;
     std::optional<gr::HistoryBuffer<T>>           _history;
+    std::atomic<bool>                             _stop_requested = false; // set by stop() until it holds _listener_mutex
 
 public:
     PortIn<T, RequiredSamples<std::dynamic_extent, detail::data_sink_buffer_size>> in;
@@ -592,7 +607,7 @@ public:
     }
 
     std::shared_ptr<StreamingPoller<T>> getStreamingPoller(PollerConfig config) {
-        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout};
+        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout, &_stop_requested};
         const auto      withBackpressure = config.overflowPolicy != OverflowPolicy::Drop;
         auto            handler          = std::make_shared<StreamingPoller<T>>(config.minRequiredSamples, config.maxRequiredSamples);
         std::lock_guard lg(_listener_mutex);
@@ -603,7 +618,7 @@ public:
 
     template<trigger::Matcher TMatcher>
     std::shared_ptr<DataSetPoller<T>> getTriggerPoller(TMatcher&& matcher, PollerConfig config = {}) {
-        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout};
+        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout, &_stop_requested};
         const auto      withBackpressure = config.overflowPolicy != OverflowPolicy::Drop;
         auto            handler          = std::make_shared<DataSetPoller<T>>(config.minRequiredSamples, config.maxRequiredSamples);
         std::lock_guard lg(_listener_mutex);
@@ -616,7 +631,7 @@ public:
     template<trigger::Matcher TMatcher>
     std::shared_ptr<DataSetPoller<T>> getMultiplexedPoller(TMatcher&& matcher, PollerConfig config = {}) {
         std::lock_guard lg(_listener_mutex);
-        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout};
+        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout, &_stop_requested};
         const auto      withBackpressure = config.overflowPolicy != OverflowPolicy::Drop;
         auto            handler          = std::make_shared<DataSetPoller<T>>(config.minRequiredSamples, config.maxRequiredSamples);
         addListener(std::make_unique<MultiplexedListener<TMatcher>>(std::forward<TMatcher>(matcher), config.maximumWindowSize, handler, backpressure), withBackpressure);
@@ -625,7 +640,7 @@ public:
 
     template<trigger::Matcher TMatcher>
     std::shared_ptr<DataSetPoller<T>> getSnapshotPoller(TMatcher&& matcher, PollerConfig config = {}) {
-        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout};
+        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout, &_stop_requested};
         const auto      withBackpressure = config.overflowPolicy != OverflowPolicy::Drop;
         auto            handler          = std::make_shared<DataSetPoller<T>>(config.minRequiredSamples, config.maxRequiredSamples);
         std::lock_guard lg(_listener_mutex);
@@ -658,9 +673,18 @@ public:
         addListener(std::make_unique<SnapshotListener<TMatcher, TCallback>>(std::forward<TMatcher>(matcher), delay, std::forward<TCallback>(callback)), false);
     }
 
+    // processBulk() can wait for poller space. stop() ends a Backpressure wait, and a BoundedBackpressure wait ends
+    // at its timeout.
+    [[nodiscard]] constexpr bool isBlocking() const noexcept { return true; }
+
+    // The flag ends a Backpressure wait inside processBulk(), which holds _listener_mutex. stop() clears the flag once
+    // it holds the mutex. The listeners' flush then waits for poller space as any publish does. A processBulk() call
+    // that takes the mutex after the stop request passes nothing to the listeners.
     void stop() noexcept {
+        _stop_requested.store(true, std::memory_order_release);
         globalDataSinkRegistry().unregisterSink(this);
         std::lock_guard lg(_listener_mutex);
+        _stop_requested.store(false, std::memory_order_release);
         for (auto& listener : _listeners) {
             listener->stop();
         }
@@ -671,7 +695,10 @@ public:
         std::vector<Tag> tags;
         {
             std::lock_guard lg(_listener_mutex); // TODO review/profile if a lock-free data structure should be used here
-            const auto      historyView = _history ? _history->get_span(0UZ) : std::span<const T>();
+            if (lifecycle::isShuttingDown(this->state())) {
+                return work::Status::DONE;
+            }
+            const auto historyView = _history ? _history->get_span(0UZ) : std::span<const T>();
             std::erase_if(_listeners, [](const auto& l) { return l->expired; });
             if (!_listeners.empty()) { // every tag map is deep-copied here, so a sink nobody listens to pays nothing
                 for (const auto& [relIndex, tagMapRef] : inData.tags()) {
@@ -759,7 +786,7 @@ private:
                 }
 
                 if (detail::publishableCount(poller->writer, 1UZ, _backpressure) > 0UZ) {
-                    auto writeData = poller->writer.reserve(1UZ); // blocks until the poller takes it under Backpressure
+                    auto writeData = poller->writer.reserve(1UZ);
                     writeData[0UZ] = std::move(data);
                     writeData.publish(1UZ);
                 } else {
@@ -1115,6 +1142,7 @@ class DataSetSink : public Block<DataSetSink<T>> {
     std::deque<std::unique_ptr<AbstractListener>> _listeners;
     bool                                          _listeners_finished = false;
     std::mutex                                    _listener_mutex;
+    std::atomic<bool>                             _stop_requested = false; // set by stop() until it holds _listener_mutex
 
 public:
     PortIn<DataSet<T>>                              in;
@@ -1139,7 +1167,7 @@ public:
 
     template<DataSetMatcher<T> M>
     std::shared_ptr<DataSetPoller<T>> getPoller(M&& matcher, PollerConfig config = {}) {
-        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout};
+        const auto      backpressure     = detail::BackpressureMode{config.overflowPolicy, config.backpressureTimeout, &_stop_requested};
         const auto      withBackpressure = config.overflowPolicy != OverflowPolicy::Drop;
         auto            handler          = std::make_shared<DataSetPoller<T>>(config.minRequiredSamples, config.maxRequiredSamples);
         std::lock_guard lg(_listener_mutex);
@@ -1163,9 +1191,18 @@ public:
         registerCallback([](const auto&) { return true; }, std::forward<Callback>(callback));
     }
 
+    // processBulk() can wait for poller space. stop() ends a Backpressure wait, and a BoundedBackpressure wait ends
+    // at its timeout.
+    [[nodiscard]] constexpr bool isBlocking() const noexcept { return true; }
+
+    // The flag ends a Backpressure wait inside processBulk(), which holds _listener_mutex. stop() clears the flag once
+    // it holds the mutex. The listeners' flush then waits for poller space as any publish does. A processBulk() call
+    // that takes the mutex after the stop request passes nothing to the listeners.
     void stop() noexcept {
+        _stop_requested.store(true, std::memory_order_release);
         globalDataSinkRegistry().unregisterSink(this);
         std::lock_guard lg(_listener_mutex);
+        _stop_requested.store(false, std::memory_order_release);
         for (auto& listener : _listeners) {
             listener->stop();
         }
@@ -1174,6 +1211,9 @@ public:
 
     [[nodiscard]] work::Status processBulk(std::span<const DataSet<T>>& inData) noexcept {
         std::lock_guard lg(_listener_mutex);
+        if (lifecycle::isShuttingDown(this->state())) {
+            return work::Status::DONE;
+        }
         for (auto& listener : _listeners) {
             listener->process(inData);
         }
@@ -1226,7 +1266,7 @@ private:
                 }
 
                 if (detail::publishableCount(poller->writer, 1UZ, backpressure) > 0UZ) {
-                    auto writeData = poller->writer.reserve(1UZ); // blocks until the poller takes it under Backpressure
+                    auto writeData = poller->writer.reserve(1UZ);
                     writeData[0UZ] = std::move(data);
                     writeData.publish(1UZ);
                 } else {

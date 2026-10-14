@@ -1,6 +1,8 @@
+#include <atomic>
 #include <cstdint>
 #include <future>
 #include <ranges>
+#include <thread>
 
 #include <boost/ut.hpp>
 
@@ -15,6 +17,7 @@
 #include <gnuradio-4.0/basic/DataSink.hpp>
 #include <gnuradio-4.0/basic/StreamToDataSet.hpp>
 #include <gnuradio-4.0/testing/Delay.hpp>
+#include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 using namespace std::chrono_literals;
@@ -202,6 +205,43 @@ void checkDataSet(const DataSet<float>& dataset, std::vector<float>& receivedDat
     receivedData.insert(receivedData.end(), dataset.signal_values.begin(), dataset.signal_values.end());
     nReceivedTags += dataset.timingEvents(0UZ).size();
 };
+
+// Publishes into every free slot of a poller. A sink that hands the poller anything then waits for space.
+template<typename TPoller>
+void fillPoller(TPoller& poller) {
+    auto span = poller.writer.reserve(poller.writer.available());
+    span.publish(span.size());
+}
+
+// Requests a stop of a running scheduler from another thread and returns how long the stop took. Past `bound`, it
+// calls `drain` until the stop returns. A sink whose stop waits for poller space then still stops.
+template<typename TScheduler, typename FDrain>
+std::chrono::milliseconds timeStop(TScheduler& sched, std::chrono::milliseconds bound, FDrain&& drain) {
+    using Clock = std::chrono::steady_clock;
+    std::atomic<bool>       stopped{false};
+    Clock::time_point       stoppedAt;
+    const Clock::time_point requested = Clock::now();
+    std::thread             stopper([&sched, &stopped, &stoppedAt] {
+        sched.requestStop();
+        stoppedAt = Clock::now();
+        stopped.store(true, std::memory_order_release);
+    });
+    while (!stopped.load(std::memory_order_acquire)) {
+        if (Clock::now() - requested > bound) {
+            drain();
+        }
+        std::this_thread::sleep_for(1ms);
+    }
+    stopper.join();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(stoppedAt - requested);
+}
+
+// matches the tag that opens a window
+struct StartMatcher {
+    trigger::MatchResult operator()(std::string_view, const Tag& tag, const property_map&) const { return tag.get("START") ? trigger::MatchResult::Matching : trigger::MatchResult::Ignore; }
+};
+
+constexpr std::string_view policyName(OverflowPolicy policy) { return policy == OverflowPolicy::Backpressure ? "Backpressure" : "BoundedBackpressure"; }
 
 } // namespace gr::blocks::basic::data_sink_test
 
@@ -500,6 +540,116 @@ const boost::ut::suite DataSinkTests = [] {
         const auto& [poller, received] = consumer.get();
         expect(eq(received, static_cast<std::size_t>(kSamples))) << "an unbounded Backpressure poller must receive every sample";
         expect(eq(poller->droppedSampleCount.load(), 0UZ)) << "Backpressure must not drop, however late the consumer is";
+    };
+
+    "continuous mode - a stop ends a Backpressure wait for poller space"_test = [] {
+        using namespace gr::tag;
+        constexpr auto kBound = 2000ms;
+        gr::Graph      testGraph;
+        auto&          src  = testGraph.emplaceBlock<testing::NullSource<float>>();
+        auto&          sink = testGraph.emplaceBlock<DataSink<float>>({{"name", "full_sink"}, {SIGNAL_NAME.shortKey(), "FullName"}});
+        expect(testGraph.connect<"out", "in">(src, sink).has_value());
+
+        // the poller is full before the graph runs, and nothing drains it. Every call of the sink waits for space.
+        auto poller = sink.getStreamingPoller({.overflowPolicy = OverflowPolicy::Backpressure});
+        fillPoller(*poller);
+        // a callback listener runs ahead of the poller's listener in each call
+        std::atomic<std::size_t> nCalls{0UZ};
+        sink.registerStreamingCallback(0UZ, [&nCalls](std::span<const float>) { nCalls.fetch_add(1UZ, std::memory_order_release); });
+
+        Scheduler sched;
+        expect(fatal(sched.exchange(std::move(testGraph)).has_value()));
+        std::thread runner([&sched] { std::ignore = sched.runAndWait(); });
+        while (nCalls.load(std::memory_order_acquire) == 0UZ) {
+            std::this_thread::sleep_for(1ms);
+        }
+        const auto took = timeStop(sched, kBound, [&poller] {
+            while (poller->process([](const auto&) {})) {
+            }
+        });
+        runner.join();
+
+        expect(lt(took.count(), kBound.count())) << std::format("the stop took {} ms", took.count());
+        expect(gt(poller->droppedSampleCount.load(), 0UZ)) << "the call the stop cut short counts its samples as dropped";
+        expect(poller->finished.load()) << "the stop marks the poller finished";
+    };
+
+    "DataSet - a stop ends a Backpressure wait for poller space"_test = [] {
+        constexpr auto kBound = 2000ms;
+        gr::Graph      testGraph;
+        auto&          src  = testGraph.emplaceBlock<testing::NullSource<DataSet<float>>>();
+        auto&          sink = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "full_data_set_sink"}, {"signal_name", "full signal"}});
+        expect(testGraph.connect<"out", "in">(src, sink).has_value());
+
+        // the poller is full before the graph runs, and nothing drains it. Every call of the sink waits for space.
+        auto poller = sink.getPoller({.overflowPolicy = OverflowPolicy::Backpressure});
+        fillPoller(*poller);
+        // a callback listener runs ahead of the poller's listener in each call
+        std::atomic<std::size_t> nCalls{0UZ};
+        sink.registerCallback([&nCalls](const DataSet<float>&) { nCalls.fetch_add(1UZ, std::memory_order_release); });
+
+        Scheduler sched;
+        expect(fatal(sched.exchange(std::move(testGraph)).has_value()));
+        std::thread runner([&sched] { std::ignore = sched.runAndWait(); });
+        while (nCalls.load(std::memory_order_acquire) == 0UZ) {
+            std::this_thread::sleep_for(1ms);
+        }
+        const auto took = timeStop(sched, kBound, [&poller] {
+            while (poller->process([](const auto&) {})) {
+            }
+        });
+        runner.join();
+
+        expect(lt(took.count(), kBound.count())) << std::format("the stop took {} ms", took.count());
+        expect(gt(poller->dropCount.load(), 0UZ)) << "the call the stop cut short counts its data set as dropped";
+        expect(poller->finished.load()) << "the stop marks the poller finished";
+    };
+
+    "multiplexed mode - the end of a stream delivers the open window into a full poller"_test = [] {
+        constexpr auto kHold = 200ms;
+        for (const OverflowPolicy policy : {OverflowPolicy::Backpressure, OverflowPolicy::BoundedBackpressure}) {
+            gr::Graph testGraph;
+            auto&     src = testGraph.emplaceBlock<testing::TagSource<float, testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", gr::Size_t{1000}}, {"mark_tag", false}});
+            src._tags     = {Tag{10UZ, {{"START", true}}}};
+            auto& sink    = testGraph.emplaceBlock<DataSink<float>>({{"name", "eos_sink"}, {"signal_name", "eos signal"}});
+            expect(testGraph.connect<"out", "in">(src, sink).has_value());
+
+            // the window opens at the START tag and closes only when the stream ends, when the sink's stop() flushes it
+            auto poller = sink.getMultiplexedPoller(StartMatcher{}, {.overflowPolicy = policy, .backpressureTimeout = 60s, .maximumWindowSize = 0UZ});
+            fillPoller(*poller);
+            const std::size_t nPrefilled = poller->reader.available();
+
+            // the consumer starts to drain kHold after the sink begins to stop, so the flush meets a full poller
+            std::atomic<std::size_t> nWindows{0UZ};
+            std::atomic<std::size_t> nFillers{0UZ};
+            std::thread              consumer([&] {
+                while (!lifecycle::isShuttingDown(sink.state())) {
+                    std::this_thread::sleep_for(1ms);
+                }
+                std::this_thread::sleep_for(kHold);
+                while (nFillers.load() < nPrefilled || nWindows.load() == 0UZ) {
+                    const bool any = poller->process([&](const auto& dataSets) {
+                        for (const auto& dataSet : dataSets) {
+                            (dataSet.signal_values.empty() ? nFillers : nWindows).fetch_add(1UZ);
+                        }
+                    });
+                    if (!any && poller->finished.load()) {
+                        break;
+                    }
+                    if (!any) {
+                        std::this_thread::sleep_for(1ms);
+                    }
+                }
+            });
+
+            Scheduler sched;
+            expect(fatal(sched.exchange(std::move(testGraph)).has_value()));
+            expect(sched.runAndWait().has_value());
+            consumer.join();
+
+            expect(eq(nWindows.load(), 1UZ)) << std::format("{}: the flush delivers the open window", policyName(policy));
+            expect(eq(poller->dropCount.load(), 0UZ)) << std::format("{}: the flush drops nothing", policyName(policy));
+        }
     };
 
     "trigger mode - polling/callback overlapping/non-overlapping"_test = [] {
