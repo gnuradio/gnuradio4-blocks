@@ -162,11 +162,28 @@ void expectBlocksUnderTheirIds(const gr::Graph& graph, std::string_view text) {
     return enough;
 }
 
+/// @brief A streaming poller on the float DataSink named `name`, taken from the loaded block itself.
+///
+/// The global sink registry finds a sink by its signal name and casts the stored pointer to the requested sink type.
+/// The cast compares type information. A loaded graph's sink is built in the basic block library. Under libc++ that
+/// library's type information for the sink differs from the program's, and the registry returns no poller. The block's
+/// registry id confirms its type before the cast.
+[[nodiscard]] std::shared_ptr<gr::blocks::basic::StreamingPoller<float>> attachToSink(gr::Graph& graph, std::string_view name, std::string_view signalName) {
+    using namespace boost::ut;
+    using gr::blocks::basic::DataSink;
+    const auto found = std::ranges::find_if(graph.blocks(), [name](const auto& block) { return block->name() == name; });
+    expect(found != graph.blocks().end()) << std::format("no block is named '{}'", name) << fatal;
+    expect(eq(gr::globalPluginLoader().registry().typeName(*found), std::string_view{"gr::blocks::basic::DataSink<float32>"})) << std::format("block '{}'", name) << fatal;
+
+    auto* sink = static_cast<DataSink<float>*>((*found)->raw());
+    expect(eq(std::string_view{sink->signal_name.value}, signalName)) << std::format("the signal name of '{}'", name);
+    return sink->getStreamingPoller({.overflowPolicy = gr::blocks::basic::OverflowPolicy::Drop});
+}
+
 } // namespace
 
 const boost::ut::suite<"example graphs"> exampleGraphTests = [] {
     using namespace boost::ut;
-    using namespace gr::blocks::basic;
 
     registerGraphFamilies();
 
@@ -218,17 +235,15 @@ const boost::ut::suite<"example graphs"> exampleGraphTests = [] {
         constexpr std::size_t kSettled  = 4096UZ; // the tail, past the filters' start-up transients
         constexpr double      kExpected = 0.2;
 
-        auto                    graph = gr::loadGrc(gr::globalPluginLoader(), graphText(kFmRadioMono));
+        auto       graph  = gr::loadGrc(gr::globalPluginLoader(), graphText(kFmRadioMono));
+        const auto poller = attachToSink(*graph, "audio_sink", "fm_audio");
+        expect(poller != nullptr) << fatal;
+
         gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(*graph)).has_value()) << fatal;
 
-        std::shared_ptr<StreamingPoller<float>> poller;
-        std::vector<float>                      audio;
-        const bool                              delivered = runUntil(scheduler, [&poller, &audio] {
-            if (poller == nullptr) {
-                poller = globalDataSinkRegistry().getStreamingPoller<float>(DataSinkQuery::signalName("fm_audio"), {.overflowPolicy = OverflowPolicy::Drop});
-                return false;
-            }
+        std::vector<float> audio;
+        const bool         delivered = runUntil(scheduler, [&poller, &audio] {
             while (poller->process([&audio](const auto& data) { audio.insert(audio.end(), data.begin(), data.end()); })) {
             }
             return audio.size() >= kWanted;
