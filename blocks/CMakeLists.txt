@@ -31,6 +31,9 @@ endif()
 # shared library that contains all registered blocks
 add_subdirectory(libs)
 
+# example graphs: YAML files the core's importer reads, installed as data, with a qa that loads each one
+add_subdirectory(examples)
+
 if(GR4_ENABLE_SDR)
   add_subdirectory(sdr)
 endif()

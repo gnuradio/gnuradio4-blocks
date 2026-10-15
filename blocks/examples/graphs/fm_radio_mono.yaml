@@ -1,0 +1,72 @@
+# Broadcast FM, mono: a wideband front end down to audio.
+#
+# The chain is a tuner, a decimating channel filter, a discriminator, an audio resampler and
+# de-emphasis. The front-end rate of 1.92 MS/s sets these values:
+#
+#   rf_source and tuner sample_rate   = 1920000
+#   channel decimation                = 8, for a channel rate of 240 kHz
+#   discriminator gain                = 240000 / (2*pi*75000) = 0.5092958
+#   audio decimation                  = 5, for 240 kHz / 5 = 48 kHz
+#
+# A new front-end rate changes both sample_rate entries. It also changes the channel decimation,
+# or else the channel rate and with it the discriminator gain and the audio decimation. The
+# discriminator gain maps the 75 kHz peak deviation of broadcast FM to an audio level of 1. The
+# de-emphasis tau is 75 us in the Americas and Korea and 50 us elsewhere.
+#
+# Substitutions for a real receiver:
+#
+#   rf_source  -> gr::blocks::sdr::SoapySource<complex<float32>> (-DGR4_ENABLE_SDR=ON) at the same
+#                 sample_rate, with device set to the SoapySDR driver name, frequency to the
+#                 station and rx_gains in dB. Both are lists, one entry per channel, written
+#                 with the tag first: frequency: !!float64 [98.1e6], rx_gains: !!float64 [30.0].
+#                 The generator lets the graph load and run with no hardware. It is paced to
+#                 wall-clock time and delivers 1.92 MS/s. Its tone sits 15 kHz above center. A
+#                 carrier at a fifth of full deviation demodulates to a steady 0.2.
+#   tuner      -> frequency_shift moves a station that is off center onto center.
+#   audio_sink -> gr::blocks::audio::AudioSink<float32> (-DGR4_ENABLE_AUDIO=ON) to hear the
+#                 audio. DataSink hands the audio to a host application under its signal_name.
+blocks:
+  - id: gr::blocks::basic::SignalGenerator<complex<float32>>
+    parameters:
+      name: rf_source
+      sample_rate: !!float32 1920000.0
+      signal_type: Sin
+      tone_frequency: !!float32 15000.0
+      amplitude: !!float32 1.0
+      chunk_size: !!uint32 8192
+  - id: gr::blocks::math::Rotator<complex<float32>>
+    parameters:
+      name: tuner
+      sample_rate: !!float32 1920000.0
+      frequency_shift: !!float32 0.0
+  - id: gr::blocks::filter::StagedDecimator<complex<float32>>
+    parameters:
+      name: channel
+      decimation: !!uint32 8
+      passband_width: !!float32 0.8
+  - id: gr::blocks::analog::QuadratureDemod<float32>
+    parameters:
+      name: discriminator
+      gain: !!float32 0.5092958
+  - id: gr::blocks::filter::RationalResampler<float32>
+    parameters:
+      name: audio
+      interpolation: !!uint32 1
+      decimation: !!uint32 5
+  - id: gr::blocks::analog::FmDeemphasis<float32>
+    parameters:
+      name: deemphasis
+      sample_rate: !!float32 48000.0
+      tau: !!float64 7.5e-05
+  - id: gr::blocks::basic::DataSink<float32>
+    parameters:
+      name: audio_sink
+      signal_name: fm_audio
+      sample_rate: !!float32 48000.0
+connections:
+  - [rf_source, out, tuner, in]
+  - [tuner, out, channel, in]
+  - [channel, out, discriminator, in]
+  - [discriminator, out, audio, in]
+  - [audio, out, deemphasis, in]
+  - [deemphasis, out, audio_sink, in]
