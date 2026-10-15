@@ -8,6 +8,12 @@ add_basic_test(qa_Converter)
 add_basic_test(qa_Selector)
 add_basic_test(qa_sources)
 add_basic_test(qa_DataSink)
+# qa_DataSinkRegistry looks up sinks that the shared block library creates. Under Emscripten that library is a static
+# archive linked into the program, and the lookup has no second shared object to cross.
+if(NOT EMSCRIPTEN)
+  add_basic_test(qa_DataSinkRegistry)
+  target_link_libraries(qa_DataSinkRegistry PRIVATE gnuradio4::GrBasicBlocksShared)
+endif()
 add_basic_test(qa_SampleDelay)
 add_basic_test(qa_TriggerBlocks)
 add_basic_test(qa_Throttle)
