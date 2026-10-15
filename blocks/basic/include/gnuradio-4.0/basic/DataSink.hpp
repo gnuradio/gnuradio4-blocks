@@ -10,14 +10,17 @@
 #include <gnuradio-4.0/TriggerMatcher.hpp>
 #include <gnuradio-4.0/WaitStrategy.hpp>
 
-#include <any>
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <deque>
 #include <limits>
 #include <print>
+#include <string_view>
 #include <thread>
+#include <typeinfo>
 
 #include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
 
@@ -224,9 +227,20 @@ struct DataSinkQuery {
 };
 
 class DataSinkRegistry {
-    std::mutex                      _mutex;
-    std::vector<std::any>           _sinks;
-    std::map<std::string, std::any> _sink_by_signal_name;
+    // A sink registers itself from the shared object that compiled its type, and a lookup can run in another shared
+    // object. Under hidden visibility each of the two objects holds its own type_info for the sink type, and a runtime
+    // that compares type_info by address finds the two unequal. An entry holds the type_info, size and alignment of the
+    // sink type as the registering object compiled it.
+    struct Entry {
+        void*                 sink      = nullptr;
+        const std::type_info* type      = nullptr;
+        std::size_t           size      = 0UZ;
+        std::size_t           alignment = 0UZ;
+    };
+
+    std::mutex                   _mutex;
+    std::vector<Entry>           _sinks;
+    std::map<std::string, Entry> _sink_by_signal_name;
 
 public:
     template<DataSinkOrDataSetSinkLike TSink>
@@ -241,20 +255,16 @@ public:
             throw gr::exception(std::format("Failed to register sink `{}`. Sink with the signal_name `{}` is already registered.", sink->name, sink->signal_name), location);
         }
 
-        _sinks.push_back(sink);
-        _sink_by_signal_name[sink->signal_name] = sink;
+        _sinks.push_back(entryOf(sink));
+        _sink_by_signal_name[sink->signal_name] = entryOf(sink);
         sink->_registered                       = true;
     }
 
     template<DataSinkOrDataSetSinkLike TSink>
     void unregisterSink(TSink* sink) {
         std::lock_guard lg{_mutex};
-        std::erase_if(_sinks, [sink](const std::any& v) -> bool {
-            // _sinks holds sinks of every registered element type; the pointer cast returns nullptr on a type mismatch instead of throwing
-            auto ptr = std::any_cast<TSink*>(&v);
-            return ptr && *ptr == sink;
-        });
-        _sink_by_signal_name.erase(sink->signal_name);
+        std::erase_if(_sinks, [sink](const Entry& entry) { return entry.sink == sink; });
+        eraseSignalName(sink->signal_name.value, sink);
         sink->_registered = false;
     }
 
@@ -274,8 +284,8 @@ public:
             throw gr::exception(std::format("Failed to update signal_name of sink `{}`. Sink with signal_name `{}` is already registered.", sink->name, newName), location);
         }
 
-        _sink_by_signal_name.erase(std::string(oldName));
-        _sink_by_signal_name[std::string(newName)] = sink;
+        eraseSignalName(std::string(oldName), sink);
+        _sink_by_signal_name[std::string(newName)] = entryOf(sink);
     }
 
     template<typename T>
@@ -393,34 +403,56 @@ public:
     }
 
 private:
+    template<DataSinkOrDataSetSinkLike TSink>
+    [[nodiscard]] static Entry entryOf(TSink* sink) noexcept {
+        return {sink, &typeid(TSink), sizeof(TSink), alignof(TSink)};
+    }
+
+    // Erases the entry under the name when it holds the sink. A sink that was refused a taken name leaves the owner's
+    // entry in place.
+    void eraseSignalName(const std::string& name, const void* sink) {
+        if (const auto it = _sink_by_signal_name.find(name); it != _sink_by_signal_name.end() && it->second.sink == sink) {
+            _sink_by_signal_name.erase(it);
+        }
+    }
+
+    // true when a mangled name contains a form that gcc or clang gives to a type without external linkage: an anonymous
+    // namespace (_GLOBAL__N), an entity local to a function with internal linkage (ZL), an unnamed class or closure
+    // (clang's $_, gcc's ._anon_) or a closure or unnamed type in a mangled scope (Ul, Ut). A name that contains one of
+    // these strings by chance is refused too.
+    [[nodiscard]] static bool namesTypeWithoutExternalLinkage(std::string_view mangledName) noexcept {
+        constexpr std::array<std::string_view, 6UZ> kMarkers{"_GLOBAL__N", "ZL", "$_", "._anon_", "Ul", "Ut"};
+        return std::ranges::any_of(kMarkers, [mangledName](std::string_view marker) { return mangledName.contains(marker); });
+    }
+
+    // The sink of an entry as a T, or nullptr when the entry holds a sink of another type. An entry holds a T when the
+    // runtime finds its type_info equal to T's. The mangled name identifies a type across shared objects only when the
+    // type has external linkage. An entry also holds a T when its mangled name equals T's and carries none of the forms
+    // above, and its size and alignment equal T's.
+    template<typename T>
+    [[nodiscard]] static T* as(const Entry& entry) noexcept {
+        if (*entry.type == typeid(T)) {
+            return static_cast<T*>(entry.sink);
+        }
+        const std::string_view name = entry.type->name();
+        if (namesTypeWithoutExternalLinkage(name) || name != std::string_view(typeid(T).name()) || entry.size != sizeof(T) || entry.alignment != alignof(T)) {
+            return nullptr;
+        }
+        return static_cast<T*>(entry.sink);
+    }
+
     template<typename T>
     T* find(const DataSinkQuery& query) {
         if (query._signal_name) {
             const auto it = _sink_by_signal_name.find(*query._signal_name);
-            if (it != _sink_by_signal_name.end()) {
-                try {
-                    return std::any_cast<T*>(it->second);
-                } catch (...) {
-                    return nullptr;
-                }
-            }
-            return nullptr;
+            return it != _sink_by_signal_name.end() ? as<T>(it->second) : nullptr;
         }
-        auto sinkNameMatches = [&query](const std::any& v) {
-            try {
-                const auto sink = std::any_cast<T*>(v);
-                return query._sink_name == sink->name;
-            } catch (...) {
-                return false;
+        for (const Entry& entry : _sinks) {
+            if (T* sink = as<T>(entry); sink != nullptr && query._sink_name == sink->name) {
+                return sink;
             }
-        };
-
-        const auto it = std::ranges::find_if(_sinks, sinkNameMatches);
-        if (it == _sinks.end()) {
-            return nullptr;
         }
-
-        return std::any_cast<T*>(*it);
+        return nullptr;
     }
 };
 
