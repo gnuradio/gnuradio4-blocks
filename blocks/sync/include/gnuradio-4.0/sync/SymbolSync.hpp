@@ -119,9 +119,11 @@ and counted, and leave the block in the state it would have been in with no tag 
 
 A NaN or infinite input sample makes the timing error non-finite for each symbol whose window or history holds it.
 Such a symbol leaves the loop's period estimate (`average_period`) and phase unchanged, puts 0 on the `error` port and
-counts in `non_finite_errors`; an output sample whose window holds the NaN is NaN. A period above twice the upper clamp
-is reset to `samples_per_symbol` and counted in `period_resets`. The upper clamp is `samples_per_symbol` plus
-`max_deviation`, or one and a half times `samples_per_symbol` when `max_deviation` is 0.
+counts in `non_finite_errors`; an output sample whose window holds the NaN is NaN. A finite timing error beyond plus
+or minus 16 is clipped to that limit and counted in `clipped_errors`; a noiseless unit-power signal shaped with
+rolloff 0.2 or more stays below it. A period above twice the upper clamp is reset to `samples_per_symbol` and counted
+in `period_resets`. The upper clamp is `samples_per_symbol` plus `max_deviation`, or one and a half times
+`samples_per_symbol` when `max_deviation` is 0.
 )"">;
 
     PortIn<T>                in;
@@ -148,8 +150,9 @@ is reset to `samples_per_symbol` and counted in `period_resets`. The upper clamp
 
     Annotated<gr::Size_t, "non_finite_errors", Doc<"Read-only: symbols whose timing error was NaN or infinite">>   non_finite_errors = 0U;
     Annotated<gr::Size_t, "period_resets", Doc<"Read-only: symbols whose period was reset to samples_per_symbol">> period_resets     = 0U;
+    Annotated<gr::Size_t, "clipped_errors", Doc<"Read-only: symbols whose timing error was clipped to +/-16">>     clipped_errors    = 0U;
 
-    GR_MAKE_REFLECTABLE(SymbolSync, in, out, error, instant_period, average_period, samples_per_symbol, max_deviation, outputs_per_symbol, detector, constellation, arity, detector_gain, noise_bandwidth, damping, interpolator, polyphase_arms, matched_filter_taps, rolloff, trigger, trigger_presets, non_finite_errors, period_resets);
+    GR_MAKE_REFLECTABLE(SymbolSync, in, out, error, instant_period, average_period, samples_per_symbol, max_deviation, outputs_per_symbol, detector, constellation, arity, detector_gain, noise_bandwidth, damping, interpolator, polyphase_arms, matched_filter_taps, rolloff, trigger, trigger_presets, non_finite_errors, period_resets, clipped_errors);
 
     detail::TimingLoop _loop{0.01, 1.0, 1.0, 1.0, 8.0};
     // Tap count follows `interpolator` (mmse6/8/12); the 128 phase steps and the 0.25 design band are
@@ -293,6 +296,7 @@ is reset to `samples_per_symbol` and counted in `period_resets`. The upper clamp
 
         non_finite_errors = 0U;
         period_resets     = 0U;
+        clipped_errors    = 0U;
     }
 
     /// @brief The decision shape a constellation name selects, empty for a name this slicer cannot carry.
@@ -385,6 +389,18 @@ private:
     }
 
     /**
+     * @brief The largest timing error magnitude the loop steps on, in error units.
+     *
+     * The modified M&M and the two slope forms clip at 1 themselves. Each other detector multiplies a difference of two
+     * samples or decisions by a third sample. At unit average symbol power, the outer 4-PAM level, 3/sqrt(5), is the
+     * largest constellation magnitude. A raised-cosine pulse with rolloff 0.2 or more raises a sample to at most 2.08
+     * times that level, the sum of the pulse's magnitudes at half-symbol offsets. A noiseless unit-power signal thus
+     * gives an error of at most 2 * 9/5 * 2.08^2, about 15.6, at any timing offset, and at most about 8.7 for BPSK and
+     * QPSK. The limit of 16 lies just above the 4-PAM bound and at 1.8 times the BPSK and QPSK bound.
+     */
+    static constexpr float kErrorLimit = 16.f;
+
+    /**
      * @brief Steps the loop on `_error` and returns the symbol's period in input samples: finite, positive and at most
      * twice the clamp's upper bound. The caller turns it into a sample advance by an integer conversion, undefined for
      * a NaN or a value past the integer's range.
@@ -392,6 +408,10 @@ private:
     [[nodiscard]] double nextPeriod() noexcept {
         double instant = _loop.frequency();
         if (std::isfinite(_error)) [[likely]] {
+            if (std::abs(_error) > kErrorLimit) [[unlikely]] {
+                _error         = std::copysign(kErrorLimit, _error);
+                clipped_errors = clipped_errors + 1U;
+            }
             instant = _loop.step(static_cast<double>(_error));
         } else {
             _error            = 0.f;

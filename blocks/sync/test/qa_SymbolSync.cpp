@@ -1015,20 +1015,46 @@ const boost::ut::suite<"SymbolSync"> symbolSyncTests = [] {
         expect(std::ranges::all_of(tracked.aux[1], [](float p) { return p == 4.f; })) << "and the instant period is the nominal one";
     };
 
-    "a finite sample far outside the detector's range resets the period"_test = [] {
+    "a finite sample far outside the detector's range is clipped, and a period past the bound is reset"_test = [] {
         constexpr std::size_t kAt   = 2000UZ * 4UZ + 1UZ;
         const std::vector<CF> clean = nyquistPsk(3000UZ * 4UZ, 4.0, 0.35, true, 1.4, 45U);
         std::vector<CF>       dirty = clean;
-        dirty[kAt]                  = CF{1e21f, 0.f}; // the proportional arm alone moves the position past the range of a 64-bit count
+        dirty[kAt]                  = CF{1e21f, 0.f}; // unclipped, the proportional arm alone moves the position past the range of a 64-bit count
 
         SymbolSync<CF> block   = make<CF>({{"samples_per_symbol", 4.0}});
         const auto     tracked = drive<CF>(block, std::span<const CF>(dirty));
-        const double   ceiling = 2.0 * block.loop().maxFrequency();
-        expect(gt(static_cast<std::size_t>(block.period_resets.value), 0UZ)) << "the oversized period is reset and counted";
+        expect(gt(static_cast<std::size_t>(block.clipped_errors.value), 0UZ)) << "the oversized error is clipped and counted";
         expect(eq(static_cast<std::size_t>(block.non_finite_errors.value), 0UZ)) << "the error itself is finite";
-        expect(gt(tracked.samples.size(), 2000UZ)) << "the stream runs on past the sample";
-        expect(std::ranges::all_of(tracked.aux[1], [ceiling](float p) { return p > 0.f && static_cast<double>(p) <= ceiling; })) << "every instant period is positive and at most twice the clamp's upper bound";
-        expect(le(block.loop().frequency(), block.loop().maxFrequency())) << "the loop's frequency stays inside its clamp";
+        expect(eq(static_cast<std::size_t>(block.period_resets.value), 0UZ)) << "the clipped error keeps the period inside the bound";
+        expect(gt(tracked.samples.size(), 2900UZ)) << "the stream runs on past the sample";
+        expect(lt(meanErrorVector(std::span<const CF>(tracked.samples), tracked.samples.size() - 500UZ), 0.01)) << "and the output after it slices";
+
+        // A detector gain far below the true one makes even a clipped error step the period past the bound.
+        SymbolSync<CF> loose   = make<CF>({{"samples_per_symbol", 4.0}, {"detector_gain", 0.01}});
+        const auto     reset   = drive<CF>(loose, std::span<const CF>(dirty));
+        const double   ceiling = 2.0 * loose.loop().maxFrequency();
+        expect(gt(static_cast<std::size_t>(loose.period_resets.value), 0UZ)) << "the oversized period is reset and counted";
+        expect(gt(reset.samples.size(), 2000UZ)) << "the stream runs on past the sample";
+        expect(std::ranges::all_of(reset.aux[1], [ceiling](float p) { return p > 0.f && static_cast<double>(p) <= ceiling; })) << "every instant period is positive and at most twice the clamp's upper bound";
+        expect(le(loose.loop().frequency(), loose.loop().maxFrequency())) << "the loop's frequency stays inside its clamp";
+    };
+
+    "one large finite sample into Gardner costs no symbol and keeps the lock"_test = [] {
+        constexpr std::size_t kAt   = 2000UZ * 4UZ + 1UZ;
+        const std::vector<CF> clean = nyquistPsk(3000UZ * 4UZ, 4.0, 0.35, true, 1.4, 45U);
+        std::vector<CF>       dirty = clean;
+        dirty[kAt]                  = CF{1e3f, 0.f};
+
+        SymbolSync<CF> reference = make<CF>({{"samples_per_symbol", 4.0}, {"detector", std::string("Gardner")}});
+        const auto     plain     = drive<CF>(reference, std::span<const CF>(clean));
+
+        SymbolSync<CF> block   = make<CF>({{"samples_per_symbol", 4.0}, {"detector", std::string("Gardner")}});
+        const auto     tracked = drive<CF>(block, std::span<const CF>(dirty));
+        expect(eq(tracked.samples.size(), plain.samples.size())) << "the sample costs no symbol";
+        expect(gt(static_cast<std::size_t>(block.clipped_errors.value), 0UZ)) << "the sample's errors are clipped and counted";
+        expect(eq(static_cast<std::size_t>(reference.clipped_errors.value), 0UZ)) << "the clean run clips nothing";
+        expect(eq(static_cast<std::size_t>(block.period_resets.value), 0UZ));
+        expect(lt(meanErrorVector(std::span<const CF>(tracked.samples), tracked.samples.size() - 500UZ), 0.01)) << "the output after the sample slices";
     };
 };
 
