@@ -1,4 +1,6 @@
+#include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/basic/ConverterBlocks.hpp>
+#include <gnuradio-4.0/basic/NullSources.hpp>
 
 #include <iostream>
 #include <tuple>
@@ -267,6 +269,39 @@ const boost::ut::suite<"complex To/From conversion tests"> complexConversion = [
             expect(eq(outputComplexData[2], std::complex<T>{T(5.0f), T(6.0f)}));
         } | std::tuple<float, double, std::int8_t, std::int16_t>();
     } | kArithmeticTypes;
+};
+
+const boost::ut::suite<"converter port names"> converterPortNames = [] {
+    using namespace boost::ut;
+    using namespace gr::blocks::basic;
+    using gr::blocks::basic::NullSink;
+    using gr::blocks::basic::NullSource;
+
+    // graph files connect these blocks by port name
+    "the one-input converters keep their port names"_test = [] {
+        gr::Graph flow;
+        auto&     complexSource = flow.emplaceBlock<NullSource<std::complex<float>>>();
+        auto&     realSource    = flow.emplaceBlock<NullSource<float>>();
+        auto&     abs           = flow.emplaceBlock<Abs<std::complex<float>>>();
+        auto&     real          = flow.emplaceBlock<Real<std::complex<float>>>();
+        auto&     imag          = flow.emplaceBlock<Imag<std::complex<float>>>();
+        auto&     arg           = flow.emplaceBlock<Arg<std::complex<float>>>();
+        auto&     toDegree      = flow.emplaceBlock<RadiansToDegree<float>>();
+        auto&     toRadians     = flow.emplaceBlock<DegreeToRadians<float>>();
+
+        expect(flow.connect<"out", "in">(complexSource, abs).has_value());
+        expect(flow.connect<"out", "in">(complexSource, real).has_value());
+        expect(flow.connect<"out", "in">(complexSource, imag).has_value());
+        expect(flow.connect<"out", "in">(complexSource, arg).has_value());
+        expect(flow.connect<"out", "rad">(realSource, toDegree).has_value());
+        expect(flow.connect<"out", "deg">(realSource, toRadians).has_value());
+        expect(flow.connect<"abs", "in">(abs, flow.emplaceBlock<NullSink<float>>()).has_value());
+        expect(flow.connect<"real", "in">(real, flow.emplaceBlock<NullSink<float>>()).has_value());
+        expect(flow.connect<"imag", "in">(imag, flow.emplaceBlock<NullSink<float>>()).has_value());
+        expect(flow.connect<"arg", "in">(arg, flow.emplaceBlock<NullSink<float>>()).has_value());
+        expect(flow.connect<"deg", "in">(toDegree, flow.emplaceBlock<NullSink<float>>()).has_value());
+        expect(flow.connect<"rad", "in">(toRadians, flow.emplaceBlock<NullSink<float>>()).has_value());
+    };
 };
 
 int main() { /* not needed for UT */ }
