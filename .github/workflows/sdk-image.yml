@@ -23,49 +23,49 @@ jobs:
         include:
           - name: Ubuntu 24.04 | gcc-14 | Release
             tag_suffix: ubuntu-24.04-gcc14-release
-            library_sdk_tag: main-ubuntu-24.04-gcc14-release
+            core_sdk_tag: main-ubuntu-24.04-gcc14-release
             cc: gcc-14
             cxx: g++-14
             cmake_build_type: RelWithDebInfo
             cmake_flags: ""
           - name: Ubuntu 26.04 | gcc | Release
             tag_suffix: ubuntu-26.04-gcc-release
-            library_sdk_tag: main-ubuntu-26.04-gcc-release
+            core_sdk_tag: main-ubuntu-26.04-gcc-release
             cc: gcc
             cxx: g++
             cmake_build_type: RelWithDebInfo
             cmake_flags: ""
           - name: Ubuntu 26.04 | gcc | Debug
             tag_suffix: ubuntu-26.04-gcc-debug
-            library_sdk_tag: main-ubuntu-26.04-gcc-debug
+            core_sdk_tag: main-ubuntu-26.04-gcc-debug
             cc: gcc
             cxx: g++
             cmake_build_type: Debug
             cmake_flags: ""
           - name: Ubuntu 24.04 | clang-20 | Release
             tag_suffix: ubuntu-24.04-clang20-release
-            library_sdk_tag: main-ubuntu-24.04-clang20-release
+            core_sdk_tag: main-ubuntu-24.04-clang20-release
             cc: clang-20
             cxx: clang++-20
             cmake_build_type: RelWithDebInfo
             cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
           - name: Fedora 44 | clang | Release
             tag_suffix: fedora-44-clang-release
-            library_sdk_tag: main-fedora-44-clang-release
+            core_sdk_tag: main-fedora-44-clang-release
             cc: clang
             cxx: clang++
             cmake_build_type: RelWithDebInfo
             cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
           - name: Fedora 44 | clang | Debug
             tag_suffix: fedora-44-clang-debug
-            library_sdk_tag: main-fedora-44-clang-debug
+            core_sdk_tag: main-fedora-44-clang-debug
             cc: clang
             cxx: clang++
             cmake_build_type: Debug
             cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
           - name: Ubuntu 24.04 | Emscripten | Release
             tag_suffix: ubuntu-24.04-emscripten-release
-            library_sdk_tag: main-ubuntu-24.04-emscripten-release
+            core_sdk_tag: main-ubuntu-24.04-emscripten-release
             sdk_target: emscripten
             cc: emcc
             cxx: em++
@@ -95,8 +95,8 @@ jobs:
           push: true
           build-args: |
             GIT_SHA=${{ github.sha }}
-            LIBRARY_SDK_OWNER=${{ github.repository_owner }}
-            LIBRARY_SDK_TAG=${{ matrix.library_sdk_tag }}
+            CORE_SDK_OWNER=${{ github.repository_owner }}
+            CORE_SDK_TAG=${{ matrix.core_sdk_tag }}
             REPOSITORY_URL=https://github.com/${{ github.repository }}
             CC=${{ matrix.cc }}
             CXX=${{ matrix.cxx }}
@@ -120,7 +120,6 @@ jobs:
             printf "GNURADIO4_PREFIX=%s\n" "${GNURADIO4_PREFIX}"
             test -d /opt/gnuradio4
             test -f /opt/gnuradio4/share/gnuradio4-core-sdk/manifest
-            test -f /opt/gnuradio4/share/gnuradio4-library-sdk/manifest
             test -f /opt/gnuradio4/share/gnuradio4-blocks-sdk/manifest
             cat /opt/gnuradio4/share/gnuradio4-blocks-sdk/manifest
             find /opt/gnuradio4 -path "*/cmake/*" -name "gnuradio4Config.cmake" -print -quit | grep .
@@ -129,7 +128,7 @@ jobs:
             if [ "${GR4_SDK_TARGET}" = emscripten ]; then
               command -v emcc
               command -v node
-              grep -q "sdk_target=emscripten" /opt/gnuradio4/share/gnuradio4-library-sdk/manifest
+              grep -q "sdk_target=emscripten" /opt/gnuradio4/share/gnuradio4-core-sdk/manifest
               find /opt/gnuradio4 -name "libGrBasicBlocksStatic.a" -print -quit | grep .
             fi
           '
