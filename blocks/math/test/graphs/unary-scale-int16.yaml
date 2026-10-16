@@ -1,0 +1,18 @@
+# Negate<int16> with scale 2: out = -in * 2, wrapped in 16 bits.
+#   20000 -3 0 -> -40000 6 0; -40000 wraps to -40000 + 65536 = 25536
+blocks:
+  - id: gr::blocks::testing::VectorSource<int16>
+    parameters:
+      name: source
+      values: [20000, -3, 0]
+  - id: gr::blocks::math::Negate<int16>
+    parameters:
+      name: negate
+      scale: !!int16 2
+  - id: gr::blocks::testing::ExpectSink<int16>
+    parameters:
+      name: sink
+      expected: [25536, 6, 0]
+connections:
+  - [source, out, negate, in]
+  - [negate, out, sink, in]

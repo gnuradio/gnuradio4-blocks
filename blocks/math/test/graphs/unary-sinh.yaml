@@ -1,0 +1,42 @@
+# Sinh: out = (e^in - e^-in) / 2.
+#   0 ln2 -ln2 1 -> 0 0.75 -0.75 1.1752011936438014, since sinh(ln 2) = (2 - 1/2) / 2
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32
+        - 0.0
+        - 0.6931471805599453
+        - -0.6931471805599453
+        - 1.0
+  - id: gr::blocks::math::Sinh<float32>
+    parameters:
+      name: sinh_f32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_f32
+      expected: !!float32 [0.0, 0.75, -0.75, 1.1752011936438014]
+      relative_tolerance: 1e-6
+      tolerance: 1e-6
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source_f64
+      values: !!float64
+        - 0.0
+        - 0.6931471805599453
+        - -0.6931471805599453
+        - 1.0
+  - id: gr::blocks::math::Sinh<float64>
+    parameters:
+      name: sinh_f64
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink_f64
+      expected: !!float64 [0.0, 0.75, -0.75, 1.1752011936438014]
+      relative_tolerance: 1e-12
+      tolerance: 1e-12
+connections:
+  - [source_f32, out, sinh_f32, in]
+  - [sinh_f32, out, sink_f32, in]
+  - [source_f64, out, sinh_f64, in]
+  - [sinh_f64, out, sink_f64, in]

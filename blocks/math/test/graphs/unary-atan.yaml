@@ -1,0 +1,42 @@
+# Atan: out = atan(in), in radians.
+#   0 1 -1 1e30 -> 0 pi/4 -pi/4 pi/2
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32 [0.0, 1.0, -1.0, 1e+30]
+  - id: gr::blocks::math::Atan<float32>
+    parameters:
+      name: atan_f32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_f32
+      expected: !!float32
+        - 0.0
+        - 0.7853981633974483
+        - -0.7853981633974483
+        - 1.5707963267948966
+      relative_tolerance: 1e-6
+      tolerance: 1e-6
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source_f64
+      values: !!float64 [0.0, 1.0, -1.0, 1e+30]
+  - id: gr::blocks::math::Atan<float64>
+    parameters:
+      name: atan_f64
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink_f64
+      expected: !!float64
+        - 0.0
+        - 0.7853981633974483
+        - -0.7853981633974483
+        - 1.5707963267948966
+      relative_tolerance: 1e-12
+      tolerance: 1e-12
+connections:
+  - [source_f32, out, atan_f32, in]
+  - [atan_f32, out, sink_f32, in]
+  - [source_f64, out, atan_f64, in]
+  - [atan_f64, out, sink_f64, in]

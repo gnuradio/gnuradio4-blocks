@@ -1,0 +1,23 @@
+# Conjugate: out = re(in) - j im(in).
+#   (1,-2) (0,0) (-3.5,4) -> (1,2) (0,0) (-3.5,-4)
+blocks:
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: source_c32
+      values: !!complex32
+        - (1.0, -2.0)
+        - (0.0, 0.0)
+        - (-3.5, 4.0)
+  - id: gr::blocks::math::Conjugate<complex<float32>>
+    parameters:
+      name: conjugate_c32
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: sink_c32
+      expected: !!complex32
+        - (1.0, 2.0)
+        - (0.0, 0.0)
+        - (-3.5, -4.0)
+connections:
+  - [source_c32, out, conjugate_c32, in]
+  - [conjugate_c32, out, sink_c32, in]

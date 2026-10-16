@@ -1,0 +1,56 @@
+# Power: out = in^n for the integer setting n.
+#   float32, n = 3:  -2 0 1.5 0.5        -> -8 0 3.375 0.125
+#   float64, n = -2: -2 4 0.5            -> 0.25 0.0625 4
+#   complex, n = 3:  (0,1) (1,1) (-2,0)  -> (0,-1) (-2,2) (-8,0), since j^3 = -j and (1+j)^3 = 2j(1+j)
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32 [-2.0, 0.0, 1.5, 0.5]
+  - id: gr::blocks::math::Power<float32>
+    parameters:
+      name: power_f32
+      n: !!int32 3
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_f32
+      expected: !!float32 [-8.0, 0.0, 3.375, 0.125]
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source_f64
+      values: !!float64 [-2.0, 4.0, 0.5]
+  - id: gr::blocks::math::Power<float64>
+    parameters:
+      name: power_f64
+      n: !!int32 -2
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink_f64
+      expected: !!float64 [0.25, 0.0625, 4.0]
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: source_c32
+      values: !!complex32
+        - (0.0, 1.0)
+        - (1.0, 1.0)
+        - (-2.0, 0.0)
+  - id: gr::blocks::math::Power<complex<float32>>
+    parameters:
+      name: power_c32
+      n: !!int32 3
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: sink_c32
+      expected: !!complex32
+        - (0.0, -1.0)
+        - (-2.0, 2.0)
+        - (-8.0, 0.0)
+      relative_tolerance: 1e-6
+      tolerance: 1e-6
+connections:
+  - [source_f32, out, power_f32, in]
+  - [power_f32, out, sink_f32, in]
+  - [source_f64, out, power_f64, in]
+  - [power_f64, out, sink_f64, in]
+  - [source_c32, out, power_c32, in]
+  - [power_c32, out, sink_c32, in]

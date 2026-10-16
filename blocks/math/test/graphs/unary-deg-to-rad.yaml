@@ -1,0 +1,42 @@
+# DegToRad: out = (in / 180) * pi.
+#   0 90 -180 360 -> 0 pi/2 -pi 2pi
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32 [0.0, 90.0, -180.0, 360.0]
+  - id: gr::blocks::math::DegToRad<float32>
+    parameters:
+      name: deg_to_rad_f32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_f32
+      expected: !!float32
+        - 0.0
+        - 1.5707963267948966
+        - -3.141592653589793
+        - 6.283185307179586
+      relative_tolerance: 1e-6
+      tolerance: 1e-6
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source_f64
+      values: !!float64 [0.0, 90.0, -180.0, 360.0]
+  - id: gr::blocks::math::DegToRad<float64>
+    parameters:
+      name: deg_to_rad_f64
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink_f64
+      expected: !!float64
+        - 0.0
+        - 1.5707963267948966
+        - -3.141592653589793
+        - 6.283185307179586
+      relative_tolerance: 1e-12
+      tolerance: 1e-12
+connections:
+  - [source_f32, out, deg_to_rad_f32, in]
+  - [deg_to_rad_f32, out, sink_f32, in]
+  - [source_f64, out, deg_to_rad_f64, in]
+  - [deg_to_rad_f64, out, sink_f64, in]

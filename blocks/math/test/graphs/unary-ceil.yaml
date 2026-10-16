@@ -1,0 +1,30 @@
+# Ceil: the smallest integer value not below the sample.
+#   -1.5 0 2.5 2.7 -0.2 -> -1 0 3 3 -0 (-0 equals 0)
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32 [-1.5, 0.0, 2.5, 2.7, -0.2]
+  - id: gr::blocks::math::Ceil<float32>
+    parameters:
+      name: ceil_f32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_f32
+      expected: !!float32 [-1.0, 0.0, 3.0, 3.0, 0.0]
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source_f64
+      values: !!float64 [-1.5, 0.0, 2.5, 2.7, -0.2]
+  - id: gr::blocks::math::Ceil<float64>
+    parameters:
+      name: ceil_f64
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink_f64
+      expected: !!float64 [-1.0, 0.0, 3.0, 3.0, 0.0]
+connections:
+  - [source_f32, out, ceil_f32, in]
+  - [ceil_f32, out, sink_f32, in]
+  - [source_f64, out, ceil_f64, in]
+  - [ceil_f64, out, sink_f64, in]

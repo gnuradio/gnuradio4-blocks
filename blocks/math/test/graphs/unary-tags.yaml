@@ -1,0 +1,127 @@
+# The carrier keys a Unary block forwards. Each source tags sample 1 with phase_est, freq_est and mark.
+#   Conjugate<complex<float32>> changes the carrier frequency: it drops phase_est and freq_est, keeps mark.
+#   Power<complex<float32>>, n 2, has ports of its own and drops the same keys.
+#     (1,2) (3,4) (5,6) -> (-3,4) (-7,24) (-11,60)
+#   Negate<complex<float32>> rotates the carrier by pi: it drops phase_est, keeps freq_est.
+#   Negate<float32> has a real output: it keeps phase_est.
+blocks:
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: complex_source
+      values: !!complex32
+        - (1.0, 2.0)
+        - (3.0, 4.0)
+        - (5.0, 6.0)
+      tag_indices: !!uint32 [1]
+      tag_map:
+        phase_est: 0.5
+        freq_est: 0.1
+        mark: frame
+  - id: gr::blocks::math::Conjugate<complex<float32>>
+    parameters:
+      name: conjugate
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: conjugate_phase
+      expected: !!complex32
+        - (1.0, -2.0)
+        - (3.0, -4.0)
+        - (5.0, -6.0)
+      tag_key: phase_est
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: conjugate_freq
+      expected: !!complex32
+        - (1.0, -2.0)
+        - (3.0, -4.0)
+        - (5.0, -6.0)
+      tag_key: freq_est
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: conjugate_mark
+      expected: !!complex32
+        - (1.0, -2.0)
+        - (3.0, -4.0)
+        - (5.0, -6.0)
+      tag_key: mark
+      tag_indices: !!uint32 [1]
+  - id: gr::blocks::math::Power<complex<float32>>
+    parameters:
+      name: power
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: power_phase
+      expected: !!complex32
+        - (-3.0, 4.0)
+        - (-7.0, 24.0)
+        - (-11.0, 60.0)
+      tag_key: phase_est
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: power_freq
+      expected: !!complex32
+        - (-3.0, 4.0)
+        - (-7.0, 24.0)
+        - (-11.0, 60.0)
+      tag_key: freq_est
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: power_mark
+      expected: !!complex32
+        - (-3.0, 4.0)
+        - (-7.0, 24.0)
+        - (-11.0, 60.0)
+      tag_key: mark
+      tag_indices: !!uint32 [1]
+  - id: gr::blocks::math::Negate<complex<float32>>
+    parameters:
+      name: negate_complex
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: negate_complex_phase
+      expected: !!complex32
+        - (-1.0, -2.0)
+        - (-3.0, -4.0)
+        - (-5.0, -6.0)
+      tag_key: phase_est
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: negate_complex_freq
+      expected: !!complex32
+        - (-1.0, -2.0)
+        - (-3.0, -4.0)
+        - (-5.0, -6.0)
+      tag_key: freq_est
+      tag_indices: !!uint32 [1]
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: real_source
+      values: !!float32 [1.0, 2.0, 3.0]
+      tag_indices: !!uint32 [1]
+      tag_map:
+        phase_est: 0.5
+        freq_est: 0.1
+        mark: frame
+  - id: gr::blocks::math::Negate<float32>
+    parameters:
+      name: negate_real
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: negate_real_phase
+      expected: !!float32 [-1.0, -2.0, -3.0]
+      tag_key: phase_est
+      tag_indices: !!uint32 [1]
+connections:
+  - [complex_source, out, conjugate, in]
+  - [conjugate, out, conjugate_phase, in]
+  - [conjugate, out, conjugate_freq, in]
+  - [conjugate, out, conjugate_mark, in]
+  - [complex_source, out, power, in]
+  - [power, out, power_phase, in]
+  - [power, out, power_freq, in]
+  - [power, out, power_mark, in]
+  - [complex_source, out, negate_complex, in]
+  - [negate_complex, out, negate_complex_phase, in]
+  - [negate_complex, out, negate_complex_freq, in]
+  - [real_source, out, negate_real, in]
+  - [negate_real, out, negate_real_phase, in]

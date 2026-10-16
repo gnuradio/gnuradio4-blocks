@@ -1,0 +1,44 @@
+# Log: out = ln(in), -inf at zero, NaN for a negative sample.
+#   1 2 10 0 -1 -> 0 0.6931471805599453 2.302585092994046 -inf NaN
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32 [1.0, 2.0, 10.0, 0.0, -1.0]
+  - id: gr::blocks::math::Log<float32>
+    parameters:
+      name: log_f32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_f32
+      expected: !!float32
+        - 0.0
+        - 0.6931471805599453
+        - 2.302585092994046
+        - -.inf
+        - .nan
+      relative_tolerance: 1e-6
+      tolerance: 1e-6
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source_f64
+      values: !!float64 [1.0, 2.0, 10.0, 0.0, -1.0]
+  - id: gr::blocks::math::Log<float64>
+    parameters:
+      name: log_f64
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink_f64
+      expected: !!float64
+        - 0.0
+        - 0.6931471805599453
+        - 2.302585092994046
+        - -.inf
+        - .nan
+      relative_tolerance: 1e-12
+      tolerance: 1e-12
+connections:
+  - [source_f32, out, log_f32, in]
+  - [log_f32, out, sink_f32, in]
+  - [source_f64, out, log_f64, in]
+  - [log_f64, out, sink_f64, in]
