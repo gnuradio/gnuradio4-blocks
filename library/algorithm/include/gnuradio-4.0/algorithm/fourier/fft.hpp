@@ -1,0 +1,491 @@
+#ifndef GNURADIO_ALGORITHM_FFT_HPP
+#define GNURADIO_ALGORITHM_FFT_HPP
+
+#include <algorithm>
+#include <bit>
+#include <complex>
+#include <execution>
+#include <numbers>
+#include <ranges>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <gnuradio-4.0/algorithm/fourier/SimdFFT.hpp>
+#include <gnuradio-4.0/meta/utils.hpp>
+
+namespace gr::algorithm {
+
+namespace detail {
+
+template<gr::meta::complex_like T>
+constexpr T complex_mult(T a, T b) {
+    return a * b; // SIMD optimisation candidate
+}
+
+// the fixed-size kernels carry their own twiddles and therefore need the direction; the generic one reads the (already direction-correct) table
+template<gr::meta::complex_like C, std::size_t N = std::dynamic_extent, bool inverse = false>
+constexpr void fft_stage_kernel(C* data, const C* twiddles, std::size_t halfsize = 0UZ) {
+    using ValueType = typename C::value_type;
+
+    if constexpr (N == 2UZ) {
+        const C a = data[0];
+        const C b = data[1];
+
+        data[0] = a + b;
+        data[1] = a - b;
+    } else if constexpr (N == 4UZ) {
+        constexpr ValueType        wImag     = inverse ? ValueType(1) : ValueType(-1);
+        constexpr std::array<C, 2> twiddles4 = {
+            C{ValueType(1), ValueType(0)}, // W_4^0
+            C{ValueType(0), wImag},        // W_4^1 == -j (forward)
+        };
+        const C a = data[0];
+        const C b = data[1];
+        const C c = complex_mult(data[2], twiddles4[0]); // W_4^0 == 1
+        const C d = complex_mult(data[3], twiddles4[1]); // W_4^1 == -j
+
+        data[0] = a + c;
+        data[1] = b + d;
+        data[2] = a - c;
+        data[3] = b - d;
+    } else if constexpr (N == 8UZ) {
+        constexpr auto inv_sqrt2 = static_cast<ValueType>(1 / std::numbers::sqrt2_v<ValueType>); // std::sqrt(0.5f)
+
+        constexpr ValueType        wImag     = inverse ? inv_sqrt2 : -inv_sqrt2;
+        constexpr ValueType        wImagUnit = inverse ? ValueType(1) : ValueType(-1);
+        constexpr std::array<C, 4> twiddles8 = {//
+            C{ValueType(1), ValueType(0)},      //
+            C{inv_sqrt2, wImag},                //
+            C{ValueType(0), wImagUnit},         //
+            C{-inv_sqrt2, wImag}};
+
+        const C a0 = data[0];
+        const C a1 = data[1];
+        const C a2 = data[2];
+        const C a3 = data[3];
+
+        const C b0 = complex_mult(data[4], twiddles8[0]);
+        const C b1 = complex_mult(data[5], twiddles8[1]);
+        const C b2 = complex_mult(data[6], twiddles8[2]);
+        const C b3 = complex_mult(data[7], twiddles8[3]);
+
+        data[0] = a0 + b0;
+        data[1] = a1 + b1;
+        data[2] = a2 + b2;
+        data[3] = a3 + b3;
+
+        data[4] = a0 - b0;
+        data[5] = a1 - b1;
+        data[6] = a2 - b2;
+        data[7] = a3 - b3;
+    } else if constexpr (N == std::dynamic_extent) {
+        for (std::size_t j = 0; j < halfsize; ++j) {
+            const auto temp    = complex_mult(data[j + halfsize], twiddles[j]);
+            data[j + halfsize] = data[j] - temp;
+            data[j] += temp;
+        }
+    } else {
+        static_assert(gr::meta::always_false<C>, "unimplemented power N of 2, 4, or 8");
+    }
+}
+
+} // namespace detail
+
+/**
+ * @brief radix-2 / Bluestein DFT with an optional SimdFFT backend, for any transform length.
+ *
+ * Transforms are unnormalized, matching SimdFFT's convention: feeding the output of a
+ * Direction::Forward instance into a Direction::Backward one of the same length returns N times the
+ * input. Real-valued input (R2C) is forward-only.
+ *
+ * compute() mutates per-instance scratch (SimdFFT state, aligned buffers, Bluestein caches, the
+ * per-length plan cache): hold one instance per thread.
+ */
+template<typename TInput, gr::meta::complex_like TOutput = std::conditional_t<gr::meta::complex_like<TInput>, TInput, std::complex<TInput>>, Direction TDirection = Direction::Forward>
+requires((gr::meta::complex_like<TInput> || std::floating_point<TInput>))
+struct FFT {
+    using ValueType = typename TOutput::value_type;
+
+    std::vector<std::vector<TOutput>>                     stageTwiddles{};
+    std::vector<TOutput, gr::allocator::Aligned<TOutput>> bluesteinExpTable{};
+    std::vector<TOutput, gr::allocator::Aligned<TOutput>> bluesteinChirpFFT{};
+    std::vector<std::size_t>                              bitReverseTable{};
+    std::size_t                                           fftSize{0};
+
+    constexpr static Transform kTransform = gr::meta::complex_like<TInput> ? Transform::Complex : Transform::Real;
+    constexpr static Direction kDirection = TDirection;
+    constexpr static bool      kInverse   = kDirection == Direction::Backward;
+    static_assert(kTransform == Transform::Complex || kDirection == Direction::Forward, "real-valued input (R2C) supports the forward transform only");
+
+    SimdFFT<ValueType, kTransform>                            simdFFT{};
+    std::vector<ValueType, gr::allocator::Aligned<ValueType>> alignedInputBuffer{};
+    std::vector<ValueType, gr::allocator::Aligned<ValueType>> alignedOutputBuffer{};
+    bool                                                      useSimdFFT{true};
+
+    void initAll() {
+        precomputeTwiddleFactors();
+        precomputeBitReversal();
+    }
+
+    // returns 'out' itself: a reference to an lvalue argument, the moved container by value for an rvalue argument
+    decltype(auto) compute(const std::ranges::input_range auto& in, std::ranges::output_range<TOutput> auto&& out) {
+        computeInto(in, out);
+        if constexpr (std::is_lvalue_reference_v<decltype(out)>) {
+            return (out);
+        } else {
+            return std::remove_cvref_t<decltype(out)>(std::move(out));
+        }
+    }
+
+    auto compute(const std::ranges::input_range auto& in) {
+        using input_container_t = std::remove_cvref_t<decltype(in)>;
+        using output_alloc_t    = gr::allocator::detail::deduce_output_allocator_t<input_container_t, TOutput>;
+        return compute(in, std::vector<TOutput, output_alloc_t>(in.size()));
+    }
+
+    template<typename InRange, typename OutRange>
+    bool trySimdFFT(const InRange& in, OutRange&& out) {
+        if (simdFFT.size() != in.size()) {
+            simdFFT.resize(in.size());
+        }
+        if constexpr (kTransform == Transform::Complex) {
+            return trySimdFFT_C2C(in, out, in.size());
+        } else {
+            return trySimdFFT_R2C(in, out, in.size());
+        }
+    }
+
+private:
+    void computeInto(const std::ranges::input_range auto& in, std::ranges::output_range<TOutput> auto& out) {
+        if constexpr (requires { out.resize(in.size()); }) {
+            if (out.size() != in.size()) {
+                out.resize(in.size());
+            }
+        }
+
+        const auto size = in.size();
+        if (size == 0) {
+            return;
+        }
+
+        selectPlan(size);
+
+        if (useSimdFFT && SimdFFT<ValueType, kTransform>::canProcessSize(size, Order::Ordered) && trySimdFFT(in, out)) { // use SimdFFT if enabled and size is supported
+            return;
+        }
+
+        // fallback to original implementation
+        std::ranges::transform(in, out.begin(), [](auto v) {
+            if constexpr (std::floating_point<TInput>) {
+                return TOutput(ValueType(v), 0);
+            } else {
+                return static_cast<TOutput>(v);
+            }
+        });
+
+        if (std::has_single_bit(size)) {
+            ensureRadix2Tables();
+            transformRadix2(out);
+        } else {
+            ensureBluesteinTable(size);
+            transformBluestein(out);
+        }
+    }
+
+    bool trySimdFFT_C2C(const auto& in, auto&& out, std::size_t N) {
+        using InputValueType        = typename std::remove_cvref_t<decltype(in)>::value_type::value_type;
+        const std::size_t nElements = 2UZ * N;
+        static_assert(sizeof(std::complex<ValueType>) == 2 * sizeof(ValueType), "SimdFFT backend expects interleaved scalars; complex<T> must be 2*T bytes.");
+
+        if constexpr (std::is_same_v<InputValueType, ValueType>) {
+            if (gr::allocator::isAligned(in.data(), 64UZ) && gr::allocator::isAligned(out.data(), 64UZ)) { // zero-copy path (same precision and aligned)
+                std::span<const ValueType> inputSpan(reinterpret_cast<const ValueType*>(in.data()), nElements);
+                std::span<ValueType>       outputSpan(reinterpret_cast<ValueType*>(out.data()), nElements);
+                simdFFT.template transform<kDirection, Order::Ordered>(inputSpan, outputSpan);
+                return true;
+            } // future else: copy and avoid reinterpret_cast (slightly UB)
+        }
+
+        // buffered path for non-aligned or different precision
+        if (alignedInputBuffer.size() != nElements) {
+            alignedInputBuffer.resize(nElements);
+        }
+        if (alignedOutputBuffer.size() != nElements) {
+            alignedOutputBuffer.resize(nElements);
+        }
+
+        // copy input with type conversion if needed
+        const auto* inputPtr = reinterpret_cast<const InputValueType*>(in.data());
+        for (std::size_t i = 0; i < nElements; ++i) {
+            alignedInputBuffer[i] = static_cast<ValueType>(inputPtr[i]);
+        }
+
+        simdFFT.template transform<kDirection, Order::Ordered>(alignedInputBuffer, alignedOutputBuffer);
+
+        // copy output with type conversion if needed
+        auto* outputPtr = reinterpret_cast<ValueType*>(out.data());
+        std::memcpy(outputPtr, alignedOutputBuffer.data(), nElements * sizeof(ValueType));
+
+        return true;
+    }
+
+    bool trySimdFFT_R2C(const auto& in, auto&& out, std::size_t N) {
+        using InputValueType = typename std::remove_cvref_t<decltype(in)>::value_type;
+        static_assert(std::is_trivially_copyable_v<InputValueType>);
+        static_assert(std::is_trivially_copyable_v<ValueType>);
+        assert(std::size(in) >= N);
+        assert(std::size(out) >= N);
+
+        if (alignedOutputBuffer.size() != N) {
+            alignedOutputBuffer.resize(N); // packed real: [DC, Nyq, re1, im1, ...]
+        }
+
+        if constexpr (std::is_same_v<InputValueType, ValueType>) {
+            if (gr::allocator::isAligned(in.data(), 64UZ)) { // input is cacheline-aligned
+                simdFFT.template transform<kDirection, Order::Ordered>(std::span<const ValueType>{in.data(), N}, alignedOutputBuffer);
+            } else { // not cacheline-aligned -> copy to aligned scratch
+                if (alignedInputBuffer.size() != N) {
+                    alignedInputBuffer.resize(N);
+                }
+                std::memcpy(alignedInputBuffer.data(), in.data(), N * sizeof(ValueType));
+                simdFFT.template transform<kDirection, Order::Ordered>(std::span<const ValueType>{alignedInputBuffer.data(), N}, alignedOutputBuffer);
+            }
+        } else { // type conversion needed
+            if (alignedInputBuffer.size() != N) {
+                alignedInputBuffer.resize(N);
+            }
+            for (std::size_t i = 0; i < N; ++i) { // element-wise conversion (memcpy is invalid across types)
+                alignedInputBuffer[i] = static_cast<ValueType>(in[i]);
+            }
+            simdFFT.template transform<kDirection, Order::Ordered>(std::span<const ValueType>{alignedInputBuffer.data(), N}, alignedOutputBuffer);
+        }
+
+        // unpack to full spectrum: [DC, Nyquist, re1, im1, re2, im2, ...] → N complex values
+        out[0] = TOutput(static_cast<ValueType>(alignedOutputBuffer[0]), 0); // DC component at bin 0
+        for (std::size_t k = 1; k < N / 2; ++k) {                            // positive frequencies (bins 1 to N/2-1)
+            out[k] = TOutput(static_cast<ValueType>(alignedOutputBuffer[2 * k]), static_cast<ValueType>(alignedOutputBuffer[2 * k + 1]));
+        }
+        out[N / 2] = TOutput(static_cast<ValueType>(alignedOutputBuffer[1]), 0); // nyquist component at bin N/2
+
+        for (std::size_t k = N / 2 + 1; k < N; ++k) { // negative frequencies (bins N/2+1 to N-1) - Hermitian symmetry -> complex conjugates
+            const std::size_t mirrorIdx = N - k;
+            out[k]                      = TOutput(static_cast<ValueType>(alignedOutputBuffer[2 * mirrorIdx]), -static_cast<ValueType>(alignedOutputBuffer[2 * mirrorIdx + 1])); // Conjugate
+        }
+
+        return true;
+    }
+
+    void transformRadix2(std::ranges::input_range auto& inPlace) {
+        const std::size_t N = inPlace.size();
+        if (!std::has_single_bit(N)) {
+            throw std::invalid_argument(std::format("Input data must be power-of-two, input size: {}", inPlace.size()));
+        }
+
+        for (std::size_t i = 0UZ; i < N; ++i) {
+            const std::size_t j = bitReverseTable[i];
+            if (j > i) {
+                std::swap(inPlace[i], inPlace[j]);
+            }
+        }
+
+        const std::size_t nStages = static_cast<std::size_t>(std::countr_zero(N));
+        for (std::size_t stage = 0, size = 2; stage < nStages; size *= 2, ++stage) {
+            const auto&       twiddles = stageTwiddles[stage];
+            const std::size_t halfsize = size / 2;
+
+            for (std::size_t i = 0; i < N; i += size) {
+                TOutput* block = &inPlace[i];
+
+                switch (size) { // optimised non-branching fft sub kernels
+                case 2: detail::fft_stage_kernel<TOutput, 2, kInverse>(block, twiddles.data()); break;
+                case 4: detail::fft_stage_kernel<TOutput, 4, kInverse>(block, twiddles.data()); break;
+                case 8: detail::fft_stage_kernel<TOutput, 8, kInverse>(block, twiddles.data()); break;
+                default: // generic case
+                    detail::fft_stage_kernel<TOutput>(block, twiddles.data(), halfsize);
+                    break;
+                }
+            }
+        }
+    }
+
+    std::unique_ptr<FFT<TOutput, TOutput>>                fftCache;
+    std::vector<TOutput, gr::allocator::Aligned<TOutput>> aCache{};
+    std::vector<TOutput, gr::allocator::Aligned<TOutput>> bCache{};
+
+    // chirp-z: X[k] = w[k] * (a (*) b)[k]; the cyclic convolution's inverse FFT is expressed as conj(FFT(conj(.)))/m
+    void transformBluestein(std::ranges::input_range auto& inPlace) {
+        const std::size_t n = inPlace.size();
+        const std::size_t m = std::bit_ceil(2 * n + 1);
+
+        using input_container_t = std::remove_cvref_t<decltype(inPlace)>;
+        using output_alloc_t    = gr::allocator::detail::deduce_output_allocator_t<input_container_t, TOutput>;
+        std::vector<TOutput, output_alloc_t> a(m);
+        for (std::size_t i = 0; i < n; ++i) {
+            a[i] = detail::complex_mult(inPlace[i], bluesteinExpTable[i]);
+        }
+
+        // convolve input with chirp function
+        if (a.size() != bluesteinChirpFFT.size()) {
+            throw std::domain_error("mismatched lengths for convolution");
+        }
+        if (!fftCache) {
+            fftCache = std::make_unique<FFT<TOutput, TOutput>>();
+        }
+
+        fftCache->compute(a, aCache);
+
+        std::transform(aCache.begin(), aCache.end(), bluesteinChirpFFT.begin(), aCache.begin(), [](const TOutput& x, const TOutput& y) { return std::conj(detail::complex_mult(x, y)); });
+        fftCache->compute(aCache, bCache);
+
+        const ValueType scale = ValueType(1) / ValueType(m);
+        std::transform(bCache.begin(), std::next(bCache.begin(), static_cast<std::ptrdiff_t>(n)), bluesteinExpTable.begin(), inPlace.begin(), //
+            [scale](const TOutput& v, const TOutput& w) { return detail::complex_mult(std::conj(v) * scale, w); });
+    }
+
+    // the radix-2 tables are read by transformRadix2() alone and the Bluestein table by transformBluestein()
+    // alone, and both scale with fftSize (8 MiB of bit-reversal indices at N = 2^20), so build each only on
+    // the path that reads it. initAll() builds the radix-2 pair together, so bitReverseTable.size() keys both.
+    void ensureRadix2Tables() {
+        if (bitReverseTable.size() != fftSize) {
+            initAll();
+        }
+    }
+
+    void ensureBluesteinTable(std::size_t n) {
+        if (bluesteinExpTable.size() != n) {
+            precomputeBluesteinTable(n);
+        }
+    }
+
+    struct Plan {
+        std::size_t                                               size{0UZ};
+        SimdFFT<ValueType, kTransform>                            simdFFT{};
+        std::vector<ValueType, gr::allocator::Aligned<ValueType>> alignedInputBuffer{};
+        std::vector<ValueType, gr::allocator::Aligned<ValueType>> alignedOutputBuffer{};
+        std::vector<std::vector<TOutput>>                         stageTwiddles{};
+        std::vector<std::size_t>                                  bitReverseTable{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     bluesteinExpTable{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     bluesteinChirpFFT{};
+        std::unique_ptr<FFT<TOutput, TOutput>>                    fftCache{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     aCache{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     bCache{};
+    };
+
+    // a parked plan holds the whole per-length state, ~16 MB at N = 2^20 for complex<float>, so the count is
+    // capped instead of grown: three parked plus the live one covers the interleavings that occur in practice,
+    // and a further length evicts the least recently used plan rather than enlarging the footprint
+    static constexpr std::size_t kMaxParkedPlans = 3UZ;
+    std::vector<Plan>            parkedPlans{};
+
+    void swapPlan(Plan& plan) {
+        std::swap(simdFFT, plan.simdFFT);
+        alignedInputBuffer.swap(plan.alignedInputBuffer);
+        alignedOutputBuffer.swap(plan.alignedOutputBuffer);
+        stageTwiddles.swap(plan.stageTwiddles);
+        bitReverseTable.swap(plan.bitReverseTable);
+        bluesteinExpTable.swap(plan.bluesteinExpTable);
+        bluesteinChirpFFT.swap(plan.bluesteinChirpFFT);
+        fftCache.swap(plan.fftCache);
+        aCache.swap(plan.aCache);
+        bCache.swap(plan.bCache);
+    }
+
+    // the slot that yields the incoming plan takes the outgoing one, so a cached length change is a plain swap
+    void selectPlan(std::size_t size) {
+        if (size == fftSize) {
+            return;
+        }
+        if (fftSize == 0UZ) {
+            fftSize = size;
+            return;
+        }
+
+        const std::size_t nParked = parkedPlans.size();
+        std::size_t       slot    = nParked;
+        for (std::size_t i = 0UZ; i < nParked; ++i) {
+            if (parkedPlans[i].size == size) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot == nParked) {
+            if (nParked < kMaxParkedPlans) {
+                parkedPlans.emplace_back();
+            } else {
+                slot = 0UZ;
+            }
+        }
+
+        swapPlan(parkedPlans[slot]);
+        parkedPlans[slot].size = fftSize;
+
+        const auto parked = std::next(parkedPlans.begin(), static_cast<std::ptrdiff_t>(slot));
+        std::rotate(parked, std::next(parked), parkedPlans.end());
+        fftSize = size;
+    }
+
+    void precomputeTwiddleFactors() {
+        stageTwiddles.clear();
+        const auto minus2Pi = ValueType(kInverse ? 2 : -2) * std::numbers::pi_v<ValueType>;
+        for (std::size_t size = 2UZ; size <= fftSize; size *= 2UZ) {
+            const std::size_t    m{size / 2};
+            const TOutput        w{std::exp(TOutput(0., minus2Pi / static_cast<ValueType>(size)))};
+            std::vector<TOutput> twiddles;
+            if (size == 2) {
+                twiddles.push_back(TOutput{1.0, 0.0});
+            } else if (size == 8) {
+                twiddles.emplace_back(1.0, 0.0);                         // W_8^0
+                twiddles.emplace_back(std::sqrt(0.5), -std::sqrt(0.5));  // W_8^1
+                twiddles.emplace_back(0.0, -1.0);                        // W_8^2
+                twiddles.emplace_back(-std::sqrt(0.5), -std::sqrt(0.5)); // W_8^3
+                if constexpr (kInverse) {
+                    std::ranges::transform(twiddles, twiddles.begin(), [](const TOutput& t) { return std::conj(t); });
+                }
+            } else {
+                TOutput wk{1., 0.};
+                for (std::size_t j = 0UZ; j < m; ++j) {
+                    twiddles.push_back(wk);
+                    wk *= w;
+                }
+            }
+            stageTwiddles.push_back(std::move(twiddles));
+        }
+    }
+
+    void precomputeBluesteinTable(std::size_t n) {
+        bluesteinExpTable.resize(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::uintmax_t tmp   = static_cast<std::uintmax_t>(i) * i % (2 * n);
+            const ValueType      angle = ValueType(kInverse ? 1 : -1) * std::numbers::pi_v<ValueType> * static_cast<ValueType>(tmp) / static_cast<ValueType>(n);
+            bluesteinExpTable[i]       = std::polar<ValueType>(1.0, angle);
+        }
+
+        const std::size_t                                     m = std::bit_ceil(2 * n + 1);
+        std::vector<TOutput, gr::allocator::Aligned<TOutput>> b(m);
+        b[0] = bluesteinExpTable[0];
+        for (std::size_t i = 1; i < n; ++i) {
+            b[i] = b[m - i] = std::conj(bluesteinExpTable[i]);
+        }
+
+        FFT<TOutput, TOutput> fft{}; // always power-of-two
+        bluesteinChirpFFT = fft.compute(b);
+    }
+
+    void precomputeBitReversal() {
+        const std::size_t width = static_cast<std::size_t>(std::countr_zero(fftSize));
+        bitReverseTable.resize(fftSize);
+        for (std::size_t i = 0; i < fftSize; ++i) {
+            std::size_t val = i, result = 0;
+            for (std::size_t j = 0; j < width; ++j, val >>= 1) {
+                result = (result << 1) | (val & 1U);
+            }
+            bitReverseTable[i] = result;
+        }
+    }
+};
+
+} // namespace gr::algorithm
+
+#endif // GNURADIO_ALGORITHM_FFT_HPP

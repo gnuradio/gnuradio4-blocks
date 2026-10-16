@@ -100,14 +100,10 @@ if(ENABLE_TESTING
 endif()
 
 find_package(gnuradio4 CONFIG REQUIRED)
-find_package(gnuradio4Library CONFIG REQUIRED)
 find_package(GnuRadioBlockLib CONFIG REQUIRED)
 
 if(NOT TARGET gnuradio-core AND TARGET gnuradio4::gnuradio-core)
   add_library(gnuradio-core ALIAS gnuradio4::gnuradio-core)
-endif()
-if(NOT TARGET gnuradio-algorithm AND TARGET gnuradio4::gnuradio-algorithm)
-  add_library(gnuradio-algorithm ALIAS gnuradio4::gnuradio-algorithm)
 endif()
 # the installed gnuradio4::gnuradio-options keeps its warning flags behind $<BUILD_INTERFACE:...>, so they do not reach
 # this project through the export; recreate them on a local wrapper target so this project's own targets compile with
@@ -319,6 +315,8 @@ if(ENABLE_TESTING)
 endif()
 
 add_subdirectory(bench)
+# the library comes first: its benchmarks use add_benchmark from bench/
+add_subdirectory(library)
 add_subdirectory(blocks)
 
 set(GR4_EXPORT_NAME gnuradio4Targets)

@@ -1,12 +1,12 @@
-ARG LIBRARY_SDK_OWNER=gnuradio
-ARG LIBRARY_SDK_TAG=main-ubuntu-26.04-gcc-release
+ARG CORE_SDK_OWNER=gnuradio
+ARG CORE_SDK_TAG=main-ubuntu-26.04-gcc-release
 
-FROM ghcr.io/${LIBRARY_SDK_OWNER}/gnuradio4-library-sdk:${LIBRARY_SDK_TAG} AS builder
+FROM ghcr.io/${CORE_SDK_OWNER}/gnuradio4-core-sdk:${CORE_SDK_TAG} AS builder
 
 ARG GIT_SHA=unknown
 ARG REPOSITORY_URL=https://github.com/gnuradio/gnuradio4-blocks
-ARG LIBRARY_SDK_OWNER=gnuradio
-ARG LIBRARY_SDK_TAG=main-ubuntu-26.04-gcc-release
+ARG CORE_SDK_OWNER=gnuradio
+ARG CORE_SDK_TAG=main-ubuntu-26.04-gcc-release
 ARG CMAKE_BUILD_TYPE=RelWithDebInfo
 ARG CMAKE_FLAGS=""
 ARG CC=gcc
@@ -51,15 +51,21 @@ RUN set -eux; \
         -DCMAKE_FIND_ROOT_PATH=/opt/gnuradio4 \
         -DCMAKE_CROSSCOMPILING_EMULATOR="${system_node}" \
       && cmake --build /build/minimal-consumer --parallel \
-      && "${system_node}" /build/minimal-consumer/gnuradio4_blocks_consumer.js; \
+      && "${system_node}" /build/minimal-consumer/gnuradio4_blocks_consumer.js \
+      && emcmake cmake -S library/test_external/minimal_consumer -B /build/library-consumer \
+        -DCMAKE_PREFIX_PATH=/opt/gnuradio4 \
+        -DCMAKE_FIND_ROOT_PATH=/opt/gnuradio4 \
+        -DCMAKE_CROSSCOMPILING_EMULATOR="${system_node}" \
+      && cmake --build /build/library-consumer --parallel \
+      && "${system_node}" /build/library-consumer/gnuradio4_library_consumer.js; \
     fi \
     && mkdir -p /opt/gnuradio4/share/gnuradio4-blocks-sdk \
     && if [ "${SDK_TARGET}" = emscripten ]; then emscripten_version="$(emcc -dumpversion)"; else emscripten_version=none; fi \
-    && printf 'git_sha=%s\nprefix=/opt/gnuradio4\nlibrary_sdk_image=%s\nsdk_target=%s\nemscripten_version=%s\ncmake_build_type=%s\ncmake_flags=%s\n' \
-      "${GIT_SHA}" "ghcr.io/${LIBRARY_SDK_OWNER}/gnuradio4-library-sdk:${LIBRARY_SDK_TAG}" "${SDK_TARGET}" "${emscripten_version}" "${CMAKE_BUILD_TYPE}" "${CMAKE_FLAGS}" \
+    && printf 'git_sha=%s\nprefix=/opt/gnuradio4\ncore_sdk_image=%s\nsdk_target=%s\nemscripten_version=%s\ncmake_build_type=%s\ncmake_flags=%s\n' \
+      "${GIT_SHA}" "ghcr.io/${CORE_SDK_OWNER}/gnuradio4-core-sdk:${CORE_SDK_TAG}" "${SDK_TARGET}" "${emscripten_version}" "${CMAKE_BUILD_TYPE}" "${CMAKE_FLAGS}" \
       > /opt/gnuradio4/share/gnuradio4-blocks-sdk/manifest
 
-FROM ghcr.io/${LIBRARY_SDK_OWNER}/gnuradio4-library-sdk:${LIBRARY_SDK_TAG} AS sdk
+FROM ghcr.io/${CORE_SDK_OWNER}/gnuradio4-core-sdk:${CORE_SDK_TAG} AS sdk
 
 ARG GIT_SHA=unknown
 ARG REPOSITORY_URL=https://github.com/gnuradio/gnuradio4-blocks

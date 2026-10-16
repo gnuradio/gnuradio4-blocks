@@ -1,0 +1,14 @@
+# cmake/gnuradio4Library.pc.in
+
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: GNU Radio 4 Library
+Description: GNU Radio 4 reusable DSP and algorithm library
+Version: @GR4_PKG_VERSION@
+Requires: gnuradio4
+
+Cflags: -I${includedir}
+Libs:

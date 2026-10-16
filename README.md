@@ -4,20 +4,21 @@
 
 # GNU Radio 4.0 Blocks
 
-`gnuradio4-blocks` provides the standard C++23 block libraries for GNU Radio 4.
-It builds against installed
-[`gnuradio4-core`](https://github.com/gnuradio/gnuradio4-core) and
-[`gnuradio4-library`](https://github.com/gnuradio/gnuradio4-library) SDKs and
-installs blocks, public headers, runtime block libraries, and CMake targets for
-applications and out-of-tree block projects.
+`gnuradio4-blocks` provides the standard C++23 block libraries for GNU Radio 4
+and the algorithm library they build on. It builds against an installed
+[`gnuradio4-core`](https://github.com/gnuradio/gnuradio4-core) SDK and installs
+blocks, the algorithm library, public headers, runtime block libraries, and
+CMake targets for applications and out-of-tree block projects.
 
 This repository is one part of the split GNU Radio 4 source tree:
 
 - [`gnuradio4-core`](https://github.com/gnuradio/gnuradio4-core): runtime,
   scheduler, graph and block model, plugin support, and block-development SDK
-- [`gnuradio4-library`](https://github.com/gnuradio/gnuradio4-library): reusable,
-  non-block DSP algorithms built on core
-- `gnuradio4-blocks`: standard blocks built on core and the algorithm library
+- `gnuradio4-blocks`: the algorithm library under `library/`, and the standard
+  blocks under `blocks/`, built on core and the library
+
+`library/` holds the reusable signal-processing code that blocks share. It
+depends on core alone and never on `blocks/`; see `library/README.md`.
 
 ## What's Included?
 
@@ -41,10 +42,9 @@ enabled.
 ## Building
 
 The project requires CMake 3.27 or newer, a C++23 compiler, and compatible
-installations of the `gnuradio4`, `gnuradio4Library`, and `GnuRadioBlockLib`
-CMake packages. A default test build also requires Boost.UT and cpp-httplib.
-Point `CMAKE_PREFIX_PATH` at the prefix containing the installed core and
-library SDKs:
+installations of the `gnuradio4` and `GnuRadioBlockLib` CMake packages, both
+installed by core. A default test build also requires Boost.UT and cpp-httplib.
+Point `CMAKE_PREFIX_PATH` at the prefix containing the installed core SDK:
 
 ```bash
 git clone https://github.com/gnuradio/gnuradio4-blocks.git
@@ -98,11 +98,19 @@ Other installed family targets include `gnuradio4::gr-common`,
 `gnuradio4::gr-math`. Public headers are installed below
 `include/gnuradio-4.0`.
 
+An installation also carries the `gnuradio4Library` package for code that
+uses only the algorithm library:
+
+```cmake
+find_package(gnuradio4Library CONFIG REQUIRED)
+target_link_libraries(my_target PRIVATE gnuradio4::gnuradio-algorithm)
+```
+
 ## Formatting and Restyled
 
 Pull requests run [Restyled](https://restyled.io/) against every file changed by
 the PR. The repository's `.restyled.yaml` limits that check to the same formatter
-set used by `gnuradio4-core` and `gnuradio4-library`:
+set used by `gnuradio4-core`:
 
 - clang-format 18 for C and C++
 - cmake-format for CMake files
