@@ -20,6 +20,9 @@ add_basic_test(qa_SkipHead)
 add_basic_test(qa_TriggerBlocks)
 add_basic_test(qa_Throttle)
 set_property(TEST qa_Throttle PROPERTY RESOURCE_LOCK rt)
+# the rate case runs on the wall clock behind a Throttle; its tolerance is derived from the lateness it observes
+add_basic_test(qa_RateProbe)
+set_property(TEST qa_RateProbe PROPERTY RESOURCE_LOCK rt)
 
 if(GR_ENABLE_BLOCK_REGISTRY AND INTERNAL_ENABLE_BLOCK_PLUGINS)
   add_basic_test(qa_BasicAvailableBlocks)
@@ -48,3 +51,10 @@ if(TARGET GrBasicBlocksShared)
     PLUGIN_DIRS
     "$<TARGET_FILE_DIR:GrBasicBlocksShared>")
 endif()
+
+# the probe is in the basic plugin; the helper adds the testing plugin alone
+gr_add_graph_test(
+  graph_basic_rate_probe
+  graphs/rate-probe.yaml
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrBasicBlocksShared>)
