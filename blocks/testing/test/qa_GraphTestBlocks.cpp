@@ -41,11 +41,11 @@ struct TagAtSource : gr::Block<TagAtSource<T>> {
     }
 };
 
-/// @brief Runs a TagAtSource into an ExpectSink and returns the error message, empty when the run succeeds.
-template<typename T>
+/// @brief Runs a source into an ExpectSink and returns the error message, empty when the run succeeds.
+template<typename T, template<typename> typename TSource = TagAtSource>
 std::string runIntoSink(gr::property_map sourceSettings, gr::property_map sinkSettings) {
     gr::Graph graph;
-    auto&     source = graph.emplaceBlock<TagAtSource<T>>(std::move(sourceSettings));
+    auto&     source = graph.emplaceBlock<TSource<T>>(std::move(sourceSettings));
     auto&     sink   = graph.emplaceBlock<gr::blocks::testing::ExpectSink<T>>(std::move(sinkSettings));
     if (!graph.connect<"out", "in">(source, sink).has_value()) {
         return "connect failed";
@@ -96,6 +96,99 @@ const boost::ut::suite<"ExpectSink"> expectSinkTests = [] {
         const std::string mismatch = runIntoSink<std::uint32_t>(property_map{{"n", gr::Size_t(4)}, {"key", std::string()}}, //
             property_map{{"expected", std::vector<std::uint32_t>{1U, 2U, 9U, 4U}}});
         expect(mismatch.contains("sample 2 is 3, expected 9")) << mismatch;
+    };
+};
+
+const boost::ut::suite<"ExpectSink expected_tags"> expectedTagsTests = [] {
+    using namespace boost::ut;
+    using gr::property_map;
+    using gr::blocks::testing::VectorSource;
+    const std::vector<float> oneToFour{1.f, 2.f, 3.f, 4.f};
+    const property_map       frameTag{{"mark", std::string("frame")}, {"level", std::int64_t(3)}};
+    const property_map       source{{"values", oneToFour}, {"tag_indices", std::vector<gr::Size_t>{1U, 3U}}, {"tag_map", frameTag}};
+
+    "two tags match exactly and the end-of-stream tag passes tags_exact"_test = [&] {
+        const std::string error = runIntoSink<float, VectorSource>(source, //
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", frameTag}, {"3", frameTag}}}, {"tags_exact", true}});
+        expect(error.empty()) << error;
+    };
+
+    "a listed end-of-stream tag matches at the sample count"_test = [&] {
+        const std::string error = runIntoSink<float>(property_map{{"n", gr::Size_t(4)}, {"key", std::string()}}, //
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"4", property_map{{"end_of_stream", true}}}}}, {"tags_exact", true}});
+        expect(error.empty()) << error;
+    };
+
+    "a key with the gr: prefix matches the listed key"_test = [&] {
+        const std::string error = runIntoSink<float>(property_map{{"n", gr::Size_t(4)}, {"at", gr::Size_t(2)}, {"key", std::string("gr:mark")}}, //
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"2", property_map{{"mark", std::string("x")}}}}}, {"tags_exact", true}});
+        expect(error.empty()) << error;
+    };
+
+    "a wrong value fails with the index, the key and both values"_test = [&] {
+        const property_map wrongLevel{{"mark", std::string("frame")}, {"level", std::int64_t(4)}};
+        const std::string  error = runIntoSink<float, VectorSource>(source, //
+             property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", wrongLevel}, {"3", frameTag}}}});
+        expect(error.contains("tag 'level' at sample 1 is 3, expected 4")) << error;
+    };
+
+    "a numeric value is compared in the type of the expected value"_test = [&] {
+        const auto runWithLevel = [&](gr::pmt::Value level, gr::pmt::Value expectedLevel) {
+            return runIntoSink<float, VectorSource>(property_map{{"values", oneToFour}, {"tag_indices", std::vector<gr::Size_t>{1U}}, {"tag_map", property_map{{"level", level}}}}, //
+                property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", property_map{{"level", expectedLevel}}}}}});
+        };
+        const std::string widened = runWithLevel(gr::pmt::Value(gr::Size_t(3)), gr::pmt::Value(std::int64_t(3)));
+        expect(widened.empty()) << widened;
+        const std::string inexact = runWithLevel(gr::pmt::Value(0.1f), gr::pmt::Value(0.1));
+        expect(inexact.contains("tag 'level' at sample 1 is 0.1 (float32), expected 0.1 (float64)")) << inexact;
+        const std::string text = runWithLevel(gr::pmt::Value(std::string("3")), gr::pmt::Value(std::int64_t(3)));
+        expect(text.contains("(string), expected 3 (int64)")) << text;
+        const std::string integerAsDouble = runWithLevel(gr::pmt::Value(std::int64_t(3)), gr::pmt::Value(3.0));
+        expect(integerAsDouble.empty()) << integerAsDouble;
+        const std::string doubleAsInteger = runWithLevel(gr::pmt::Value(3.0), gr::pmt::Value(std::int64_t(3)));
+        expect(doubleAsInteger.empty()) << doubleAsInteger;
+        const std::string singleAsInteger = runWithLevel(gr::pmt::Value(3.0f), gr::pmt::Value(std::int64_t(3)));
+        expect(singleAsInteger.empty()) << singleAsInteger;
+        const std::string singleAsDouble = runWithLevel(gr::pmt::Value(3.0f), gr::pmt::Value(3.0));
+        expect(singleAsDouble.empty()) << singleAsDouble;
+        const std::string lossy = runWithLevel(gr::pmt::Value(0.1000000001), gr::pmt::Value(0.1f));
+        expect(lossy.contains("tag 'level' at sample 1 is 0.1000000001 (float64), expected 0.1 (float32)")) << lossy;
+    };
+
+    "a missing tag fails when the stream ends"_test = [&] {
+        const std::string error = runIntoSink<float, VectorSource>(source, //
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", frameTag}, {"2", property_map{{"mark", std::string("frame")}}}}}});
+        expect(error.contains("tag 'mark' at sample 2 is missing, expected")) << error;
+    };
+
+    "tags_exact refuses a key not listed at its index"_test = [&] {
+        const std::string error = runIntoSink<float, VectorSource>(source, //
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", frameTag}, {"3", property_map{{"mark", std::string("frame")}}}}}, {"tags_exact", true}});
+        expect(error.contains("tag 'level' at sample 3 is 3, expected no such tag")) << error;
+    };
+
+    "tags_exact refuses a tag at an index the map does not list"_test = [&] {
+        const std::string error = runIntoSink<float, VectorSource>(source, //
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", frameTag}}}, {"tags_exact", true}});
+        expect(error.contains(" at sample 3 is ") && error.contains("expected no such tag")) << error;
+    };
+
+    "two spellings of one index listing the same key fail"_test = [&] {
+        const std::string error = runIntoSink<float, VectorSource>(source, //
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", frameTag}, {"01", property_map{{"mark", std::string("frame")}}}}}});
+        expect(error.contains("expected_tags keys '") && error.contains("both list tag 'mark' at sample 1") && error.contains("'01'")) << error;
+    };
+
+    "unlisted tags pass without tags_exact"_test = [&] {
+        const std::string error = runIntoSink<float, VectorSource>(source, //
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", property_map{{"mark", std::string("frame")}}}}}});
+        expect(error.empty()) << error;
+    };
+
+    "an expected_tags key that is not a sample index fails"_test = [&] {
+        const std::string error = runIntoSink<float, VectorSource>(source, //
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"one", frameTag}}}});
+        expect(error.contains("expected_tags key 'one' is not a sample index")) << error;
     };
 };
 

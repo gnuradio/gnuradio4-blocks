@@ -1,0 +1,21 @@
+# The sink expects a tag of key `mark` at samples 1 and 2. The source publishes it at sample 1 only.
+# The run must end with an error naming sample 2 and the key, and with a nonzero exit status.
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source
+      values: [1.0, 2.0, 3.0, 4.0]
+      tag_indices: !!uint32 [1]
+      tag_map:
+        mark: frame
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink
+      expected: [1.0, 2.0, 3.0, 4.0]
+      expected_tags:
+        1:
+          mark: frame
+        2:
+          mark: frame
+connections:
+  - [source, out, sink, in]

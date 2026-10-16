@@ -56,3 +56,23 @@ gr_add_graph_test(
   SET
   "source.values=[-1.0]"
   "sink.expected=[1.0]")
+gr_add_graph_test(graph_testing_vector_expect_tags_exact graphs/vector-expect-tags-exact.yaml)
+gr_add_graph_test(
+  graph_testing_vector_expect_tags_value_mismatch
+  graphs/vector-expect-tags-value-mismatch.yaml
+  PASS_REGULAR_EXPRESSION
+  "tag 'level' at sample 1 is 3, expected 4")
+gr_add_graph_test(graph_testing_vector_expect_tags_value_mismatch_exit graphs/vector-expect-tags-value-mismatch.yaml
+                  WILL_FAIL)
+gr_add_graph_test(
+  graph_testing_vector_expect_tags_missing
+  graphs/vector-expect-tags-missing.yaml
+  PASS_REGULAR_EXPRESSION
+  "tag 'mark' at sample 2 is missing, expected \"frame\"")
+gr_add_graph_test(graph_testing_vector_expect_tags_missing_exit graphs/vector-expect-tags-missing.yaml WILL_FAIL)
+gr_add_graph_test(
+  graph_testing_vector_expect_tags_extra
+  graphs/vector-expect-tags-extra.yaml
+  PASS_REGULAR_EXPRESSION
+  "tag 'level' at sample 1 is 3, expected no such tag")
+gr_add_graph_test(graph_testing_vector_expect_tags_extra_exit graphs/vector-expect-tags-extra.yaml WILL_FAIL)
