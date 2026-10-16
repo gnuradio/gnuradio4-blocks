@@ -1,165 +1,9 @@
-cmake_minimum_required(VERSION 3.27)
+# The library: reusable algorithms that the blocks build on. Its targets link core and each other, never a block target
+# (cmake/LibraryLayering.cmake). The parent directory provides the shared setup: core's package, Boost.UT, the warning
+# options, httplib, the test helpers and add_benchmark.
 
-project(
-  gnuradio4Library
-  VERSION 4.0.0
-  LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 23)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# No target in this tree declares a C++20 module, so dependency scanning would only add a preprocessor pass per
-# translation unit; disable it until a module exists to discover.
-set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
-set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
-
-include(CMakePackageConfigHelpers)
-include(GNUInstallDirs)
-include(FetchContent)
-find_package(PkgConfig QUIET)
-
-option(ENABLE_EXAMPLES "Enable example builds" ON)
-option(ENABLE_TESTING "Enable test builds" ON)
-option(ENABLE_COVERAGE "Enable coverage target generation" OFF)
-option(WARNINGS_AS_ERRORS "Enable -Werror flags" ON)
-option(GR_USE_FETCHCONTENT_DEPS "Allow CMake to download selected third-party dependencies with FetchContent" OFF)
-option(USE_CCACHE "Use ccache if available" ON)
-
-# Test executables check correctness; a lower optimization level roughly halves their compile time and peak RSS.
-# Benchmarks pin their own level. Empty keeps the build type's default.
-set(GR_QA_OPTIMIZATION_LEVEL
-    "-O1"
-    CACHE STRING "Optimization level for test executables in optimized build types (empty = build-type default)")
+# the FileIo HTTP client path needs cpr; the build leaves it off
 set(GR_HTTP_ENABLED OFF)
-
-# limit parallel compile/link jobs to prevent OOM with template-heavy TUs, override with -DGR_BUILD_PARALLEL_LEVEL=<N>
-# (mirrors gnuradio4-core; CI with more RAM can raise this)
-set(GR_BUILD_PARALLEL_LEVEL
-    "6"
-    CACHE STRING "Maximum parallel compile/link jobs")
-if(CMAKE_GENERATOR MATCHES "Ninja")
-  set_property(GLOBAL APPEND PROPERTY JOB_POOLS compile_pool=${GR_BUILD_PARALLEL_LEVEL} link_pool=2)
-  set(CMAKE_JOB_POOL_COMPILE compile_pool)
-  set(CMAKE_JOB_POOL_LINK link_pool)
-endif()
-
-find_program(CCACHE_PROGRAM ccache)
-if(CCACHE_PROGRAM AND USE_CCACHE)
-  message(STATUS "ccache found and will be used")
-  set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
-elseif(USE_CCACHE)
-  message(WARNING "USE_CCACHE is ON but ccache was not found on PATH — builds will not be cached")
-else()
-  message(STATUS "ccache will not be used")
-endif()
-
-if(ENABLE_TESTING
-   AND (UNIX
-        OR APPLE
-        OR WIN32))
-  include(CTest)
-  enable_testing()
-endif()
-
-find_package(gnuradio4 CONFIG REQUIRED)
-
-if(NOT TARGET gnuradio-core AND TARGET gnuradio4::gnuradio-core)
-  add_library(gnuradio-core ALIAS gnuradio4::gnuradio-core)
-endif()
-# the installed gnuradio4::gnuradio-options keeps its warning battery behind $<BUILD_INTERFACE:...>, so recreate one on
-# a local wrapper target to compile this project's own targets with -Wall/-Werror & co. The battery sits on an interface
-# target of its own, listed after the imported one, because a target's own options precede the ones it inherits: carried
-# directly on the wrapper, a local suppression would land ahead of the flags an SDK built from an older core still
-# exports, and have no effect.
-if(NOT TARGET gnuradio-options AND TARGET gnuradio4::gnuradio-options)
-  include(cmake/CompilerWarnings.cmake)
-  add_library(gnuradio-library-warnings INTERFACE)
-  set_project_warnings(gnuradio-library-warnings)
-  add_library(gnuradio-options INTERFACE)
-  target_link_libraries(gnuradio-options INTERFACE gnuradio4::gnuradio-options gnuradio-library-warnings)
-endif()
-if(NOT TARGET gnuradio-blocklib-core AND TARGET gnuradio4::gnuradio-blocklib-core)
-  add_library(gnuradio-blocklib-core ALIAS gnuradio4::gnuradio-blocklib-core)
-endif()
-if(NOT TARGET gnuradio-meta AND TARGET gnuradio4::gnuradio-meta)
-  add_library(gnuradio-meta ALIAS gnuradio4::gnuradio-meta)
-endif()
-if(NOT TARGET vir AND TARGET gnuradio4::vir)
-  add_library(vir ALIAS gnuradio4::vir)
-endif()
-if(NOT TARGET magic_enum AND TARGET gnuradio4::magic_enum)
-  add_library(magic_enum ALIAS gnuradio4::magic_enum)
-endif()
-
-if(NOT EMSCRIPTEN)
-  find_package(httplib CONFIG QUIET)
-  if(NOT TARGET httplib::httplib)
-    pkg_search_module(
-      CPP_HTTPLIB
-      QUIET
-      IMPORTED_TARGET
-      cpp-httplib
-      httplib)
-    if(CPP_HTTPLIB_FOUND)
-      add_library(httplib::httplib INTERFACE IMPORTED)
-      target_link_libraries(httplib::httplib INTERFACE PkgConfig::CPP_HTTPLIB)
-    endif()
-  endif()
-  if(NOT TARGET httplib::httplib)
-    message(FATAL_ERROR "cpp-httplib is required to build the algorithm tests.")
-  endif()
-endif()
-
-set(BOOST_UT_DISABLE_MODULE
-    ON
-    CACHE BOOL "Disable UT Module Support" FORCE)
-add_compile_definitions(BOOST_UT_DISABLE_MODULE)
-if(EMSCRIPTEN OR GR_USE_FETCHCONTENT_DEPS)
-  FetchContent_Declare(
-    ut
-    GIT_REPOSITORY https://github.com/boost-ext/ut.git
-    GIT_TAG 53e17f25119598c6458d30351b260193096ba67e
-    EXCLUDE_FROM_ALL)
-else()
-  find_package(ut CONFIG QUIET)
-  if(TARGET Boost::ut AND NOT TARGET ut)
-    add_library(ut ALIAS Boost::ut)
-  elseif(TARGET boost::ut AND NOT TARGET ut)
-    add_library(ut ALIAS boost::ut)
-  endif()
-  if(NOT TARGET ut)
-    find_path(GR_BOOST_UT_INCLUDE_DIR boost/ut.hpp)
-    if(NOT GR_BOOST_UT_INCLUDE_DIR)
-      message(FATAL_ERROR "Boost.UT was not found. Install libboost-ext-ut-dev, ut-devel, or a source-built Boost.UT.")
-    endif()
-    add_library(ut INTERFACE)
-    target_include_directories(ut INTERFACE ${GR_BOOST_UT_INCLUDE_DIR})
-  endif()
-endif()
-if(EMSCRIPTEN OR GR_USE_FETCHCONTENT_DEPS)
-  FetchContent_MakeAvailable(ut)
-endif()
-
-if(EMSCRIPTEN AND TARGET ut)
-  # Boost.UT upstream adds -fwasm-exceptions which conflicts with -fexceptions, so replace it
-  get_target_property(_ut_copts ut INTERFACE_COMPILE_OPTIONS)
-  get_target_property(_ut_lopts ut INTERFACE_LINK_OPTIONS)
-  if(_ut_copts)
-    list(REMOVE_ITEM _ut_copts -fwasm-exceptions)
-    list(APPEND _ut_copts -fexceptions)
-    set_target_properties(ut PROPERTIES INTERFACE_COMPILE_OPTIONS "${_ut_copts}")
-  endif()
-  if(_ut_lopts)
-    list(REMOVE_ITEM _ut_lopts -fwasm-exceptions)
-    list(APPEND _ut_lopts -fexceptions)
-    set_target_properties(ut PROPERTIES INTERFACE_LINK_OPTIONS "${_ut_lopts}")
-  endif()
-endif()
-
-if(NOT TARGET Boost::ut AND TARGET ut)
-  add_library(Boost::ut ALIAS ut)
-endif()
 
 if(NOT TARGET exprtk)
   add_library(exprtk STATIC third_party/exprtk.cpp)
@@ -172,86 +16,23 @@ if(NOT TARGET gnuradio4::exprtk)
   add_library(gnuradio4::exprtk ALIAS exprtk)
 endif()
 
+# The library installs its own package, gnuradio4Library, beside the blocks' package, so a consumer that finds
+# gnuradio4Library and links gnuradio4::gnuradio-algorithm or gnuradio4::exprtk builds unchanged.
 set(GR4_EXPORT_NAME gnuradio4LibraryTargets)
 set(GR4_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/gnuradio4Library")
-set(GR4_PKG_VERSION
-    "${PROJECT_VERSION}-git"
-    CACHE STRING "Version string used in gnuradio4Library.pc")
-set(GR_TEST_HELPER_LIBRARIES "")
 
-if(ENABLE_TESTING)
-  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/GnuRadioTestHelpers.cmake)
-endif()
-
-if(ENABLE_TESTING
-   AND (UNIX
-        OR APPLE
-        OR WIN32)
-   AND ENABLE_COVERAGE)
-  message("Coverage reporting enabled")
-  include(cmake/CodeCoverage.cmake)
-  append_coverage_compiler_flags()
-  set(GCOVR_ADDITIONAL_ARGS "--merge-mode-functions=merge-use-line-min"
-                            "--gcov-ignore-parse-errors=negative_hits.warn_once_per_file")
-  set(GR4_LIBRARY_COVERAGE_EXCLUDES "${CMAKE_BINARY_DIR}/*" "${CMAKE_SOURCE_DIR}/third_party/*"
-                                    "${CMAKE_BINARY_DIR}/_deps/*")
-endif()
-
-add_subdirectory(bench)
 add_subdirectory(algorithm)
 
-if(ENABLE_TESTING
-   AND (UNIX
-        OR APPLE
-        OR WIN32)
-   AND ENABLE_COVERAGE)
-  set(GR4_LIBRARY_COVERAGE_DEPENDENCIES
-      qa_Xoshiro256pp
-      qa_GaussianNoise
-      qa_NoiseGenerator
-      qa_ToneGenerator
-      qa_SignalGeneratorCore
-      qa_algorithm_fourier
-      qa_UncertainValue
-      qa_UncertainValueFormatter
-      qa_UncertainValueCompatibility
-      qa_DataSetEstimators
-      qa_FilterTool
-      qa_ImCanvas
-      qa_ImChart
-      qa_ImGraph
-      qa_SchmittTrigger
-      qa_SimdFFT
-      qa_SvdFilter
-      qa_SavitzkyGolay
-      qa_TensorMath
-      qa_SVD
-      qa_SampleRateEstimator
-      qa_BurstTaper
-      qa_FileIo
-      qa_FileIoHelpers)
-  setup_target_for_coverage_gcovr_xml(
-    NAME
-    coverage
-    EXECUTABLE
-    ctest
-    EXECUTABLE_ARGS
-    "--output-on-failure"
-    DEPENDENCIES
-    ${GR4_LIBRARY_COVERAGE_DEPENDENCIES}
-    EXCLUDE
-    ${GR4_LIBRARY_COVERAGE_EXCLUDES})
-  setup_target_for_coverage_gcovr_html(
-    NAME
-    coverage_html
-    EXECUTABLE
-    ctest
-    EXECUTABLE_ARGS
-    "--output-on-failure"
-    DEPENDENCIES
-    ${GR4_LIBRARY_COVERAGE_DEPENDENCIES}
-    EXCLUDE
-    ${GR4_LIBRARY_COVERAGE_EXCLUDES})
+include(cmake/LibraryLayering.cmake)
+cmake_language(
+  EVAL
+  CODE
+  "cmake_language(DEFER DIRECTORY [[${PROJECT_SOURCE_DIR}]] CALL gr_library_check_link_direction [[${CMAKE_CURRENT_SOURCE_DIR}]] [[${PROJECT_SOURCE_DIR}/blocks]])"
+)
+
+if(ENABLE_TESTING)
+  add_test(NAME qa_LibraryLayering COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P
+                                           ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckLibraryIncludes.cmake)
 endif()
 
 configure_package_config_file(
@@ -265,19 +46,34 @@ write_basic_package_version_file(
 
 configure_file(cmake/gnuradio4Library.pc.in "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4Library.pc" @ONLY)
 
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4LibraryConfig.cmake"
-              "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4LibraryConfigVersion.cmake"
-              "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4Library.pc" DESTINATION "${GR4_CMAKE_INSTALL_DIR}")
+# Every file the library installs is development material: headers, a static library and package files. Every rule here
+# and in algorithm/ belongs to the Devel component, the component name core uses for its block-library generator files.
+install(
+  FILES "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4LibraryConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4LibraryConfigVersion.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4Library.pc"
+  DESTINATION "${GR4_CMAKE_INSTALL_DIR}"
+  COMPONENT Devel)
 
 install(
   TARGETS exprtk
   EXPORT ${GR4_EXPORT_NAME}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(FILES $<TARGET_FILE:exprtk> DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(FILES third_party/exprtk.hpp DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
-install(DIRECTORY third_party/exprtk DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Devel)
+install(
+  FILES $<TARGET_FILE:exprtk>
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  COMPONENT Devel)
+install(
+  FILES third_party/exprtk.hpp
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+  COMPONENT Devel)
+install(
+  DIRECTORY third_party/exprtk
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+  COMPONENT Devel)
 
 install(
   EXPORT ${GR4_EXPORT_NAME}
   NAMESPACE gnuradio4::
-  DESTINATION "${GR4_CMAKE_INSTALL_DIR}")
+  DESTINATION "${GR4_CMAKE_INSTALL_DIR}"
+  COMPONENT Devel)

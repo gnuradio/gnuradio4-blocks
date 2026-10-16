@@ -5,7 +5,9 @@ Blocks in this repository build on it, and applications and out-of-tree block
 projects can use it directly. It depends on `gnuradio4-core` alone.
 
 The dependency runs one way. Code under `library/` may use core. It never
-includes a header or links a target from `blocks/`. A piece of code that a
+includes a header or links a target from `blocks/`. The configure step fails
+when a library target links a block target, and the `qa_LibraryLayering` test
+fails when a library file includes a block header. A piece of code that a
 second block family could use moves into `library/algorithm/`, with its test,
 and the block keeps a thin wrapper around it.
 
