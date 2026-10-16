@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <expected>
 #include <functional>
@@ -20,6 +21,9 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/LifeCycle.hpp>
@@ -943,6 +947,93 @@ std::thread spawn_rep_multipart_responder(TestEndpoint endpoint, std::vector<std
     });
 }
 
+// depth PAIR tags followed by depth + 1 NULL tags: a pair nested depth levels deep through the car
+std::vector<std::uint8_t> legacy_pair_chain(std::size_t depth) {
+    std::vector<std::uint8_t> bytes(depth, 0x07U);
+    bytes.insert(bytes.end(), depth + 1UZ, 0x06U);
+    return bytes;
+}
+
+// a GR3 list of NULL elements linked through the cdr: one pair per element, closed by NULL
+std::vector<std::uint8_t> legacy_cdr_list(std::size_t elements) {
+    std::vector<std::uint8_t> bytes;
+    for (std::size_t i = 0; i < elements; ++i) {
+        bytes.insert(bytes.end(), {0x07U, 0x06U});
+    }
+    bytes.push_back(0x06U);
+    return bytes;
+}
+
+// a flat GR3 dict of distinct four-letter keys in sorted order, each value NULL
+std::vector<std::uint8_t> legacy_flat_dict(std::size_t entries) {
+    std::vector<std::uint8_t> bytes;
+    for (std::size_t i = 0; i < entries; ++i) {
+        const auto letter = [&](std::size_t place) { return static_cast<std::uint8_t>('a' + (i / place) % 26UZ); };
+        bytes.insert(bytes.end(), {0x09U, 0x07U, 0x02U, 0x00U, 0x04U, letter(17'576UZ), letter(676UZ), letter(26UZ), letter(1UZ), 0x06U});
+    }
+    bytes.push_back(0x06U);
+    return bytes;
+}
+
+// a GR3 dict of one entry whose value is a pair nested value_depth levels deep
+std::vector<std::uint8_t> legacy_dict_with_nested_value(std::size_t value_depth) {
+    std::vector<std::uint8_t> bytes{0x09U, 0x07U, 0x02U, 0x00U, 0x03U, 'k', 'e', 'y'};
+    const auto                value = legacy_pair_chain(value_depth);
+    bytes.insert(bytes.end(), value.begin(), value.end());
+    bytes.push_back(0x06U);
+    return bytes;
+}
+
+// the DecodeError text for a refused buffer, or an empty optional for a buffer that decodes
+std::optional<std::string> legacy_refusal(const std::vector<std::uint8_t>& bytes) {
+    try {
+        std::ignore = legacy_pmt::deserialize_from_legacy(bytes.data(), bytes.size());
+    } catch (const zdetail::DecodeError& error) {
+        return std::string(error.what());
+    }
+    return std::nullopt;
+}
+
+enum class ChildDecode { refused, decoded, round_trip_differs, other_error, ended_by_signal, fork_failed };
+
+// Decodes on a thread with the default stack in a forked child, and with round_trip re-encodes the result and compares
+// it with the input. A stack overflow ends the child by a signal and leaves the test binary running.
+ChildDecode legacy_decode_in_child(const std::vector<std::uint8_t>& bytes, bool round_trip = false) {
+    std::fflush(stdout);
+    const pid_t child = fork();
+    if (child < 0) {
+        return ChildDecode::fork_failed;
+    }
+    if (child == 0) {
+        int         code = 2;
+        std::thread worker([&] {
+            try {
+                const auto decoded = legacy_pmt::deserialize_from_legacy(bytes.data(), bytes.size());
+                code               = !round_trip || legacy_pmt::serialize_to_legacy(decoded) == bytes ? 1 : 3;
+            } catch (const zdetail::DecodeError&) {
+                code = 0;
+            } catch (...) {
+                code = 2;
+            }
+        });
+        worker.join();
+        _exit(code);
+    }
+    int status = 0;
+    if (waitpid(child, &status, 0) != child) {
+        return ChildDecode::other_error;
+    }
+    if (!WIFEXITED(status)) {
+        return ChildDecode::ended_by_signal;
+    }
+    switch (WEXITSTATUS(status)) {
+    case 0: return ChildDecode::refused;
+    case 1: return ChildDecode::decoded;
+    case 3: return ChildDecode::round_trip_differs;
+    default: return ChildDecode::other_error;
+    }
+}
+
 } // namespace
 
 const suite ZmqBlocksTests = [] {
@@ -1800,6 +1891,88 @@ const suite ZmqBlocksTests = [] {
             long_string_threw = true;
         }
         expect(long_string_threw);
+    };
+
+    "Legacy PMT pair chain decodes at the nesting bound and is refused past it"_test = [] {
+        constexpr std::size_t bound   = legacy_pmt::kMaxNestingDepth;
+        const auto            at      = legacy_pair_chain(bound);
+        const auto            decoded = legacy_pmt::deserialize_from_legacy(at.data(), at.size());
+        expect(legacy_pmt::serialize_to_legacy(decoded) == at);
+
+        const auto refusal = legacy_refusal(legacy_pair_chain(bound + 1UZ));
+        expect(refusal.has_value()) << "a pair chain one past the bound decodes";
+        if (refusal) {
+            expect(refusal->contains("depth " + std::to_string(bound + 1UZ))) << *refusal;
+            expect(refusal->contains("bound of " + std::to_string(bound))) << *refusal;
+        }
+    };
+
+    "Legacy PMT list linked through the cdr is bounded by the nesting bound"_test = [] {
+        constexpr std::size_t bound   = legacy_pmt::kMaxNestingDepth;
+        const auto            at      = legacy_cdr_list(bound);
+        const auto            decoded = legacy_pmt::deserialize_from_legacy(at.data(), at.size());
+        expect(legacy_pmt::serialize_to_legacy(decoded) == at);
+
+        const auto refusal = legacy_refusal(legacy_cdr_list(bound + 1UZ));
+        expect(refusal.has_value()) << "a list one element past the bound decodes";
+        if (refusal) {
+            expect(refusal->contains("depth " + std::to_string(bound + 1UZ))) << *refusal;
+        }
+    };
+
+    "Legacy PMT dict value is refused past the nesting bound"_test = [] {
+        constexpr std::size_t bound   = legacy_pmt::kMaxNestingDepth;
+        const auto            at      = legacy_dict_with_nested_value(bound - 1UZ);
+        const auto            decoded = legacy_pmt::deserialize_from_legacy(at.data(), at.size());
+        expect(legacy_pmt::serialize_to_legacy(decoded) == at);
+
+        const auto refusal = legacy_refusal(legacy_dict_with_nested_value(bound));
+        expect(refusal.has_value()) << "a dict value one level past the bound decodes";
+        if (refusal) {
+            expect(refusal->contains("depth " + std::to_string(bound + 1UZ))) << *refusal;
+        }
+    };
+
+    "Legacy PMT flat dict adds no depth per entry"_test = [] {
+        constexpr std::size_t bound = legacy_pmt::kMaxNestingDepth;
+        const auto            small = legacy_flat_dict(bound + 1UZ);
+        expect(legacy_pmt::serialize_to_legacy(legacy_pmt::deserialize_from_legacy(small.data(), small.size())) == small);
+
+        for (const std::size_t entries : {bound + 1UZ, 17'576UZ, 100'000UZ}) {
+            const auto bytes = legacy_flat_dict(entries);
+            const auto child = legacy_decode_in_child(bytes);
+            expect(child == ChildDecode::decoded) << entries << "dict entries";
+            if (child == ChildDecode::decoded) {
+                const auto  decoded = legacy_pmt::deserialize_from_legacy(bytes.data(), bytes.size());
+                const auto* map     = decoded.get_if<gr::pmt::Value::Map>();
+                expect(map != nullptr && eq(map->size(), entries)) << entries << "dict entries";
+            }
+        }
+    };
+
+    "Legacy PMT flat dict of 100000 entries round-trips through the encoder"_test = [] {
+        const auto result = legacy_decode_in_child(legacy_flat_dict(100'000UZ), true);
+        expect(result == ChildDecode::decoded) << "child result " << static_cast<int>(result);
+    };
+
+    "Legacy PMT pair chain nested 100000 levels through the car is refused"_test = [] {
+        const auto bytes = legacy_pair_chain(100'000UZ);
+        const auto child = legacy_decode_in_child(bytes);
+        expect(child == ChildDecode::refused);
+        if (child == ChildDecode::refused) {
+            const auto refusal = legacy_refusal(bytes);
+            expect(refusal.has_value() && refusal->contains("depth " + std::to_string(legacy_pmt::kMaxNestingDepth + 1UZ)));
+        }
+    };
+
+    "Legacy PMT past the nesting bound is counted as a refused message"_test = [] {
+        const auto                  bytes = legacy_pair_chain(legacy_pmt::kMaxNestingDepth + 1UZ);
+        zmq::message_t              msg(bytes.data(), bytes.size());
+        zdetail::ZmqReceiveCounters counters;
+        const auto                  decoded = zdetail::decode_frame<gr::pmt::Value>(msg, false, gr::blocks::zeromq::PmtWireFormat::GR3, counters);
+        expect(!decoded.has_value());
+        expect(eq(counters.snapshot().refused_messages, std::uint64_t{1}));
+        expect(eq(counters.snapshot().messages, std::uint64_t{1}));
     };
 
     "REP tag selection does not commit on header failure"_test = [] {

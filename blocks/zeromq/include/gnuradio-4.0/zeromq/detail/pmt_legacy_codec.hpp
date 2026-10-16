@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <format>
 #include <limits>
 #include <memory_resource>
 #include <stdexcept>
@@ -22,6 +23,15 @@ namespace legacy_pmt {
 
 using gr::Tensor;
 using gr::pmt::Value;
+
+/// Deepest nesting the decoder accepts. The outermost value sits at depth 0. A pair's car and cdr, a dict entry's key
+/// and value, and a tuple's elements each sit one level below their container. The entries of a dict add no depth: the
+/// decoder reads them in a loop, and the message size alone bounds their number. A list of pairs linked through the
+/// cdr decodes to nested two-element tensors and gains one level per element. The bound admits such a list of 64
+/// elements at the top level. A GR3 PDU, a pair of a metadata dict and a uniform vector, reaches depth 2 with scalar
+/// metadata. The bound leaves room for metadata nested far deeper. It also limits the recursion of the decoder, and of
+/// the destructor and encoder of the decoded value, to a fixed depth.
+inline constexpr std::size_t kMaxNestingDepth = 64UZ;
 
 inline std::vector<uint8_t> serialize_to_legacy(const Value& obj);
 
@@ -225,33 +235,19 @@ static std::vector<uint8_t> serialize_dict(const Value::Map& map) {
     std::sort(keys.begin(), keys.end());
 
     std::vector<uint8_t> out;
-    if (keys.empty()) {
-        write_u8(out, static_cast<uint8_t>(legacy_tag::LEGACY_PMT_NULL));
-        return out;
-    }
-
-    auto write_tail = [&](auto&& self, std::size_t idx) -> void {
-        if (idx >= keys.size()) {
-            write_u8(out, static_cast<uint8_t>(legacy_tag::LEGACY_PMT_NULL));
-            return;
-        }
+    for (const auto& key : keys) {
         write_u8(out, static_cast<uint8_t>(legacy_tag::LEGACY_PMT_DICT));
         write_u8(out, static_cast<uint8_t>(legacy_tag::LEGACY_PMT_PAIR));
-        const auto& key       = keys[idx];
-        auto        key_bytes = serialize_string(key);
+        auto key_bytes = serialize_string(key);
         out.insert(out.end(), key_bytes.begin(), key_bytes.end());
-        std::pmr::string key_pmr(key, std::pmr::get_default_resource());
-        auto             it = map.find(key_pmr);
+        auto it = map.find(std::pmr::string(key, std::pmr::get_default_resource()));
         if (it == map.end()) {
             throw std::runtime_error("Legacy PMT dict missing key");
         }
-        const auto& val       = it->second;
-        auto        val_bytes = serialize_to_legacy(val);
+        auto val_bytes = serialize_to_legacy(it->second);
         out.insert(out.end(), val_bytes.begin(), val_bytes.end());
-        self(self, idx + 1);
-    };
-
-    write_tail(write_tail, 0);
+    }
+    write_u8(out, static_cast<uint8_t>(legacy_tag::LEGACY_PMT_NULL));
     return out;
 }
 
@@ -526,11 +522,11 @@ std::vector<VTYPE> create_vector_from_big_endian(const uint8_t*& ptr, const uint
     return vec;
 }
 
-static Value deserialize_value(const uint8_t*& ptr, const uint8_t* end);
+static Value deserialize_value(const uint8_t*& ptr, const uint8_t* end, std::size_t depth);
 
-static Value deserialize_pair(const uint8_t*& ptr, const uint8_t* end) {
-    Value              car = deserialize_value(ptr, end);
-    Value              cdr = deserialize_value(ptr, end);
+static Value deserialize_pair(const uint8_t*& ptr, const uint8_t* end, std::size_t depth) {
+    Value              car = deserialize_value(ptr, end, depth + 1UZ);
+    Value              cdr = deserialize_value(ptr, end, depth + 1UZ);
     std::vector<Value> values;
     values.reserve(2);
     values.push_back(std::move(car));
@@ -538,49 +534,46 @@ static Value deserialize_pair(const uint8_t*& ptr, const uint8_t* end) {
     return Value(Tensor<Value>(std::move(values)));
 }
 
-static Value deserialize_dict(const uint8_t*& ptr, const uint8_t* end) {
-    if (ptr >= end) {
-        throw gr::blocks::zeromq::detail::DecodeError("Truncated legacy PMT buffer (dict)");
-    }
-
+/// Decodes the entries that follow a DICT tag. Each entry is a pair of a symbol key and a value, followed by a DICT tag
+/// that starts the next entry or a NULL tag that closes the dict. The first occurrence of a key wins.
+static Value deserialize_dict(const uint8_t*& ptr, const uint8_t* end, std::size_t depth) {
     Value::Map map{std::pmr::get_default_resource()};
-
-    if (ptr >= end) {
-        return Value(std::move(map));
-    }
-
-    auto pair_tag = static_cast<legacy_tag>(*ptr++);
-    if (pair_tag == legacy_tag::LEGACY_PMT_NULL) {
-        return Value(std::move(map));
-    }
-    if (pair_tag != legacy_tag::LEGACY_PMT_PAIR) {
-        throw gr::blocks::zeromq::detail::DecodeError("Malformed legacy PMT dict (missing pair tag)");
-    }
-
-    Value key = deserialize_value(ptr, end);
-    Value val = deserialize_value(ptr, end);
-
-    if (!key.is_string()) {
-        throw gr::blocks::zeromq::detail::DecodeError("Legacy PMT dict key is not a string");
-    }
-    std::string key_str = std::string(key.value_or(std::string_view{}));
-    map.emplace(std::pmr::string(key_str, std::pmr::get_default_resource()), std::move(val));
-
-    Value tail = deserialize_value(ptr, end);
-    if (tail.is_map()) {
-        if (auto tail_map = tail.get_if<Value::Map>()) {
-            for (auto& [k, v] : *tail_map) {
-                map.emplace(std::pmr::string(k, std::pmr::get_default_resource()), std::move(v));
-            }
+    while (true) {
+        if (ptr >= end) {
+            throw gr::blocks::zeromq::detail::DecodeError("Truncated legacy PMT buffer (dict)");
         }
-    } else if (!tail.is_monostate()) {
-        throw gr::blocks::zeromq::detail::DecodeError("Malformed legacy PMT dict tail");
-    }
+        auto pair_tag = static_cast<legacy_tag>(*ptr++);
+        if (pair_tag == legacy_tag::LEGACY_PMT_NULL) {
+            return Value(std::move(map));
+        }
+        if (pair_tag != legacy_tag::LEGACY_PMT_PAIR) {
+            throw gr::blocks::zeromq::detail::DecodeError("Malformed legacy PMT dict (missing pair tag)");
+        }
 
-    return Value(std::move(map));
+        Value key = deserialize_value(ptr, end, depth + 1UZ);
+        Value val = deserialize_value(ptr, end, depth + 1UZ);
+        if (!key.is_string()) {
+            throw gr::blocks::zeromq::detail::DecodeError("Legacy PMT dict key is not a string");
+        }
+        map.emplace(std::pmr::string(key.value_or(std::string_view{}), std::pmr::get_default_resource()), std::move(val));
+
+        if (ptr >= end) {
+            throw gr::blocks::zeromq::detail::DecodeError("Truncated legacy PMT buffer (dict tail)");
+        }
+        auto tail_tag = static_cast<legacy_tag>(*ptr++);
+        if (tail_tag == legacy_tag::LEGACY_PMT_NULL) {
+            return Value(std::move(map));
+        }
+        if (tail_tag != legacy_tag::LEGACY_PMT_DICT) {
+            throw gr::blocks::zeromq::detail::DecodeError("Malformed legacy PMT dict tail");
+        }
+    }
 }
 
-static Value deserialize_value(const uint8_t*& ptr, const uint8_t* end) {
+static Value deserialize_value(const uint8_t*& ptr, const uint8_t* end, std::size_t depth) {
+    if (depth > kMaxNestingDepth) {
+        throw gr::blocks::zeromq::detail::DecodeError(std::format("Legacy PMT nesting depth {} exceeds the bound of {}", depth, kMaxNestingDepth));
+    }
     if (ptr >= end) {
         throw gr::blocks::zeromq::detail::DecodeError("Empty legacy PMT buffer");
     }
@@ -677,16 +670,15 @@ static Value deserialize_value(const uint8_t*& ptr, const uint8_t* end) {
             throw gr::blocks::zeromq::detail::DecodeError("Truncated legacy PMT tuple");
         }
         std::vector<Value> values;
-        values.reserve(len);
         for (uint32_t i = 0; i < len; ++i) {
-            values.push_back(deserialize_value(ptr, end));
+            values.push_back(deserialize_value(ptr, end, depth + 1UZ));
         }
         return Value(Tensor<Value>(values));
     }
     case legacy_tag::LEGACY_PMT_PAIR: {
-        return deserialize_pair(ptr, end);
+        return deserialize_pair(ptr, end, depth);
     }
-    case legacy_tag::LEGACY_PMT_DICT: return deserialize_dict(ptr, end);
+    case legacy_tag::LEGACY_PMT_DICT: return deserialize_dict(ptr, end, depth);
     case legacy_tag::LEGACY_PMT_VECTOR:
     default: throw gr::blocks::zeromq::detail::DecodeError("Unsupported or unknown legacy PMT tag");
     }
@@ -698,13 +690,13 @@ inline gr::pmt::Value deserialize_from_legacy(const uint8_t* data, std::size_t s
     }
     const uint8_t* ptr    = data;
     const uint8_t* end    = data + size;
-    auto           result = deserialize_value(ptr, end);
+    auto           result = deserialize_value(ptr, end, 0UZ);
     if (ptr != end) {
         throw gr::blocks::zeromq::detail::DecodeError("Trailing bytes in legacy PMT buffer");
     }
     return result;
 }
 
-inline gr::pmt::Value deserialize_from_legacy(const uint8_t*& data, const uint8_t* end) { return deserialize_value(data, end); }
+inline gr::pmt::Value deserialize_from_legacy(const uint8_t*& data, const uint8_t* end) { return deserialize_value(data, end, 0UZ); }
 
 } // namespace legacy_pmt
