@@ -11,3 +11,4 @@ function(add_math_benchmark BM_NAME)
 endfunction()
 
 add_math_benchmark(bm_Rotator)
+add_math_benchmark(bm_Unary)

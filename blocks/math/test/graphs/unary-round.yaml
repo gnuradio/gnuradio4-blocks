@@ -1,0 +1,30 @@
+# Round: the nearest integer value, halves away from zero.
+#   -1.5 0 2.5 2.4 -0.2 -> -2 0 3 2 -0 (-0 equals 0)
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32 [-1.5, 0.0, 2.5, 2.4, -0.2]
+  - id: gr::blocks::math::Round<float32>
+    parameters:
+      name: round_f32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_f32
+      expected: !!float32 [-2.0, 0.0, 3.0, 2.0, 0.0]
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source_f64
+      values: !!float64 [-1.5, 0.0, 2.5, 2.4, -0.2]
+  - id: gr::blocks::math::Round<float64>
+    parameters:
+      name: round_f64
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink_f64
+      expected: !!float64 [-2.0, 0.0, 3.0, 2.0, 0.0]
+connections:
+  - [source_f32, out, round_f32, in]
+  - [round_f32, out, sink_f32, in]
+  - [source_f64, out, round_f64, in]
+  - [round_f64, out, sink_f64, in]

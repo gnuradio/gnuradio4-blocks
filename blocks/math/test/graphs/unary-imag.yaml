@@ -1,0 +1,20 @@
+# Imag: out = im(in), complex in, float32 out.
+#   (1,-2) (0,0) (-3.5,4) -> -2 0 4
+blocks:
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: source_c32
+      values: !!complex32
+        - (1.0, -2.0)
+        - (0.0, 0.0)
+        - (-3.5, 4.0)
+  - id: gr::blocks::math::Imag<complex<float32>>
+    parameters:
+      name: imag_c32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_c32
+      expected: !!float32 [-2.0, 0.0, 4.0]
+connections:
+  - [source_c32, out, imag_c32, in]
+  - [imag_c32, out, sink_c32, in]

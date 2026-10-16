@@ -1,0 +1,21 @@
+# MagnitudeSquared: out = re^2 + im^2, complex in, float32 out.
+#   (3,4) (0,0) (-1,0) (0,-2.5) -> 25 0 1 6.25
+blocks:
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: source_c32
+      values: !!complex32
+        - (3.0, 4.0)
+        - (0.0, 0.0)
+        - (-1.0, 0.0)
+        - (0.0, -2.5)
+  - id: gr::blocks::math::MagnitudeSquared<complex<float32>>
+    parameters:
+      name: magnitude_squared_c32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_c32
+      expected: !!float32 [25.0, 0.0, 1.0, 6.25]
+connections:
+  - [source_c32, out, magnitude_squared_c32, in]
+  - [magnitude_squared_c32, out, sink_c32, in]
