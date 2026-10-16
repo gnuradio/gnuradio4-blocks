@@ -7,6 +7,7 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/DataSet.hpp>
+#include <gnuradio-4.0/math/Unary.hpp>
 #include <gnuradio-4.0/meta/UncertainValue.hpp>
 
 namespace gr::blocks::basic {
@@ -59,106 +60,138 @@ Performs scaling, i.e. 'R output = R(input * scale)'
     }
 };
 
-GR_REGISTER_BLOCK(gr::blocks::basic::Abs, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
+namespace detail {
 
-template<typename T>
-requires std::is_arithmetic_v<T> || meta::complex_like<T>
-struct Abs : Block<Abs<T>> {
-    using R           = meta::fundamental_base_value_type_t<T>;
-    using Description = Doc<"@brief basic block to calculate the absolute (magnitude) value of a complex or arithmetic input stream">;
+/*
+ * The converters below are `math::Unary` blocks whose operations name the converters' ports:
+ * `in` and `abs`, `in` and `imag`, `in` and `real`, `in` and `arg`, `rad` and `deg`, `deg` and `rad`.
+ */
+
+template<typename Derived, typename T, typename R>
+struct AbsPorts : Block<Derived> {
+    using Block<Derived>::Block;
+
     PortIn<T>  in;
     PortOut<R> abs;
 
-    GR_MAKE_REFLECTABLE(Abs, in, abs);
-
-    [[nodiscard]] constexpr R processOne(T input) const noexcept {
-        if constexpr (std::is_unsigned_v<T>) {
-            using TSigned = std::make_signed_t<T>;
-            return static_cast<R>(std::abs(static_cast<TSigned>(input)));
-        } else {
-            return static_cast<R>(std::abs(input));
-        }
-    }
+    GR_MAKE_REFLECTABLE(AbsPorts, in, abs);
 };
 
-GR_REGISTER_BLOCK(gr::blocks::basic::Imag, [T], [std::complex<float>])
+template<typename Derived, typename T, typename R>
+struct ImagPorts : Block<Derived> {
+    using Block<Derived>::Block;
 
-template<typename T>
-requires std::is_arithmetic_v<T> || meta::complex_like<T>
-struct Imag : Block<Imag<T>> {
-    using R           = meta::fundamental_base_value_type_t<T>;
-    using Description = Doc<"@brief basic block to the imaginary component of a complex input stream">;
     PortIn<T>  in;
     PortOut<R> imag;
 
-    GR_MAKE_REFLECTABLE(Imag, in, imag);
-
-    [[nodiscard]] constexpr R processOne(T input) const noexcept { return std::imag(input); }
+    GR_MAKE_REFLECTABLE(ImagPorts, in, imag);
 };
 
-GR_REGISTER_BLOCK(gr::blocks::basic::Real, [T], [std::complex<float>])
+template<typename Derived, typename T, typename R>
+struct RealPorts : Block<Derived> {
+    using Block<Derived>::Block;
 
-template<typename T>
-requires std::is_arithmetic_v<T> || meta::complex_like<T>
-struct Real : Block<Real<T>> {
-    using R           = meta::fundamental_base_value_type_t<T>;
-    using Description = Doc<"@brief basic block to the real component of a complex input stream">;
     PortIn<T>  in;
     PortOut<R> real;
 
-    GR_MAKE_REFLECTABLE(Real, in, real);
-
-    [[nodiscard]] constexpr R processOne(T input) const noexcept { return std::real(input); }
+    GR_MAKE_REFLECTABLE(RealPorts, in, real);
 };
 
-GR_REGISTER_BLOCK(gr::blocks::basic::Arg, [T], [std::complex<float>])
+template<typename Derived, typename T, typename R>
+struct ArgPorts : Block<Derived> {
+    using Block<Derived>::Block;
 
-template<typename T>
-requires std::is_arithmetic_v<T> || meta::complex_like<T>
-struct Arg : Block<Arg<T>> {
-    using R           = meta::fundamental_base_value_type_t<T>;
-    using Description = Doc<"@brief basic block to calculate the argument (phase angle, [radians]) of a complex input stream">;
     PortIn<T>  in;
     PortOut<R> arg;
 
-    GR_MAKE_REFLECTABLE(Arg, in, arg);
-
-    [[nodiscard]] constexpr R processOne(T input) const noexcept { return std::arg(input); }
+    GR_MAKE_REFLECTABLE(ArgPorts, in, arg);
 };
 
-GR_REGISTER_BLOCK(gr::blocks::basic::RadiansToDegree, [T], [float])
+template<typename Derived, typename T, typename R>
+struct RadiansToDegreePorts : Block<Derived> {
+    using Block<Derived>::Block;
 
-template<std::floating_point T>
-struct RadiansToDegree : Block<RadiansToDegree<T>> {
-    using R           = meta::fundamental_base_value_type_t<T>;
-    using Description = Doc<"@brief convert radians to degree">;
     PortIn<T>  rad;
     PortOut<R> deg;
 
-    GR_MAKE_REFLECTABLE(RadiansToDegree, rad, deg);
-
-    template<gr::meta::t_or_simd<T> V>
-    [[nodiscard]] constexpr auto processOne(const V& radians) const noexcept {
-        return (radians / std::numbers::pi_v<T>)*static_cast<T>(180);
-    }
+    GR_MAKE_REFLECTABLE(RadiansToDegreePorts, rad, deg);
 };
 
-GR_REGISTER_BLOCK(gr::blocks::basic::DegreeToRadians, [T], [float])
+template<typename Derived, typename T, typename R>
+struct DegreeToRadiansPorts : Block<Derived> {
+    using Block<Derived>::Block;
 
-template<std::floating_point T>
-struct DegreeToRadians : Block<DegreeToRadians<T>> {
-    using R           = meta::fundamental_base_value_type_t<T>;
-    using Description = Doc<"@brief convert radians to degree">;
     PortIn<T>  deg;
     PortOut<R> rad;
 
-    GR_MAKE_REFLECTABLE(DegreeToRadians, deg, rad);
-
-    template<gr::meta::t_or_simd<T> V>
-    [[nodiscard]] constexpr auto processOne(const V& degree) const noexcept {
-        return (degree / static_cast<T>(180)) * std::numbers::pi_v<T>;
-    }
+    GR_MAKE_REFLECTABLE(DegreeToRadiansPorts, deg, rad);
 };
+
+struct AbsOp : math::unary::Abs {
+    using Description = Doc<"@brief basic block to calculate the absolute (magnitude) value of a complex or arithmetic input stream">;
+    template<typename Derived, typename T, typename R>
+    using ports = AbsPorts<Derived, T, R>;
+};
+
+struct ImagOp : math::unary::Imag {
+    using Description = Doc<"@brief basic block to the imaginary component of a complex input stream">;
+    template<typename Derived, typename T, typename R>
+    using ports = ImagPorts<Derived, T, R>;
+};
+
+struct RealOp : math::unary::Real {
+    using Description = Doc<"@brief basic block to the real component of a complex input stream">;
+    template<typename Derived, typename T, typename R>
+    using ports = RealPorts<Derived, T, R>;
+};
+
+struct ArgOp : math::unary::Phase {
+    using Description = Doc<"@brief basic block to calculate the argument (phase angle, [radians]) of a complex input stream">;
+    template<typename Derived, typename T, typename R>
+    using ports = ArgPorts<Derived, T, R>;
+};
+
+struct RadiansToDegreeOp : math::unary::RadToDeg {
+    using Description = Doc<"@brief convert radians to degree">;
+    template<typename Derived, typename T, typename R>
+    using ports = RadiansToDegreePorts<Derived, T, R>;
+};
+
+struct DegreeToRadiansOp : math::unary::DegToRad {
+    using Description = Doc<"@brief convert degree to radians">;
+    template<typename Derived, typename T, typename R>
+    using ports = DegreeToRadiansPorts<Derived, T, R>;
+};
+
+} // namespace detail
+
+GR_REGISTER_BLOCK("gr::blocks::basic::Abs", gr::blocks::basic::Abs, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
+template<typename T>
+requires std::is_arithmetic_v<T> || meta::complex_like<T>
+using Abs = math::Unary<detail::AbsOp, T>;
+
+GR_REGISTER_BLOCK("gr::blocks::basic::Imag", gr::blocks::basic::Imag, [T], [std::complex<float>])
+template<typename T>
+requires std::is_arithmetic_v<T> || meta::complex_like<T>
+using Imag = math::Unary<detail::ImagOp, T>;
+
+GR_REGISTER_BLOCK("gr::blocks::basic::Real", gr::blocks::basic::Real, [T], [std::complex<float>])
+template<typename T>
+requires std::is_arithmetic_v<T> || meta::complex_like<T>
+using Real = math::Unary<detail::RealOp, T>;
+
+GR_REGISTER_BLOCK("gr::blocks::basic::Arg", gr::blocks::basic::Arg, [T], [std::complex<float>])
+template<typename T>
+requires std::is_arithmetic_v<T> || meta::complex_like<T>
+using Arg = math::Unary<detail::ArgOp, T>;
+
+GR_REGISTER_BLOCK("gr::blocks::basic::RadiansToDegree", gr::blocks::basic::RadiansToDegree, [T], [float])
+template<std::floating_point T>
+using RadiansToDegree = math::Unary<detail::RadiansToDegreeOp, T>;
+
+GR_REGISTER_BLOCK("gr::blocks::basic::DegreeToRadians", gr::blocks::basic::DegreeToRadians, [T], [float])
+template<std::floating_point T>
+using DegreeToRadians = math::Unary<detail::DegreeToRadiansOp, T>;
 
 GR_REGISTER_BLOCK(gr::blocks::basic::ToRealImag, [T], [std::complex<float>])
 

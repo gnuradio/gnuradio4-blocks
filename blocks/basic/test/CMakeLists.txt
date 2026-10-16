@@ -69,3 +69,9 @@ if(TARGET GrBasicBlocksShared)
     PLUGIN_DIRS
     $<TARGET_FILE_DIR:GrBasicBlocksShared>)
 endif()
+
+gr_add_graph_test(
+  graph_basic_converter_ports
+  graphs/converter-ports.yaml
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrBasicBlocksShared>)
