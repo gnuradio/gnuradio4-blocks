@@ -31,6 +31,7 @@
 #include <gnuradio-4.0/Scheduler.hpp>
 
 #include <gnuradio-4.0/basic/DataSetToStream.hpp>
+#include <gnuradio-4.0/basic/NullSources.hpp>
 #include <gnuradio-4.0/basic/PacketToDataSet.hpp>
 #include <gnuradio-4.0/digital/CrcBlocks.hpp>
 #include <gnuradio-4.0/network/ZmqPacketIO.hpp>
@@ -128,7 +129,7 @@ int main(int argc, char** argv) {
     // and the branch's counts exact: the graph ends when every consumer of the wire's output is done, so a branch
     // that ran forever would keep the source alive past the sink that ends the run, and a branch that ran an
     // unpredictable number of packets would report counts nothing could assert.
-    auto& bound = graph.emplaceBlock<testing::HeadBlock<gr::Packet<std::uint8_t>>>({
+    auto& bound = graph.emplaceBlock<basic::HeadBlock<gr::Packet<std::uint8_t>>>({
         {"name", std::string("checked packets")},
         {"n_samples_max", nPackets},
     });

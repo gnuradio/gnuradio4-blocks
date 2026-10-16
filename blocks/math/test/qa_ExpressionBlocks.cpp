@@ -4,7 +4,7 @@
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
-#include <gnuradio-4.0/testing/NullSources.hpp>
+#include <gnuradio-4.0/basic/NullSources.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 #include <gnuradio-4.0/Message.hpp>
@@ -24,7 +24,7 @@ const boost::ut::suite<"basic expression block tests"> basicMath = [] {
     "ExpressionSISO"_test = []<typename T>(const T&) {
         Graph graph;
 
-        auto& source    = graph.emplaceBlock<testing::ConstantSource<T>>({{"n_samples_max", 10U}, {"default_value", T(21)}});
+        auto& source    = graph.emplaceBlock<blocks::basic::ConstantSource<T>>({{"n_samples_max", 10U}, {"default_value", T(21)}});
         auto& exprBlock = graph.emplaceBlock<ExpressionSISO<T>>({{"expr_string", "a*x"}, {"param_a", T(2)}});
         auto& tagSink   = graph.emplaceBlock<testing::TagSink<T, USE_PROCESS_ONE>>({{"log_tags", true}, {"log_samples", true}});
         expect(graph.connect<"out", "in">(source, exprBlock).has_value());
@@ -45,8 +45,8 @@ const boost::ut::suite<"basic expression block tests"> basicMath = [] {
     "ExpressionDISO"_test = []<typename T>(const T&) {
         Graph graph;
 
-        auto& source1   = graph.emplaceBlock<testing::ConstantSource<T>>({{"n_samples_max", 10U}, {"default_value", T(7)}});
-        auto& source2   = graph.emplaceBlock<testing::ConstantSource<T>>({{"n_samples_max", 10U}, {"default_value", T(5)}});
+        auto& source1   = graph.emplaceBlock<blocks::basic::ConstantSource<T>>({{"n_samples_max", 10U}, {"default_value", T(7)}});
+        auto& source2   = graph.emplaceBlock<blocks::basic::ConstantSource<T>>({{"n_samples_max", 10U}, {"default_value", T(5)}});
         auto& exprBlock = graph.emplaceBlock<ExpressionDISO<T>>({{"expr_string", "z := a * (x + y + 2)"}, {"param_a", T(3)}});
         auto& tagSink   = graph.emplaceBlock<testing::TagSink<T, USE_PROCESS_ONE>>({{"log_tags", true}, {"log_samples", true}});
         expect(graph.connect<"out", "in0">(source1, exprBlock).has_value());

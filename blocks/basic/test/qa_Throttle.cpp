@@ -16,9 +16,9 @@
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
 
+#include <gnuradio-4.0/basic/NullSources.hpp>
 #include <gnuradio-4.0/basic/Throttle.hpp>
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
-#include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 #include <gnuradio-4.0/testing/TestSpans.hpp>
@@ -346,9 +346,9 @@ const boost::ut::suite<"Throttle"> throttleTests = [] {
         constexpr std::int64_t kCallMs = 5000;
 
         gr::Graph graph;
-        auto&     source   = graph.emplaceBlock<gr::blocks::testing::NullSource<float>>();
+        auto&     source   = graph.emplaceBlock<gr::blocks::basic::NullSource<float>>();
         auto&     throttle = graph.emplaceBlock<Throttle<float>>({{"sample_rate", kRateHz}, {"max_items_per_chunk", kChunk}, {"max_sleep_s", 0.05}});
-        auto&     sink     = graph.emplaceBlock<gr::blocks::testing::NullSink<float>>();
+        auto&     sink     = graph.emplaceBlock<gr::blocks::basic::NullSink<float>>();
         expect(graph.connect<"out", "in">(source, throttle).has_value());
         expect(graph.connect<"out", "in">(throttle, sink).has_value());
 

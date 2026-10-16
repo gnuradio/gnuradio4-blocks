@@ -9,6 +9,7 @@
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/basic/NullSources.hpp>
 #include <gnuradio-4.0/testing/Delay.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/PerformanceMonitor.hpp>
@@ -18,6 +19,9 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
     using namespace boost::ut;
     using namespace gr;
     using namespace gr::blocks::testing;
+    using gr::blocks::basic::ConstantSource;
+    using gr::blocks::basic::HeadBlock;
+    using gr::blocks::basic::NullSource;
     constexpr auto kTestTypes = std::tuple<uint8_t, int16_t, int32_t, float>();
 
     "ConstantSource->Copy->CountingSink"_test = []<typename T>(const T&) {
