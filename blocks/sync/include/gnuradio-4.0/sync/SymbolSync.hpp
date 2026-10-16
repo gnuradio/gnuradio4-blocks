@@ -116,6 +116,12 @@ stream leaving the block carries one sample per symbol across a tag as it does a
 producer's tags to honor and empty honors any; `trigger_presets` turns presetting off altogether. A payload out of
 range, one carrying another producer's name, and one whose instant the position has already gone past are each ignored
 and counted, and leave the block in the state it would have been in with no tag at all.
+
+A NaN or infinite input sample makes the timing error non-finite for each symbol whose window or history holds it.
+Such a symbol leaves the loop's period estimate (`average_period`) and phase unchanged, puts 0 on the `error` port and
+counts in `non_finite_errors`; an output sample whose window holds the NaN is NaN. A period above twice the upper clamp
+is reset to `samples_per_symbol` and counted in `period_resets`. The upper clamp is `samples_per_symbol` plus
+`max_deviation`, or one and a half times `samples_per_symbol` when `max_deviation` is 0.
 )"">;
 
     PortIn<T>                in;
@@ -140,7 +146,10 @@ and counted, and leave the block in the state it would have been in with no tag 
     Annotated<std::string, "trigger", Doc<"the trigger_name a timing tag must carry for its payload to be honored; empty honors any timing tag">>                                     trigger{};
     Annotated<bool, "trigger_presets", Doc<"whether a matching timing tag presets at all; false ignores every time_est and clock_est and counts it">>                                 trigger_presets = true;
 
-    GR_MAKE_REFLECTABLE(SymbolSync, in, out, error, instant_period, average_period, samples_per_symbol, max_deviation, outputs_per_symbol, detector, constellation, arity, detector_gain, noise_bandwidth, damping, interpolator, polyphase_arms, matched_filter_taps, rolloff, trigger, trigger_presets);
+    Annotated<gr::Size_t, "non_finite_errors", Doc<"Read-only: symbols whose timing error was NaN or infinite">>   non_finite_errors = 0U;
+    Annotated<gr::Size_t, "period_resets", Doc<"Read-only: symbols whose period was reset to samples_per_symbol">> period_resets     = 0U;
+
+    GR_MAKE_REFLECTABLE(SymbolSync, in, out, error, instant_period, average_period, samples_per_symbol, max_deviation, outputs_per_symbol, detector, constellation, arity, detector_gain, noise_bandwidth, damping, interpolator, polyphase_arms, matched_filter_taps, rolloff, trigger, trigger_presets, non_finite_errors, period_resets);
 
     detail::TimingLoop _loop{0.01, 1.0, 1.0, 1.0, 8.0};
     // Tap count follows `interpolator` (mmse6/8/12); the 128 phase steps and the 0.25 design band are
@@ -281,6 +290,9 @@ and counted, and leave the block in the state it would have been in with no tag 
         _base            = 0ULL;
         _baseLead        = 0ULL;
         _positioned      = false;
+
+        non_finite_errors = 0U;
+        period_resets     = 0U;
     }
 
     /// @brief The decision shape a constellation name selects, empty for a name this slicer cannot carry.
@@ -372,6 +384,27 @@ private:
         return static_cast<std::uint64_t>(reach) + (reach > 0.0 ? 1ULL : 0ULL) + (polyphase ? 1ULL : 0ULL);
     }
 
+    /**
+     * @brief Steps the loop on `_error` and returns the symbol's period in input samples: finite, positive and at most
+     * twice the clamp's upper bound. The caller turns it into a sample advance by an integer conversion, undefined for
+     * a NaN or a value past the integer's range.
+     */
+    [[nodiscard]] double nextPeriod() noexcept {
+        double instant = _loop.frequency();
+        if (std::isfinite(_error)) [[likely]] {
+            instant = _loop.step(static_cast<double>(_error));
+        } else {
+            _error            = 0.f;
+            non_finite_errors = non_finite_errors + 1U;
+        }
+        const double period = instant > 0.0 ? instant : _loop.frequency();
+        if (period <= 2.0 * _loop.maxFrequency()) [[likely]] {
+            return period;
+        }
+        period_resets = period_resets + 1U;
+        return samples_per_symbol;
+    }
+
     /// @brief A 64-bit sample offset narrowed to an index; a template, so the cast stands where `std::size_t` is 32
     /// bits and is not a useless cast where the two are the same 64-bit type.
     template<std::integral To, std::integral From>
@@ -431,8 +464,7 @@ private:
                 const T late = kTraits.needsLookahead ? lookahead<Polyphase>(x, windowStart) : T{};
 
                 _error               = errorOf<D>(late);
-                const double instant = _loop.step(static_cast<double>(_error));
-                _instantPeriod       = instant > 0.0 ? instant : _loop.frequency();
+                _instantPeriod       = nextPeriod();
                 _interpolationPeriod = _instantPeriod / _cycleLength;
             } else if ((due & kDetectorStep) != 0U) {
                 _midpoint = y;
@@ -454,7 +486,8 @@ private:
             }
 
             if (!applyTimingTags(Preset::TheNextInstant)) {
-                // `advanced` is positive, so truncation is `floor` and is one instruction; `std::floor` is a dozen.
+                // `_interpolationPeriod` is positive and bounded here. Truncation is then `floor` and is one
+                // instruction; `std::floor` is a dozen.
                 const double        advanced = _mu + _interpolationPeriod;
                 const std::uint64_t whole    = static_cast<std::uint64_t>(advanced);
                 _mu                          = advanced - static_cast<double>(whole);

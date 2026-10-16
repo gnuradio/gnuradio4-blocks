@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <numbers>
 #include <random>
 #include <span>
@@ -958,6 +959,76 @@ const boost::ut::suite<"SymbolSync"> symbolSyncTests = [] {
 
         const std::size_t polyOut = finishes(std::type_identity<CF>{}, {{"samples_per_symbol", 4.0}, {"detector", std::string("Gardner")}, {"detector_gain", 1.0}, {"interpolator", std::string("polyphase")}, {"noise_bandwidth", 0.02}}, psk);
         expect(gt(polyOut, 1800UZ)) << "the polyphase graph, whose held window is symbols long, still ends";
+    };
+
+    "one NaN sample costs no symbol and leaves the timing where it was"_test = [] {
+        // The NaN lands in the middle of a settled run and, in the second arm, in the first symbol's window.
+        constexpr std::size_t kSymbols = 3000UZ;
+        constexpr float       kNaN     = std::numeric_limits<float>::quiet_NaN();
+        const std::vector<CF> clean    = nyquistPsk(kSymbols * 4UZ, 4.0, 0.35, true, 1.4, 44U);
+
+        SymbolSync<CF> reference = make<CF>({{"samples_per_symbol", 4.0}});
+        const auto     plain     = drive<CF>(reference, std::span<const CF>(clean));
+        expect(gt(plain.samples.size(), 2900UZ));
+
+        for (const std::size_t at : {2000UZ * 4UZ + 1UZ, 0UZ}) {
+            std::vector<CF> dirty = clean;
+            dirty[at]             = CF{kNaN, 0.f};
+
+            SymbolSync<CF> block   = make<CF>({{"samples_per_symbol", 4.0}});
+            const auto     tracked = drive<CF>(block, std::span<const CF>(dirty));
+
+            // One sample reaches the windows that hold it and then the detector's two-symbol history.
+            const std::size_t reach = block.windowLength() / 4UZ + 2UZ;
+            expect(eq(tracked.samples.size(), plain.samples.size())) << "the NaN at " << at << " costs no symbol";
+            expect(gt(static_cast<std::size_t>(block.non_finite_errors.value), 0UZ)) << "the NaN at " << at << " reaches the detector";
+            expect(le(static_cast<std::size_t>(block.non_finite_errors.value), reach)) << "and only the symbols whose window or history holds it";
+            expect(eq(static_cast<std::size_t>(block.period_resets.value), 0UZ));
+            expect(le(static_cast<std::size_t>(std::ranges::count_if(tracked.samples, [](CF s) { return !std::isfinite(s.real()); })), block.windowLength() / 4UZ)) << "a NaN output only where the window holds the NaN";
+            expect(std::ranges::all_of(tracked.aux[1], [](float p) { return std::isfinite(p); })) << "the instant period stays finite, NaN at " << at;
+            expect(std::ranges::all_of(tracked.aux[2], [](float p) { return std::isfinite(p); })) << "and the loop's period with it";
+            expect(std::isfinite(block.loop().frequency()));
+
+            const double settled = meanOfTail(std::span<const float>(tracked.aux[2]), 500UZ);
+            const double clear   = meanOfTail(std::span<const float>(plain.aux[2]), 500UZ);
+            expect(lt(std::abs(settled - clear) / clear, 5e-6)) << "the period after the NaN at " << at << " is the clean run's, " << settled << " against " << clear;
+            expect(lt(meanErrorVector(std::span<const CF>(tracked.samples), tracked.samples.size() - 500UZ), 0.01)) << "and the output after it slices";
+        }
+    };
+
+    "a stream of infinities counts every symbol and runs at the nominal period"_test = [] {
+        constexpr float       kInf = std::numeric_limits<float>::infinity();
+        const std::vector<CF> silent(2000UZ, CF{});
+        const std::vector<CF> infinite(silent.size(), CF{kInf, -kInf});
+
+        SymbolSync<CF> idle      = make<CF>({{"samples_per_symbol", 4.0}});
+        const auto     reference = drive<CF>(idle, std::span<const CF>(silent));
+        expect(gt(reference.samples.size(), 400UZ)) << "a silent stream runs at the nominal period";
+
+        SymbolSync<CF> block   = make<CF>({{"samples_per_symbol", 4.0}});
+        const auto     tracked = drive<CF>(block, std::span<const CF>(infinite));
+        expect(eq(tracked.samples.size(), reference.samples.size())) << "the infinite stream yields the silent stream's symbol count";
+        expect(eq(static_cast<std::size_t>(block.non_finite_errors.value), tracked.samples.size())) << "every symbol's error is non-finite and counted";
+        expect(eq(static_cast<std::size_t>(block.period_resets.value), 0UZ));
+        expect(eq(block.loop().frequency(), 4.0)) << "the loop holds the frequency it started at";
+        expect(std::ranges::all_of(tracked.aux[0], [](float e) { return e == 0.f; })) << "the error port carries 0 for a symbol the loop skipped";
+        expect(std::ranges::all_of(tracked.aux[1], [](float p) { return p == 4.f; })) << "and the instant period is the nominal one";
+    };
+
+    "a finite sample far outside the detector's range resets the period"_test = [] {
+        constexpr std::size_t kAt   = 2000UZ * 4UZ + 1UZ;
+        const std::vector<CF> clean = nyquistPsk(3000UZ * 4UZ, 4.0, 0.35, true, 1.4, 45U);
+        std::vector<CF>       dirty = clean;
+        dirty[kAt]                  = CF{1e21f, 0.f}; // the proportional arm alone moves the position past the range of a 64-bit count
+
+        SymbolSync<CF> block   = make<CF>({{"samples_per_symbol", 4.0}});
+        const auto     tracked = drive<CF>(block, std::span<const CF>(dirty));
+        const double   ceiling = 2.0 * block.loop().maxFrequency();
+        expect(gt(static_cast<std::size_t>(block.period_resets.value), 0UZ)) << "the oversized period is reset and counted";
+        expect(eq(static_cast<std::size_t>(block.non_finite_errors.value), 0UZ)) << "the error itself is finite";
+        expect(gt(tracked.samples.size(), 2000UZ)) << "the stream runs on past the sample";
+        expect(std::ranges::all_of(tracked.aux[1], [ceiling](float p) { return p > 0.f && static_cast<double>(p) <= ceiling; })) << "every instant period is positive and at most twice the clamp's upper bound";
+        expect(le(block.loop().frequency(), block.loop().maxFrequency())) << "the loop's frequency stays inside its clamp";
     };
 };
 
