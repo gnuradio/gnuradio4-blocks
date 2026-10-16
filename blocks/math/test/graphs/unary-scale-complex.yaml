@@ -1,0 +1,24 @@
+# Negate<complex<float32>> with scale (0,1): out = -in * j, the product by components.
+#   -(1+2j) * j = (-1-2j) * j = 2-1j
+#   -(3-4j) * j = (-3+4j) * j = -4-3j
+# Each product of small integers is exact in float32. The sink takes no tolerance.
+blocks:
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: source
+      values: !!complex32
+        - (1.0, 2.0)
+        - (3.0, -4.0)
+  - id: gr::blocks::math::Negate<complex<float32>>
+    parameters:
+      name: negate
+      scale: !!complex32 (0.0, 1.0)
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: sink
+      expected: !!complex32
+        - (2.0, -1.0)
+        - (-4.0, -3.0)
+connections:
+  - [source, out, negate, in]
+  - [negate, out, sink, in]

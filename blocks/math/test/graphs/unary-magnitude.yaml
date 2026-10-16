@@ -1,0 +1,23 @@
+# Magnitude: out = |in|, complex in, float32 out.
+#   (3,4) (0,0) (-1,0) (0,-2.5) -> 5 0 1 2.5
+blocks:
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: source_c32
+      values: !!complex32
+        - (3.0, 4.0)
+        - (0.0, 0.0)
+        - (-1.0, 0.0)
+        - (0.0, -2.5)
+  - id: gr::blocks::math::Magnitude<complex<float32>>
+    parameters:
+      name: magnitude_c32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_c32
+      expected: !!float32 [5.0, 0.0, 1.0, 2.5]
+      relative_tolerance: 1e-6
+      tolerance: 1e-6
+connections:
+  - [source_c32, out, magnitude_c32, in]
+  - [magnitude_c32, out, sink_c32, in]

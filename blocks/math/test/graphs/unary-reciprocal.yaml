@@ -1,0 +1,52 @@
+# Reciprocal: out = 1 / in, and 0 for a zero sample.
+#   real:    -2 0 4 0.5          -> -0.5 0 0.25 2
+#   complex: (0,1) (0,0) (1,1)   -> (0,-1) (0,0) (0.5,-0.5), since 1/j = -j and 1/(1+j) = (1-j)/2
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32 [-2.0, 0.0, 4.0, 0.5]
+  - id: gr::blocks::math::Reciprocal<float32>
+    parameters:
+      name: reciprocal_f32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_f32
+      expected: !!float32 [-0.5, 0.0, 0.25, 2.0]
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source_f64
+      values: !!float64 [-2.0, 0.0, 4.0, 0.5]
+  - id: gr::blocks::math::Reciprocal<float64>
+    parameters:
+      name: reciprocal_f64
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink_f64
+      expected: !!float64 [-0.5, 0.0, 0.25, 2.0]
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: source_c32
+      values: !!complex32
+        - (0.0, 1.0)
+        - (0.0, 0.0)
+        - (1.0, 1.0)
+  - id: gr::blocks::math::Reciprocal<complex<float32>>
+    parameters:
+      name: reciprocal_c32
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: sink_c32
+      expected: !!complex32
+        - (0.0, -1.0)
+        - (0.0, 0.0)
+        - (0.5, -0.5)
+      relative_tolerance: 1e-6
+      tolerance: 1e-6
+connections:
+  - [source_f32, out, reciprocal_f32, in]
+  - [reciprocal_f32, out, sink_f32, in]
+  - [source_f64, out, reciprocal_f64, in]
+  - [reciprocal_f64, out, sink_f64, in]
+  - [source_c32, out, reciprocal_c32, in]
+  - [reciprocal_c32, out, sink_c32, in]
