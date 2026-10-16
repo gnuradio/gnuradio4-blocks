@@ -194,6 +194,23 @@ struct Address {
     return flags >= 0 && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
+/// @brief Turn on keepalive for @p fd with its first probe after 30 s of quiet, then one every 10 s, three in all.
+inline void enableKeepalive(int fd) noexcept {
+    const auto set = [fd](int level, int option, int value) { std::ignore = ::setsockopt(fd, level, option, &value, static_cast<::socklen_t>(sizeof(value))); };
+    set(SOL_SOCKET, SO_KEEPALIVE, 1);
+#if defined(TCP_KEEPIDLE)
+    set(IPPROTO_TCP, TCP_KEEPIDLE, 30);
+#elif defined(TCP_KEEPALIVE)
+    set(IPPROTO_TCP, TCP_KEEPALIVE, 30);
+#endif
+#if defined(TCP_KEEPINTVL)
+    set(IPPROTO_TCP, TCP_KEEPINTVL, 10);
+#endif
+#if defined(TCP_KEEPCNT)
+    set(IPPROTO_TCP, TCP_KEEPCNT, 3);
+#endif
+}
+
 /// @brief Wait at most @p timeoutMs for @p events on @p fd; an expired wait reports no events at all.
 [[nodiscard]] inline short pollFor(int fd, short events, int timeoutMs) noexcept {
     ::pollfd  item{.fd = fd, .events = events, .revents = 0};
@@ -911,6 +928,20 @@ A connection that closes mid-envelope discards the partial envelope and counts i
 also visible as a `sequence` gap at the next whole envelope. The next connection begins by seeking, because a new
 stream owes no alignment to the old one.
 
+Two deadlines bound what an accepted peer can hold. The idle clock restarts at each header that decodes and at each
+read that carries body bytes; bytes the magic scan passes over leave it running. An accepted peer whose idle clock
+reaches `idle_timeout_ms` is dropped and counted in `nIdlePeersDropped`. An accepted peer whose envelope is still
+incomplete `body_timeout_ms` after its magic arrived is dropped and counted in `nStalledPeersDropped`. Either drop
+counts in `nDisconnects`, discards the partial envelope as a closing connection does, and lets the source take the
+next connection. The block reads the deadlines when the socket opens and refuses a change while running. The idle
+default of 30 s treats a producer silent for tens of seconds as failed. The body default of 20 s carries a 16 MiB
+envelope over a 10 Mbit/s link. A producer that pauses longer than `idle_timeout_ms` must reconnect and may lose its
+first write after the pause; a sporadic producer needs a longer deadline or 0. A deadline of 0 disables it. With
+`idle_timeout_ms` 0, a peer that connected and never sent holds the slot; with `body_timeout_ms` 0, a peer that
+trickles body bytes holds it. A connection the source made is kept however quiet it is. Every connection carries
+`SO_KEEPALIVE`: a probe after 30 s of silence, then two more 10 s apart. The connection ends when the third probe goes
+unanswered, about a minute after the far host has gone. A platform without those timer options keeps the system's own.
+
 The reader dies of its own socket and of nothing else, which is what makes `work::Status::ERROR` mean something. Four
 faults end it: the listening socket reporting `POLLERR`, `POLLHUP` or `POLLNVAL`; an `accept` that fails for anything
 but a would-block, an interrupt, an aborted connection or a passing shortage of descriptors or memory; a socket the
@@ -936,8 +967,10 @@ required and has no default: it is the bound that decides what a peer's claimed 
     Annotated<gr::Size_t, "max_reject_bytes", Unit<"byte">, Doc<"raw bytes of a refused envelope kept for inspection">>                     max_reject_bytes    = 256U;
     Annotated<gr::Size_t, "max_tracked_sources", Doc<"distinct source_id values whose sequence is tracked">>                                max_tracked_sources = 8U;
     Annotated<gr::Size_t, "reconnect_ms", Unit<"ms">, Doc<"interval between connection attempts while connecting">>                         reconnect_ms        = 100U;
+    Annotated<gr::Size_t, "idle_timeout_ms", Unit<"ms">, Doc<"time since framing progress before the peer is dropped; 0 disables">>         idle_timeout_ms     = 30000U;
+    Annotated<gr::Size_t, "body_timeout_ms", Unit<"ms">, Doc<"time to complete an envelope before the peer is dropped; 0 disables">>        body_timeout_ms     = 20000U;
 
-    GR_MAKE_REFLECTABLE(TcpPacketSource, out, reject, endpoint, bind, max_message_bytes, queue_messages, queue_bytes, max_reject_bytes, max_tracked_sources, reconnect_ms);
+    GR_MAKE_REFLECTABLE(TcpPacketSource, out, reject, endpoint, bind, max_message_bytes, queue_messages, queue_bytes, max_reject_bytes, max_tracked_sources, reconnect_ms, idle_timeout_ms, body_timeout_ms);
 
     std::uint64_t nEnvelopesReceived = 0ULL; ///< headers that decoded, each of which identifies one envelope
     std::uint64_t nPacketsPublished  = 0ULL; ///< packets published on out
@@ -969,11 +1002,13 @@ required and has no default: it is the bound that decides what a peer's claimed 
     std::uint64_t nMetaKeysMistyped      = 0ULL; ///< vocabulary keys whose type disagrees with the declaration
     std::uint64_t nTimestampsCarried     = 0ULL; ///< packet_timestamp values consumed into the carrier field
 
-    std::uint64_t nPeersRefused   = 0ULL; ///< connections accepted and closed because one peer was already served
-    std::uint64_t nDisconnects    = 0ULL; ///< connections lost
-    std::uint64_t nReconnects     = 0ULL; ///< connections established after the first
-    std::uint64_t nRecvErrors     = 0ULL; ///< read failures other than would-block and interrupt
-    std::uint64_t nReaderFailures = 0ULL; ///< reader threads that ended on a fault of the socket they own
+    std::uint64_t nPeersRefused        = 0ULL; ///< connections accepted and closed because one peer was already served
+    std::uint64_t nDisconnects         = 0ULL; ///< connections lost
+    std::uint64_t nReconnects          = 0ULL; ///< connections established after the first
+    std::uint64_t nRecvErrors          = 0ULL; ///< read failures other than would-block and interrupt
+    std::uint64_t nReaderFailures      = 0ULL; ///< reader threads that ended on a fault of the socket they own
+    std::uint64_t nIdlePeersDropped    = 0ULL; ///< served peers dropped after idle_timeout_ms without framing progress
+    std::uint64_t nStalledPeersDropped = 0ULL; ///< served peers dropped with an envelope incomplete after body_timeout_ms
 
     /// @brief One decoded arrival, on whichever port it belongs.
     struct Incoming {
@@ -1013,6 +1048,10 @@ required and has no default: it is the bound that decides what a peer's claimed 
     std::uint64_t               _skipRemaining = 0ULL;
     gr::network::EnvelopeHeader _header{};
 
+    std::chrono::steady_clock::time_point _receivedAt{};        ///< when the served peer last sent a byte
+    std::chrono::steady_clock::time_point _heardAt{};           ///< when the served peer last advanced the framing
+    std::chrono::steady_clock::time_point _envelopeStartedAt{}; ///< when the magic of the envelope under way arrived
+
     std::string   _endpoint{};
     bool          _bind              = false;
     std::size_t   _queueMessages     = 1024UZ;
@@ -1021,6 +1060,8 @@ required and has no default: it is the bound that decides what a peer's claimed 
     std::size_t   _maxTrackedSources = 8UZ;
     std::size_t   _maxRejectBytes    = 256UZ;
     std::uint32_t _reconnectMs       = 100U;
+    std::uint32_t _idleTimeoutMs     = 30000U;
+    std::uint32_t _bodyTimeoutMs     = 20000U;
     bool          _socketOpen        = false;
     bool          _everConnected     = false;
     std::size_t   _addressCursor     = 0UZ; ///< which resolved address the next connection attempt takes; the I/O thread's alone
@@ -1193,6 +1234,12 @@ private:
         if (reconnect_ms.value != _reconnectMs) {
             refuse("reconnect_ms");
         }
+        if (idle_timeout_ms.value != _idleTimeoutMs) {
+            refuse("idle_timeout_ms");
+        }
+        if (body_timeout_ms.value != _bodyTimeoutMs) {
+            refuse("body_timeout_ms");
+        }
     }
 
     void freezeSocketSettings() {
@@ -1204,6 +1251,8 @@ private:
         _maxTrackedSources = static_cast<std::size_t>(max_tracked_sources.value);
         _maxRejectBytes    = static_cast<std::size_t>(max_reject_bytes.value);
         _reconnectMs       = reconnect_ms.value;
+        _idleTimeoutMs     = idle_timeout_ms.value;
+        _bodyTimeoutMs     = body_timeout_ms.value;
         _addressCursor     = 0UZ;
     }
 
@@ -1254,6 +1303,8 @@ private:
         append("reconnects", nReconnects);
         append("receive errors", nRecvErrors);
         append("reader failures", nReaderFailures);
+        append("idle peers dropped", nIdlePeersDropped);
+        append("stalled peers dropped", nStalledPeersDropped);
         if (!_lastReaderError.empty()) {
             std::format_to(std::back_inserter(report), "{}reader ended: {}", report.empty() ? "" : ", ", _lastReaderError);
         }
@@ -1405,13 +1456,16 @@ private:
 
             const short revents = detail::sockio::pollFor(peer.get(), POLLIN, detail::sockio::kPollMs);
             if (revents == 0) {
+                dropIfOverdue(peer);
                 continue; // the bounded wait expired, which is how the loop returns to observe a stop request
             }
             const ::ssize_t received = ::recv(peer.get(), chunk.data(), chunk.size(), 0);
             if (received > 0) {
                 const std::size_t count = static_cast<std::size_t>(received);
                 nBytesReceived += count;
+                _receivedAt = std::chrono::steady_clock::now();
                 feed(std::span<const std::uint8_t>(chunk).first(count));
+                dropIfOverdue(peer); // the body deadline also holds for a peer that keeps sending too slowly to finish
                 continue;
             }
             if (received < 0 && detail::sockio::wouldBlock(errno)) {
@@ -1488,9 +1542,12 @@ private:
     void adoptPeer(detail::sockio::Descriptor& peer, int fd) {
         const int on = 1;
         std::ignore  = ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, static_cast<::socklen_t>(sizeof(on)));
-        std::ignore  = detail::sockio::setNonBlocking(fd);
+        detail::sockio::enableKeepalive(fd);
+        std::ignore = detail::sockio::setNonBlocking(fd);
         peer.reset(fd);
         resetStream(); // a new stream owes no alignment to the old one, so the reader begins by seeking
+        _receivedAt = std::chrono::steady_clock::now();
+        _heardAt    = _receivedAt;
         if (_everConnected) {
             ++nReconnects;
         }
@@ -1504,6 +1561,24 @@ private:
         }
         resetStream();
         ++nDisconnects;
+    }
+
+    /// @brief Drop an accepted peer once its envelope has been incomplete for `body_timeout_ms` or its framing has not
+    /// advanced for `idle_timeout_ms`.
+    void dropIfOverdue(detail::sockio::Descriptor& peer) {
+        if (!_bind) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (_bodyTimeoutMs != 0U && _state != ReadState::Seek && now - _envelopeStartedAt >= std::chrono::milliseconds(_bodyTimeoutMs)) {
+            ++nStalledPeersDropped;
+            losePeer(peer);
+            return;
+        }
+        if (_idleTimeoutMs != 0U && now - _heardAt >= std::chrono::milliseconds(_idleTimeoutMs)) {
+            ++nIdlePeersDropped;
+            losePeer(peer);
+        }
     }
 
     [[nodiscard]] std::string refuseExtraPeers(detail::sockio::Descriptor& listener) {
@@ -1558,8 +1633,14 @@ private:
     }
 
     void feed(std::span<const std::uint8_t> bytes) {
+        const auto          inBody         = [this] { return _state == ReadState::Body || _state == ReadState::Skip; };
+        const bool          wasInBody      = inBody();
+        const std::uint64_t headersDecoded = nEnvelopesReceived;
         _buffer.insert(_buffer.end(), bytes.begin(), bytes.end());
         while (advance()) {
+        }
+        if (wasInBody || inBody() || nEnvelopesReceived != headersDecoded) {
+            _heardAt = _receivedAt;
         }
     }
 
@@ -1584,7 +1665,8 @@ private:
                 nBytesSkipped += skipped;
                 discard(skipped);
             }
-            _state = ReadState::Header;
+            _state             = ReadState::Header;
+            _envelopeStartedAt = _receivedAt;
             return true;
         }
         // no match, so everything but a tail that could still be the start of one is scanned past
