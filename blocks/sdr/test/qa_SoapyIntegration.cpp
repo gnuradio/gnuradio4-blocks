@@ -21,6 +21,7 @@
 
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/basic/ClockSource.hpp>
+#include <gnuradio-4.0/basic/NullSources.hpp>
 #include <gnuradio-4.0/sdr/LoopbackDevice.hpp>
 #include <gnuradio-4.0/sdr/SoapySink.hpp>
 #include <gnuradio-4.0/sdr/SoapySource.hpp>
@@ -1578,7 +1579,7 @@ const boost::ut::suite<"SoapySink underflow"> underflowTests = [] {
             gr::Graph            flow;
 
             // every write reports an underflow and takes nothing, so the limit is reached in as many writes
-            auto& txSource = flow.emplaceBlock<gr::blocks::testing::ConstantSource<CF32>>({{"n_samples_max", std::uint64_t{2000}}});
+            auto& txSource = flow.emplaceBlock<gr::blocks::basic::ConstantSource<CF32>>({{"n_samples_max", std::uint64_t{2000}}});
             auto& txSink   = flow.emplaceBlock<SoapySink<CF32, 1UZ>>({
                 {"device", "loopback"},
                 {"device_parameter", std::string("device_mode=tx_only,underflow_every=1")},
@@ -1864,6 +1865,7 @@ const boost::ut::suite<"Soapy blocks that cannot start"> startFailureTests = [] 
     using namespace gr;
     using namespace gr::blocks::sdr;
     using namespace gr::blocks::testing;
+    using gr::blocks::basic::ConstantSource;
     using Sched = gr::scheduler::Simple<>;
     using gr::lifecycle::State;
 

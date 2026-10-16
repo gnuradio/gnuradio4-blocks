@@ -52,9 +52,10 @@ if(TARGET GrBasicBlocksShared)
     "$<TARGET_FILE_DIR:GrBasicBlocksShared>")
 endif()
 
-# the probe is in the basic plugin; the helper adds the testing plugin alone
 gr_add_graph_test(
   graph_basic_rate_probe
   graphs/rate-probe.yaml
   PLUGIN_DIRS
   $<TARGET_FILE_DIR:GrBasicBlocksShared>)
+
+gr_add_graph_test(graph_basic_null_head_expect graphs/null-head-expect.yaml)

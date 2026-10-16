@@ -3,7 +3,9 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 
+#include <format>
 #include <iostream>
+#include <string>
 
 using namespace boost::ut;
 
@@ -63,21 +65,38 @@ const boost::ut::suite TagTests = [] {
         std::print("Warning: Failed to init {} blocks\n", result);
     }
 
+    "the basic plugin registers the null sources, the testing plugin does not"_test = [] {
+        gr::BlockRegistry basicOnly;
+        gr::BlockRegistry testingOnly;
+        expect(gt(gr::blocklib::initGrBasicBlocks(basicOnly), 0UZ));
+        expect(gt(gr::blocklib::initGrTestingBlocks(testingOnly), 0UZ));
+        for (const std::string_view block : {"NullSource"sv, "ConstantSource"sv, "HeadBlock"sv, "NullSink"sv}) {
+            for (const std::string_view type : {"uint8"sv, "int16"sv, "int32"sv, "float32"sv, "complex<float32>"sv, "gr::Packet<float32>"sv, "gr::Tensor<float32>"sv, "gr::DataSet<float32>"sv}) {
+                const std::string basicKey   = std::format("gr::blocks::basic::{}<{}>", block, type);
+                const std::string testingKey = std::format("gr::blocks::testing::{}<{}>", block, type);
+                expect(basicOnly.contains(basicKey)) << basicKey;
+                expect(!basicOnly.contains(testingKey)) << testingKey;
+                expect(!testingOnly.contains(basicKey)) << basicKey;
+                expect(!testingOnly.contains(testingKey)) << testingKey;
+            }
+        }
+    };
+
     "CheckAvailableBlocks"_test = [&] {
         expect(gt(registry.keys().size(), 20UZ));
 
         expect(registry.contains("gr::blocks::basic::ClockSource"sv));
         expect(registry.contains("gr::blocks::testing::Delay<float32>"sv));
-        expect(registry.contains("gr::blocks::testing::NullSource<float32>"sv));
-        expect(registry.contains("gr::blocks::testing::NullSource<complex<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::NullSource<gr::Packet<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::NullSource<gr::Tensor<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::NullSource<gr::DataSet<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::ConstantSource<float32>"sv));
-        expect(registry.contains("gr::blocks::testing::ConstantSource<complex<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::ConstantSource<gr::Packet<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::ConstantSource<gr::Tensor<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::ConstantSource<gr::DataSet<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::NullSource<float32>"sv));
+        expect(registry.contains("gr::blocks::basic::NullSource<complex<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::NullSource<gr::Packet<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::NullSource<gr::Tensor<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::NullSource<gr::DataSet<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::ConstantSource<float32>"sv));
+        expect(registry.contains("gr::blocks::basic::ConstantSource<complex<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::ConstantSource<gr::Packet<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::ConstantSource<gr::Tensor<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::ConstantSource<gr::DataSet<float32>>"sv));
         expect(registry.contains("gr::blocks::testing::SlowSource<float32>"sv));
         expect(registry.contains("gr::blocks::testing::SlowSource<complex<float32>>"sv));
         expect(registry.contains("gr::blocks::testing::SlowSource<gr::Packet<float32>>"sv));
@@ -90,16 +109,16 @@ const boost::ut::suite TagTests = [] {
         expect(registry.contains("gr::blocks::testing::Copy<gr::Packet<float32>>"sv));
         expect(registry.contains("gr::blocks::testing::Copy<gr::Tensor<float32>>"sv));
         expect(registry.contains("gr::blocks::testing::Copy<gr::DataSet<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::HeadBlock<float32>"sv));
-        expect(registry.contains("gr::blocks::testing::HeadBlock<complex<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::HeadBlock<gr::Packet<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::HeadBlock<gr::Tensor<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::HeadBlock<gr::DataSet<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::NullSink<float32>"sv));
-        expect(registry.contains("gr::blocks::testing::NullSink<complex<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::NullSink<gr::Packet<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::NullSink<gr::Tensor<float32>>"sv));
-        expect(registry.contains("gr::blocks::testing::NullSink<gr::DataSet<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::HeadBlock<float32>"sv));
+        expect(registry.contains("gr::blocks::basic::HeadBlock<complex<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::HeadBlock<gr::Packet<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::HeadBlock<gr::Tensor<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::HeadBlock<gr::DataSet<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::NullSink<float32>"sv));
+        expect(registry.contains("gr::blocks::basic::NullSink<complex<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::NullSink<gr::Packet<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::NullSink<gr::Tensor<float32>>"sv));
+        expect(registry.contains("gr::blocks::basic::NullSink<gr::DataSet<float32>>"sv));
         expect(registry.contains("gr::blocks::fileio::BasicFileSink<float32>"sv));
         expect(registry.contains("gr::blocks::basic::Convert<float32, float32>"sv));
         expect(registry.contains("gr::blocks::basic::Convert<float32, int32>"sv));

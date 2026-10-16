@@ -2,12 +2,14 @@
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/basic/NullSources.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
 
 const boost::ut::suite<"SimCompute"> simComputeTests = [] {
     using namespace boost::ut;
     using namespace gr;
     using namespace gr::blocks::testing;
+    using gr::blocks::basic::ConstantSource;
     constexpr auto kTestTypes = std::tuple<uint8_t, int16_t, int32_t, float>();
 
     "zero complexity"_test = []<typename T>(const T&) {

@@ -155,14 +155,14 @@ endfunction()
 # passes when the output matches the expression instead, for a graph that must end with an error. With WILL_FAIL, the
 # case passes when rungraph exits with a nonzero status. ctest ignores the exit status of a case with
 # PASS_REGULAR_EXPRESSION. A graph that must end with a given error and a nonzero status takes two cases, one with each
-# keyword. The function refuses both keywords in one case. The plugin directories are this build's testing plugin and
-# each PLUGIN_DIRS entry, handed over in GNURADIO4_PLUGIN_DIRECTORIES. Each SET entry, in the form block.key=value,
-# becomes one --set argument. A relative graph path is read from the calling directory. The case carries the label
-# `graph`. Without rungraph, as with an Emscripten build of core, the function registers no case, and the configure
-# prints the directories it searched, once. The installed rungraph carries no run path. The case puts the installation's
-# library directory, two levels above gnuradio4_DIR, first in the loader's search path: DYLD_LIBRARY_PATH on macOS,
-# LD_LIBRARY_PATH on other Unix systems. On Windows, core installs its libraries in the bin directory beside rungraph,
-# where the loader looks first.
+# keyword. The function refuses both keywords in one case. The plugin directories are this build's testing and basic
+# plugins and each PLUGIN_DIRS entry, handed over in GNURADIO4_PLUGIN_DIRECTORIES. Each SET entry, in the form
+# block.key=value, becomes one --set argument. A relative graph path is read from the calling directory. The case
+# carries the label `graph`. Without rungraph, as with an Emscripten build of core, the function registers no case, and
+# the configure prints the directories it searched, once. The installed rungraph carries no run path. The case puts the
+# installation's library directory, two levels above gnuradio4_DIR, first in the loader's search path: DYLD_LIBRARY_PATH
+# on macOS, LD_LIBRARY_PATH on other Unix systems. On Windows, core installs its libraries in the bin directory beside
+# rungraph, where the loader looks first.
 function(gr_add_graph_test TEST_NAME GRAPH)
   cmake_parse_arguments(
     PARSE_ARGV
@@ -212,7 +212,8 @@ function(gr_add_graph_test TEST_NAME GRAPH)
     ABSOLUTE
     BASE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}")
-  set(_pluginDirs "$<TARGET_FILE_DIR:GrTestingBlocksShared>" ${_graphTest_PLUGIN_DIRS})
+  set(_pluginDirs "$<TARGET_FILE_DIR:GrTestingBlocksShared>" "$<TARGET_FILE_DIR:GrBasicBlocksShared>"
+                  ${_graphTest_PLUGIN_DIRS})
   list(
     JOIN
     _pluginDirs

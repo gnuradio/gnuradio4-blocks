@@ -15,9 +15,9 @@
 #include <gnuradio-4.0/meta/reflection.hpp>
 
 #include <gnuradio-4.0/basic/DataSink.hpp>
+#include <gnuradio-4.0/basic/NullSources.hpp>
 #include <gnuradio-4.0/basic/StreamToDataSet.hpp>
 #include <gnuradio-4.0/testing/Delay.hpp>
-#include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 using namespace std::chrono_literals;
@@ -546,7 +546,7 @@ const boost::ut::suite DataSinkTests = [] {
         using namespace gr::tag;
         constexpr auto kBound = 2000ms;
         gr::Graph      testGraph;
-        auto&          src  = testGraph.emplaceBlock<testing::NullSource<float>>();
+        auto&          src  = testGraph.emplaceBlock<NullSource<float>>();
         auto&          sink = testGraph.emplaceBlock<DataSink<float>>({{"name", "full_sink"}, {SIGNAL_NAME.shortKey(), "FullName"}});
         expect(testGraph.connect<"out", "in">(src, sink).has_value());
 
@@ -577,7 +577,7 @@ const boost::ut::suite DataSinkTests = [] {
     "DataSet - a stop ends a Backpressure wait for poller space"_test = [] {
         constexpr auto kBound = 2000ms;
         gr::Graph      testGraph;
-        auto&          src  = testGraph.emplaceBlock<testing::NullSource<DataSet<float>>>();
+        auto&          src  = testGraph.emplaceBlock<NullSource<DataSet<float>>>();
         auto&          sink = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "full_data_set_sink"}, {"signal_name", "full signal"}});
         expect(testGraph.connect<"out", "in">(src, sink).has_value());
 
