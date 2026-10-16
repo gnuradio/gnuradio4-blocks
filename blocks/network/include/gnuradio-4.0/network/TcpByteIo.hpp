@@ -236,6 +236,23 @@ struct Address {
     return flags >= 0 && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
+/// @brief Turn on keepalive for @p fd: idle 30 s, interval 10 s, three probes.
+inline void enableKeepalive(int fd) noexcept {
+    const auto set = [fd](int level, int option, int value) { std::ignore = ::setsockopt(fd, level, option, &value, static_cast<::socklen_t>(sizeof(value))); };
+    set(SOL_SOCKET, SO_KEEPALIVE, 1);
+#if defined(TCP_KEEPIDLE)
+    set(IPPROTO_TCP, TCP_KEEPIDLE, 30);
+#elif defined(TCP_KEEPALIVE)
+    set(IPPROTO_TCP, TCP_KEEPALIVE, 30);
+#endif
+#if defined(TCP_KEEPINTVL)
+    set(IPPROTO_TCP, TCP_KEEPINTVL, 10);
+#endif
+#if defined(TCP_KEEPCNT)
+    set(IPPROTO_TCP, TCP_KEEPCNT, 3);
+#endif
+}
+
 /// @brief Wait at most @p timeoutMs for @p events on @p fd; an expired wait reports no events at all.
 [[nodiscard]] inline short pollFor(int fd, short events, int timeoutMs) noexcept {
     ::pollfd  item{.fd = fd, .events = events, .revents = 0};
@@ -268,6 +285,7 @@ struct Counters {
     std::uint64_t peersRefused = 0ULL; ///< connections accepted and closed because one peer was already served
     std::uint64_t disconnects  = 0ULL; ///< connections lost
     std::uint64_t reconnects   = 0ULL; ///< connections established after the first
+    std::uint64_t idleDrops    = 0ULL; ///< served peers dropped after idle_timeout_ms without a byte
 };
 
 } // namespace detail::bytesockio
@@ -828,6 +846,17 @@ peer that moves is followed and a name that is gone is fatal. A shortage retries
 counts as permanent. What a peer does — closing, resetting, refusing a connection — costs the connection and
 nothing more, and the reconnect loop carries on. `nReaderFailures` counts the reader threads that ended this way and
 `lastReaderError()` names the last fault.
+
+An accepted peer that sends nothing for `idle_timeout_ms` is dropped and counted in `nIdlePeersDropped` and
+`nDisconnects`, and the source then takes the next connection. The default of 30 s treats a producer silent for tens
+of seconds as failed. A deadline of 0 lets a peer that connected and never sent hold the one slot until the graph
+stops. The block reads the deadline when the socket opens and refuses a change while running. The deadline counts only
+time the reader spends waiting on the socket. A queue held full under `backpressure` therefore drops no peer. A
+producer that pauses longer than `idle_timeout_ms` must reconnect and may lose its first write after the pause; a
+sporadic producer needs a longer deadline or 0. A connection the source made is kept however quiet it is. Every
+connection carries `SO_KEEPALIVE`: a probe after 30 s of silence, then two more 10 s apart. The connection ends when
+the third probe goes unanswered. A host that lost power leaves a half-open connection, and keepalive ends it about a
+minute later. A platform without those timer options keeps the system's own.
 )"">;
 
     PortOut<std::uint8_t> out;
@@ -839,16 +868,18 @@ nothing more, and the reconnect loop carries on. `nReaderFailures` counts the re
     Annotated<gr::Size_t, "reconnect_ms", Unit<"ms">, Doc<"interval between connection attempts while connecting">>                   reconnect_ms = 100U;
 
     Annotated<gr::Size_t, "connect_timeout_ms", Unit<"ms">, Doc<"how long one connection attempt may go unanswered before it is abandoned and another made; default 5000">> connect_timeout_ms = 5000U;
+    Annotated<gr::Size_t, "idle_timeout_ms", Unit<"ms">, Doc<"time since the last byte before the peer is dropped; 0 disables">>                                            idle_timeout_ms    = 30000U;
 
-    GR_MAKE_REFLECTABLE(TcpByteSource, out, endpoint, bind, overflow, queue_bytes, reconnect_ms, connect_timeout_ms);
+    GR_MAKE_REFLECTABLE(TcpByteSource, out, endpoint, bind, overflow, queue_bytes, reconnect_ms, connect_timeout_ms, idle_timeout_ms);
 
-    std::uint64_t nBytes          = 0ULL; ///< bytes taken off the socket
-    std::uint64_t nBytesDropped   = 0ULL; ///< queued bytes discarded on overflow
-    std::uint64_t nRecvErrors     = 0ULL; ///< read failures other than would-block and interrupt
-    std::uint64_t nPeersRefused   = 0ULL; ///< connections accepted and closed because one peer was already served
-    std::uint64_t nDisconnects    = 0ULL; ///< connections lost
-    std::uint64_t nReconnects     = 0ULL; ///< connections established after the first
-    std::uint64_t nReaderFailures = 0ULL; ///< reader threads that ended on a fault of the socket they own
+    std::uint64_t nBytes            = 0ULL; ///< bytes taken off the socket
+    std::uint64_t nBytesDropped     = 0ULL; ///< queued bytes discarded on overflow
+    std::uint64_t nRecvErrors       = 0ULL; ///< read failures other than would-block and interrupt
+    std::uint64_t nPeersRefused     = 0ULL; ///< connections accepted and closed because one peer was already served
+    std::uint64_t nDisconnects      = 0ULL; ///< connections lost
+    std::uint64_t nReconnects       = 0ULL; ///< connections established after the first
+    std::uint64_t nReaderFailures   = 0ULL; ///< reader threads that ended on a fault of the socket they own
+    std::uint64_t nIdlePeersDropped = 0ULL; ///< served peers dropped after idle_timeout_ms without a byte
 
     std::mutex              _mutex;
     std::condition_variable _cv;
@@ -865,6 +896,7 @@ nothing more, and the reconnect loop carries on. `nReaderFailures` counts the re
     std::size_t   _queueBytes       = 0UZ;
     std::uint32_t _reconnectMs      = 100U;
     std::uint32_t _connectTimeoutMs = 5000U;
+    std::uint32_t _idleTimeoutMs    = 30000U;
     bool          _backpressure     = false;
     bool          _socketOpen       = false;
     bool          _everConnected    = false;
@@ -872,6 +904,7 @@ nothing more, and the reconnect loop carries on. `nReaderFailures` counts the re
     std::size_t   _transientFaults  = 0UZ; ///< consecutive faults of a kind that may lift; the I/O thread's alone
 
     std::chrono::steady_clock::time_point _resolvedAt{}; ///< when the endpoint was last resolved; the I/O thread's alone
+    std::chrono::steady_clock::time_point _heardAt{};    ///< when the served peer last sent a byte; the I/O thread's alone
 
     struct IoThreadGuard { // must be last member — destroyed first, so the reader is gone before the queue it fills
         TcpByteSource* self;
@@ -932,7 +965,7 @@ nothing more, and the reconnect loop carries on. `nReaderFailures` counts the re
     /// @brief The counters as one set, taken under the lock the I/O thread writes them behind.
     [[nodiscard]] detail::bytesockio::Counters counters() {
         std::lock_guard lock(_mutex);
-        return {.bytes = nBytes, .bytesDropped = nBytesDropped, .socketErrors = nRecvErrors, .peersRefused = nPeersRefused, .disconnects = nDisconnects, .reconnects = nReconnects};
+        return {.bytes = nBytes, .bytesDropped = nBytesDropped, .socketErrors = nRecvErrors, .peersRefused = nPeersRefused, .disconnects = nDisconnects, .reconnects = nReconnects, .idleDrops = nIdlePeersDropped};
     }
 
     /// @brief What ended the reader thread, or empty while it runs and after a stop it was asked for.
@@ -1002,6 +1035,9 @@ private:
         if (connect_timeout_ms.value != _connectTimeoutMs) {
             refuse("connect_timeout_ms");
         }
+        if (idle_timeout_ms.value != _idleTimeoutMs) {
+            refuse("idle_timeout_ms");
+        }
     }
 
     void freezeSocketSettings() {
@@ -1011,6 +1047,7 @@ private:
         _queueBytes       = static_cast<std::size_t>(queue_bytes.value);
         _reconnectMs      = reconnect_ms.value;
         _connectTimeoutMs = connect_timeout_ms.value;
+        _idleTimeoutMs    = idle_timeout_ms.value;
         _addressCursor    = 0UZ;
     }
 
@@ -1037,6 +1074,7 @@ private:
         append("disconnects", nDisconnects);
         append("reconnects", nReconnects);
         append("reader failures", nReaderFailures);
+        append("idle peers dropped", nIdlePeersDropped);
         if (!_lastReaderError.empty()) {
             std::format_to(std::back_inserter(report), "{}reader ended: {}", report.empty() ? "" : ", ", _lastReaderError);
         }
@@ -1203,6 +1241,7 @@ private:
                 const std::size_t room = queueRoom();
                 if (room == 0UZ) {
                     waitBounded(detail::bytesockio::kPollMs); // the socket is not read again until the graph makes room
+                    _heardAt = std::chrono::steady_clock::now();
                     continue;
                 }
                 wanted = std::min(room, chunk.size());
@@ -1210,10 +1249,12 @@ private:
 
             const short revents = detail::bytesockio::pollFor(peer.get(), POLLIN, detail::bytesockio::kPollMs);
             if (revents == 0) {
+                dropIfIdle(peer);
                 continue; // the bounded wait expired, which is how the loop returns to observe a stop request
             }
             const ::ssize_t received = ::recv(peer.get(), chunk.data(), wanted, 0);
             if (received > 0) {
+                _heardAt = std::chrono::steady_clock::now();
                 enqueue(std::span<const std::uint8_t>(chunk).first(static_cast<std::size_t>(received)));
                 continue;
             }
@@ -1317,8 +1358,10 @@ private:
     void adoptPeer(detail::bytesockio::Descriptor& peer, int fd) {
         const int on = 1;
         std::ignore  = ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, static_cast<::socklen_t>(sizeof(on)));
-        std::ignore  = detail::bytesockio::setNonBlocking(fd);
+        detail::bytesockio::enableKeepalive(fd);
+        std::ignore = detail::bytesockio::setNonBlocking(fd);
         peer.reset(fd);
+        _heardAt = std::chrono::steady_clock::now();
         std::lock_guard lock(_mutex);
         if (_everConnected) {
             ++nReconnects;
@@ -1330,6 +1373,17 @@ private:
         peer.reset();
         std::lock_guard lock(_mutex);
         ++nDisconnects;
+    }
+
+    /// @brief Drop an accepted peer once it has sent nothing for `idle_timeout_ms`.
+    void dropIfIdle(detail::bytesockio::Descriptor& peer) {
+        if (!_bind || _idleTimeoutMs == 0U || std::chrono::steady_clock::now() - _heardAt < std::chrono::milliseconds(_idleTimeoutMs)) {
+            return;
+        }
+        peer.reset();
+        std::lock_guard lock(_mutex);
+        ++nDisconnects;
+        ++nIdlePeersDropped;
     }
 
     [[nodiscard]] std::string refuseExtraPeers(detail::bytesockio::Descriptor& listener) {
