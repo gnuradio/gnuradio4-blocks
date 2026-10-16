@@ -13,59 +13,6 @@
 
 namespace gr::blocks::testing {
 
-GR_REGISTER_BLOCK(gr::blocks::testing::NullSource, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float>, gr::Packet<float>, gr::Tensor<float>, gr::DataSet<float> ])
-
-template<typename T>
-struct NullSource : Block<NullSource<T>> {
-    using Description = Doc<R""(A source block that emits zeros or type-specified default value continuously.
-Used mainly for testing and benchmarking where a consistent and predictable output is essential.
-Ideal for scenarios that require a simple, low-overhead source of consistent values.)"">;
-
-    gr::PortOut<T> out;
-
-    GR_MAKE_REFLECTABLE(NullSource, out);
-
-    [[nodiscard]] constexpr T processOne() const noexcept { return T{}; }
-
-    [[nodiscard]] constexpr auto processOne(meta::constexpr_value auto N) const noexcept
-    requires std::is_arithmetic_v<T>
-    {
-        return meta::simdize<T, N>{};
-    }
-};
-
-static_assert(gr::BlockLike<NullSource<float>>);
-
-GR_REGISTER_BLOCK(gr::blocks::testing::ConstantSource, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float>, gr::Packet<float>, gr::Tensor<float>, gr::DataSet<float> ])
-
-template<typename T>
-struct ConstantSource : Block<ConstantSource<T>> {
-    using value_t     = std::conditional_t<std::is_same_v<T, std::string>, std::string, meta::fundamental_base_value_type_t<T>>; // use base-type for types not supported by settings
-    using Description = Doc<R""(A source block that emits a constant default value for each output sample.
-This block counts the number of samples emitted and optionally halts after reaching a specified maximum.
-Commonly used for testing and simulations where consistent output and finite execution are required.)"">;
-
-    gr::PortOut<T> out;
-
-    Annotated<value_t, "default value", Visible, Doc<"default value for each sample">>               default_value{};
-    Annotated<std::uint64_t, "max samples", Doc<"count>n_samples_max -> signal DONE (0: infinite)">> n_samples_max = 0UZ;
-    Annotated<std::uint64_t, "count", Doc<"sample count (diagnostics only)">>                        count         = 0UZ;
-
-    GR_MAKE_REFLECTABLE(ConstantSource, out, default_value, n_samples_max, count);
-
-    void reset() { count = 0U; }
-
-    [[nodiscard]] constexpr T processOne() noexcept {
-        count++;
-        if (n_samples_max > 0 && count >= n_samples_max) {
-            this->requestStop();
-        }
-        return T(default_value.value);
-    }
-};
-
-static_assert(gr::BlockLike<ConstantSource<float>>);
-
 GR_REGISTER_BLOCK(gr::blocks::testing::SlowSource, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float>, gr::Packet<float>, gr::Tensor<float>, gr::DataSet<float> ])
 
 template<typename T>
@@ -156,47 +103,6 @@ Commonly used used to isolate parts of a flowgraph, manage buffer sizes, or simp
     [[nodiscard]] constexpr auto processOne(V input) const noexcept {
         return input;
     }
-};
-
-GR_REGISTER_BLOCK(gr::blocks::testing::HeadBlock, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float>, gr::Packet<float>, gr::Tensor<float>, gr::DataSet<float> ])
-
-template<typename T>
-struct HeadBlock : Block<HeadBlock<T>> {
-    using Description = Doc<R""(Limits the number of output samples by copying the first N items from the input to the output and then signaling completion.
-Commonly used to control data flow in systems where precise sample counts are critical, such as in file recording or when executing flow graphs without a GUI.)"">;
-
-    gr::PortIn<T>  in;
-    gr::PortOut<T> out;
-
-    Annotated<std::uint64_t, "max samples", Doc<"count>n_samples_max -> signal DONE (0: infinite)">> n_samples_max = 0UZ;
-    Annotated<std::uint64_t, "count", Doc<"sample count (diagnostics only)">>                        count         = 0UZ;
-
-    GR_MAKE_REFLECTABLE(HeadBlock, in, out, n_samples_max, count);
-
-    void reset() { count = 0U; }
-
-    [[nodiscard]] constexpr auto processOne(T input) noexcept {
-        count++;
-        if (n_samples_max > 0 && count >= n_samples_max) {
-            this->requestStop();
-        }
-        return input;
-    }
-};
-
-GR_REGISTER_BLOCK(gr::blocks::testing::NullSink, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float>, gr::Packet<float>, gr::Tensor<float>, gr::DataSet<float> ])
-
-template<typename T>
-struct NullSink : Block<NullSink<T>> {
-    using Description = Doc<R""(A sink block that consumes and discards all input samples without producing any output.
-Used primarily for absorbing data in a flow graph where output processing is unnecessary.
-Commonly used for testing, performance benchmarking, and in scenarios where signal flow needs to be terminated without external effects.)"">;
-
-    gr::PortIn<T> in;
-    GR_MAKE_REFLECTABLE(NullSink, in);
-
-    template<gr::meta::t_or_simd<T> V>
-    void processOne(V) const noexcept { /* do nothing */ }
 };
 
 GR_REGISTER_BLOCK(gr::blocks::testing::CountingSink, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float>, gr::Packet<float>, gr::Tensor<float>, gr::DataSet<float> ])

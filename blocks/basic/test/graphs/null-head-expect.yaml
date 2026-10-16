@@ -1,0 +1,28 @@
+# Two chains of basic sources into ExpectSink. NullSource feeds HeadBlock, which passes four zeros and then stops.
+# ConstantSource emits three samples of its default value and then stops. The run passes when each sink receives
+# exactly its expected samples.
+blocks:
+  - id: gr::blocks::basic::NullSource<float32>
+    parameters:
+      name: zeros
+  - id: gr::blocks::basic::HeadBlock<float32>
+    parameters:
+      name: head
+      n_samples_max: !!uint64 4
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: zeros_sink
+      expected: !!float32 [0.0, 0.0, 0.0, 0.0]
+  - id: gr::blocks::basic::ConstantSource<float32>
+    parameters:
+      name: constant
+      default_value: !!float32 1.5
+      n_samples_max: !!uint64 3
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: constant_sink
+      expected: !!float32 [1.5, 1.5, 1.5]
+connections:
+  - [zeros, out, head, in]
+  - [head, out, zeros_sink, in]
+  - [constant, out, constant_sink, in]
