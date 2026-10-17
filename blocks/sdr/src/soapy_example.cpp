@@ -35,7 +35,7 @@ gr::Graph createGraph(std::string fileName1, std::string fileName2, gr::Size_t m
 
     if (fileName1.contains("null")) {
         std::println("write channel0 to NullSink");
-        auto& fileSink1 = flow.emplaceBlock<blocks::basic::NullSink<TDataType>>();
+        auto& fileSink1 = flow.emplaceBlock<gr::blocks::basic::NullSink<TDataType>>();
         expect(flow.connect<"out#0", "in">(source, fileSink1).has_value()) << "error connecting NullSink1";
     } else {
         std::println("write to fileName1: {}", fileName1);
@@ -45,7 +45,7 @@ gr::Graph createGraph(std::string fileName1, std::string fileName2, gr::Size_t m
 
     if (fileName2.contains("null")) {
         std::println("write channel1 to NullSink");
-        auto& fileSink2 = flow.emplaceBlock<blocks::basic::NullSink<TDataType>>();
+        auto& fileSink2 = flow.emplaceBlock<gr::blocks::basic::NullSink<TDataType>>();
         expect(flow.connect<"out#1", "in">(source, fileSink2).has_value()) << "error connecting NullSink2";
     } else {
         std::println("write to fileName2: {}", fileName2);

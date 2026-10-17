@@ -401,9 +401,9 @@ const boost::ut::suite<"doppler shift"> dopplerShiftTests = [] {
     };
 
     "a frequency tag passes through untouched in both directions"_test = [] {
-        using gr::testing::ProcessFunction;
-        using gr::testing::TagSink;
-        using gr::testing::TagSource;
+        using gr::blocks::testing::ProcessFunction;
+        using gr::blocks::testing::TagSink;
+        using gr::blocks::testing::TagSource;
 
         constexpr double kTuned = 437'000'000.;
         const Pass       pass   = leoPass(2., 6'000., 0.5);

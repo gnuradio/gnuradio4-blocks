@@ -14,8 +14,6 @@
 #include <gnuradio-4.0/basic/StreamToDataSet.hpp>
 #include <gnuradio-4.0/meta/UncertainValue.hpp>
 
-#include <gnuradio-4.0/electrical/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::electrical {
 
 GR_REGISTER_BLOCK("gr::blocks::electrical::ThreePhasePowerMetrics", gr::blocks::electrical::ThreePhasePowerMetrics, [T], [ float, gr::UncertainValue<float> ])

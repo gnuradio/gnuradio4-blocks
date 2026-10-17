@@ -10,7 +10,6 @@
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/Port.hpp>
 #include <gnuradio-4.0/annotated.hpp>
-#include <gnuradio-4.0/math/NamespaceCompatibility.hpp>
 #include <gnuradio-4.0/meta/utils.hpp>
 #include <numbers>
 #include <optional>

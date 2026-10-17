@@ -8,8 +8,6 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 
-#include <gnuradio-4.0/testing/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::testing {
 
 GR_REGISTER_BLOCK(gr::blocks::testing::Delay, [T], [float])

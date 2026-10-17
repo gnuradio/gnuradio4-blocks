@@ -23,9 +23,9 @@ namespace qa_pam_symbols {
 
 using gr::blocks::digital::LevelTracker;
 using gr::blocks::digital::PamSlicer;
-using gr::testing::ProcessFunction;
-using gr::testing::TagSink;
-using gr::testing::TagSource;
+using gr::blocks::testing::ProcessFunction;
+using gr::blocks::testing::TagSink;
+using gr::blocks::testing::TagSource;
 
 /// A block carrying a seqlock is neither copyable nor movable, so every one below is built where it is used.
 template<typename TBlock>

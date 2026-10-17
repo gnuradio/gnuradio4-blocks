@@ -17,8 +17,6 @@
 #include <ranges>
 #include <vector>
 
-#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::basic {
 
 GR_REGISTER_BLOCK("gr::blocks::basic::StreamToDataSet", gr::blocks::basic::StreamToDataSet, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ]);

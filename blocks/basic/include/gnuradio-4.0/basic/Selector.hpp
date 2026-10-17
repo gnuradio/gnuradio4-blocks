@@ -6,8 +6,6 @@
 
 #include <gnuradio-4.0/meta/utils.hpp>
 
-#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::basic {
 using namespace gr;
 

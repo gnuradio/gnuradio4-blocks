@@ -137,9 +137,9 @@ struct Seen {
 
 template<typename TBlock>
 [[nodiscard]] Seen throughGraph(gr::property_map settings, std::span<const std::uint8_t> stream, std::span<const gr::Tag> incoming = {}) {
-    using gr::testing::ProcessFunction;
-    using gr::testing::TagSink;
-    using gr::testing::TagSource;
+    using gr::blocks::testing::ProcessFunction;
+    using gr::blocks::testing::TagSink;
+    using gr::blocks::testing::TagSource;
 
     gr::Graph  graph;
     const auto values = gr::Tensor<std::uint8_t>(stream.begin(), stream.end());
@@ -198,9 +198,9 @@ struct SeenPair {
 };
 
 [[nodiscard]] SeenPair decoderGraph(gr::property_map settings, std::span<const std::uint8_t> chips, std::span<const gr::Tag> incoming = {}, bool connectFlags = true) {
-    using gr::testing::ProcessFunction;
-    using gr::testing::TagSink;
-    using gr::testing::TagSource;
+    using gr::blocks::testing::ProcessFunction;
+    using gr::blocks::testing::TagSink;
+    using gr::blocks::testing::TagSource;
 
     gr::Graph  graph;
     const auto values = gr::Tensor<std::uint8_t>(chips.begin(), chips.end());

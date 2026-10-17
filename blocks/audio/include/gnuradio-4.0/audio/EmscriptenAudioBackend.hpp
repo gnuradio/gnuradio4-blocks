@@ -23,8 +23,6 @@
 #include <emscripten/webaudio.h>
 #include <malloc.h>
 
-#include <gnuradio-4.0/audio/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::audio::detail {
 
 // -- worklet runtime types --

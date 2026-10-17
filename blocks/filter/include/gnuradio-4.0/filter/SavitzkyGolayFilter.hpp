@@ -11,7 +11,6 @@
 #include <gnuradio-4.0/algorithm/dataset/DataSetHelper.hpp>
 #include <gnuradio-4.0/algorithm/filter/SavitzkyGolay.hpp>
 
-#include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
 #include <gnuradio-4.0/filter/TagDelay.hpp>
 
 namespace gr::blocks::filter {

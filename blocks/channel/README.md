@@ -17,5 +17,4 @@ against clean samples.
 Each model's parameters stay live-settable, so a graph can sweep an impairment
 without being rebuilt.
 
-`gr::channel` is the algorithm layer's namespace, so the blocks here stay in `gr::blocks::channel` and ship no
-compatibility import, which would collide with it.
+`gr::channel` is the algorithm layer's namespace. The blocks here live in `gr::blocks::channel`.

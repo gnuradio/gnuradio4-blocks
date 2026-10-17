@@ -75,7 +75,7 @@ const boost::ut::suite<"StreamToDataSet Block"> selectorTest = [] {
         expect(eq(funcGen.settings().getNStoredParameters(), 9UZ));
 
         auto& sink   = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "SampleGeneratorSink"}});
-        auto& uiSink = graph.emplaceBlock<testing::ImChartMonitor<float>>({{"name", "ImChartSinkFull"}});
+        auto& uiSink = graph.emplaceBlock<gr::blocks::testing::ImChartMonitor<float>>({{"name", "ImChartSinkFull"}});
         expect(graph.connect<"out", "clk_in">(clockSrc, funcGen).has_value()) << "connect clockSrc->funcGen";
         expect(graph.connect<"out", "in">(funcGen, sink).has_value()) << "connect funcGen->sink";
         expect(graph.connect<"out", "in">(funcGen, uiSink).has_value()) << "connect funcGen->uiSink";
@@ -87,9 +87,9 @@ const boost::ut::suite<"StreamToDataSet Block"> selectorTest = [] {
         expect(graph.connect<"out", "in">(funcGen, streamFilter).has_value()) << "connect funcGen->streamFilter";
         expect(graph.connect<"out", "in">(funcGen, dataSetFilter).has_value()) << "connect funcGen->dataSetFilter";
 
-        auto& uiFilteredStreamSink = graph.emplaceBlock<testing::ImChartMonitor<float>>({{"name", "ImChartFilteredStream"}});
+        auto& uiFilteredStreamSink = graph.emplaceBlock<gr::blocks::testing::ImChartMonitor<float>>({{"name", "ImChartFilteredStream"}});
         expect(graph.connect<"out", "in">(streamFilter, uiFilteredStreamSink).has_value()) << "connect funcGen->uiFilteredStreamSink";
-        auto& uiDataSetSink = graph.emplaceBlock<testing::ImChartMonitor<DataSet<float>>>({{"name", "ImChartDataSet"}});
+        auto& uiDataSetSink = graph.emplaceBlock<gr::blocks::testing::ImChartMonitor<DataSet<float>>>({{"name", "ImChartDataSet"}});
         expect(graph.connect<"out", "in">(dataSetFilter, uiDataSetSink).has_value()) << "connect funcGen->uiDataSetSink";
 
         std::thread uiLoop([&uiSink, &uiFilteredStreamSink, &uiDataSetSink]() {
