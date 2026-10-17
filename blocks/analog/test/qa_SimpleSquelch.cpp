@@ -60,9 +60,9 @@ template<typename T>
 /// @brief The offsets at which a key outside `gr::tag::kDefaultTags` reaches the sink through @p TBlock.
 template<typename TIn, typename TOut, typename TBlock>
 [[nodiscard]] std::vector<std::size_t> privateTagOffsets(gr::property_map settings) {
-    using gr::testing::ProcessFunction;
-    using gr::testing::TagSink;
-    using gr::testing::TagSource;
+    using gr::blocks::testing::ProcessFunction;
+    using gr::blocks::testing::TagSink;
+    using gr::blocks::testing::TagSource;
 
     const gr::property_map::key_type key{"private_key"};
     const gr::pmt::Value             value{std::string("carried")};

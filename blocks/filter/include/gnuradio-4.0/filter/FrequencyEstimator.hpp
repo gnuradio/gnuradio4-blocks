@@ -20,8 +20,6 @@
 #include <gnuradio-4.0/algorithm/fourier/fft_common.hpp>
 #include <gnuradio-4.0/algorithm/fourier/window.hpp>
 
-#include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::filter {
 
 GR_REGISTER_BLOCK("gr::blocks::filter::FrequencyEstimatorTimeDomain", gr::blocks::filter::FrequencyEstimatorTimeDomain, [T], [float])

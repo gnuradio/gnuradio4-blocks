@@ -40,9 +40,9 @@ using gr::blocks::filter::DesignedFilter;
 using gr::blocks::filter::RationalResampler;
 using gr::blocks::sync::CostasLoop;
 using gr::blocks::sync::SymbolSync;
-using gr::testing::ProcessFunction;
-using gr::testing::TagSink;
-using gr::testing::TagSource;
+using gr::blocks::testing::ProcessFunction;
+using gr::blocks::testing::TagSink;
+using gr::blocks::testing::TagSource;
 
 using CF = std::complex<float>;
 

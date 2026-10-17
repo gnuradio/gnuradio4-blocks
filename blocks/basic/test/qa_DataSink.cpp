@@ -265,7 +265,7 @@ const boost::ut::suite DataSinkTests = [] {
         gr::Graph testGraph;
         auto&     src   = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}, //
                   {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_MIN.shortKey(), -42.f}, {SIGNAL_MAX.shortKey(), 42.f}});
-        auto&     delay = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
+        auto&     delay = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
         auto&     sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.shortKey(), "TestName"}});
         src._tags       = srcTags;
 
@@ -368,7 +368,7 @@ const boost::ut::suite DataSinkTests = [] {
         auto&      src     = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}, //
                      {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_MIN.shortKey(), -42.f}, {SIGNAL_MAX.shortKey(), 42.f}});
         src._tags          = srcTags;
-        auto& delay        = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
+        auto& delay        = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
         auto& sink         = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.shortKey(), "TestName"}});
 
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
@@ -475,7 +475,7 @@ const boost::ut::suite DataSinkTests = [] {
         gr::Graph testGraph;
         auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
         // only needs to hold the stream until the poller is registered, which spinUntil does at once
-        auto& delay = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", 100u}});
+        auto& delay = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", 100u}});
         auto& sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "stalled_sink"}, {SIGNAL_NAME.shortKey(), "StalledName"}});
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, sink).has_value());
@@ -507,7 +507,7 @@ const boost::ut::suite DataSinkTests = [] {
         gr::Graph testGraph;
         auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
         // only needs to hold the stream until the poller is registered, which spinUntil does at once
-        auto& delay = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", 100u}});
+        auto& delay = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", 100u}});
         auto& sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "patient_sink"}, {SIGNAL_NAME.shortKey(), "PatientName"}});
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, sink).has_value());
@@ -546,7 +546,7 @@ const boost::ut::suite DataSinkTests = [] {
         using namespace gr::tag;
         constexpr auto kBound = 2000ms;
         gr::Graph      testGraph;
-        auto&          src  = testGraph.emplaceBlock<NullSource<float>>();
+        auto&          src  = testGraph.emplaceBlock<gr::blocks::basic::NullSource<float>>();
         auto&          sink = testGraph.emplaceBlock<DataSink<float>>({{"name", "full_sink"}, {SIGNAL_NAME.shortKey(), "FullName"}});
         expect(testGraph.connect<"out", "in">(src, sink).has_value());
 
@@ -577,7 +577,7 @@ const boost::ut::suite DataSinkTests = [] {
     "DataSet - a stop ends a Backpressure wait for poller space"_test = [] {
         constexpr auto kBound = 2000ms;
         gr::Graph      testGraph;
-        auto&          src  = testGraph.emplaceBlock<NullSource<DataSet<float>>>();
+        auto&          src  = testGraph.emplaceBlock<gr::blocks::basic::NullSource<DataSet<float>>>();
         auto&          sink = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "full_data_set_sink"}, {"signal_name", "full signal"}});
         expect(testGraph.connect<"out", "in">(src, sink).has_value());
 
@@ -609,7 +609,7 @@ const boost::ut::suite DataSinkTests = [] {
         constexpr auto kHold = 200ms;
         for (const OverflowPolicy policy : {OverflowPolicy::Backpressure, OverflowPolicy::BoundedBackpressure}) {
             gr::Graph testGraph;
-            auto&     src = testGraph.emplaceBlock<testing::TagSource<float, testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", gr::Size_t{1000}}, {"mark_tag", false}});
+            auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", gr::Size_t{1000}}, {"mark_tag", false}});
             src._tags     = {Tag{10UZ, {{"START", true}}}};
             auto& sink    = testGraph.emplaceBlock<DataSink<float>>({{"name", "eos_sink"}, {"signal_name", "eos signal"}});
             expect(testGraph.connect<"out", "in">(src, sink).has_value());
@@ -674,7 +674,7 @@ const boost::ut::suite DataSinkTests = [] {
                 {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_MIN.shortKey(), -2.f}, {SIGNAL_MAX.shortKey(), 2.f}});
 
         src._tags   = srcTags;
-        auto& delay = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
+        auto& delay = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
         auto& sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {"signal_name", "TestName"}});
 
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
@@ -767,7 +767,7 @@ const boost::ut::suite DataSinkTests = [] {
                 {SAMPLE_RATE.shortKey(), kSampleRate}, {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, //
                 {SIGNAL_MIN.shortKey(), 0.f}, {SIGNAL_MAX.shortKey(), static_cast<float>(kSamples - 1)}});
         src._tags     = srcTags;
-        auto& delay   = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
+        auto& delay   = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
         auto& sink    = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.shortKey(), "TestName"}});
 
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
@@ -842,7 +842,7 @@ const boost::ut::suite DataSinkTests = [] {
         gr::Graph        testGraph;
         auto&            src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<int32_t>>({{"n_samples_max", n_samples}, {"mark_tag", false}});
         src._tags            = tags;
-        auto& delay          = testGraph.emplaceBlock<testing::Delay<int32_t>>({{"delay_ms", 2500u}});
+        auto& delay          = testGraph.emplaceBlock<gr::blocks::testing::Delay<int32_t>>({{"delay_ms", 2500u}});
         auto& sink           = testGraph.emplaceBlock<DataSink<int32_t>>({{"name", "test_sink"}, {"signal_name", "test signal"}});
 
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
@@ -933,8 +933,8 @@ const boost::ut::suite DataSinkTests = [] {
 
     "DataSet - polling"_test = [] {
         gr::Graph testGraph;
-        auto&     source          = testGraph.emplaceBlock<testing::TagSource<float, testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "test signal"}, {"signal_unit", "test unit"}, {"mark_tag", false}});
-        auto&     delay           = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
+        auto&     source          = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "test signal"}, {"signal_unit", "test unit"}, {"mark_tag", false}});
+        auto&     delay           = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
         auto&     streamToDataSet = testGraph.emplaceBlock<StreamToDataSet<float>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
         auto&     sink            = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "test_sink"}, {"signal_name", "test signal"}});
         expect(testGraph.connect<"out", "in">(source, delay).has_value());
@@ -995,8 +995,8 @@ const boost::ut::suite DataSinkTests = [] {
     // and that a record's payload, annotations and timing events reach a poller found by sink name unchanged.
     "DataSet<uint8_t> - polling by sink name"_test = [] {
         gr::Graph testGraph;
-        auto&     source          = testGraph.emplaceBlock<testing::TagSource<std::uint8_t, testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "byte signal"}, {"signal_unit", "byte"}, {"mark_tag", false}});
-        auto&     delay           = testGraph.emplaceBlock<testing::Delay<std::uint8_t>>({{"delay_ms", kProcessingDelayMs}});
+        auto&     source          = testGraph.emplaceBlock<gr::blocks::testing::TagSource<std::uint8_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "byte signal"}, {"signal_unit", "byte"}, {"mark_tag", false}});
+        auto&     delay           = testGraph.emplaceBlock<gr::blocks::testing::Delay<std::uint8_t>>({{"delay_ms", kProcessingDelayMs}});
         auto&     streamToDataSet = testGraph.emplaceBlock<StreamToDataSet<std::uint8_t>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
         auto&     sink            = testGraph.emplaceBlock<DataSetSink<std::uint8_t>>({{"name", "byte_sink"}, {"signal_name", "byte signal"}});
         expect(testGraph.connect<"out", "in">(source, delay).has_value());
@@ -1048,8 +1048,8 @@ const boost::ut::suite DataSinkTests = [] {
 
     "DataSet - callback"_test = [] {
         gr::Graph testGraph;
-        auto&     source          = testGraph.emplaceBlock<testing::TagSource<float, testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "test signal"}, {"signal_unit", "test unit"}, {"mark_tag", false}});
-        auto&     delay           = testGraph.emplaceBlock<testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
+        auto&     source          = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "test signal"}, {"signal_unit", "test unit"}, {"mark_tag", false}});
+        auto&     delay           = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
         auto&     streamToDataSet = testGraph.emplaceBlock<StreamToDataSet<float>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
         auto&     sink            = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "test_sink"}, {"signal_name", "test signal"}});
         expect(testGraph.connect<"out", "in">(source, delay).has_value());
@@ -1099,10 +1099,10 @@ const boost::ut::suite DataSinkTests = [] {
 
     "DataSet - unregistering sinks of different sample types"_test = [] {
         gr::Graph testGraph;
-        auto&     floatSource = testGraph.emplaceBlock<testing::TagSource<float, testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "float signal"}, {"mark_tag", false}});
+        auto&     floatSource = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "float signal"}, {"mark_tag", false}});
         auto&     floatFilter = testGraph.emplaceBlock<StreamToDataSet<float>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
         auto&     floatSink   = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "float_data_set_sink"}, {"signal_name", "float signal"}});
-        auto&     byteSource  = testGraph.emplaceBlock<testing::TagSource<std::uint8_t, testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "byte signal"}, {"mark_tag", false}});
+        auto&     byteSource  = testGraph.emplaceBlock<gr::blocks::testing::TagSource<std::uint8_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "byte signal"}, {"mark_tag", false}});
         auto&     byteFilter  = testGraph.emplaceBlock<StreamToDataSet<std::uint8_t>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
         auto&     byteSink    = testGraph.emplaceBlock<DataSetSink<std::uint8_t>>({{"name", "byte_data_set_sink"}, {"signal_name", "byte signal"}});
         expect(testGraph.connect<"out", "in">(floatSource, floatFilter).has_value());

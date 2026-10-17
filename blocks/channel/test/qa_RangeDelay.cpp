@@ -1117,8 +1117,8 @@ int main() {
 
     // In a graph the framework reads the tags too, and the end of the stream releases the tags still waiting
     "a tag still waiting at the end of the stream leaves at the end-of-stream index"_test = [] {
-        using gr::testing::ProcessFunction;
-        using gr::testing::TagSource;
+        using gr::blocks::testing::ProcessFunction;
+        using gr::blocks::testing::TagSource;
 
         constexpr gr::Size_t kSamples = 256U;
         constexpr float      kRate    = 1'000.f;
@@ -1180,8 +1180,8 @@ int main() {
         expect(that % (block->sample_rate.value == 1'000.f && block->order.value == 1 && block->attenuation_db.value == 60.0 && block->rolloff.value == 0.2 && block->bank_size.value == 32U)) << "every member keeps its accepted value";
         std::ignore = block->processBulk(std::span<const float>(impulses).subspan(256UZ), std::span<float>(out).subspan(256UZ));
         expect(std::ranges::equal(out, reference)) << "and the samples are those of the unchanged block";
-        expect(gr::testing::settingsOutsideLimits(RangeDelay<float>{}).empty()) << "every default lies inside its limits";
-        expect(gr::testing::settingsOutsideLimits(DopplerShift<C>{}).empty()) << "the shift's defaults too";
+        expect(gr::blocks::testing::settingsOutsideLimits(RangeDelay<float>{}).empty()) << "every default lies inside its limits";
+        expect(gr::blocks::testing::settingsOutsideLimits(DopplerShift<C>{}).empty()) << "the shift's defaults too";
     };
 
     // A change that leaves the anchor alone keeps a trigger anchor where its tag put it
