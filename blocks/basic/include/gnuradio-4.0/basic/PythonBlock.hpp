@@ -11,8 +11,6 @@
 template<typename T>
 inline PyModuleDef* myBlockPythonDefinitions(void);
 
-#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::basic {
 
 using namespace gr;

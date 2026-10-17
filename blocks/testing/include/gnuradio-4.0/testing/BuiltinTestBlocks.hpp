@@ -4,8 +4,6 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/meta/reflection.hpp>
 
-#include <gnuradio-4.0/testing/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::testing {
 
 template<typename T>

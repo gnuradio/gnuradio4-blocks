@@ -351,7 +351,7 @@ const boost::ut::suite<"fading channel"> fadingTests = [] {
         using gr::blocks::channel::test::keysOtherThan;
 
         const gr::property_map twoTaps{{"delays", std::vector<gr::Size_t>{0U, 3U}}, {"powers_db", std::vector<double>{0.0, -3.0}}, {"max_doppler", 0.01}, {"seed", std::uint64_t(9)}};
-        expect(keysCrossing<gr::testing::Copy<C>>() == keysOtherThan({})) << "every test key crosses a block that drops none";
+        expect(keysCrossing<gr::blocks::testing::Copy<C>>() == keysOtherThan({})) << "every test key crosses a block that drops none";
         expect(keysCrossing<FadingChannel<C>>(twoTaps) == keysOtherThan({"freq_est", "phase_est", "time_est", "clock_est"}));
     };
 };

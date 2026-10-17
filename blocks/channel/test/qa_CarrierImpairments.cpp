@@ -70,17 +70,17 @@ struct LoopRun {
 
 template<typename TMiddle>
 [[nodiscard]] LoopRun runIntoLoop(std::span<const C> input, std::vector<gr::Tag> tags, gr::property_map middleSettings = {}) {
-    using gr::testing::ProcessFunction;
+    using gr::blocks::testing::ProcessFunction;
 
     gr::Graph graph;
-    auto&     source = graph.emplaceBlock<gr::testing::TagSource<C, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(input.size())}, {"values", gr::Tensor<C>(input.begin(), input.end())}, {"sample_rate", 1.f}, {"mark_tag", false}});
+    auto&     source = graph.emplaceBlock<gr::blocks::testing::TagSource<C, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(input.size())}, {"values", gr::Tensor<C>(input.begin(), input.end())}, {"sample_rate", 1.f}, {"mark_tag", false}});
     source._tags     = std::move(tags);
 
     auto& middle        = graph.emplaceBlock<TMiddle>(std::move(middleSettings));
     auto& loop          = graph.emplaceBlock<gr::blocks::sync::PllCarrierTracking>({});
-    auto& outSink       = graph.emplaceBlock<gr::testing::TagSink<C, ProcessFunction::USE_PROCESS_BULK>>({});
-    auto& frequencySink = graph.emplaceBlock<gr::testing::TagSink<float, ProcessFunction::USE_PROCESS_BULK>>({});
-    auto& phaseSink     = graph.emplaceBlock<gr::testing::TagSink<float, ProcessFunction::USE_PROCESS_BULK>>({});
+    auto& outSink       = graph.emplaceBlock<gr::blocks::testing::TagSink<C, ProcessFunction::USE_PROCESS_BULK>>({});
+    auto& frequencySink = graph.emplaceBlock<gr::blocks::testing::TagSink<float, ProcessFunction::USE_PROCESS_BULK>>({});
+    auto& phaseSink     = graph.emplaceBlock<gr::blocks::testing::TagSink<float, ProcessFunction::USE_PROCESS_BULK>>({});
     boost::ut::expect(graph.connect<"out", "in">(source, middle).has_value());
     boost::ut::expect(graph.connect<"out", "in">(middle, loop).has_value());
     boost::ut::expect(graph.connect<"out", "in">(loop, outSink).has_value());
@@ -287,7 +287,7 @@ const boost::ut::suite<"carrier impairments"> carrierTests = [] {
         static_assert(std::ranges::equal(IqImbalance<C>::DroppedTagKeysControl::kKeys, std::array{kPhaseEstKey}));
         static_assert(gr::block::kUnfilteredTagPropagationAdmissible<FrequencyOffset<C>> && gr::block::kUnfilteredTagPropagationAdmissible<PhaseNoise<C>> && gr::block::kUnfilteredTagPropagationAdmissible<IqImbalance<C>>);
 
-        expect(keysCrossing<gr::testing::Copy<C>>() == keysOtherThan({})) << "every test key crosses a block that drops none";
+        expect(keysCrossing<gr::blocks::testing::Copy<C>>() == keysOtherThan({})) << "every test key crosses a block that drops none";
         expect(keysCrossing<FrequencyOffset<C>>({{"frequency_offset", 0.01}}) == keysOtherThan({kFreqEstKey, kPhaseEstKey})) << "FrequencyOffset";
         expect(keysCrossing<PhaseNoise<C>>({{"linewidth", 0.001}}) == keysOtherThan({kPhaseEstKey})) << "PhaseNoise";
         expect(keysCrossing<IqImbalance<C>>({{"phase_imbalance", 0.04}}) == keysOtherThan({kPhaseEstKey})) << "IqImbalance";
@@ -303,7 +303,7 @@ const boost::ut::suite<"carrier impairments"> carrierTests = [] {
         const auto                 shifted  = tone(kSamples, kInput + kOffset);
         const std::vector<gr::Tag> estimate{gr::Tag{0UZ, gr::property_map{{gr::property_map::key_type{gr::blocks::sync::kFreqEstKey}, stale}}}};
 
-        const LoopRun relayed = runIntoLoop<gr::testing::Copy<C>>(std::span<const C>(shifted), estimate);
+        const LoopRun relayed = runIntoLoop<gr::blocks::testing::Copy<C>>(std::span<const C>(shifted), estimate);
         expect(eq(relayed.frequency.size(), kSamples));
         expect(approx(relayed.frequency[0UZ], stale, 1e-3f)) << "a block that forwards the key steers the loop to the stale estimate";
 
@@ -322,7 +322,7 @@ const boost::ut::suite<"carrier impairments"> carrierTests = [] {
         const auto                 input    = tone(kSamples, 0.);
         const std::vector<gr::Tag> estimate{gr::Tag{16UZ, gr::property_map{{gr::property_map::key_type{gr::blocks::sync::kPhaseEstKey}, kStale}}}};
 
-        const LoopRun relayed = runIntoLoop<gr::testing::Copy<C>>(std::span<const C>(input), estimate);
+        const LoopRun relayed = runIntoLoop<gr::blocks::testing::Copy<C>>(std::span<const C>(input), estimate);
         expect(eq(relayed.phase.size(), kSamples));
         expect(approx(relayed.phase[16UZ], kStale, 1e-6f)) << "a block that forwards the key sets the loop phase to the stale estimate";
 

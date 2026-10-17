@@ -34,7 +34,6 @@
 
 #include <gnuradio-4.0/Message.hpp>
 #include <gnuradio-4.0/meta/formatter.hpp>
-#include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
 
 namespace gr::blocks::sdr::soapy {
 

@@ -26,15 +26,15 @@ inline constexpr std::array<std::string_view, 5UZ> kTagKeys{"freq_est", "phase_e
 template<typename TBlock>
 [[nodiscard]] std::set<std::string, std::less<>> keysCrossing(gr::property_map settings = {}) {
     using C = std::complex<float>;
-    using gr::testing::ProcessFunction;
+    using gr::blocks::testing::ProcessFunction;
 
     gr::Graph              graph;
-    auto&                  source = graph.emplaceBlock<gr::testing::TagSource<C, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", gr::Size_t{128U}}, {"sample_rate", 1.f}, {"mark_tag", false}});
+    auto&                  source = graph.emplaceBlock<gr::blocks::testing::TagSource<C, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", gr::Size_t{128U}}, {"sample_rate", 1.f}, {"mark_tag", false}});
     const gr::property_map keys{{"freq_est", 0.01f}, {"phase_est", 0.5f}, {"time_est", 0.25f}, {"clock_est", std::vector<float>{0.25f, 4.f}}, {"burst_id", std::string("b7")}};
     source._tags = {gr::Tag{0UZ, keys}, gr::Tag{64UZ, keys}};
 
     auto& block = graph.emplaceBlock<TBlock>(std::move(settings));
-    auto& sink  = graph.emplaceBlock<gr::testing::TagSink<C, ProcessFunction::USE_PROCESS_BULK>>({});
+    auto& sink  = graph.emplaceBlock<gr::blocks::testing::TagSink<C, ProcessFunction::USE_PROCESS_BULK>>({});
     boost::ut::expect(graph.connect<"out", "in">(source, block).has_value());
     boost::ut::expect(graph.connect<"out", "in">(block, sink).has_value());
 

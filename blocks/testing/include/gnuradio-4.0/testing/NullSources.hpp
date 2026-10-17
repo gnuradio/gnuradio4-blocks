@@ -9,8 +9,6 @@
 #include <gnuradio-4.0/Tensor.hpp>
 #include <gnuradio-4.0/meta/reflection.hpp>
 
-#include <gnuradio-4.0/testing/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::testing {
 
 GR_REGISTER_BLOCK(gr::blocks::testing::NullSource, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float>, gr::Packet<float>, gr::Tensor<float>, gr::DataSet<float> ])
