@@ -25,3 +25,7 @@ set_target_properties(GrOfdmBlocksObject PROPERTIES GR_PCH_INCLUDES_POCKETFFT ON
 if(TARGET gnuradio4::GrOfdmBlocksShared AND ENABLE_TESTING)
   add_subdirectory(test)
 endif()
+
+if(ENABLE_EXAMPLES)
+  add_subdirectory(benchmarks)
+endif()
