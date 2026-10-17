@@ -20,6 +20,16 @@
 #include <gnuradio-4.0/basic/SampleDelay.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
+// QA_SAMPLE_DELAY_ADDRESS_SANITIZER is defined in a build with the address sanitizer. Clang 20 and earlier report the
+// sanitizer only through __has_feature(address_sanitizer).
+#if defined(__SANITIZE_ADDRESS__)
+#define QA_SAMPLE_DELAY_ADDRESS_SANITIZER
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define QA_SAMPLE_DELAY_ADDRESS_SANITIZER
+#endif
+#endif
+
 namespace {
 
 using gr::blocks::basic::SampleDelay;
@@ -395,7 +405,7 @@ const boost::ut::suite<"SampleDelay"> sampleDelayTests = [] {
         const std::vector<std::complex<double>> x(64UZ, std::complex<double>{1.0, 0.0});
         std::ignore = run<std::complex<double>>(block, x, 64UZ);
 
-#ifndef __SANITIZE_ADDRESS__
+#ifndef QA_SAMPLE_DELAY_ADDRESS_SANITIZER
         // The line has no upper bound of its own, so a delay this large is refused by the allocator rather than by
         // the block. The address sanitizer's allocator aborts on a request it cannot serve instead of reporting it,
         // so this case is asked only of a build whose allocator answers by throwing.
