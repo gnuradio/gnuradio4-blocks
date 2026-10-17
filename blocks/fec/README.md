@@ -20,5 +20,4 @@ settings validation and the counters a graph reads.
 The LDPC and Polar pairs are behind `GR4_ENABLE_AFF3CT`, which is off by default;
 the module builds whole without it.
 
-`gr::fec` is the algorithm layer's namespace, so the blocks here stay in `gr::blocks::fec` and ship no
-compatibility import, which would collide with it.
+`gr::fec` is the algorithm layer's namespace. The blocks here live in `gr::blocks::fec`.

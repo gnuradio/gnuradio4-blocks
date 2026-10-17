@@ -11,8 +11,6 @@
 #include <gnuradio-4.0/sdr/DcBlocker.hpp>
 #include <gnuradio-4.0/sdr/SoapyRaiiWrapper.hpp>
 
-#include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
-
 #include <chrono>
 #include <thread>
 

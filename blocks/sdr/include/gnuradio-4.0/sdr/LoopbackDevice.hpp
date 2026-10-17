@@ -21,7 +21,6 @@
 #include <vector>
 
 #include <gnuradio-4.0/CircularBuffer.hpp>
-#include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
 
 #if defined(__clang__)
 #pragma clang diagnostic push

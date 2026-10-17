@@ -152,9 +152,9 @@ template<typename TFirst, typename TSecond>
 /// tags the sink saw. Only a graph exercises the framework's own forwarder, which is what tag propagation means here.
 template<typename TBuild>
 [[nodiscard]] std::vector<gr::Tag> throughGraph(std::span<const std::uint8_t> stream, std::span<const gr::Tag> incoming, TBuild&& build) {
-    using gr::testing::ProcessFunction;
-    using gr::testing::TagSink;
-    using gr::testing::TagSource;
+    using gr::blocks::testing::ProcessFunction;
+    using gr::blocks::testing::TagSink;
+    using gr::blocks::testing::TagSource;
 
     gr::Graph  graph;
     const auto values = gr::Tensor<std::uint8_t>(stream.begin(), stream.end());

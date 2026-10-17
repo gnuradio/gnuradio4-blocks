@@ -12,8 +12,6 @@
 #include <gnuradio-4.0/meta/reflection.hpp>
 #include <gnuradio-4.0/thread/MemoryMonitor.hpp>
 
-#include <gnuradio-4.0/testing/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::testing {
 
 namespace details {

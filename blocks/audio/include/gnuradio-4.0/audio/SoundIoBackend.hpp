@@ -33,8 +33,6 @@
 #include <string>
 #include <string_view>
 
-#include <gnuradio-4.0/audio/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::audio::detail {
 
 #if !defined(__EMSCRIPTEN__)

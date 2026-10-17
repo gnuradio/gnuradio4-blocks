@@ -21,9 +21,9 @@
 namespace {
 
 using gr::blocks::basic::SkipHead;
-using gr::testing::ProcessFunction;
-using gr::testing::TagSink;
-using gr::testing::TagSource;
+using gr::blocks::testing::ProcessFunction;
+using gr::blocks::testing::TagSink;
+using gr::blocks::testing::TagSource;
 namespace span = gr::blocks::testing::span;
 
 template<typename T>

@@ -194,11 +194,9 @@ For example, use `gr::blocks::math::Multiply<float>` in C++ and
 follow the same `gr::blocks::<module>::<block>` convention for both their
 concrete C++ type and any quoted alias supplied to `GR_REGISTER_BLOCK`.
 
-Deprecated C++ namespace aliases or imports preserve source compatibility with
-the former flat `gr::<module>` names. They are a temporary migration aid and are
-not emitted as plugin registry aliases: serialized flowgraphs and runtime
-registry clients must use the canonical names above. Code that declares new
-members inside a compatibility namespace must migrate to the canonical namespace.
+Each block lives in `gr::blocks::<module>` and registers under that name. C++
+code, serialized flowgraphs and registry clients use these names. The algorithm
+layer keeps its own namespaces (`gr::filter`, `gr::math` and the like).
 
 ## SDK Images
 

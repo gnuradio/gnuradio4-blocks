@@ -25,11 +25,11 @@ namespace qa_bit_packing {
 using gr::blocks::digital::PackBits;
 using gr::blocks::digital::RepackBits;
 using gr::blocks::digital::UnpackBits;
+using gr::blocks::testing::ProcessFunction;
+using gr::blocks::testing::TagSink;
+using gr::blocks::testing::TagSource;
 using gr::blocks::testing::span::InputSpan;
 using gr::blocks::testing::span::OutputSpan;
-using gr::testing::ProcessFunction;
-using gr::testing::TagSink;
-using gr::testing::TagSource;
 
 /**
  * @brief A declared rate changer that records what the framework's end-of-stream hook does.

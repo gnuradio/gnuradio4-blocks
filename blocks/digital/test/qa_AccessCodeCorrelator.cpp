@@ -155,9 +155,9 @@ struct Rng {
 
 /// @brief Run the block in a graph over @p stream with @p incoming planted at the source, and report what the sink saw.
 [[nodiscard]] std::vector<gr::Tag> throughGraph(gr::property_map settings, std::span<const std::uint8_t> stream, std::span<const gr::Tag> incoming) {
-    using gr::testing::ProcessFunction;
-    using gr::testing::TagSink;
-    using gr::testing::TagSource;
+    using gr::blocks::testing::ProcessFunction;
+    using gr::blocks::testing::TagSink;
+    using gr::blocks::testing::TagSource;
 
     gr::Graph  graph;
     const auto values = gr::Tensor<std::uint8_t>(stream.begin(), stream.end());

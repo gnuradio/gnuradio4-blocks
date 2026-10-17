@@ -29,8 +29,6 @@
 
 using namespace gr;
 
-#include <gnuradio-4.0/http/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::http {
 
 namespace fileio = gr::algorithm::fileio;

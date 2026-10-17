@@ -20,8 +20,6 @@
 #include <gnuradio-4.0/sdr/Saturate.hpp>
 #include <gnuradio-4.0/sdr/SoapyRaiiWrapper.hpp>
 
-#include <gnuradio-4.0/sdr/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::sdr {
 
 GR_REGISTER_BLOCK("gr::blocks::sdr::SoapySink", gr::blocks::sdr::SoapySimpleSink, [T], [ uint8_t, int16_t, std::complex<float> ])
