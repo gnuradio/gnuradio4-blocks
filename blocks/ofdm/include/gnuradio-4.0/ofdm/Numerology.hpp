@@ -43,13 +43,15 @@ inline constexpr auto kPowerOfTwo = [](gr::Size_t value) { return std::has_singl
 using FftLengthLimits = Limits<static_cast<gr::Size_t>(kMinFftLength), static_cast<gr::Size_t>(kMaxFftLength), kPowerOfTwo>;
 
 /// @brief The meta keys a symbol record carries.
-inline constexpr std::string_view kFftLenKey      = "fft_len";
-inline constexpr std::string_view kSymbolIndexKey = "symbol_index";
-inline constexpr std::string_view kFrameIndexKey  = "frame_index";
-inline constexpr std::string_view kSymbolInFrame  = "symbol_in_frame";
-inline constexpr std::string_view kSymbolKindKey  = "symbol_kind";
-inline constexpr std::string_view kSampleStartKey = "sample_start";
-inline constexpr std::string_view kPadCarriersKey = "pad_carriers";
+inline constexpr std::string_view kFftLenKey       = "fft_len";
+inline constexpr std::string_view kSymbolIndexKey  = "symbol_index";
+inline constexpr std::string_view kFrameIndexKey   = "frame_index";
+inline constexpr std::string_view kSymbolInFrame   = "symbol_in_frame";
+inline constexpr std::string_view kSymbolKindKey   = "symbol_kind";
+inline constexpr std::string_view kSampleStartKey  = "sample_start";
+inline constexpr std::string_view kPadCarriersKey  = "pad_carriers";
+inline constexpr std::string_view kDiscardedKey    = "discarded_samples";
+inline constexpr std::string_view kTimingOffsetKey = "timing_offset";
 
 /// The record kinds written under `symbol_kind`.
 inline constexpr std::string_view kKindSync = "sync";
@@ -113,6 +115,28 @@ inline void requireValid(const std::expected<void, gr::Error>& checked) {
         words[w].assign(flat.begin() + static_cast<std::ptrdiff_t>(w * fftLength), flat.begin() + static_cast<std::ptrdiff_t>((w + 1UZ) * fftLength));
     }
     return words;
+}
+
+/// @brief The cyclic-prefix length of symbol @p symbolInFrame.
+///
+/// One entry is a constant prefix. Several entries form a cycle indexed by the symbol's position in its frame. The
+/// cycle restarts with every frame. The position is 64 bits wide on every target, and the cycle index is the whole
+/// position modulo the cycle length.
+[[nodiscard]] inline std::size_t cyclicPrefixLength(std::span<const gr::Size_t> cycle, std::uint64_t symbolInFrame) noexcept {
+    const std::uint64_t entry = symbolInFrame % cycle.size();
+    return static_cast<std::size_t>(cycle[static_cast<std::size_t>(entry)]);
+}
+
+/// @brief Refuses an empty prefix cycle and any entry longer than `fft_len`.
+inline void requireCyclicPrefix(std::span<const gr::Size_t> cycle, gr::Size_t fftLength) {
+    if (cycle.empty()) {
+        throw gr::exception("cp_len is the prefix length, a scalar or a per-symbol cycle, and must hold at least one entry");
+    }
+    for (const gr::Size_t length : cycle) {
+        if (length > fftLength) {
+            throw gr::exception(std::format("cp_len entry {} exceeds fft_len {}: a prefix is a copy of the symbol's own tail and cannot be longer than the symbol", length, fftLength));
+        }
+    }
 }
 
 /**
@@ -182,6 +206,21 @@ public:
 private:
     DataSet<Complex> _skeleton{};
 };
+
+/// @brief The unsigned meta value under @p key, or @p fallback when the record does not carry one.
+[[nodiscard]] inline std::uint64_t metaCount(const DataSet<Complex>& record, std::string_view key, std::uint64_t fallback) noexcept {
+    if (record.meta_information.empty()) {
+        return fallback;
+    }
+    const auto entry = record.meta_information[0UZ].find(std::pmr::string(key));
+    if (entry == record.meta_information[0UZ].end()) {
+        return fallback;
+    }
+    if (const auto* value = entry->second.get_if<std::uint64_t>(); value != nullptr) {
+        return *value;
+    }
+    return fallback;
+}
 
 } // namespace detail
 
