@@ -51,11 +51,31 @@ inline constexpr std::string_view kSymbolKindKey   = "symbol_kind";
 inline constexpr std::string_view kSampleStartKey  = "sample_start";
 inline constexpr std::string_view kPadCarriersKey  = "pad_carriers";
 inline constexpr std::string_view kDiscardedKey    = "discarded_samples";
+inline constexpr std::string_view kCpeRadKey       = "cpe_rad";
+inline constexpr std::string_view kEvmDbKey        = "evm_db";
+inline constexpr std::string_view kFrameEvmDbKey   = "frame_evm_db";
 inline constexpr std::string_view kTimingOffsetKey = "timing_offset";
 
 /// The record kinds written under `symbol_kind`.
-inline constexpr std::string_view kKindSync = "sync";
-inline constexpr std::string_view kKindData = "data";
+inline constexpr std::string_view kKindSync      = "sync";
+inline constexpr std::string_view kKindData      = "data";
+inline constexpr std::string_view kKindEqualized = "equalized";
+
+/**
+ * @brief Complex multiply, reciprocal and divide, written out in real arithmetic.
+ *
+ * The `std::complex` operators call library helpers that handle infinities and scale the division. Each helper is a
+ * function call in a loop that runs once per carrier per symbol. These functions make no such check. A divisor must be
+ * finite and nonzero.
+ */
+[[nodiscard]] inline constexpr Complex multiply(Complex a, Complex b) noexcept { return Complex(a.real() * b.real() - a.imag() * b.imag(), a.real() * b.imag() + a.imag() * b.real()); }
+
+[[nodiscard]] inline constexpr Complex reciprocal(Complex a) noexcept {
+    const float scale = 1.f / (a.real() * a.real() + a.imag() * a.imag());
+    return Complex(a.real() * scale, -a.imag() * scale);
+}
+
+[[nodiscard]] inline constexpr Complex divide(Complex a, Complex b) noexcept { return multiply(a, reciprocal(b)); }
 
 /// @brief Builds the numerology. A numerology the carrier map refuses throws the map's gr::exception.
 [[nodiscard]] inline gr::ofdm::CarrierMap buildMap(gr::Size_t fftLength, std::span<const std::int32_t> dataCarriers, std::span<const std::int32_t> pilotCarriers) {
@@ -79,6 +99,15 @@ inline void requireValid(const std::expected<void, gr::Error>& checked) {
         throw gr::exception(carrier.error().message, carrier.error().sourceLocation);
     }
     return *carrier;
+}
+
+/// @brief The FFT bin of signed carrier @p carrier. A carrier outside the transform throws the carrier map's message.
+[[nodiscard]] inline std::size_t binAt(std::size_t fftLength, int carrier) {
+    const auto bin = gr::ofdm::CarrierMap::binOf(fftLength, carrier);
+    if (!bin) {
+        throw gr::exception(bin.error().message, bin.error().sourceLocation);
+    }
+    return *bin;
 }
 
 /// @brief Converts an interleaved re,im setting to complex values. An odd length throws and names the setting.

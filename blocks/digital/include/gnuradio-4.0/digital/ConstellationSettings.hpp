@@ -12,7 +12,7 @@
 
 #include <gnuradio-4.0/algorithm/digital/Constellation.hpp>
 
-namespace gr::blocks::digital::detail {
+namespace gr::blocks::digital {
 
 /**
  * @brief The constellation as a setting - a name and its parameters - rather than a shared mutable object.
@@ -24,7 +24,7 @@ namespace gr::blocks::digital::detail {
  * `gr::exception` rather than as the library's own argument error.
  */
 template<std::floating_point F>
-[[nodiscard]] gr::digital::Constellation<F> build(std::string_view name, gr::Size_t arity, F phaseOffset, gr::Size_t labelXor, std::span<const F> interleavedPoints, std::string_view normalizationName) {
+[[nodiscard]] gr::digital::Constellation<F> constellationFromSettings(std::string_view name, gr::Size_t arity, F phaseOffset, gr::Size_t labelXor, std::span<const F> interleavedPoints, std::string_view normalizationName) {
     try {
         return gr::digital::constellationFromName<F>(name, static_cast<std::size_t>(arity), phaseOffset, static_cast<std::uint8_t>(labelXor), interleavedPoints, normalizationName);
     } catch (const std::invalid_argument& error) {
@@ -41,6 +41,6 @@ power rather than to unit peak amplitude, which differ by 0.471 dB on 16QAM and 
 constant-modulus constellation.
 )"">;
 
-} // namespace gr::blocks::digital::detail
+} // namespace gr::blocks::digital
 
 #endif // GNURADIO_CONSTELLATION_SETTINGS_HPP
