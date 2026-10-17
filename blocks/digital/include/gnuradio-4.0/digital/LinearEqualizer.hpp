@@ -77,8 +77,8 @@ observations, on the measurement conventions, is what will make them readable ou
     Annotated<bool, "freeze", Doc<"live: adaptation stops, filtering continues">>                                           freeze           = false;
     Annotated<double, "divergence_bound", Doc<"tap energy past which the taps return to the spike and n_resets counts it">> divergence_bound = 100.0;
 
-    Annotated<std::string, "constellation", detail::ConstellationSettingsDoc, Visible> constellation = std::string("qpsk");
-    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, for 'psk' and 'qam'">>     arity         = 4U;
+    Annotated<std::string, "constellation", ConstellationSettingsDoc, Visible>         constellation = std::string("qpsk");
+    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, read by 'psk' and 'qam'">> arity         = 4U;
     Annotated<F, "phase_offset", Unit<"rad">, Doc<"rotation of the 'psk' point set">>  phase_offset  = F{0};
     Annotated<gr::Size_t, "label_xor", Doc<"label offset of the 'psk' point set">>     label_xor     = 0U;
     Annotated<std::vector<F>, "points", Doc<"interleaved re,im for 'custom'">>         points{};
@@ -132,7 +132,7 @@ observations, on the measurement conventions, is what will make them readable ou
         if ((training_sequence.value.size() % 2UZ) != 0UZ) {
             throw gr::exception(std::format("training_sequence is interleaved re,im and needs an even count, got {}", training_sequence.value.size()));
         }
-        _constellation = detail::build<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization);
+        _constellation = constellationFromSettings<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization);
 
         const auto rule = gr::digital::adaptiveAlgorithmFrom(algorithm);
         _filter.configure(static_cast<std::size_t>(num_taps.value), rule, step_size, gr::digital::modulusReference<F>(_constellation.points()), divergence_bound);

@@ -82,8 +82,8 @@ the stream `SymbolSync` and the carrier loops deliver. This block does not scale
     /// nothing and the readers below remain the whole interface for a graph that polls.
     PortOut<DataSet<float>, Async, Optional> records;
 
-    Annotated<std::string, "constellation", detail::ConstellationSettingsDoc, Visible> constellation = std::string("qpsk");
-    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, for 'psk' and 'qam'">>     arity         = 4U;
+    Annotated<std::string, "constellation", ConstellationSettingsDoc, Visible>         constellation = std::string("qpsk");
+    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, read by 'psk' and 'qam'">> arity         = 4U;
     Annotated<F, "phase_offset", Unit<"rad">, Doc<"rotation of the 'psk' point set">>  phase_offset  = F{0};
     Annotated<gr::Size_t, "label_xor", Doc<"label offset of the 'psk' point set">>     label_xor     = 0U;
     Annotated<std::vector<F>, "points", Doc<"interleaved re,im for 'custom'">>         points{};
@@ -131,7 +131,7 @@ the stream `SymbolSync` and the carrier loops deliver. This block does not scale
         if (window < 1U) {
             throw gr::exception("window must hold at least one symbol");
         }
-        _constellation  = detail::build<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization);
+        _constellation  = constellationFromSettings<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization);
         _referencePower = detail::referencePower(_constellation);
         if (!(_referencePower > 0.)) {
             throw gr::exception("the constellation's points carry no power to measure against");
@@ -340,8 +340,8 @@ This block does not scale it.
     Annotated<gr::Size_t, "window", Unit<"symbols">, Visible, Doc<"symbols per reading; a change restarts the window">> window     = 4096U;
     Annotated<double, "ceiling_db", Unit<"dB">, Doc<"the magnitude snrDb() is clamped to, either side of zero">>        ceiling_db = 100.0;
 
-    Annotated<std::string, "constellation", detail::ConstellationSettingsDoc, Visible> constellation = std::string("qpsk");
-    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, for 'psk' and 'qam'">>     arity         = 4U;
+    Annotated<std::string, "constellation", ConstellationSettingsDoc, Visible>         constellation = std::string("qpsk");
+    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, read by 'psk' and 'qam'">> arity         = 4U;
     Annotated<F, "phase_offset", Unit<"rad">, Doc<"rotation of the 'psk' point set">>  phase_offset  = F{0};
     Annotated<gr::Size_t, "label_xor", Doc<"label offset of the 'psk' point set">>     label_xor     = 0U;
     Annotated<std::vector<F>, "points", Doc<"interleaved re,im for 'custom'">>         points{};
@@ -390,7 +390,7 @@ This block does not scale it.
         }
         // The vocabulary is validated whichever method runs, so a name that is wrong is heard about rather than
         // ignored; only the decision-directed method reads the result.
-        _constellation    = detail::build<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization);
+        _constellation    = constellationFromSettings<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization);
         _referencePower   = detail::referencePower(_constellation);
         _decisionDirected = method == "decision_directed";
         if (_decisionDirected && !(_referencePower > 0.)) {
