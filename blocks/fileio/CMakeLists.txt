@@ -14,6 +14,7 @@ gr_add_block_library(
   SPLIT_BLOCK_INSTANTIATIONS
   HEADERS
   include/gnuradio-4.0/fileio/BasicFileIo.hpp
+  include/gnuradio-4.0/fileio/FdIo.hpp
   include/gnuradio-4.0/fileio/WavBlocks.hpp
   LINK_LIBRARIES
   gnuradio4::gr-fileio)
