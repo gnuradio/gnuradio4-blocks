@@ -15,6 +15,7 @@ if(NOT EMSCRIPTEN)
   target_link_libraries(qa_DataSinkRegistry PRIVATE gnuradio4::GrBasicBlocksShared)
 endif()
 add_basic_test(qa_SampleDelay)
+add_basic_test(qa_SkipHead)
 add_basic_test(qa_TriggerBlocks)
 add_basic_test(qa_Throttle)
 set_property(TEST qa_Throttle PROPERTY RESOURCE_LOCK rt)
@@ -37,4 +38,12 @@ if(PYTHON_AVAILABLE)
   add_basic_test(qa_PythonBlock)
   # the block library compiles PythonBlock<int32_t> and PythonBlock<float> in two units, and a case runs both
   target_link_libraries(qa_PythonBlock PRIVATE Python3::Python Python3::NumPy gnuradio4::GrBasicBlocksShared)
+endif()
+
+if(TARGET GrBasicBlocksShared)
+  gr_add_graph_test(
+    graph_basic_skip_head
+    graphs/skip-head.yaml
+    PLUGIN_DIRS
+    "$<TARGET_FILE_DIR:GrBasicBlocksShared>")
 endif()

@@ -9,6 +9,7 @@ set(GrBasicBlocks_HDRS
     include/gnuradio-4.0/basic/PacketToDataSet.hpp
     include/gnuradio-4.0/basic/Selector.hpp
     include/gnuradio-4.0/basic/SignalGenerator.hpp
+    include/gnuradio-4.0/basic/SkipHead.hpp
     include/gnuradio-4.0/basic/StreamToDataSet.hpp
     include/gnuradio-4.0/basic/SyncBlock.hpp
     include/gnuradio-4.0/basic/Throttle.hpp
