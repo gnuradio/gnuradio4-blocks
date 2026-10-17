@@ -14,6 +14,7 @@ gr_add_block_library(
   HEADERS
   include/gnuradio-4.0/ofdm/CarrierAllocator.hpp
   include/gnuradio-4.0/ofdm/CyclicPrefix.hpp
+  include/gnuradio-4.0/ofdm/SchmidlCoxSync.hpp
   LINK_LIBRARIES
   gr-ofdm)
 
