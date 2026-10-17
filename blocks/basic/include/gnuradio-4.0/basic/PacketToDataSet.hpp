@@ -25,6 +25,7 @@
 // The record-metadata vocabulary table is included rather than copied because the table is the contract: a second
 // copy here would be a second place to edit when a key is added, and every boundary a record's metadata crosses has
 // to agree on it.
+#include <gnuradio-4.0/algorithm/dataset/RecordVocabulary.hpp>
 #include <gnuradio-4.0/basic/RecordMetadata.hpp>
 
 namespace gr::blocks::basic {
@@ -210,8 +211,8 @@ private:
     /// @brief Copy `source` into `map`, dropping and counting a vocabulary key whose type disagrees with the table.
     void copyInto(property_map& map, const property_map& source) {
         for (const auto& [key, value] : source) {
-            const std::string_view name = detail::shortKey(std::string_view(key));
-            if (!detail::packet::holdsVocabularyType(detail::packet::vocabularyType(name), value)) {
+            const std::string_view name = gr::dataset::shortKey(std::string_view(key));
+            if (!gr::dataset::holdsVocabularyType(gr::dataset::vocabularyType(name), value)) {
                 ++nMetaKeysDropped; // a typed read on this value would return nothing and report nothing
                 continue;
             }

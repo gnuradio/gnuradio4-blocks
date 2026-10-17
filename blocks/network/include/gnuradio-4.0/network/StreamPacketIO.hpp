@@ -86,9 +86,8 @@ struct CarriedTag {
 /// key, so both are read. A value at another type is not a sample rate and is left alone — it still crosses inside
 /// the tag it belongs to, where the far end sees exactly what the near end did.
 [[nodiscard]] inline std::optional<float> sampleRateOf(const property_map& map) noexcept {
-    using gr::blocks::network::detail::shortKey;
     for (const auto& [key, value] : map) {
-        if (shortKey(std::string_view(key)) == gr::tag::SAMPLE_RATE.shortKey()) {
+        if (gr::dataset::shortKey(std::string_view(key)) == gr::tag::SAMPLE_RATE.shortKey()) {
             if (const float* rate = value.get_if<float>(); rate != nullptr) {
                 return *rate;
             }

@@ -24,6 +24,7 @@
 #include <gnuradio-4.0/annotated.hpp>
 #include <gnuradio-4.0/meta/utils.hpp>
 
+#include <gnuradio-4.0/algorithm/dataset/RecordVocabulary.hpp>
 #include <gnuradio-4.0/basic/RecordMetadata.hpp>
 
 namespace gr::blocks::basic {
@@ -241,8 +242,8 @@ private:
         bool statedRate = false;
         if (signalIndex < ds.meta_information.size()) { // the record's own statement about itself, copied key for key
             for (const auto& [key, value] : ds.meta_information[signalIndex]) {
-                const std::string_view name = detail::shortKey(std::string_view(key));
-                if (!detail::packet::holdsVocabularyType(detail::packet::vocabularyType(name), value)) {
+                const std::string_view name = gr::dataset::shortKey(std::string_view(key));
+                if (!gr::dataset::holdsVocabularyType(gr::dataset::vocabularyType(name), value)) {
                     ++nMetaKeysDropped; // a typed read on the far side would return nothing and report nothing
                     continue;
                 }
@@ -251,8 +252,8 @@ private:
             }
         }
         for (const auto& [key, value] : arrivingTag) { // the tag at this record's index annotates this record
-            const std::string_view name = detail::shortKey(std::string_view(key));
-            if (!detail::packet::holdsVocabularyType(detail::packet::vocabularyType(name), value)) {
+            const std::string_view name = gr::dataset::shortKey(std::string_view(key));
+            if (!gr::dataset::holdsVocabularyType(gr::dataset::vocabularyType(name), value)) {
                 ++nMetaKeysDropped;
                 continue;
             }

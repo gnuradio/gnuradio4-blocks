@@ -284,65 +284,6 @@ struct EveryKeyCopy : gr::Block<EveryKeyCopy<TItem>, gr::UnfilteredTagPropagatio
 
 } // namespace
 
-// ─── the vocabulary itself, asserted against the framework's own declarations ──────────────────────────────────────
-
-const boost::ut::suite<"DataSetToPacket vocabulary"> vocabularyTests = [] {
-    using namespace boost::ut;
-    using namespace gr::blocks::basic::detail;
-    using namespace gr::blocks::basic::detail::packet;
-
-    // The vocabulary is what the record-metadata declaration says, and a framework retyping breaks the
-    // build here rather than a peer at run time
-    "the nine borrowed keys keep the framework's declared types"_test = [] {
-        static_assert(std::same_as<std::remove_cvref_t<decltype(gr::tag::SAMPLE_RATE)>::value_type, float>);
-        static_assert(std::same_as<std::remove_cvref_t<decltype(gr::tag::FREQUENCY)>::value_type, double>);
-        static_assert(std::same_as<std::remove_cvref_t<decltype(gr::tag::SIGNAL_NAME)>::value_type, std::string>);
-        static_assert(std::same_as<std::remove_cvref_t<decltype(gr::tag::SIGNAL_QUANTITY)>::value_type, std::string>);
-        static_assert(std::same_as<std::remove_cvref_t<decltype(gr::tag::SIGNAL_UNIT)>::value_type, std::string>);
-        static_assert(std::same_as<std::remove_cvref_t<decltype(gr::tag::SIGNAL_MIN)>::value_type, float>);
-        static_assert(std::same_as<std::remove_cvref_t<decltype(gr::tag::SIGNAL_MAX)>::value_type, float>);
-        static_assert(std::same_as<std::remove_cvref_t<decltype(gr::tag::N_DROPPED_SAMPLES)>::value_type, gr::Size_t>);
-        static_assert(std::same_as<std::remove_cvref_t<decltype(gr::tag::TRIGGER_NAME)>::value_type, std::string>);
-        expect(true) << "the nine borrowed declarations are asserted at compile time";
-    };
-
-    "twenty-one keys, each with exactly one declared type"_test = [] {
-        using enum VocabularyType;
-        const std::pair<std::string_view, VocabularyType> declared[]{                                                                     // borrowed from the framework's reserved stream vocabulary
-            {"sample_rate", Float}, {"frequency", Double}, {"signal_name", String}, {"signal_quantity", String}, {"signal_unit", String}, //
-            {"signal_min", Float}, {"signal_max", Float}, {"n_dropped_samples", Size}, {"trigger_name", String},
-            // defined by the record-metadata vocabulary
-            {"protocol", String}, {"schema_version", Size}, {"sample_start", UInt64}, {"sequence", UInt64}, {"discontinuity", String},                                 //
-            {"crc_ok", Bool}, {"corrected_errors", Size}, {"uncorrectable_errors", Size}, {"discard_reason", String}, {"source_id", String}, {"dropped_events", Size}, //
-            {"header_corrected_errors", UInt64}};
-
-        expect(eq(std::size(declared), 21UZ)) << "twelve defined here and nine borrowed";
-        for (const auto& [key, type] : declared) {
-            expect(vocabularyType(key) == type) << std::format("{} is declared once", key);
-            const std::string prefixed = std::format("gr:{}", key);
-            expect(vocabularyType(shortKey(prefixed)) == type) << std::format("gr:{} is the same key once the framework's prefix is stripped", key);
-        }
-
-        // a producer's own private keys are unbounded and impose nothing
-        for (const std::string_view key : {"ctx", "n_pre", "n_post", "n_max", "sync_errors", "header_ok", "crc_value", "crc_width", "packet_number", "header_flags", "header_items", "trigger_time", "trigger_offset", "trigger_meta_info", "num_channels"}) {
-            expect(vocabularyType(key) == NotVocabulary) << std::format("{} is producer-private or a stream-only reserved key", key);
-        }
-    };
-
-    "a value of the wrong type fails its key's declaration and a private key passes anything"_test = [] {
-        expect(holdsVocabularyType(VocabularyType::Float, gr::pmt::Value(48000.f)));
-        expect(!holdsVocabularyType(VocabularyType::Float, gr::pmt::Value(48000.0))) << "no promotion, no narrowing, no conversion";
-        expect(holdsVocabularyType(VocabularyType::Size, gr::pmt::Value(gr::Size_t{1U})));
-        expect(!holdsVocabularyType(VocabularyType::Size, gr::pmt::Value(std::uint64_t{1ULL})));
-        expect(holdsVocabularyType(VocabularyType::UInt64, gr::pmt::Value(std::uint64_t{1ULL})));
-        expect(!holdsVocabularyType(VocabularyType::UInt64, gr::pmt::Value(gr::Size_t{1U})));
-        expect(holdsVocabularyType(VocabularyType::Bool, gr::pmt::Value(true)));
-        expect(holdsVocabularyType(VocabularyType::String, gr::pmt::Value(std::string("ax25"))));
-        expect(holdsVocabularyType(VocabularyType::NotVocabulary, gr::pmt::Value(std::uint64_t{1ULL})));
-        expect(holdsVocabularyType(VocabularyType::NotVocabulary, gr::pmt::Value(gr::property_map{})));
-    };
-};
-
 // ─── the conversion, driven through spans ─────────────────────────────────────────────────────────────────────────
 
 const boost::ut::suite<"DataSetToPacket"> dataSetToPacketTests = [] {

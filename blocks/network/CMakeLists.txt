@@ -13,7 +13,7 @@ endif()
 
 add_library(gr-network INTERFACE)
 add_library(gnuradio4::gr-network ALIAS gr-network)
-target_link_libraries(gr-network INTERFACE gnuradio4::gnuradio-core gnuradio4::gnuradio-algorithm gr-basic)
+target_link_libraries(gr-network INTERFACE gnuradio4::gnuradio-core gnuradio4::gnuradio-algorithm)
 target_include_directories(gr-network INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
                                                 $<INSTALL_INTERFACE:include/>)
 if(GR4_NETWORK_HAVE_LIBZMQ)

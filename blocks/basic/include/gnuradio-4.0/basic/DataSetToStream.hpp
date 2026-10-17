@@ -25,6 +25,7 @@
 #include <gnuradio-4.0/annotated.hpp>
 #include <gnuradio-4.0/meta/utils.hpp>
 
+#include <gnuradio-4.0/algorithm/dataset/RecordVocabulary.hpp>
 #include <gnuradio-4.0/basic/RecordMetadata.hpp>
 
 namespace gr::blocks::basic {
@@ -36,7 +37,7 @@ enum class ReservedTagType : std::uint8_t { NotReserved, Float, Double, String, 
 
 /// @brief The type `key` is declared to hold in `gr::tag`, or `NotReserved` when the framework reserves no such key.
 [[nodiscard]] inline ReservedTagType reservedTagType(std::string_view key) noexcept {
-    const std::string_view name = shortKey(key);
+    const std::string_view name = gr::dataset::shortKey(key);
     using enum ReservedTagType;
     if (name == tag::SAMPLE_RATE.shortKey() || name == tag::SIGNAL_MIN.shortKey() || name == tag::SIGNAL_MAX.shortKey() || name == tag::TRIGGER_OFFSET.shortKey()) {
         return Float;
@@ -334,7 +335,7 @@ private:
 
         if (signalIndex < ds.meta_information.size()) { // (i) the record's own statement about itself, copied verbatim
             for (const auto& [key, value] : ds.meta_information[signalIndex]) {
-                const std::string_view        name = detail::shortKey(std::string_view(key));
+                const std::string_view        name = gr::dataset::shortKey(std::string_view(key));
                 const detail::ReservedTagType type = detail::reservedTagType(name);
                 if (!detail::holdsReservedType(type, value)) { // (iii) a typed read would return nothing and report nothing
                     ++nMetaKeysDropped;
