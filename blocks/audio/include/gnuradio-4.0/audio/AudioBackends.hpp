@@ -21,8 +21,6 @@
 #include <type_traits>
 #include <vector>
 
-#include <gnuradio-4.0/audio/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::audio::detail {
 
 template<typename T>

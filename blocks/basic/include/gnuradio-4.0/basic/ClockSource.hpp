@@ -13,8 +13,6 @@
 #include <gnuradio-4.0/meta/formatter.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
-#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::basic {
 
 template<typename T, gr::meta::fixed_string description = "", typename... Arguments>

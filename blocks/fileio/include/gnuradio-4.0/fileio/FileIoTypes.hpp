@@ -3,8 +3,6 @@
 
 #include <filesystem>
 
-#include <gnuradio-4.0/fileio/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::fileio {
 
 enum class Mode { overwrite, append, multi };
