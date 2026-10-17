@@ -13,8 +13,12 @@ gr_add_block_library(
   ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
   include/gnuradio-4.0/ofdm/CarrierAllocator.hpp
+  include/gnuradio-4.0/ofdm/CyclicPrefix.hpp
   LINK_LIBRARIES
   gr-ofdm)
+# The precompiled header reaches the vendored PocketFFT through CyclicPrefix.hpp and fourier/fft.hpp;
+# cmake/CompilerWarnings.cmake turns -Wnull-dereference off for it under GCC 14.
+set_target_properties(GrOfdmBlocksObject PROPERTIES GR_PCH_INCLUDES_POCKETFFT ON)
 
 if(TARGET gnuradio4::GrOfdmBlocksShared AND ENABLE_TESTING)
   add_subdirectory(test)
