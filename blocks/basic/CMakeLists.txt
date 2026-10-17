@@ -13,6 +13,7 @@ set(GrBasicBlocks_HDRS
     include/gnuradio-4.0/basic/SkipHead.hpp
     include/gnuradio-4.0/basic/StreamToDataSet.hpp
     include/gnuradio-4.0/basic/SyncBlock.hpp
+    include/gnuradio-4.0/basic/TagDebug.hpp
     include/gnuradio-4.0/basic/Throttle.hpp
     include/gnuradio-4.0/basic/Trigger.hpp)
 
