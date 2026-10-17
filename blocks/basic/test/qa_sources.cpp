@@ -75,6 +75,7 @@ const boost::ut::suite TagTests = [] {
     };
 
     "ClockSource w/ Graph/Block<T> provided thread"_test = [&clockSourceTest] { clockSourceTest.template operator()<true>(false); };
+    "ClockSource verbose console"_test                   = [&clockSourceTest] { clockSourceTest.template operator()<true>(true); };
     // "ClockSource w/ user-provided thread"_test           = [&clockSourceTest] { clockSourceTest.template operator()<false>(false); }; // TODO: check potential threading issue for user-provided threads
 
     "SignalGenerator test"_test = [] {

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <format>
+#include <ranges>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
@@ -11,7 +12,6 @@
 #include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/TriggerMatcher.hpp>
 #include <gnuradio-4.0/meta/formatter.hpp>
-#include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 #include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
 
@@ -142,7 +142,14 @@ Terminates when n_samples_max is reached (0 = unlimited).)"">;
             if (_nextTagIndex < tags.size() && samplesToNextTag <= samplesToProduce) {
                 const auto tagDeltaIndex = tags[_nextTagIndex].index - static_cast<std::size_t>(n_samples_produced);
                 if (verbose_console) {
-                    gr::blocks::testing::print_tag(tags[_nextTagIndex], std::format("{}::processBulk(...)\t publish tag at {:6}", this->name, n_samples_produced + tagDeltaIndex));
+                    const Tag&  tag   = tags[_nextTagIndex];
+                    auto        entry = [](const auto& kvp) { return std::make_pair(std::string_view(kvp.first), kvp.second); };
+                    std::string mapText{"<empty map>"};
+                    if (!tag.map.empty()) {
+                        mapText = gr::join(tag.map | std::views::transform(entry), ", ");
+                    }
+                    std::println("{}::processBulk(...)\t publish tag at {:6} @index= {}: map: {{ {} }}", //
+                        this->name, n_samples_produced + tagDeltaIndex, tag.index, mapText);
                 }
                 outSpan.publishTag(tags[_nextTagIndex].map, tagDeltaIndex);
                 samplesToProduce = std::max(samplesToNextTag, gr::Size_t{1});
