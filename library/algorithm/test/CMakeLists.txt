@@ -74,6 +74,10 @@ add_ut_test(qa_ReedSolomon)
 add_ut_test(qa_Bch)
 add_ut_test(qa_Convolutional)
 add_ut_test(qa_Interleaver)
+add_ut_test(qa_CarrierMap)
+# Checks the preamble's half repeat through the library FFT. That FFT uses SimdFFT, which needs the inliner depth of
+# -O2.
+gr_pin_test_optimization(qa_CarrierMap -O2)
 
 if(EMSCRIPTEN)
   # Simple HTTP server used only for unit tests.
@@ -157,6 +161,7 @@ target_link_libraries(qa_ReedSolomon PRIVATE gnuradio-algorithm)
 target_link_libraries(qa_Bch PRIVATE gnuradio-algorithm)
 target_link_libraries(qa_Convolutional PRIVATE gnuradio-algorithm)
 target_link_libraries(qa_Interleaver PRIVATE gnuradio-algorithm)
+target_link_libraries(qa_CarrierMap PRIVATE gnuradio-algorithm)
 
 add_executable(example_ImChart example_ImChart.cpp)
 target_link_libraries(example_ImChart PRIVATE gnuradio-algorithm)
