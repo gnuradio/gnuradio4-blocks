@@ -1,0 +1,23 @@
+# A source publishes one tag map at samples 0 and 3 into a TagDebug that prints the tags holding `mark`. The sink
+# expects the samples unchanged and the tags of key `mark` at 0 and 3. The run passes when the sink receives both.
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source
+      values: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+      tag_indices: !!uint32 [0, 3]
+      tag_map:
+        mark: frame
+  - id: gr::blocks::basic::TagDebug<float32>
+    parameters:
+      name: debug
+      key_filter: mark
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink
+      expected: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+      tag_key: mark
+      tag_indices: !!uint32 [0, 3]
+connections:
+  - [source, out, debug, in]
+  - [debug, out, sink, in]
