@@ -13,5 +13,7 @@ endfunction()
 
 add_measurement_benchmark(bm_Detectors)
 add_measurement_benchmark(bm_Kurtosis)
+add_measurement_benchmark(bm_PhaseUnwrap)
+add_measurement_benchmark(bm_PolarizationCombiner)
 add_measurement_benchmark(bm_SpectralEstimate)
 add_measurement_benchmark(bm_SpectralKurtosis)
