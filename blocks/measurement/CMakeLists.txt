@@ -12,6 +12,8 @@ gr_add_block_library(
   MAKE_SHARED_LIBRARY
   ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
+  include/gnuradio-4.0/measurement/Detectors.hpp
+  include/gnuradio-4.0/measurement/OccupiedBandwidth.hpp
   include/gnuradio-4.0/measurement/SpectralEstimate.hpp
   LINK_LIBRARIES
   gr-measurement)
@@ -21,4 +23,8 @@ set_target_properties(GrMeasurementBlocksObject PROPERTIES GR_PCH_INCLUDES_POCKE
 
 if(TARGET gnuradio4::GrMeasurementBlocksShared AND ENABLE_TESTING)
   add_subdirectory(test)
+endif()
+
+if(ENABLE_EXAMPLES)
+  add_subdirectory(benchmarks)
 endif()

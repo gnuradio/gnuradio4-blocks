@@ -21,6 +21,7 @@
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/algorithm/fourier/window.hpp>
+#include <gnuradio-4.0/measurement/Detectors.hpp>
 #include <gnuradio-4.0/measurement/SpectralEstimate.hpp>
 #include <gnuradio-4.0/testing/TestSpans.hpp>
 
@@ -60,6 +61,31 @@ struct BurstSource : gr::Block<BurstSource<T>> {
             }
         }
         std::copy_n(samples.begin() + static_cast<std::ptrdiff_t>(at), take, outSpan.begin());
+        at += take;
+        outSpan.publish(take);
+        return gr::work::Status::OK;
+    }
+};
+
+/// Emits a fixed list of records, then ends the stream.
+struct RecordSource : gr::Block<RecordSource> {
+    gr::PortOut<gr::DataSet<float>, gr::Async> out;
+
+    std::vector<gr::DataSet<float>> records{};
+    std::size_t                     at = 0UZ;
+
+    GR_MAKE_REFLECTABLE(RecordSource, out);
+
+    [[nodiscard]] gr::work::Status processBulk(gr::OutputSpanLike auto& outSpan) {
+        if (at >= records.size()) {
+            outSpan.publish(0UZ);
+            this->requestStop();
+            return gr::work::Status::DONE;
+        }
+        const std::size_t take = std::min(records.size() - at, outSpan.size());
+        for (std::size_t k = 0UZ; k < take; ++k) {
+            outSpan[k] = records[at + k];
+        }
         at += take;
         outSpan.publish(take);
         return gr::work::Status::OK;
@@ -307,6 +333,27 @@ template<typename TBlock>
     return sink.records.size();
 }
 
+/// @brief Runs a record source through a records-in, records-out block into a sink and returns the records the sink
+/// took.
+template<typename TBlock>
+[[nodiscard]] std::vector<gr::DataSet<float>> collectFromRecords(gr::property_map settings, std::vector<gr::DataSet<float>> records) {
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<RecordSource>();
+    auto&     block  = graph.emplaceBlock<TBlock>(std::move(settings));
+    auto&     sink   = graph.emplaceBlock<RecordSink>();
+    source.records   = std::move(records);
+
+    if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
+        return {};
+    }
+    gr::scheduler::Simple scheduler;
+    if (!scheduler.exchange(std::move(graph)).has_value()) {
+        return {};
+    }
+    std::ignore = scheduler.runAndWait(); // the source ends the stream
+    return sink.records;
+}
+
 /// @brief The variance of a record's bins over the square of their mean. For white noise the bins are independent
 /// draws of one distribution, and the figure is the estimator's relative variance.
 [[nodiscard]] double relativeVariance(const gr::DataSet<float>& record) {
@@ -324,6 +371,18 @@ template<typename TBlock>
     }
     variance /= static_cast<double>(values.size() - 1UZ);
     return variance / (mean * mean);
+}
+
+/// @brief The frequency of the strongest detection in a detection record, in bins of a `fftSize` transform.
+[[nodiscard]] double strongestPeakBin(const gr::DataSet<float>& detections, float sampleRate, std::size_t fftSize) {
+    const std::size_t n    = detections.signal_values.size() / 3UZ;
+    std::size_t       best = 0UZ;
+    for (std::size_t k = 1UZ; k < n; ++k) {
+        if (detections.signal_values[n + k] > detections.signal_values[n + best]) {
+            best = k;
+        }
+    }
+    return static_cast<double>(detections.signal_values[best]) * static_cast<double>(fftSize) / static_cast<double>(sampleRate);
 }
 
 /// @brief The `compute_seconds` a record states, and the wall clock of the `processBulk` call that made it.
@@ -1094,6 +1153,39 @@ const boost::ut::suite<"SpectralEstimate"> spectralTests = [] {
 
         expect(at64 > 0. && at32 > 0.) << "both settings produce whole records";
         expect(ratio > 1.5 && ratio < 2.7) << "the variance envelope is a factor of two, measured " << ratio;
+    };
+
+    "the sub-bin frequency of a windowed tone, with each window's bias"_test = [] {
+        // A complex tone goes through the block's window and transform, and PeakDetect refines its frequency with a
+        // three-point parabolic fit. The fit is exact for a parabola. A windowed main lobe gives a bias that depends
+        // on the window. The test prints the bias for each window and bounds it.
+        constexpr double kCenterBin = 32.;
+        constexpr double kMargin    = 0.06; // bins, above the measured bias at offsets 0.3 and 0.5
+
+        for (const std::string& windowName : {std::string("Hann"), std::string("Blackman")}) {
+            for (const double offset : {0.0, 0.3, 0.5}) {
+                const gr::property_map psdSettings{{"fft_size", gr::Size_t{kFft}}, {"n_averages", gr::Size_t{4U}}, {"overlap", 0.5}, {"sample_rate", kSampleRate}, {"window", windowName}};
+                const auto             psd = collect<WelchPsd<CF>, CF>(psdSettings, tone(kFft * 16UZ, kCenterBin + offset, kFft), 4096UZ);
+                expect(!psd.empty()) << "the tone produces a density record";
+                if (psd.empty()) {
+                    continue;
+                }
+                const auto detections = collectFromRecords<gr::blocks::measurement::PeakDetect>({{"threshold_db", 20.0}, {"reference", std::string("above_median")}}, {psd.front()});
+                expect(eq(detections.size(), 1UZ)) << "one tone gives one detection record, window " << windowName << " offset " << offset;
+                if (detections.empty()) {
+                    continue;
+                }
+                const double measured = strongestPeakBin(detections.front(), kSampleRate, kFft);
+                const double bias     = measured - (kCenterBin + offset);
+                std::println("{:<9} tone at bin {:+.1f}: parabolic estimate off by {:+.5f} bins", windowName, offset, bias);
+
+                if (offset == 0.0) {
+                    expect(std::abs(bias) < 1e-4) << "at a bin center the lobe is symmetric and the refinement adds nothing, measured " << bias;
+                } else {
+                    expect(std::abs(bias) < kMargin) << "off-center bias for " << windowName << " at " << offset << " bins measured " << bias;
+                }
+            }
+        }
     };
 
     "every emitted record is well formed and states its rate, start, segment count, overlap and noise bandwidth"_test = [] {
