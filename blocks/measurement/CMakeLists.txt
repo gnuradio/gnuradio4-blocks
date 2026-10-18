@@ -15,6 +15,8 @@ gr_add_block_library(
   include/gnuradio-4.0/measurement/Detectors.hpp
   include/gnuradio-4.0/measurement/Kurtosis.hpp
   include/gnuradio-4.0/measurement/OccupiedBandwidth.hpp
+  include/gnuradio-4.0/measurement/PhaseUnwrap.hpp
+  include/gnuradio-4.0/measurement/PolarizationCombiner.hpp
   include/gnuradio-4.0/measurement/SpectralEstimate.hpp
   include/gnuradio-4.0/measurement/SpectralKurtosis.hpp
   LINK_LIBRARIES
