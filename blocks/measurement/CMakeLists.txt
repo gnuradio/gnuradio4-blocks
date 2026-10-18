@@ -12,6 +12,7 @@ gr_add_block_library(
   MAKE_SHARED_LIBRARY
   ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
+  include/gnuradio-4.0/measurement/Autocorrelation.hpp
   include/gnuradio-4.0/measurement/Detectors.hpp
   include/gnuradio-4.0/measurement/Kurtosis.hpp
   include/gnuradio-4.0/measurement/OccupiedBandwidth.hpp
