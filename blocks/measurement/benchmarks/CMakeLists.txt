@@ -12,4 +12,6 @@ function(add_measurement_benchmark BM_NAME)
 endfunction()
 
 add_measurement_benchmark(bm_Detectors)
+add_measurement_benchmark(bm_Kurtosis)
 add_measurement_benchmark(bm_SpectralEstimate)
+add_measurement_benchmark(bm_SpectralKurtosis)

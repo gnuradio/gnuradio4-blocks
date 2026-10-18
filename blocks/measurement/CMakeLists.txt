@@ -13,8 +13,10 @@ gr_add_block_library(
   ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
   include/gnuradio-4.0/measurement/Detectors.hpp
+  include/gnuradio-4.0/measurement/Kurtosis.hpp
   include/gnuradio-4.0/measurement/OccupiedBandwidth.hpp
   include/gnuradio-4.0/measurement/SpectralEstimate.hpp
+  include/gnuradio-4.0/measurement/SpectralKurtosis.hpp
   LINK_LIBRARIES
   gr-measurement)
 
