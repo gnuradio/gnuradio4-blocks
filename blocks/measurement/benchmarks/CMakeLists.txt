@@ -11,6 +11,7 @@ function(add_measurement_benchmark BM_NAME)
   target_compile_options(${BM_NAME} PRIVATE -O3)
 endfunction()
 
+add_measurement_benchmark(bm_Autocorrelation)
 add_measurement_benchmark(bm_Detectors)
 add_measurement_benchmark(bm_Kurtosis)
 add_measurement_benchmark(bm_PhaseUnwrap)
