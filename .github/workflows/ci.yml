@@ -63,7 +63,6 @@ jobs:
 
   build:
     name: "${{ matrix.name }}"
-    needs: [dco, restyled]
     runs-on: ubuntu-latest
     concurrency:
       group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-${{ matrix.name }}
