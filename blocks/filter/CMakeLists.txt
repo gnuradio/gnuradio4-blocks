@@ -14,6 +14,7 @@ gr_add_block_library(
   HEADERS
   include/gnuradio-4.0/filter/ArbitraryRateResampler.hpp
   include/gnuradio-4.0/filter/Channelizer.hpp
+  include/gnuradio-4.0/filter/DcBlocker.hpp
   include/gnuradio-4.0/filter/DesignedFilter.hpp
   include/gnuradio-4.0/filter/FirFilter.hpp
   include/gnuradio-4.0/filter/FrequencyEstimator.hpp
