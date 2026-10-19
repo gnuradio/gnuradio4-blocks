@@ -11,5 +11,6 @@ function(add_basic_benchmark BM_NAME)
   target_compile_options(${BM_NAME} PRIVATE -O3)
 endfunction()
 
+add_basic_benchmark(bm_IqCorrection)
 add_basic_benchmark(bm_SampleDelay)
 add_basic_benchmark(bm_DataSetToStream)
