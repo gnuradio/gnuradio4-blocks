@@ -1,0 +1,52 @@
+# RealToComplex at 48 kHz with a 12 kHz transition over 16 zeros. The filter has 15 taps and a delay of 7 input
+# samples, and the 16 inputs make 8 outputs. A tag at input t leaves on output floor((t + 8) / 2) while that output
+# exists, and at the end-of-stream index otherwise.
+#   input tags      1, 13
+#   moved           4, 10
+#   output tags     4, 8 (10 lies past the last output, 7; the stream ends at index 8)
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source
+      values:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+      tag_indices: !!uint32 [1, 13]
+      tag_map:
+        trigger_name: mark
+  - id: gr::blocks::basic::RealToComplex<float32>
+    parameters:
+      name: convert
+      sample_rate: !!float32 48000.0
+      transition_hz: !!float32 12000.0
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: sink
+      expected: !!complex32
+        - (0.0, 0.0)
+        - (0.0, 0.0)
+        - (0.0, 0.0)
+        - (0.0, 0.0)
+        - (0.0, 0.0)
+        - (0.0, 0.0)
+        - (0.0, 0.0)
+        - (0.0, 0.0)
+      tag_key: trigger_name
+      tag_indices: !!uint32 [4, 8]
+connections:
+  - [source, out, convert, in]
+  - [convert, out, sink, in]
