@@ -25,6 +25,7 @@ add_basic_test(qa_IqCorrection)
 gr_pin_test_optimization(qa_IqCorrection BUILD_TYPE)
 add_basic_test(qa_TriggerBlocks)
 add_basic_test(qa_Decimators)
+add_basic_test(qa_RealToComplex)
 add_basic_test(qa_Throttle)
 set_property(TEST qa_Throttle PROPERTY RESOURCE_LOCK rt)
 # the rate case runs on the wall clock behind a Throttle; its tolerance is derived from the lateness it observes
@@ -158,5 +159,13 @@ endif()
 gr_add_graph_test(
   graph_basic_converter_ports
   graphs/converter-ports.yaml
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrBasicBlocksShared>)
+
+# RealToComplex moves its tags by the conversion's delay and forwards the ones past its last output at the end-of-stream
+# index
+gr_add_graph_test(
+  graph_basic_real_to_complex_end_tags
+  graphs/real-to-complex-end-tags.yaml
   PLUGIN_DIRS
   $<TARGET_FILE_DIR:GrBasicBlocksShared>)
