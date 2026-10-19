@@ -12,6 +12,7 @@ set(GrBasicBlocks_HDRS
     include/gnuradio-4.0/basic/IqCorrection.hpp
     include/gnuradio-4.0/basic/PacketToDataSet.hpp
     include/gnuradio-4.0/basic/RateProbe.hpp
+    include/gnuradio-4.0/basic/RealToComplex.hpp
     include/gnuradio-4.0/basic/Selector.hpp
     include/gnuradio-4.0/basic/SignalGenerator.hpp
     include/gnuradio-4.0/basic/SkipHead.hpp
