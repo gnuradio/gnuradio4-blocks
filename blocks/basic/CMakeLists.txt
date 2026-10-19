@@ -8,6 +8,7 @@ set(GrBasicBlocks_HDRS
     include/gnuradio-4.0/basic/MessageDebug.hpp
     include/gnuradio-4.0/basic/NullSources.hpp
     include/gnuradio-4.0/basic/SampleDelay.hpp
+    include/gnuradio-4.0/basic/IqCorrection.hpp
     include/gnuradio-4.0/basic/PacketToDataSet.hpp
     include/gnuradio-4.0/basic/RateProbe.hpp
     include/gnuradio-4.0/basic/Selector.hpp
