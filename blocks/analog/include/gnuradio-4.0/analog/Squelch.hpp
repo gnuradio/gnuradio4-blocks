@@ -326,7 +326,11 @@ arrived with.
     detail::SquelchGate<PowerSquelch<T>> _machine{};
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& /*newSettings*/) {
-        _detector._alpha     = detail::averagerCoefficient(alpha, averaging_time_s, static_cast<double>(sample_rate));
+        const auto coefficient = detail::averagerCoefficient(alpha, averaging_time_s, static_cast<double>(sample_rate));
+        if (!coefficient) {
+            throw gr::exception(coefficient.error().message);
+        }
+        _detector._alpha     = *coefficient;
         _detector._threshold = std::pow(10.0, threshold_db / 10.0);
         alpha                = _detector._alpha;
         _machine._gate.setRamp(static_cast<std::uint32_t>(ramp.value));
@@ -503,7 +507,11 @@ own offset, `sample_rate` carrying this block's value.
     detail::PowerDetector _detector{};
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& /*newSettings*/) {
-        _detector._alpha     = detail::averagerCoefficient(alpha, averaging_time_s, static_cast<double>(sample_rate));
+        const auto coefficient = detail::averagerCoefficient(alpha, averaging_time_s, static_cast<double>(sample_rate));
+        if (!coefficient) {
+            throw gr::exception(coefficient.error().message);
+        }
+        _detector._alpha     = *coefficient;
         _detector._threshold = std::pow(10.0, threshold_db / 10.0);
         alpha                = _detector._alpha;
     }

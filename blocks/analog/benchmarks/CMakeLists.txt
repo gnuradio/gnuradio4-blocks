@@ -13,5 +13,6 @@ endfunction()
 
 add_analog_benchmark(bm_Agc)
 add_analog_benchmark(bm_FmEmphasis)
+add_analog_benchmark(bm_NoiseBlanker)
 add_analog_benchmark(bm_PowerMeter)
 add_analog_benchmark(bm_QuadratureDemod)
