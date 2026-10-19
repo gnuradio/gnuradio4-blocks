@@ -21,6 +21,7 @@ add_basic_test(qa_TagDebug)
 add_basic_test(qa_IqCorrection)
 gr_pin_test_optimization(qa_IqCorrection BUILD_TYPE)
 add_basic_test(qa_TriggerBlocks)
+add_basic_test(qa_Decimators)
 add_basic_test(qa_Throttle)
 set_property(TEST qa_Throttle PROPERTY RESOURCE_LOCK rt)
 # the rate case runs on the wall clock behind a Throttle; its tolerance is derived from the lateness it observes
