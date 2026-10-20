@@ -123,6 +123,76 @@ inline constexpr std::uint64_t kArbitraryMask = kArbitraryOne - 1ULL;
 
 namespace detail {
 
+/// @brief A prototype cut into arms, and the length of the window every arm reads.
+struct ArmBank {
+    std::vector<float> taps;             ///< arm-major, each arm reversed, adjacent arms adjacent
+    std::size_t        windowLength = 0; ///< `B = ceil(N/L)`, with `B+1` taps stored per arm for the wrap term
+};
+
+/**
+ * @brief `arm[p][r] = h[p + (r-1)*L]` from `p = -1` up, each arm reversed, arms adjacent.
+ *
+ * The `r = 0` column is `h[p-L]`: zero for every arm below `L`, and the first real tap of the wrap
+ * arms, which keeps the wrap branch free. Substituting `r' = r-1` leaves
+ * `sum_r' h[p + r'*L] * x[a-1-r']` for `p < L`, the arm-`p` output anchored at `a-1`, and for
+ * `p >= L` the same expression is the wrapped arm reading the next input sample.
+ *
+ * The arm count follows the node set: `{0,1}` at orders 0 and 1 reaches `p = L`, and `{-1,0,1,2}`
+ * at order 3 reaches `p = L+1` from `p = -1`. Order 0 needs the second arm because it rounds
+ * rather than truncates.
+ */
+[[nodiscard]] inline ArmBank polyphaseArmBank(std::span<const float> prototype, std::size_t bankSize, int order) {
+    ArmBank out;
+    out.windowLength = (prototype.size() + bankSize - 1UZ) / bankSize;
+
+    const std::size_t armStep = out.windowLength + 1UZ;
+    const std::size_t arms    = bankSize + ((order == 3) ? 4UZ : 2UZ);
+    out.taps.assign(arms * armStep, 0.0f);
+    for (std::size_t a = 0UZ; a < arms; ++a) {
+        const std::ptrdiff_t p = static_cast<std::ptrdiff_t>(a) - 1;
+        for (std::size_t j = 0UZ; j <= out.windowLength; ++j) {
+            const std::ptrdiff_t at = p + (static_cast<std::ptrdiff_t>(out.windowLength - j) - 1) * static_cast<std::ptrdiff_t>(bankSize);
+            if (at >= 0 && static_cast<std::size_t>(at) < prototype.size()) {
+                out.taps[a * armStep + j] = prototype[static_cast<std::size_t>(at)];
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * @brief `sum_s w_s(mu) * dot(arm[p+s], window)`, the Lagrange weights on the nodes `s`.
+ *
+ * `q+1` dot products of the same window against `q+1` consecutive arms, which are one contiguous
+ * run of taps. The weights are a few multiplies of the fraction, once per output, and the node set
+ * and the summation order are fixed by the order rather than by the call, so that the result does
+ * not depend on how the stream is chunked.
+ */
+template<typename T>
+requires PolyphaseSample<T>
+[[nodiscard]] inline T polyphaseArmBlend(const float* arm, const typename PolyphaseTraits<T, float>::SampleValue* x, std::size_t n, double mu, int order) noexcept {
+    using SampleValue = typename PolyphaseTraits<T, float>::SampleValue;
+
+    if (order == 0) {
+        // the nearest arm, not the arm below: rounding halves the delay error to the h/2 the error
+        // bound states, where truncation delivers h
+        return polyphaseDot<T, float>((mu < 0.5) ? arm : arm + n, x, n);
+    }
+    if (order == 1) {
+        const T first  = polyphaseDot<T, float>(arm, x, n);
+        const T second = polyphaseDot<T, float>(arm + n, x, n);
+        return static_cast<SampleValue>(1.0 - mu) * first + static_cast<SampleValue>(mu) * second;
+    }
+
+    const double weight[4] = {-mu * (mu - 1.0) * (mu - 2.0) / 6.0, (mu + 1.0) * (mu - 1.0) * (mu - 2.0) / 2.0, -(mu + 1.0) * mu * (mu - 2.0) / 2.0, (mu + 1.0) * mu * (mu - 1.0) / 6.0};
+
+    T sum{};
+    for (std::ptrdiff_t s = 0; s < 4; ++s) {
+        sum += static_cast<SampleValue>(weight[s]) * polyphaseDot<T, float>(arm + (s - 1) * static_cast<std::ptrdiff_t>(n), x, n);
+    }
+    return sum;
+}
+
 struct ArbitraryDesignKey {
     std::size_t bankSize      = 0UZ;
     double      minRate       = 0.0;
@@ -477,65 +547,16 @@ public:
     }
 
 private:
-    /**
-     * @brief `arm[p][r] = h[p + (r-1)*L]` from `p = -1` up, each arm reversed, arms adjacent.
-     *
-     * The `r = 0` column is `h[p-L]`: zero for every arm below `L`, and the first real tap of the
-     * wrap arms, which is what makes the wrap branch free. Substituting `r' = r-1` leaves
-     * `sum_r' h[p + r'*L] * x[a-1-r']` for `p < L`, the arm-`p` output anchored at `a-1`, and for
-     * `p >= L` the same expression is the wrapped arm reading the next input sample.
-     *
-     * The arm count follows the node set: `{0,1}` at orders 0 and 1 reaches `p = L`, and
-     * `{-1,0,1,2}` at order 3 reaches `p = L+1` from `p = -1`. Order 0 needs the second arm because
-     * it rounds rather than truncates.
-     */
+    /// Cuts @p taps into the arm bank with `detail::polyphaseArmBank` and sizes the window.
     void build(std::span<const float> taps) {
-        _prototypeLength = taps.size();
-        _windowLength    = (taps.size() + _bankSize - 1UZ) / _bankSize;
-
-        const std::size_t armStep = _windowLength + 1UZ;
-        const std::size_t arms    = _bankSize + ((_order == 3) ? 4UZ : 2UZ);
-        _bank.assign(arms * armStep, 0.0f);
-        for (std::size_t a = 0UZ; a < arms; ++a) {
-            const std::ptrdiff_t p = static_cast<std::ptrdiff_t>(a) - 1;
-            for (std::size_t j = 0UZ; j <= _windowLength; ++j) {
-                const std::ptrdiff_t at = p + (static_cast<std::ptrdiff_t>(_windowLength - j) - 1) * static_cast<std::ptrdiff_t>(_bankSize);
-                if (at >= 0 && static_cast<std::size_t>(at) < taps.size()) {
-                    _bank[a * armStep + j] = taps[static_cast<std::size_t>(at)];
-                }
-            }
-        }
+        _prototypeLength      = taps.size();
+        detail::ArmBank built = detail::polyphaseArmBank(taps, _bankSize, _order);
+        _windowLength         = built.windowLength;
+        _bank                 = std::move(built.taps);
         _window.assign(2UZ * _windowLength, T{});
     }
 
-    /**
-     * @brief `sum_s w_s(mu) * dot(arm[p+s], window)`, the Lagrange weights on the nodes `s`.
-     *
-     * `q+1` dot products of the same window against `q+1` consecutive arms, which are one
-     * contiguous run of taps. The weights are a few multiplies of the fraction, once per output,
-     * and the node set and the summation order are fixed at construction rather than per call, so
-     * that the result does not depend on how the stream is chunked.
-     */
-    [[nodiscard]] T blend(const float* arm, const SampleValue* x, std::size_t n, double mu) const noexcept {
-        if (_order == 0) {
-            // the nearest arm, not the arm below: rounding halves the delay error to the h/2 the
-            // error bound states, where truncation delivers h
-            return detail::polyphaseDot<T, float>((mu < 0.5) ? arm : arm + n, x, n);
-        }
-        if (_order == 1) {
-            const T first  = detail::polyphaseDot<T, float>(arm, x, n);
-            const T second = detail::polyphaseDot<T, float>(arm + n, x, n);
-            return static_cast<SampleValue>(1.0 - mu) * first + static_cast<SampleValue>(mu) * second;
-        }
-
-        const double weight[4] = {-mu * (mu - 1.0) * (mu - 2.0) / 6.0, (mu + 1.0) * (mu - 1.0) * (mu - 2.0) / 2.0, -(mu + 1.0) * mu * (mu - 2.0) / 2.0, (mu + 1.0) * mu * (mu - 1.0) / 6.0};
-
-        T sum{};
-        for (std::ptrdiff_t s = 0; s < 4; ++s) {
-            sum += static_cast<SampleValue>(weight[s]) * detail::polyphaseDot<T, float>(arm + (s - 1) * static_cast<std::ptrdiff_t>(n), x, n);
-        }
-        return sum;
-    }
+    [[nodiscard]] T blend(const float* arm, const SampleValue* x, std::size_t n, double mu) const noexcept { return detail::polyphaseArmBlend<T>(arm, x, n, mu, _order); }
 
     std::size_t        _bankSize;
     int                _order;
