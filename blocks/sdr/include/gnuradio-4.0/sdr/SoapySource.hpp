@@ -488,7 +488,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
                     }
                 }
             }
-            static const std::pmr::string kEosKey(tag::END_OF_STREAM.shortKey());
+            static const std::pmr::string kEosKey(tag::END_OF_STREAM.key());
             if (clkTag.map.contains(kEosKey)) {
                 _clockEosReceived = true;
             }

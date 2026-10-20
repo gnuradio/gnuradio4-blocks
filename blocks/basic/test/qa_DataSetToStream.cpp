@@ -291,6 +291,31 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
         expect(std::ranges::none_of(capture.samples, [](float value) { return value == 42.f; })) << "the padding value never reaches the stream";
     };
 
+    // A boolean end-of-stream marker passes under both spellings. A string under either spelling is dropped and counted.
+    "the end-of-stream marker as the framework writes it is held to its declared type"_test = [] {
+        const std::string framework(gr::tag::END_OF_STREAM.key());
+        const std::string bare(gr::tag::END_OF_STREAM.shortKey());
+        expect(neq(framework, bare)) << "the two spellings differ";
+
+        for (const std::string& key : {framework, bare}) {
+            Record<float> record = makeExtractedRecord<float>(4UZ, 48000.f);
+            putMeta(record.meta_information[0UZ], key, pmt::Value(true));
+            auto                block = make<DataSetToStream<float>>();
+            const Record<float> input[]{record};
+            const auto          capture = run<float>(block, input);
+            expect(eq(block.nMetaKeysDropped, 0ULL)) << std::format("a boolean '{}' is kept", key);
+            expect(eq(read<bool>(mapAt(capture.tags, 0UZ), key).value_or(false), true)) << std::format("a boolean '{}' reaches the stream's first tag", key);
+
+            Record<float> wrong = makeExtractedRecord<float>(4UZ, 48000.f);
+            putMeta(wrong.meta_information[0UZ], key, pmt::Value(std::string("yes")));
+            auto                wrongBlock = make<DataSetToStream<float>>();
+            const Record<float> wrongInput[]{wrong};
+            const auto          wrongCapture = run<float>(wrongBlock, wrongInput);
+            expect(eq(wrongBlock.nMetaKeysDropped, 1ULL)) << std::format("a string '{}' is dropped and counted", key);
+            expect(!hasKey(mapAt(wrongCapture.tags, 0UZ), key)) << std::format("a string '{}' does not reach the stream", key);
+        }
+    };
+
     "a multi-signal record emits only the selected signal"_test = [] {
         const Record<float> input[]{makeRecord<float>(4UZ, 4UZ)};
         for (gr::Size_t index = 0U; index < 4U; ++index) {

@@ -104,13 +104,16 @@ std::optional<std::size_t> callIndex(const std::vector<std::string>& calls, std:
 
 bool sawCall(const std::vector<std::string>& calls, std::string_view fragment) { return callIndex(calls, fragment).has_value(); }
 
-auto runWithWatchdog(auto& sched, std::chrono::seconds timeout = std::chrono::seconds{6}) {
-    auto watchdog = std::jthread([&sched, timeout](std::stop_token stoken) {
+auto runWithWatchdog(auto& sched, std::chrono::seconds timeout = std::chrono::seconds{6}, std::atomic<bool>* watchdogFired = nullptr) {
+    auto watchdog = std::jthread([&sched, timeout, watchdogFired](std::stop_token stoken) {
         auto deadline = std::chrono::steady_clock::now() + timeout;
         while (std::chrono::steady_clock::now() < deadline && !stoken.stop_requested()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
         if (!stoken.stop_requested()) {
+            if (watchdogFired != nullptr) {
+                watchdogFired->store(true, std::memory_order_release);
+            }
             sched.requestStop();
         }
     });
@@ -460,10 +463,12 @@ const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
         expect(flow.connect<"out", "clk_in">(clock, source).has_value());
         expect(flow.connect<"out", "in">(source, sink).has_value());
 
-        Sched sched;
+        Sched             sched;
+        std::atomic<bool> watchdogFired{false};
         expect(sched.exchange(std::move(flow)).has_value());
-        auto ret = runWithWatchdog(sched, std::chrono::seconds{4});
+        auto ret = runWithWatchdog(sched, std::chrono::seconds{4}, &watchdogFired);
         expect(ret.has_value());
+        expect(!watchdogFired.load(std::memory_order_acquire)) << "the clock's end of stream stops the source before the watchdog does";
         expect(gt(sink._nSamplesProduced, gr::Size_t{0})) << "should have received samples before clk_in EoS";
     };
 
