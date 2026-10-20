@@ -12,4 +12,5 @@ function(add_filter_benchmark BM_NAME)
 endfunction()
 
 add_filter_benchmark(bm_ArbitraryRateResampler)
+add_filter_benchmark(bm_Channelizer)
 add_filter_benchmark(bm_FirFilter)
