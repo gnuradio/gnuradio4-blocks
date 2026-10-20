@@ -6,6 +6,7 @@ function(add_gr_benchmark BM_NAME)
             gnuradio-core
             gnuradio-algorithm
             gr-fourier
+            gnuradio4::gr-testing
             ut
             ut-benchmark)
   # Performance-related benchmarks should be optimised during compile time.
@@ -13,3 +14,4 @@ function(add_gr_benchmark BM_NAME)
 endfunction()
 
 add_gr_benchmark(bm_fft_block)
+add_gr_benchmark(bm_FrequencyCompressor)

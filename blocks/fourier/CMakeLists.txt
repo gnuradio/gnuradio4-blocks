@@ -12,6 +12,7 @@ gr_add_block_library(
   MAKE_SHARED_LIBRARY
   ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
+  include/gnuradio-4.0/fourier/FrequencyCompressor.hpp
   include/gnuradio-4.0/fourier/fft.hpp
   LINK_LIBRARIES
   gnuradio4::gr-basic
