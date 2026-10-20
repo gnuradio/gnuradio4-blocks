@@ -30,6 +30,8 @@
 
 namespace {
 
+using gr::filter::designChannelizerPrototype;
+using gr::filter::measureChannelizerPrototype;
 using gr::filter::PolyphaseChannelizer;
 using gr::filter::PolyphaseSynthesizer;
 using gr::filter::fir::design::polyphasePartition;
@@ -119,7 +121,7 @@ struct ToneResponse {
 /// warm-up covers twice the steps the prototype needs to fill, so the measured window sees only steady state.
 [[nodiscard]] ToneResponse runTone(std::size_t channels, std::size_t oversample, std::span<const float> prototype, std::size_t wanted, double offset) {
     PolyphaseChannelizer<float> bank;
-    bank.configure(channels, prototype, oversample);
+    boost::ut::expect(bank.configure(channels, prototype, oversample).has_value());
 
     const std::size_t stride = bank.stride();
     const std::size_t warmUp = 2UZ * (bank.prototypeLength() / stride) + 8UZ;
@@ -246,8 +248,8 @@ struct Reconstruction {
 
     PolyphaseChannelizer<float> analysis;
     PolyphaseSynthesizer<float> synthesis;
-    analysis.configure(channels, prototype, oversample);
-    synthesis.configure(channels, prototype, oversample);
+    boost::ut::expect(analysis.configure(channels, prototype, oversample).has_value());
+    boost::ut::expect(synthesis.configure(channels, prototype, oversample).has_value());
 
     const std::size_t stride = analysis.stride();
     const std::size_t length = analysis.prototypeLength();
@@ -418,7 +420,7 @@ const boost::ut::suite<"PolyphaseChannelizer commutator"> polyphaseChannelizerCo
                 }
 
                 PolyphaseChannelizer<float> bank;
-                bank.configure(channels, prototype, oversample);
+                boost::ut::expect(bank.configure(channels, prototype, oversample).has_value());
                 const std::size_t stride = bank.stride();
                 const auto        taps   = asDouble(bank.prototype());
 
@@ -455,7 +457,7 @@ const boost::ut::suite<"PolyphaseChannelizer commutator"> polyphaseChannelizerCo
                 }
 
                 PolyphaseChannelizer<float> bank;
-                bank.configure(channels, prototype, oversample);
+                boost::ut::expect(bank.configure(channels, prototype, oversample).has_value());
                 const std::size_t stride = bank.stride();
                 const auto        taps   = asDouble(bank.prototype());
 
@@ -525,6 +527,10 @@ const boost::ut::suite<"PolyphaseChannelizer round trip"> polyphaseChannelizerRo
         expect(gt(oversampled[0].residualDb, -20.)) << std::format("the plain lowpass must not reconstruct: {:.1f} dB oversampled", oversampled[0].residualDb);
         expect(lt(oversampled[3].residualDb, -55.)) << std::format("the alpha 0.5, L = 16 root-Nyquist prototype must reconstruct: {:.1f} dB oversampled", oversampled[3].residualDb);
 
+        for (std::size_t i = 1UZ; i < designs.size(); ++i) {
+            expect(gt(critical[i].residualDb, -20.)) << std::format("{}: a critically sampled root-Nyquist pair must not reconstruct: {:.1f} dB", designs[i].label, critical[i].residualDb);
+        }
+
         for (std::size_t i = 0UZ; i < designs.size(); ++i) {
             expect(lt(oversampled[i].residualDb, critical[i].residualDb)) << std::format("{}: oversampling must not make reconstruction worse, {:.1f} dB against {:.1f} dB", designs[i].label, oversampled[i].residualDb, critical[i].residualDb);
 
@@ -548,7 +554,7 @@ const boost::ut::suite<"PolyphaseChannelizer streaming"> polyphaseChannelizerStr
 
         for (const std::size_t oversample : {1UZ, 2UZ}) {
             PolyphaseChannelizer<float> bank;
-            bank.configure(kChannels, prototype, oversample);
+            boost::ut::expect(bank.configure(kChannels, prototype, oversample).has_value());
             const std::size_t stride = bank.stride();
 
             gr::rng::Xoshiro256pp rng(0xBEEFU);
@@ -598,7 +604,7 @@ const boost::ut::suite<"PolyphaseChannelizer streaming"> polyphaseChannelizerStr
 
         for (const std::size_t oversample : {1UZ, 2UZ}) {
             PolyphaseSynthesizer<float> bank;
-            bank.configure(kChannels, prototype, oversample);
+            boost::ut::expect(bank.configure(kChannels, prototype, oversample).has_value());
             const std::size_t stride = bank.stride();
 
             gr::rng::Xoshiro256pp rng(0xBEEFU);
@@ -708,23 +714,36 @@ const boost::ut::suite<"polyphasePartition"> polyphasePartitionTests = [] {
 const boost::ut::suite<"PolyphaseChannelizer configuration"> polyphaseChannelizerConfigurationTests = [] {
     using namespace boost::ut;
 
-    "configure refuses geometry the commutator cannot run"_test = [] {
+    "configure refuses geometry the commutator cannot run, by name, and keeps the bank"_test = [] {
         const auto prototype = kaiserPrototype(16UZ);
 
         const auto check = [&prototype](auto bank, std::string_view name) {
-            expect(throws<std::invalid_argument>([&] { bank.configure(0UZ, prototype); })) << std::format("{}: zero channels", name);
-            expect(throws<std::invalid_argument>([&] { bank.configure(1UZ, prototype); })) << std::format("{}: one channel", name);
-            expect(throws<std::invalid_argument>([&] { bank.configure(decltype(bank)::kMaxChannels + 1UZ, prototype); })) << std::format("{}: one channel past the widest bank", name);
-            expect(nothrow([&] { bank.configure(2UZ, prototype); })) << std::format("{}: the narrowest bank", name);
-            expect(nothrow([&] { bank.configure(decltype(bank)::kMaxChannels, prototype); })) << std::format("{}: the widest bank", name);
+            const auto refused = [&](std::size_t channels, std::span<const float> taps, std::size_t oversample, std::string_view mention, std::string_view label) {
+                const std::size_t before = bank.channels();
+                const auto        result = bank.configure(channels, taps, oversample);
+                expect(!result.has_value()) << std::format("{}: {}", name, label);
+                if (!result.has_value()) {
+                    expect(result.error().message.find(mention) != std::string::npos) << std::format("{}: {}: \"{}\" does not mention {}", name, label, result.error().message, mention);
+                }
+                expect(eq(bank.channels(), before)) << std::format("{}: {}: a refusal leaves the bank as it was", name, label);
+            };
+            const auto accepted = [&](std::size_t channels, std::size_t oversample, std::string_view label) { expect(bank.configure(channels, prototype, oversample).has_value()) << std::format("{}: {}", name, label); };
 
-            expect(throws<std::invalid_argument>([&] { bank.configure(16UZ, prototype, 0UZ); })) << std::format("{}: oversample zero", name);
-            expect(throws<std::invalid_argument>([&] { bank.configure(16UZ, prototype, 3UZ); })) << std::format("{}: oversample three", name);
-            expect(throws<std::invalid_argument>([&] { bank.configure(15UZ, prototype, 2UZ); })) << std::format("{}: an odd channel count oversampled", name);
-            expect(nothrow([&] { bank.configure(15UZ, prototype, 1UZ); })) << std::format("{}: an odd channel count critically sampled", name);
-            expect(nothrow([&] { bank.configure(16UZ, prototype, 2UZ); })) << std::format("{}: an even channel count oversampled", name);
+            accepted(4UZ, 1UZ, "a bank to keep");
+            refused(0UZ, prototype, 1UZ, "channels", "zero channels");
+            refused(1UZ, prototype, 1UZ, "channels", "one channel");
+            refused(decltype(bank)::kMaxChannels + 1UZ, prototype, 1UZ, "channels", "one channel past the widest bank");
+            accepted(2UZ, 1UZ, "the narrowest bank");
+            accepted(decltype(bank)::kMaxChannels, 1UZ, "the widest bank");
 
-            expect(throws<std::invalid_argument>([&] { bank.configure(16UZ, std::span<const float>{}); })) << std::format("{}: an empty prototype", name);
+            accepted(4UZ, 1UZ, "a bank to keep");
+            refused(16UZ, prototype, 0UZ, "oversample", "oversample zero");
+            refused(16UZ, prototype, 3UZ, "oversample", "oversample three");
+            refused(15UZ, prototype, 2UZ, "even channel count, got 15", "an odd channel count oversampled");
+            accepted(15UZ, 1UZ, "an odd channel count critically sampled");
+            accepted(16UZ, 2UZ, "an even channel count oversampled");
+
+            refused(16UZ, std::span<const float>{}, 1UZ, "prototype", "an empty prototype");
         };
 
         check(PolyphaseChannelizer<float>{}, "channelizer");
@@ -737,7 +756,7 @@ const boost::ut::suite<"PolyphaseChannelizer configuration"> polyphaseChannelize
         const auto check = [&prototype](auto bank, std::string_view name) {
             for (const std::size_t channels : {2UZ, 16UZ, 64UZ}) {
                 for (const std::size_t oversample : {1UZ, 2UZ}) {
-                    bank.configure(channels, prototype, oversample);
+                    expect(bank.configure(channels, prototype, oversample).has_value());
                     const auto label = std::format("{} M {} oversample {}", name, channels, oversample);
                     expect(eq(bank.channels(), channels)) << label;
                     expect(eq(bank.oversample(), oversample)) << label;
@@ -757,10 +776,121 @@ const boost::ut::suite<"PolyphaseChannelizer configuration"> polyphaseChannelize
         const std::array<float, 3UZ> prototype{1.f, 2.f, 3.f};
 
         PolyphaseChannelizer<float> bank;
-        bank.configure(8UZ, prototype);
+        expect(bank.configure(8UZ, prototype).has_value());
         expect(eq(bank.prototypeLength(), 8UZ)) << "the padded prototype must fill one branch per channel";
         expect(eq(bank.prototype()[0], 1.f));
         expect(eq(bank.prototype()[3], 0.f));
+    };
+};
+
+const boost::ut::suite<"PolyphaseChannelizer prototype design"> polyphaseChannelizerDesignTests = [] {
+    using namespace boost::ut;
+
+    "a boxcar design is one channel long and needs no search"_test = [] {
+        const auto design = designChannelizerPrototype(8UZ, "boxcar", 60., 0.2);
+        expect(fatal(design.has_value())) << "a boxcar of eight channels is a valid design";
+        expect(eq(design->taps.size(), 8UZ));
+        expect(eq(design->span, 1UZ));
+        expect(design->ok);
+    };
+
+    "a design refuses parameters outside their range"_test = [] {
+        const auto oneChannel = designChannelizerPrototype(1UZ, "boxcar", 60., 0.2);
+        expect(fatal(!oneChannel.has_value())) << "one channel";
+        expect(oneChannel.error().message.contains("at least two")) << oneChannel.error().message;
+
+        const auto wideTransition = designChannelizerPrototype(8UZ, "boxcar", 60., 1.);
+        expect(fatal(!wideTransition.has_value())) << "a transition of a whole spacing";
+        expect(wideTransition.error().message.contains("(0, 1)")) << wideTransition.error().message;
+
+        const auto noAttenuation = designChannelizerPrototype(8UZ, "lowpass", 0., 0.2);
+        expect(fatal(!noAttenuation.has_value())) << "zero attenuation";
+        expect(noAttenuation.error().message.contains("attenuation_db")) << noAttenuation.error().message;
+
+        const auto shortSpan = designChannelizerPrototype(8UZ, "root_nyquist", 60., 0.2, 1UZ);
+        expect(fatal(!shortSpan.has_value())) << "a span of one";
+        expect(shortSpan.error().message.contains("span is 1")) << shortSpan.error().message;
+
+        const auto unknown = designChannelizerPrototype(8UZ, "elliptic", 60., 0.2);
+        expect(fatal(!unknown.has_value())) << "an unknown family";
+        expect(unknown.error().message.contains("'elliptic'")) << unknown.error().message;
+    };
+
+    "the span bound belongs to the root-Nyquist family alone"_test = [] {
+        const auto longLowpass = designChannelizerPrototype(8UZ, "lowpass", 60., 0.2, 100UZ);
+        expect(longLowpass.has_value()) << "a lowpass design does not read the span";
+
+        const auto overCap = designChannelizerPrototype(8UZ, "root_nyquist", 60., 0.2, 65UZ);
+        expect(fatal(!overCap.has_value())) << "a root-Nyquist span one past the cap";
+        expect(overCap.error().message.contains("span is 65")) << overCap.error().message;
+
+        const auto belowOwnCap = designChannelizerPrototype(8UZ, "root_nyquist", 60., 0.2, 32UZ, 1UZ, 0.1, 64UZ);
+        expect(belowOwnCap.has_value());
+        const auto pastOwnCap = designChannelizerPrototype(8UZ, "root_nyquist", 60., 0.2, 32UZ, 1UZ, 0.1, 16UZ);
+        expect(!pastOwnCap.has_value()) << "the same span is refused under a lower cap";
+    };
+
+    "the lowpass search returns the shortest length that meets the target"_test = [] {
+        // Every odd length below the returned one misses the target or the ripple limit. The search bisects on the
+        // assumption that the two limits hold from some length on, and this sweep checks that at each setting.
+        for (const auto& [channels, transition, attenuationDb] : {std::tuple{4UZ, 0.2, 60.}, std::tuple{4UZ, 0.2, 80.}, std::tuple{8UZ, 0.3, 60.}}) {
+            const auto design = designChannelizerPrototype(channels, "lowpass", attenuationDb, transition);
+            expect(fatal(design.has_value() && design->ok));
+
+            const double spacing        = 1. / static_cast<double>(channels);
+            const double passEdge       = 0.5 * (1. - transition) * spacing;
+            const double stopEdge       = spacing - passEdge;
+            std::size_t  shorterMeeting = 0UZ;
+            for (std::size_t n = 5UZ; n < design->taps.size(); n += 2UZ) {
+                const auto [stopbandDb, rippleDb] = gr::filter::detail::channelizerEdgeScan(gr::filter::fir::design::kaiserLowpass(n, 0.5 * spacing, attenuationDb), passEdge, stopEdge);
+                if (stopbandDb <= -attenuationDb && rippleDb <= 0.1) {
+                    ++shorterMeeting;
+                }
+            }
+            expect(eq(shorterMeeting, 0UZ)) << std::format("M = {}, transition {}, {} dB: no length below {} meets the target", channels, transition, attenuationDb, design->taps.size());
+        }
+    };
+
+    "a measurement reads the prototype the bank runs, at unit gain and without its padding"_test = [] {
+        const auto design = designChannelizerPrototype(8UZ, "lowpass", 60., 0.2);
+        expect(fatal(design.has_value()));
+
+        std::vector<float> padded = design->taps;
+        padded.resize(((padded.size() + 7UZ) / 8UZ) * 8UZ + 8UZ, 0.f);
+        std::vector<float> gained = design->taps;
+        std::ranges::transform(gained, gained.begin(), [](float tap) { return 8.f * tap; });
+
+        const auto plain  = measureChannelizerPrototype(design->taps, 8UZ, 0.2);
+        const auto asRun  = measureChannelizerPrototype(padded, 8UZ, 0.2);
+        const auto scaled = measureChannelizerPrototype(gained, 8UZ, 0.2);
+        expect(fatal(plain.has_value() && asRun.has_value() && scaled.has_value()));
+
+        expect(approx(plain->stopbandDb, design->stopbandDb, 0.01)) << "the design measures as designed";
+        expect(approx(asRun->stopbandDb, plain->stopbandDb, 0.01)) << std::format("zero padding moves nothing: {:.2f} dB against {:.2f} dB", asRun->stopbandDb, plain->stopbandDb);
+        expect(approx(asRun->rippleDb, plain->rippleDb, 0.01));
+        expect(approx(scaled->stopbandDb, plain->stopbandDb, 0.01)) << std::format("the figures are relative to DC: {:.2f} dB against {:.2f} dB", scaled->stopbandDb, plain->stopbandDb);
+        expect(approx(scaled->rippleDb, plain->rippleDb, 0.01));
+
+        const auto noGain = measureChannelizerPrototype(std::vector<float>{1.f, -1.f}, 8UZ, 0.2);
+        expect(!noGain.has_value()) << "a prototype with no DC gain has nothing to measure against";
+        if (!noGain.has_value()) {
+            expect(noGain.error().message.contains("DC gain")) << noGain.error().message;
+        }
+    };
+
+    "a measurement refuses a bank it cannot describe"_test = [] {
+        const auto prototype = kaiserPrototype(8UZ);
+        const auto measured  = measureChannelizerPrototype(prototype, 8UZ, 0.2);
+        expect(fatal(measured.has_value())) << "a Kaiser prototype for eight channels measures";
+        expect(measured->ok);
+
+        const auto oneChannel = measureChannelizerPrototype(prototype, 1UZ, 0.2);
+        expect(fatal(!oneChannel.has_value())) << "one channel";
+        expect(oneChannel.error().message.contains("at least two")) << oneChannel.error().message;
+
+        const auto empty = measureChannelizerPrototype(std::span<const float>{}, 8UZ, 0.2);
+        expect(fatal(!empty.has_value())) << "an empty prototype";
+        expect(empty.error().message.contains("empty")) << empty.error().message;
     };
 };
 
