@@ -8,11 +8,18 @@
 #include <numbers>
 #include <numeric>
 #include <string_view>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <vector>
 
 #include <boost/ut.hpp>
+
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
+#include <csignal>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include <gnuradio-4.0/meta/formatter.hpp>
 
@@ -535,6 +542,159 @@ const boost::ut::suite<"FFT algorithms and window functions"> windowTests = [] {
         expect(eq(fft.pocketPlanBuilds, 2UZ)) << "alternating two known lengths plans neither again";
     };
 
+    // The four-step split factors the transform exactly. It is held to the agreement expected of two float engines of
+    // the same accuracy, not to the loose bound the native path's twiddle recurrence forces. SimdFFT is the reference
+    // because Auto runs it at these lengths on one thread. The thread count must not change the answer. The split does
+    // the same arithmetic in the same order however the batches are shared out.
+    "the four-step split matches SimdFFT"_test = [] {
+        using Cplx = std::complex<float>;
+        gr::algorithm::FFT<Cplx, Cplx> simd{};
+        gr::algorithm::FFT<Cplx, Cplx> split{};
+        simd.backend  = gr::algorithm::FftBackend::Simd;
+        split.backend = gr::algorithm::FftBackend::FourStep;
+
+        bool enginesRan      = true;
+        bool sameAcrossCount = true;
+        for (const std::size_t n : {1UZ << 16UZ, 1UZ << 18UZ, 1UZ << 20UZ}) {
+            enginesRan           = enginesRan && simd.resolveBackend(n) == gr::algorithm::FftBackend::Simd && split.resolveBackend(n) == gr::algorithm::FftBackend::FourStep;
+            const auto signal    = deterministicComplexSignal<Cplx>(n);
+            const auto reference = asDoubleSpectrum(simd.compute(signal));
+            split.threads        = 1UZ;
+            const auto oneThread = split.compute(signal);
+            for (const std::size_t threads : {1UZ, 2UZ, 4UZ}) {
+                split.threads     = threads;
+                const auto actual = split.compute(signal);
+                sameAcrossCount   = sameAcrossCount && std::ranges::equal(actual, oneThread);
+                expect(eq(actual.size(), n)) << std::format("n={} threads={} output size", n, threads);
+                expect(lt(relativeL2Error(actual, reference), 1.e-5)) << std::format("n={} threads={} relative L2 error {}", n, threads, relativeL2Error(actual, reference));
+            }
+        }
+        expect(enginesRan) << "the split arm ran the split and the reference arm ran SimdFFT";
+        expect(sameAcrossCount) << "the spectrum is bit for bit the same at every thread count";
+    };
+
+    // 2^22, the length the split is built for. A second engine at this length would double the memory of the case.
+    // A few bins are summed directly in double instead, in the bin order of the definition. An error beyond float
+    // rounding in any one of them means a wrong table or a wrong batch.
+    "the four-step split at 2^22 matches a direct sum of selected bins"_test = [] {
+        using Cplx = std::complex<float>;
+        gr::algorithm::FFT<Cplx, Cplx> split{};
+        split.backend = gr::algorithm::FftBackend::FourStep;
+        split.threads = 4UZ;
+
+        const std::size_t n      = 1UZ << 22UZ;
+        const auto        signal = deterministicComplexSignal<Cplx>(n);
+        const auto        actual = split.compute(signal);
+        expect(split.resolveBackend(n) == gr::algorithm::FftBackend::FourStep) << "the split ran";
+        expect(eq(actual.size(), n));
+
+        double energy = 0.;
+        for (const auto& v : signal) {
+            energy += std::norm(std::complex<double>(static_cast<double>(v.real()), static_cast<double>(v.imag())));
+        }
+        double worst = 0.;
+        for (const std::size_t k : {0UZ, 1UZ, 1UZ << 11UZ, (1UZ << 11UZ) + 1UZ, n / 2UZ, n - 1UZ}) {
+            std::complex<double> sum{};
+            for (std::size_t i = 0; i < n; ++i) {
+                const double angle = -2. * std::numbers::pi * static_cast<double>((i * k) & (n - 1UZ)) / static_cast<double>(n);
+                sum += std::complex<double>(static_cast<double>(signal[i].real()), static_cast<double>(signal[i].imag())) * std::polar(1., angle);
+            }
+            const std::complex<double> got(static_cast<double>(actual[k].real()), static_cast<double>(actual[k].imag()));
+            worst = std::max(worst, std::abs(got - sum) / std::sqrt(energy)); // the rms bin magnitude is sqrt(energy)
+        }
+        expect(lt(worst, 1.e-5)) << std::format("worst selected bin error, relative to the rms bin: {}", worst);
+    };
+
+    // the backward direction, and the round trip the unnormalized convention names
+    "the four-step split runs backward"_test = [] {
+        using Cplx = std::complex<float>;
+        gr::algorithm::FFT<Cplx, Cplx, gr::algorithm::Direction::Backward> simd{};
+        gr::algorithm::FFT<Cplx, Cplx, gr::algorithm::Direction::Backward> split{};
+        gr::algorithm::FFT<Cplx, Cplx>                                     forward{};
+        simd.backend    = gr::algorithm::FftBackend::Simd;
+        split.backend   = gr::algorithm::FftBackend::FourStep;
+        split.threads   = 4UZ;
+        forward.backend = gr::algorithm::FftBackend::FourStep;
+        forward.threads = 4UZ;
+
+        bool enginesRan = true;
+        for (const std::size_t n : {1UZ << 16UZ, 1UZ << 18UZ}) {
+            enginesRan           = enginesRan && simd.resolveBackend(n) == gr::algorithm::FftBackend::Simd && split.resolveBackend(n) == gr::algorithm::FftBackend::FourStep && forward.resolveBackend(n) == gr::algorithm::FftBackend::FourStep;
+            const auto signal    = deterministicComplexSignal<Cplx>(n);
+            const auto reference = asDoubleSpectrum(simd.compute(signal));
+            const auto actual    = split.compute(signal);
+            expect(lt(relativeL2Error(actual, reference), 1.e-5)) << std::format("n={} backward relative L2 error {}", n, relativeL2Error(actual, reference));
+
+            std::vector<std::complex<double>> scaled(n); // unnormalized: backward(forward(x)) == N*x
+            for (std::size_t i = 0; i < n; ++i) {
+                scaled[i] = std::complex<double>(static_cast<double>(signal[i].real()), static_cast<double>(signal[i].imag())) * static_cast<double>(n);
+            }
+            const auto roundTrip = split.compute(forward.compute(signal));
+            expect(lt(relativeL2Error(roundTrip, scaled), 1.e-5)) << std::format("n={} round-trip relative L2 error {}", n, relativeL2Error(roundTrip, scaled));
+        }
+        expect(enginesRan) << "each arm ran the engine it names";
+    };
+
+    // The split's per-length state is parked and restored with the rest. Alternating two lengths rebuilds neither
+    // table, so each length's table and work buffer keep their addresses. A length that comes back gives the same
+    // spectrum it gave the first time.
+    "the four-step split parks its tables"_test = [] {
+        using Cplx = std::complex<float>;
+        gr::algorithm::FFT<Cplx, Cplx> split{};
+        split.backend = gr::algorithm::FftBackend::FourStep;
+        split.threads = 2UZ;
+
+        const auto first          = deterministicComplexSignal<Cplx>(1UZ << 16UZ);
+        const auto other          = deterministicComplexSignal<Cplx>(1UZ << 17UZ);
+        const auto firstReference = asDoubleSpectrum(split.compute(first));
+        const auto firstTable     = split.fourStepTwiddles.data();
+        const auto firstWork      = split.fourStepWork.data();
+        const auto otherReference = asDoubleSpectrum(split.compute(other));
+        const auto otherTable     = split.fourStepTwiddles.data();
+        const auto otherWork      = split.fourStepWork.data();
+        expect(firstTable != otherTable && firstWork != otherWork) << "each length owns its table and work buffer";
+
+        bool   samePlace = true;
+        double worst     = 0.;
+        for (std::size_t i = 0; i < 4UZ; ++i) {
+            worst     = std::max(worst, relativeL2Error(split.compute(first), firstReference));
+            samePlace = samePlace && split.fourStepTwiddles.data() == firstTable && split.fourStepWork.data() == firstWork;
+            worst     = std::max(worst, relativeL2Error(split.compute(other), otherReference));
+            samePlace = samePlace && split.fourStepTwiddles.data() == otherTable && split.fourStepWork.data() == otherWork;
+        }
+        expect(samePlace) << "a length that comes back finds its own table and work buffer where it left them";
+        expect(lt(worst, 1.e-12)) << "and gives the same spectrum";
+    };
+
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
+    // The first threaded call starts the pool. A child forked after that runs a threaded transform to the end and
+    // gets the parent's spectrum bit for bit. An alarm ends a child that waits for workers a fork does not carry over.
+    "a forked child runs a threaded transform"_test = [] {
+        using Cplx = std::complex<float>;
+        gr::algorithm::FFT<Cplx, Cplx> split{};
+        split.backend = gr::algorithm::FftBackend::FourStep;
+        split.threads = 4UZ;
+        if (split.effectiveThreads() < 2UZ) {
+            return; // one logical CPU runs the split inline and starts no pool
+        }
+
+        const auto signal    = deterministicComplexSignal<Cplx>(1UZ << 16UZ);
+        const auto reference = split.compute(signal);
+        const auto pid       = fork();
+        if (pid == 0) {
+            alarm(20U);
+            const auto again = split.compute(signal);
+            _exit(std::ranges::equal(again, reference) ? 0 : 1);
+        }
+        expect(ge(pid, 0)) << "fork succeeded";
+
+        int status = 0;
+        waitpid(pid, &status, 0);
+        const bool finished = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+        expect(finished) << std::format("the child ended with status {:#x}: exit {}, signal {}", status, WIFEXITED(status) ? WEXITSTATUS(status) : -1, WIFSIGNALED(status) ? WTERMSIG(status) : 0);
+    };
+#endif
+
     // useSimdFFT vetoes every backend except the native path, and only while the backend is left at Auto
     "backend selection"_test = [] {
         using Cplx = std::complex<float>;
@@ -554,12 +714,52 @@ const boost::ut::suite<"FFT algorithms and window functions"> windowTests = [] {
         fft.useSimdFFT = false;
         expect(fft.resolveBackend(4096UZ) == FftBackend::Native) << "the legacy switch pins the native path";
         expect(fft.resolveBackend(1UZ << 22UZ) == FftBackend::Native) << "and pins it at every length";
+        fft.threads = 4UZ;
+        expect(fft.resolveBackend(1UZ << 22UZ) == FftBackend::Native) << "and at every thread count, where the split would otherwise run";
+        fft.threads = 1UZ;
 
         fft.backend = FftBackend::PocketFFT;
         expect(fft.resolveBackend(4096UZ) == FftBackend::PocketFFT) << "an explicit backend outranks the legacy switch";
 
         fft.backend = FftBackend::Simd;
         expect(fft.resolveBackend(1009UZ) == FftBackend::Native) << "a size SimdFFT cannot take falls back to the native path";
+    };
+
+    // `threads` moves Auto off SimdFFT, and only at a length where the split is faster. The clamp is against the
+    // machine. A caller may ask for more threads than the machine has without oversubscribing it.
+    "thread count and the four-step's selection"_test = [] {
+        using Cplx = std::complex<float>;
+        using gr::algorithm::FftBackend;
+        gr::algorithm::FFT<Cplx, Cplx> fft{};
+
+        expect(eq(fft.threads, 1UZ)) << "one thread is the default";
+        expect(eq(fft.effectiveThreads(), 1UZ)) << "and it is what one thread means";
+        expect(fft.resolveBackend(1UZ << 22UZ) == FftBackend::Simd) << "on one thread Auto keeps SimdFFT at every power of two";
+
+        fft.threads = 4UZ;
+        if (fft.effectiveThreads() > 1UZ) {
+            expect(fft.resolveBackend(1UZ << 22UZ) == FftBackend::FourStep) << "above one thread Auto takes the split at a display length";
+            expect(fft.resolveBackend(gr::algorithm::FFT<Cplx, Cplx>::kFourStepMinSize) == FftBackend::FourStep) << "and from the threshold upward";
+        } else {
+            expect(fft.resolveBackend(1UZ << 22UZ) == FftBackend::Simd) << "a machine with one logical CPU clamps the request to one thread and keeps SimdFFT";
+        }
+        expect(fft.resolveBackend(gr::algorithm::FFT<Cplx, Cplx>::kFourStepMinSize / 2UZ) == FftBackend::Simd) << "below the threshold Auto keeps SimdFFT, where the batches do not cover their own passes";
+        expect(fft.resolveBackend(1250UZ) == FftBackend::PocketFFT) << "and at a length that is not a power of two";
+
+        fft.backend = FftBackend::FourStep;
+        expect(fft.resolveBackend(1250UZ) == FftBackend::PocketFFT) << "an explicitly pinned split still falls back where it cannot run";
+        expect(fft.resolveBackend(1UZ << 20UZ) == FftBackend::FourStep) << "and runs where it can";
+        expect(fft.resolveBackend(4096UZ) == FftBackend::FourStep) << "including below the threshold, which is Auto's policy and not a limit of the engine";
+
+        fft.threads = 1UZ;
+        expect(fft.resolveBackend(1UZ << 20UZ) == FftBackend::FourStep) << "an explicit backend is not vetoed by the thread count";
+
+        fft.threads = 1024UZ;
+        expect(le(fft.effectiveThreads(), static_cast<std::size_t>(std::max(1U, std::thread::hardware_concurrency())))) << "the request is clamped to what the machine has";
+
+        gr::algorithm::FFT<float, Cplx> realInput{};
+        realInput.threads = 4UZ;
+        expect(realInput.resolveBackend(1UZ << 20UZ) == FftBackend::Simd) << "real input stays on the existing paths, which produce the full mirrored spectrum";
     };
 
     // amplitude scaling: 1/N over the full spectrum, 2/N over the half spectrum except at DC and Nyquist

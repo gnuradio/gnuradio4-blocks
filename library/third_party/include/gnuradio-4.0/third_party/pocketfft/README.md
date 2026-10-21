@@ -20,4 +20,6 @@ the odd-length DCT-IV path, Tan Ping Liang and Peter Bell for the `prev_good_siz
 overflow checks in the `good_size` search. The full notice is in the header. `LICENSE.md` is upstream's license file.
 
 Used by `gnuradio-4.0/algorithm/fourier/fft.hpp` in `gr::algorithm::FFT`. The `PocketFFT` backend holds its own
-`pocketfft_c` or `pocketfft_r` plan.
+`pocketfft_c` or `pocketfft_r` plan. The `FourStep` backend calls `pocketfft::c2c` on a two-dimensional shape and builds
+its two plans on each call, since the header's plan cache is compiled out. The passes of the `FourStep`
+backend run on the header's thread pool. Include the header through `fft.hpp`, which sets `POCKETFFT_PTHREADS`.
