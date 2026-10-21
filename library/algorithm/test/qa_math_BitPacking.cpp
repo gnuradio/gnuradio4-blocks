@@ -14,16 +14,16 @@
 #include <utility>
 #include <vector>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 namespace {
 
-using gr::digital::BitOrder;
-using gr::digital::BitRepack;
-using gr::digital::configureRepack;
-using gr::digital::mapRepackedOffset;
-using gr::digital::repack;
-using gr::digital::repackTail;
+using gr::math::BitOrder;
+using gr::math::BitRepack;
+using gr::math::configureRepack;
+using gr::math::mapRepackedOffset;
+using gr::math::repack;
+using gr::math::repackTail;
 
 constexpr BitOrder kOrders[] = {BitOrder::MsbFirst, BitOrder::LsbFirst};
 
@@ -201,14 +201,14 @@ const boost::ut::suite<"bit packing"> bitPackingTests = [] {
             std::vector<std::uint8_t> fastBits(bytes.size() * 8UZ, std::uint8_t{0xAA});
             std::vector<std::uint8_t> generalBits(fastBits.size(), std::uint8_t{0x55});
             repack(unpack, bytes, fastBits);
-            gr::digital::detail::repackGeneral(unpack, bytes, generalBits);
+            gr::math::detail::repackGeneral(unpack, bytes, generalBits);
             expect(eq(firstDifference(fastBits, generalBits), generalBits.size())) << std::format("unpacking {} differs at bit {}", magic_enum::enum_name(order), firstDifference(fastBits, generalBits));
 
             const BitRepack           pack = configured(1U, 8U, BitOrder::MsbFirst, order);
             std::vector<std::uint8_t> fastBytes(bits.size() / 8UZ, std::uint8_t{0xAA});
             std::vector<std::uint8_t> generalBytes(fastBytes.size(), std::uint8_t{0x55});
             repack(pack, bits, fastBytes);
-            gr::digital::detail::repackGeneral(pack, bits, generalBytes);
+            gr::math::detail::repackGeneral(pack, bits, generalBytes);
             expect(eq(firstDifference(fastBytes, generalBytes), generalBytes.size())) << std::format("packing {} differs at byte {}", magic_enum::enum_name(order), firstDifference(fastBytes, generalBytes));
         }
     };
@@ -320,7 +320,7 @@ const boost::ut::suite<"bit packing"> bitPackingTests = [] {
                 worst = std::max(worst, static_cast<std::size_t>(configured(bitsIn, bitsOut, BitOrder::MsbFirst, BitOrder::MsbFirst).period));
             }
         }
-        expect(eq(worst, gr::digital::kMaxRepackPeriod)) << "the shift table is sized for the longest period in the space";
+        expect(eq(worst, gr::math::kMaxRepackPeriod)) << "the shift table is sized for the longest period in the space";
 
         const BitRepack defaults{};
         const BitRepack rebuilt = configured(defaults.bitsIn, defaults.bitsOut, defaults.orderIn, defaults.orderOut);

@@ -20,8 +20,8 @@
 #include <gnuradio-4.0/Port.hpp>
 #include <gnuradio-4.0/annotated.hpp>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
 #include <gnuradio-4.0/algorithm/digital/HeaderFormat.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 #include <gnuradio-4.0/digital/HeaderLayout.hpp>
 
@@ -71,7 +71,7 @@ record gains `header_items`, the count the header occupied, so a loopback chain 
     Annotated<gr::Size_t, "frame_prefix_items", Unit<"items">, Doc<"frame items ahead of the payload the field does count; only under 'whole_frame', and 0 means the header's own item count">>    frame_prefix_items = 0U;
     Annotated<gr::Size_t, "max_payload_items", Unit<"items">, Doc<"the largest wire payload a frame may carry; required, 0 leaves the block inert, and a longer record is dropped">, Visible>      max_payload_items  = 0U;
     Annotated<gr::Size_t, "payload_pack_bits", Doc<"0 takes the record's items as wire bit items; 1 to 8 unpacks each record item into that many bit items first">>                                payload_pack_bits  = 0U;
-    Annotated<gr::digital::BitOrder, "payload_bit_order", Doc<"the order the unpack stage takes a record item's bits in, MsbFirst or LsbFirst">>                                                   payload_bit_order  = gr::digital::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "payload_bit_order", Doc<"the order the unpack stage takes a record item's bits in, MsbFirst or LsbFirst">>                                                      payload_bit_order  = gr::math::BitOrder::MsbFirst;
 
     GR_MAKE_REFLECTABLE(LengthHeaderFramer, in, out, sync_word, header_format, fixed_payload_items, length_bits, byte_order, flags_position, count_covers, count_unit_items, check_items, frame_prefix_items, max_payload_items, payload_pack_bits, payload_bit_order);
 
@@ -85,7 +85,7 @@ record gains `header_items`, the count the header occupied, so a loopback chain 
     gr::digital::HeaderFormat _format{gr::digital::LengthCrcHeader{}};
     std::size_t               _headerItems = 0UZ;
     std::vector<std::uint8_t> _sync{};
-    gr::digital::BitRepack    _unpack{};
+    gr::math::BitRepack       _unpack{};
     std::vector<std::uint8_t> _frame{};
     bool                      _configured = false;
 
@@ -116,10 +116,10 @@ record gains `header_items`, the count the header occupied, so a loopback chain 
         if (packBits > 8U) {
             throw gr::exception(std::format("payload_pack_bits is 0, for a record already carrying bit items, or in [1, 8], got {}", packBits));
         }
-        gr::digital::BitRepack unpack;
+        gr::math::BitRepack unpack;
         if (packBits != 0U) {
             try {
-                gr::digital::configureRepack(unpack, packBits, 1U, payload_bit_order, gr::digital::BitOrder::MsbFirst);
+                gr::math::configureRepack(unpack, packBits, 1U, payload_bit_order, gr::math::BitOrder::MsbFirst);
             } catch (const std::invalid_argument& reason) {
                 throw gr::exception(std::string(reason.what()));
             }
@@ -200,7 +200,7 @@ record gains `header_items`, the count the header occupied, so a loopback chain 
             if (packBits == 0UZ) {
                 std::ranges::copy(payload, wire.begin());
             } else {
-                gr::digital::repack(_unpack, payload, wire);
+                gr::math::repack(_unpack, payload, wire);
             }
 
             nItemsEmitted += _frame.size();

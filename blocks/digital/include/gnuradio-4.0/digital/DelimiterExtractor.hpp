@@ -22,8 +22,8 @@
 #include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/annotated.hpp>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
 #include <gnuradio-4.0/algorithm/digital/Delimiter.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 #include <gnuradio-4.0/digital/AccessCodeCorrelator.hpp>
 
@@ -76,7 +76,7 @@ both ports, so a gap in `out`'s own sequence is exactly a record that went to `r
     Annotated<std::string, "frame_open", Doc<"'delimiter' (the closing delimiter opens the next frame), 'start' or 'immediate'">, Visible>                                                                                                                                              frame_open = std::string("delimiter");
     Annotated<std::string, "start_delimiter", Doc<"the opening delimiter; required and non-empty for frame_open 'start', and must be empty otherwise">>                                                                                                                                 start_delimiter{};
     Annotated<gr::Size_t, "bits_per_item", Doc<"bits each input item carries, 1 to 8; a soft stream carries one bit per item and any other value is refused">>                                                                                                                          bits_per_item    = 1U;
-    Annotated<gr::digital::BitOrder, "bit_order", Doc<"order of an item's bits on the wire, MsbFirst or LsbFirst; meaningful only above one bit per item">>                                                                                                                             bit_order        = gr::digital::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "bit_order", Doc<"order of an item's bits on the wire, MsbFirst or LsbFirst; meaningful only above one bit per item">>                                                                                                                                bit_order        = gr::math::BitOrder::MsbFirst;
     Annotated<std::string, "transparency", Doc<"how the payload avoids the delimiter: 'none', 'bit_stuffing' or 'byte_escape'">, Visible>                                                                                                                                               transparency     = std::string("none");
     Annotated<gr::Size_t, "stuff_after_ones", Doc<"bit stuffing only: a 0 arriving at exactly this consecutive-ones count is removed, 2 to 62">>                                                                                                                                        stuff_after_ones = 5U;
     Annotated<gr::Size_t, "abort_ones", Doc<"bit stuffing only: this many consecutive 1s abandons the frame in progress; 0 disables, and it must exceed stuff_after_ones">>                                                                                                             abort_ones       = 7U;
@@ -85,7 +85,7 @@ both ports, so a gap in `out`'s own sequence is exactly a record that went to `r
     Annotated<gr::Size_t, "max_payload_items", Unit<"items">, Doc<"the largest payload a frame may carry, in decoded items; required, 0 leaves the block inert">, Visible>                                                                                                              max_payload_items = 0U;
     Annotated<gr::Size_t, "min_payload_items", Unit<"items">, Doc<"a closed region shorter than this is refused as undersize, in the decoded items max_payload_items counts; 1 accepts every non-empty region, and an HDLC link at bits_per_item 1 sets 24 for a three-octet minimum">> min_payload_items = 1U;
     Annotated<gr::Size_t, "payload_pack_bits", Doc<"0 emits decoded items unchanged; 1 to 8 repacks the decoded bits into items of that width, and needs bits_per_item 1 and byte items">>                                                                                              payload_pack_bits = 0U;
-    Annotated<gr::digital::BitOrder, "payload_bit_order", Doc<"the order the pack stage assembles bits in, separate from bit_order because the wire's item order and the payload's byte order differ">>                                                                                 payload_bit_order = gr::digital::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "payload_bit_order", Doc<"the order the pack stage assembles bits in, separate from bit_order because the wire's item order and the payload's byte order differ">>                                                                                    payload_bit_order = gr::math::BitOrder::MsbFirst;
     Annotated<std::string, "trigger", Doc<"the trigger_name that resynchronizes the machine; empty accepts any trigger tag">>                                                                                                                                                           trigger{};
     Annotated<bool, "trigger_resets", Doc<"whether a matching trigger tag resets the machine at all">>                                                                                                                                                                                  trigger_resets = true;
     Annotated<std::string, "frame_label", Doc<"written under the record's trigger_name key when no detector supplied one; deliberately not named for that reserved key">>                                                                                                               frame_label    = std::string("delimiter");

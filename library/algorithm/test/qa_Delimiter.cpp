@@ -414,7 +414,7 @@ const boost::ut::suite<"delimiter scanner"> delimiterTests = [] {
         DelimiterConfig cfg = gr::digital::hdlc();
         cfg.maxPayloadItems = 1024UZ;
         cfg.packBits        = 8U;
-        cfg.packOrder       = gr::digital::BitOrder::LsbFirst;
+        cfg.packOrder       = gr::math::BitOrder::LsbFirst;
         gr::digital::framerConfigure(cfg);
 
         gr::digital::DelimiterEncoder encoder;

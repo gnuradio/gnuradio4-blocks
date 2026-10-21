@@ -14,17 +14,14 @@
 #include <string_view>
 #include <vector>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
 #include <gnuradio-4.0/algorithm/digital/Scrambler.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 namespace {
 
 using gr::digital::applyProfile;
-using gr::digital::BitOrder;
-using gr::digital::BitRepack;
 using gr::digital::configureExplicit;
 using gr::digital::configureMonitor;
-using gr::digital::configureRepack;
 using gr::digital::configureScrambler;
 using gr::digital::degreeOf;
 using gr::digital::delayListFromTaps;
@@ -32,7 +29,6 @@ using gr::digital::kProfiles;
 using gr::digital::minDelayOf;
 using gr::digital::profileByName;
 using gr::digital::ProfileFamily;
-using gr::digital::repack;
 using gr::digital::resetScrambler;
 using gr::digital::scramble;
 using gr::digital::ScramblerConfig;
@@ -44,6 +40,10 @@ using gr::digital::SequenceSource;
 using gr::digital::tapCountOf;
 using gr::digital::TapMask;
 using gr::digital::tapsFromDelayList;
+using gr::math::BitOrder;
+using gr::math::BitRepack;
+using gr::math::configureRepack;
+using gr::math::repack;
 
 constexpr BitOrder kOrders[] = {BitOrder::MsbFirst, BitOrder::LsbFirst};
 

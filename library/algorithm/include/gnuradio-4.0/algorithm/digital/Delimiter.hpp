@@ -14,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 /**
  * @brief Frames delimited by a reserved item pattern, the oldest way a protocol says where a frame ends.
@@ -154,9 +154,9 @@ template<std::floating_point T>
 }
 
 /// @brief The low @p width bits of @p value, in place under `MsbFirst` and reversed under `LsbFirst`.
-[[nodiscard]] inline constexpr std::uint8_t orderedLowBits(unsigned value, unsigned width, BitOrder order) noexcept {
+[[nodiscard]] inline constexpr std::uint8_t orderedLowBits(unsigned value, unsigned width, gr::math::BitOrder order) noexcept {
     const unsigned low = value & ((1U << width) - 1U);
-    if (order == BitOrder::MsbFirst) {
+    if (order == gr::math::BitOrder::MsbFirst) {
         return static_cast<std::uint8_t>(low);
     }
     unsigned reversed = 0U;
@@ -181,7 +181,7 @@ template<std::floating_point T>
 }
 
 /// @brief The item values a delimiter's bit string is put on the wire as, each item's bits laid out in @p order.
-[[nodiscard]] inline std::vector<std::uint8_t> delimiterEmitValues(std::string_view bits, unsigned width, BitOrder order) {
+[[nodiscard]] inline std::vector<std::uint8_t> delimiterEmitValues(std::string_view bits, unsigned width, gr::math::BitOrder order) {
     std::vector<std::uint8_t> values = delimiterItemValues(bits, width);
     for (std::uint8_t& value : values) {
         value = orderedLowBits(value, width, order);
@@ -202,17 +202,17 @@ struct DelimiterConfig {
     std::string                                        endDelimiter{};   ///< the closing delimiter, `'0'`/`'1'` characters, MSB first in wire order
     std::string                                        startDelimiter{}; ///< the opening delimiter, required and non-empty iff `frameOpen == Start`
     FrameOpen                                          frameOpen      = FrameOpen::Delimiter;
-    unsigned                                           bitsPerItem    = 1U;                 ///< bits each input item carries, `[1, 8]`
-    BitOrder                                           bitOrder       = BitOrder::MsbFirst; ///< order of an item's bits on the wire, meaningful only above one bit per item
+    unsigned                                           bitsPerItem    = 1U;                           ///< bits each input item carries, `[1, 8]`
+    gr::math::BitOrder                                 bitOrder       = gr::math::BitOrder::MsbFirst; ///< order of an item's bits on the wire, meaningful only above one bit per item
     Transparency                                       transparency   = Transparency::None;
-    unsigned                                           stuffAfterOnes = 5U;                  ///< bit stuffing: a `0` arriving at exactly this consecutive-ones count is removed
-    unsigned                                           abortOnes      = 7U;                  ///< bit stuffing: this many consecutive `1`s abandons the frame; exceeds `stuffAfterOnes` and the delimiters' longest run of ones; `0` disables
-    std::uint8_t                                       escapeItem     = 0U;                  ///< byte escaping: the introducer's item value
-    std::vector<std::pair<std::uint8_t, std::uint8_t>> escapeMap{};                          ///< byte escaping: `(escaped, original)` pairs
-    std::size_t                                        maxPayloadItems = 0UZ;                ///< the largest payload a frame may carry, in decoded items; `0` is unset
-    std::size_t                                        minPayloadItems = 1UZ;                ///< a closed region shorter than this is refused as undersize
-    unsigned                                           packBits        = 0U;                 ///< `0` emits decoded items unchanged; `1..8` repacks the decoded bits into items of that width
-    BitOrder                                           packOrder       = BitOrder::MsbFirst; ///< the order the pack stage assembles bits in
+    unsigned                                           stuffAfterOnes = 5U;                            ///< bit stuffing: a `0` arriving at exactly this consecutive-ones count is removed
+    unsigned                                           abortOnes      = 7U;                            ///< bit stuffing: this many consecutive `1`s abandons the frame; exceeds `stuffAfterOnes` and the delimiters' longest run of ones; `0` disables
+    std::uint8_t                                       escapeItem     = 0U;                            ///< byte escaping: the introducer's item value
+    std::vector<std::pair<std::uint8_t, std::uint8_t>> escapeMap{};                                    ///< byte escaping: `(escaped, original)` pairs
+    std::size_t                                        maxPayloadItems = 0UZ;                          ///< the largest payload a frame may carry, in decoded items; `0` is unset
+    std::size_t                                        minPayloadItems = 1UZ;                          ///< a closed region shorter than this is refused as undersize
+    unsigned                                           packBits        = 0U;                           ///< `0` emits decoded items unchanged; `1..8` repacks the decoded bits into items of that width
+    gr::math::BitOrder                                 packOrder       = gr::math::BitOrder::MsbFirst; ///< the order the pack stage assembles bits in
 
     std::uint64_t                 endBits       = 0ULL;  ///< the closing delimiter's bits, right-aligned
     std::uint64_t                 startBits     = 0ULL;  ///< the opening delimiter's bits, right-aligned
@@ -225,7 +225,7 @@ struct DelimiterConfig {
     std::array<std::uint8_t, 256> escapeTable{};         ///< the identity, overwritten at each escaped value
     std::array<bool, 256>         escapeMapped{};        ///< whether a value appears as an `escaped` value in the map
     std::array<bool, 256>         escapeOriginal{};      ///< whether a value appears as an `original` value in the map
-    BitRepack                     pack{};                ///< the pack stage's conversion, configured when `packBits` is not zero
+    gr::math::BitRepack           pack{};                ///< the pack stage's conversion, configured when `packBits` is not zero
 };
 
 /**
@@ -393,7 +393,7 @@ inline void configureDelimiter(DelimiterConfig& cfg) {
         cfg.itemTable[value] = detail::orderedLowBits(value, width, cfg.bitOrder);
     }
     if (cfg.packBits != 0U) {
-        configureRepack(cfg.pack, 1U, cfg.packBits, BitOrder::MsbFirst, cfg.packOrder);
+        gr::math::configureRepack(cfg.pack, 1U, cfg.packBits, gr::math::BitOrder::MsbFirst, cfg.packOrder);
     }
 }
 
@@ -514,7 +514,7 @@ struct DelimiterEncoder {
     std::array<std::uint8_t, 256> _escapeReverse{}; ///< the identity, overwritten at each `original` with its escaped spelling
     std::vector<std::uint8_t>     _opening{};       ///< the opening delimiter's item values, in wire order
     std::vector<std::uint8_t>     _closing{};       ///< the closing delimiter's, the same way
-    BitRepack                     _unpack{};        ///< the pack stage's conversion in reverse, configured when `packBits` is not zero
+    gr::math::BitRepack           _unpack{};        ///< the pack stage's conversion in reverse, configured when `packBits` is not zero
     std::vector<std::uint8_t>     _payload{};       ///< the unpacked payload, when that stage runs
     std::size_t                   _endBitLength = 0UZ;
 
@@ -534,7 +534,7 @@ struct DelimiterEncoder {
 
         _payload.clear();
         if (config.packBits != 0U) {
-            configureRepack(_unpack, config.packBits, 1U, config.packOrder, BitOrder::MsbFirst);
+            gr::math::configureRepack(_unpack, config.packBits, 1U, config.packOrder, gr::math::BitOrder::MsbFirst);
             _payload.reserve(config.maxPayloadItems);
         }
     }
@@ -551,7 +551,7 @@ struct DelimiterEncoder {
         if (config.packBits != 0U) {
             // the same conversion the scanner's pack stage runs, read the other way round, so no unpacking code is written twice
             _payload.resize(record.size() * config.packBits);
-            repack(_unpack, record, std::span<std::uint8_t>(_payload));
+            gr::math::repack(_unpack, record, std::span<std::uint8_t>(_payload));
             payload = std::span<const std::uint8_t>(_payload);
         }
 
@@ -985,7 +985,7 @@ private:
             // an unaligned frame carries its unpacked bits instead, so that nothing is lost to a partial item
             if (config.packBits != 0U && _frameDecoded % config.packBits == 0UZ) {
                 _packed.resize(_frameDecoded / config.packBits);
-                repack(config.pack, std::span<const std::uint8_t>(_record), std::span<std::uint8_t>(_packed));
+                gr::math::repack(config.pack, std::span<const std::uint8_t>(_record), std::span<std::uint8_t>(_packed));
                 _framePacked = true;
             }
         }
