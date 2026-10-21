@@ -18,3 +18,6 @@ License: BSD-3-Clause, copyright the Max-Planck-Society and Peter Bell. The head
 for parts of the code, under the same three clauses: Matteo Frigo and the Massachusetts Institute of Technology for
 the odd-length DCT-IV path, Tan Ping Liang and Peter Bell for the `prev_good_size` search, and Cris Luengo for the
 overflow checks in the `good_size` search. The full notice is in the header. `LICENSE.md` is upstream's license file.
+
+Used by `gnuradio-4.0/algorithm/fourier/fft.hpp` in `gr::algorithm::FFT`. The `PocketFFT` backend holds its own
+`pocketfft_c` or `pocketfft_r` plan.

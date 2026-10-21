@@ -16,6 +16,9 @@ gr_add_block_library(
   LINK_LIBRARIES
   gnuradio4::gr-basic
   gr-fourier)
+# The precompiled header reaches the vendored PocketFFT through fourier/fft.hpp; cmake/CompilerWarnings.cmake turns
+# -Wnull-dereference off for it under GCC 14.
+set_target_properties(GrFourierBlocksObject PROPERTIES GR_PCH_INCLUDES_POCKETFFT ON)
 
 if(TARGET gnuradio4::GrFourierBlocksShared AND ENABLE_TESTING)
   add_subdirectory(test)
