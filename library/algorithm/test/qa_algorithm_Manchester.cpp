@@ -14,15 +14,12 @@
 #include <string_view>
 #include <vector>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
 #include <gnuradio-4.0/algorithm/digital/Manchester.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 namespace {
 
-using gr::digital::BitOrder;
-using gr::digital::BitRepack;
 using gr::digital::configureManchester;
-using gr::digital::configureRepack;
 using gr::digital::conventionFromName;
 using gr::digital::conventionName;
 using gr::digital::conventionXor;
@@ -31,8 +28,11 @@ using gr::digital::encodeManchester;
 using gr::digital::ManchesterConfig;
 using gr::digital::ManchesterConvention;
 using gr::digital::realignManchester;
-using gr::digital::repack;
 using gr::digital::resetManchester;
+using gr::math::BitOrder;
+using gr::math::BitRepack;
+using gr::math::configureRepack;
+using gr::math::repack;
 
 constexpr BitOrder kOrders[] = {BitOrder::MsbFirst, BitOrder::LsbFirst};
 

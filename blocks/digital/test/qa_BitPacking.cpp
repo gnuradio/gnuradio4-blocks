@@ -15,6 +15,7 @@
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
 
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 #include <gnuradio-4.0/digital/BitPacking.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
@@ -944,11 +945,11 @@ const boost::ut::suite<"record repack"> recordRepackTests = [] {
             lcg = lcg * 6364136223846793005ULL + 1442695040888963407ULL;
             bit = static_cast<std::uint8_t>((lcg >> 33U) & 1ULL);
         }
-        for (const gr::digital::BitOrder order : {gr::digital::BitOrder::MsbFirst, gr::digital::BitOrder::LsbFirst}) {
+        for (const gr::math::BitOrder order : {gr::math::BitOrder::MsbFirst, gr::math::BitOrder::LsbFirst}) {
             const auto packed = through({{"bits_in", gr::Size_t{1U}}, {"bits_out", gr::Size_t{8U}}, {"output_bit_order", std::string(gr::meta::enumName(order).value_or(""))}}, {recordOf(bits)});
 
             std::vector<std::uint8_t> want(8UZ);
-            gr::digital::detail::packEightBits(std::span<const std::uint8_t>(bits), std::span<std::uint8_t>(want), order);
+            gr::math::detail::packEightBits(std::span<const std::uint8_t>(bits), std::span<std::uint8_t>(want), order);
 
             expect(eq(packed.size(), 1UZ)) << gr::meta::enumName(order).value_or("");
             if (!packed.empty()) {

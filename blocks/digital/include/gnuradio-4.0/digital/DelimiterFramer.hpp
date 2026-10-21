@@ -19,8 +19,8 @@
 #include <gnuradio-4.0/Port.hpp>
 #include <gnuradio-4.0/annotated.hpp>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
 #include <gnuradio-4.0/algorithm/digital/Delimiter.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 namespace gr::blocks::digital {
 
@@ -65,19 +65,19 @@ so a loopback chain can be read frame by frame.
     PortIn<DataSet<std::uint8_t>, Async>  in;
     PortOut<DataSet<std::uint8_t>, Async> out;
 
-    Annotated<std::string, "end_delimiter", Doc<"the closing delimiter as '0'/'1' characters, MSB first in wire order; required, empty leaves the block inert">, Visible>                                             end_delimiter{};
-    Annotated<std::string, "frame_open", Doc<"what opens a frame: 'delimiter' (the closing delimiter again), 'start' (a separate one) or 'immediate' (nothing at all)">, Visible>                                     frame_open = std::string("delimiter");
-    Annotated<std::string, "start_delimiter", Doc<"the opening delimiter; required and non-empty for frame_open 'start', and must be empty otherwise">>                                                               start_delimiter{};
-    Annotated<gr::Size_t, "bits_per_item", Doc<"bits each emitted item carries, 1 to 8">>                                                                                                                             bits_per_item    = 1U;
-    Annotated<gr::digital::BitOrder, "bit_order", Doc<"order of an item's bits on the wire, MsbFirst or LsbFirst; meaningful only above one bit per item">>                                                           bit_order        = gr::digital::BitOrder::MsbFirst;
-    Annotated<std::string, "transparency", Doc<"how the payload is kept clear of the delimiter: 'none', 'bit_stuffing' or 'byte_escape'">, Visible>                                                                   transparency     = std::string("none");
-    Annotated<gr::Size_t, "stuff_after_ones", Doc<"bit stuffing only: a 0 is inserted after the payload one that brings the consecutive-ones count to exactly this, 2 to 62">>                                        stuff_after_ones = 5U;
-    Annotated<gr::Size_t, "abort_ones", Doc<"bit stuffing only: the receiver's abort run length; validated so one configuration describes both ends, and nothing here sends an abort">>                               abort_ones       = 7U;
-    Annotated<gr::Size_t, "escape_item", Doc<"byte escaping only: the introducer's item value, 0 to 255">>                                                                                                            escape_item      = 0U;
-    Annotated<std::vector<gr::Size_t>, "escape_map", Doc<"byte escaping only: flat (escaped, original) pairs; a repeated original encodes by the last pair naming it">>                                               escape_map{};
-    Annotated<gr::Size_t, "max_payload_items", Unit<"items">, Doc<"the largest payload a frame may carry, in wire items; required, 0 leaves the block inert, and a longer record is dropped">, Visible>               max_payload_items = 0U;
-    Annotated<gr::Size_t, "payload_pack_bits", Doc<"0 takes the record's items as wire items; 1 to 8 unpacks each of them into that many bit items first, and needs bits_per_item 1">>                                payload_pack_bits = 0U;
-    Annotated<gr::digital::BitOrder, "payload_bit_order", Doc<"the order the unpack stage takes a record item's bits in, separate from bit_order because the payload's byte order and the wire's item order differ">> payload_bit_order = gr::digital::BitOrder::MsbFirst;
+    Annotated<std::string, "end_delimiter", Doc<"the closing delimiter as '0'/'1' characters, MSB first in wire order; required, empty leaves the block inert">, Visible>                                          end_delimiter{};
+    Annotated<std::string, "frame_open", Doc<"what opens a frame: 'delimiter' (the closing delimiter again), 'start' (a separate one) or 'immediate' (nothing at all)">, Visible>                                  frame_open = std::string("delimiter");
+    Annotated<std::string, "start_delimiter", Doc<"the opening delimiter; required and non-empty for frame_open 'start', and must be empty otherwise">>                                                            start_delimiter{};
+    Annotated<gr::Size_t, "bits_per_item", Doc<"bits each emitted item carries, 1 to 8">>                                                                                                                          bits_per_item    = 1U;
+    Annotated<gr::math::BitOrder, "bit_order", Doc<"order of an item's bits on the wire, MsbFirst or LsbFirst; meaningful only above one bit per item">>                                                           bit_order        = gr::math::BitOrder::MsbFirst;
+    Annotated<std::string, "transparency", Doc<"how the payload is kept clear of the delimiter: 'none', 'bit_stuffing' or 'byte_escape'">, Visible>                                                                transparency     = std::string("none");
+    Annotated<gr::Size_t, "stuff_after_ones", Doc<"bit stuffing only: a 0 is inserted after the payload one that brings the consecutive-ones count to exactly this, 2 to 62">>                                     stuff_after_ones = 5U;
+    Annotated<gr::Size_t, "abort_ones", Doc<"bit stuffing only: the receiver's abort run length; validated so one configuration describes both ends, and nothing here sends an abort">>                            abort_ones       = 7U;
+    Annotated<gr::Size_t, "escape_item", Doc<"byte escaping only: the introducer's item value, 0 to 255">>                                                                                                         escape_item      = 0U;
+    Annotated<std::vector<gr::Size_t>, "escape_map", Doc<"byte escaping only: flat (escaped, original) pairs; a repeated original encodes by the last pair naming it">>                                            escape_map{};
+    Annotated<gr::Size_t, "max_payload_items", Unit<"items">, Doc<"the largest payload a frame may carry, in wire items; required, 0 leaves the block inert, and a longer record is dropped">, Visible>            max_payload_items = 0U;
+    Annotated<gr::Size_t, "payload_pack_bits", Doc<"0 takes the record's items as wire items; 1 to 8 unpacks each of them into that many bit items first, and needs bits_per_item 1">>                             payload_pack_bits = 0U;
+    Annotated<gr::math::BitOrder, "payload_bit_order", Doc<"the order the unpack stage takes a record item's bits in, separate from bit_order because the payload's byte order and the wire's item order differ">> payload_bit_order = gr::math::BitOrder::MsbFirst;
 
     GR_MAKE_REFLECTABLE(DelimiterFramer, in, out, end_delimiter, frame_open, start_delimiter, bits_per_item, bit_order, transparency, stuff_after_ones, abort_ones, escape_item, escape_map, max_payload_items, payload_pack_bits, payload_bit_order);
 

@@ -17,7 +17,7 @@
 #include <gnuradio-4.0/algorithm/digital/Manchester.hpp>
 #include <gnuradio-4.0/annotated.hpp>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 namespace gr::blocks::digital {
 
@@ -45,7 +45,7 @@ namespace detail {
  * configuration whole and the block keeps running on it. The kernel's own rejections are the same two
  * bounds and would throw `std::invalid_argument`; they are unreachable from here.
  */
-inline void configureManchester(gr::digital::ManchesterConfig& cfg, std::string_view convention, gr::Size_t bitsPerItem, gr::digital::BitOrder order, gr::Size_t chipPhase) {
+inline void configureManchester(gr::digital::ManchesterConfig& cfg, std::string_view convention, gr::Size_t bitsPerItem, gr::math::BitOrder order, gr::Size_t chipPhase) {
     const gr::digital::ManchesterConvention mode = manchesterConvention(convention);
     if (bitsPerItem < 1U || bitsPerItem > 8U) {
         throw gr::exception(std::format("bits_per_item must be in [1, 8], got {}", bitsPerItem));
@@ -85,7 +85,7 @@ item 2t. Being a rate changer it forwards only the framework's own tag vocabular
 
     Annotated<std::string, "convention", Doc<"'ieee802_3' or 'ge_thomas'; there is no default, because the wrong one is silent">, Visible> convention{};
     Annotated<gr::Size_t, "bits_per_item", Unit<"bit">, Doc<"significant bits per item, 1 to 8, on both ports">>                           bits_per_item = 8U;
-    Annotated<gr::digital::BitOrder, "bit_order", Doc<"the traversal of each item's field, not the order of bytes">>                       bit_order     = gr::digital::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "bit_order", Doc<"the traversal of each item's field, not the order of bytes">>                          bit_order     = gr::math::BitOrder::MsbFirst;
 
     GR_MAKE_REFLECTABLE(ManchesterEncoder, in, out, convention, bits_per_item, bit_order);
 
@@ -153,7 +153,7 @@ item floor(t/2). Being a rate changer it forwards the framework's own tag vocabu
 
     Annotated<std::string, "convention", Doc<"'ieee802_3' or 'ge_thomas'; there is no default, because the wrong one is silent">, Visible>              convention{};
     Annotated<gr::Size_t, "bits_per_item", Unit<"bit">, Doc<"significant bits per item, 1 to 8, on every port">>                                        bits_per_item = 8U;
-    Annotated<gr::digital::BitOrder, "bit_order", Doc<"the traversal of each item's field, not the order of bytes">>                                    bit_order     = gr::digital::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "bit_order", Doc<"the traversal of each item's field, not the order of bytes">>                                       bit_order     = gr::math::BitOrder::MsbFirst;
     Annotated<gr::Size_t, "chip_phase", Doc<"0 or 1: the parity of the absolute chip index at which a pair starts">>                                    chip_phase    = 0U;
     Annotated<std::string, "align_tag_key", Doc<"tag key whose position re-anchors the pairing grid; empty disables tag-driven alignment">>             align_tag_key = std::string(gr::tag::TRIGGER_NAME.shortKey());
     Annotated<std::string, "align_tag_value", Doc<"if non-empty, the tag's value at that key must be a string equal to this; empty matches any value">> align_tag_value{};
@@ -282,7 +282,7 @@ item floor(t/2). Being a rate changer it forwards the framework's own tag vocabu
 
         const std::span<std::uint8_t> flags    = flagRoom(violationSpan, nItems);
         const unsigned                k        = static_cast<unsigned>(_coder.k);
-        const bool                    msb      = _coder.order == gr::digital::BitOrder::MsbFirst;
+        const bool                    msb      = _coder.order == gr::math::BitOrder::MsbFirst;
         const auto                    position = [width, msb](unsigned index) noexcept { return msb ? width - 1U - index : index; };
 
         std::size_t  published = 0UZ;

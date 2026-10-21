@@ -13,7 +13,7 @@
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 #include <gnuradio-4.0/digital/Manchester.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
@@ -399,19 +399,19 @@ const boost::ut::suite<"Manchester encoder"> manchesterEncoderTests = [] {
         const auto data = rng.items(256UZ, 8U);
         for (const std::string_view convention : kConventions) {
             for (const std::string_view order : kOrders) {
-                const gr::digital::BitOrder mode = order == "MsbFirst" ? gr::digital::BitOrder::MsbFirst : gr::digital::BitOrder::LsbFirst;
+                const gr::math::BitOrder mode = order == "MsbFirst" ? gr::math::BitOrder::MsbFirst : gr::math::BitOrder::LsbFirst;
 
-                gr::digital::BitRepack unpack;
-                gr::digital::BitRepack pack;
-                gr::digital::configureRepack(unpack, 8U, 1U, mode, mode);
-                gr::digital::configureRepack(pack, 1U, 8U, mode, mode);
+                gr::math::BitRepack unpack;
+                gr::math::BitRepack pack;
+                gr::math::configureRepack(unpack, 8U, 1U, mode, mode);
+                gr::math::configureRepack(pack, 1U, 8U, mode, mode);
 
                 std::vector<std::uint8_t> unpacked(8UZ * data.size());
-                gr::digital::repack(unpack, std::span<const std::uint8_t>(data), std::span<std::uint8_t>(unpacked));
+                gr::math::repack(unpack, std::span<const std::uint8_t>(data), std::span<std::uint8_t>(unpacked));
                 const auto chips = encoded(encoderSettings(convention, 1U, order), std::span<const std::uint8_t>(unpacked));
 
                 std::vector<std::uint8_t> packed(chips.size() / 8UZ);
-                gr::digital::repack(pack, std::span<const std::uint8_t>(chips), std::span<std::uint8_t>(packed));
+                gr::math::repack(pack, std::span<const std::uint8_t>(chips), std::span<std::uint8_t>(packed));
                 const auto direct = encoded(encoderSettings(convention, 8U, order), std::span<const std::uint8_t>(data));
                 expect(that % (packed == direct)) << std::format("{}/{}: one bit an item composes to the byte-wide coding", convention, order);
             }
