@@ -17,6 +17,10 @@ statuses:
 ignore_labels:
   - restyled-ignore
 
+# Vendored code keeps its upstream's formatting
+also_exclude:
+  - "library/third_party/**/*"
+
 restylers_version: stable
 
 restylers:
