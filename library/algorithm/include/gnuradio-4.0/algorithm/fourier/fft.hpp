@@ -8,6 +8,7 @@
 #include <numbers>
 #include <ranges>
 #include <stdexcept>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -17,6 +18,12 @@
 
 // Vendored, BSD-3-Clause. The include path is the header's installed path. A consumer with the include root on its
 // path resolves it without a second include directory from the CMake target.
+// The header's thread pool is a process-wide static. This macro makes the header register fork handlers. They stop the
+// workers before a fork and start them again in the parent and in the child. A forked child can then run a threaded
+// transform.
+#if (defined(__unix__) || defined(__APPLE__)) && !defined(__EMSCRIPTEN__) && !defined(POCKETFFT_PTHREADS)
+#define POCKETFFT_PTHREADS
+#endif
 // A consumer that finds the header through an include path that is not a system path compiles it as its own code.
 // The header then raises -Wshadow and -Wdouble-promotion under the project's warning set.
 // GCC cannot prove the plan pointers non-null once the mixed-radix codelets are inlined. -Wnull-dereference then
@@ -42,6 +49,7 @@ enum class FftBackend {
     Native,    ///< this file's radix-2 kernels, and Bluestein for the other lengths
     Simd,      ///< SimdFFT.hpp for the sizes it accepts, Native for the rest
     PocketFFT, ///< the vendored PocketFFT, a per-instance FFTPACK/Bluestein plan for any length
+    FourStep,  ///< one long power-of-two complex transform in two batches through PocketFFT's multi-dimensional driver, on `threads` threads
     Auto       ///< chosen per length from measurements, see autoBackend()
 };
 
@@ -131,7 +139,11 @@ constexpr void fft_stage_kernel(C* data, const C* twiddles, std::size_t halfsize
  * engine's rounding. The Native path's twiddle recurrence adds an error that grows with the length.
  *
  * compute() mutates per-instance scratch (SimdFFT state, aligned buffers, Bluestein caches, the
- * PocketFFT plan, the per-length plan cache): hold one instance per thread.
+ * PocketFFT plan, the four-step buffers, the per-length plan cache): hold one instance per thread.
+ * `threads` above one lets one compute() split a long transform over that many threads. It does not
+ * make an instance shareable. The first such call starts PocketFFT's process-wide pool of one worker per
+ * logical CPU. The pool lasts until the process exits. A fork stops the pool and starts it again in the parent
+ * and in the child. Do not fork while another thread is inside a threaded compute().
  */
 template<typename TInput, gr::meta::complex_like TOutput = std::conditional_t<gr::meta::complex_like<TInput>, TInput, std::complex<TInput>>, Direction TDirection = Direction::Forward>
 requires((gr::meta::complex_like<TInput> || std::floating_point<TInput>))
@@ -160,11 +172,22 @@ struct FFT {
     std::unique_ptr<PocketPlan> pocketPlan{};
     std::size_t                 pocketPlanBuilds{0UZ}; ///< plans built since construction, one per distinct length and not one per compute()
 
+    /// The four-step split's per-length state. The work buffer holds the first batch's result. The table holds the
+    /// inter-pass twiddles. Each has N entries. Both are saved and restored with the rest of the per-length state.
+    std::vector<TOutput, gr::allocator::Aligned<TOutput>> fourStepWork{};
+    std::vector<TOutput, gr::allocator::Aligned<TOutput>> fourStepTwiddles{};
+
     FftBackend backend{FftBackend::Auto};
     /// Deprecated, set backend instead. It is read only when backend is Auto. There, false selects the Native
-    /// path at every length.
+    /// path at every length and thread count.
     bool useSimdFFT{true};
 
+    /// threads one compute() may use. At one, the whole transform runs on the calling thread. Above one, at a
+    /// length the four-step accepts, Auto splits the transform over that many threads. The count is clamped to
+    /// the number of logical CPUs std::thread::hardware_concurrency() reports. The instance stays
+    /// single-consumer in both cases. The extra threads are workers of PocketFFT's process-wide pool. They touch
+    /// only this instance's buffers during the call.
+    std::size_t threads{1UZ};
 
     void initAll() {
         precomputeTwiddleFactors();
@@ -191,12 +214,50 @@ struct FFT {
     [[nodiscard]] FftBackend resolveBackend(std::size_t n) const noexcept {
         FftBackend selected = backend;
         if (selected == FftBackend::Auto) {
+            const bool splitPays = useSimdFFT && effectiveThreads() > 1UZ && n >= kFourStepMinSize && canFourStep(n);
+            selected             = splitPays ? FftBackend::FourStep : (useSimdFFT ? autoBackend(n) : FftBackend::Native);
+        }
+        if (selected == FftBackend::FourStep && !canFourStep(n)) {
             selected = useSimdFFT ? autoBackend(n) : FftBackend::Native;
         }
         if (selected == FftBackend::Simd && !SimdFFT<ValueType, kTransform>::canProcessSize(n, Order::Ordered)) {
             selected = FftBackend::Native;
         }
         return selected;
+    }
+
+    /// threads one compute() uses, the request clamped between one and the number of logical CPUs.
+    /// The count is read once and kept. hardware_concurrency() costs more than a short transform.
+    [[nodiscard]] std::size_t effectiveThreads() const noexcept {
+        static const std::size_t available = [] {
+            const unsigned int reported = std::thread::hardware_concurrency();
+            return reported == 0U ? 1UZ : static_cast<std::size_t>(reported);
+        }();
+        return std::clamp(threads, 1UZ, available);
+    }
+
+    /// The shortest length at which Auto takes the split. It is a policy bound and not a capability bound. The split
+    /// reads and writes extra records, and the two batches must recover that cost. bm_fft_backends measures the
+    /// crossover per thread count. A backend selected by hand runs at any length canFourStep() accepts. That is how
+    /// the measurement reaches below the bound.
+    ///
+    /// The bound is one number for every thread count and both precisions. It was measured for complex<float> on six
+    /// performance cores of an i7-12700H, one core per thread. The measured split against SimdFFT on the calling
+    /// thread:
+    ///   * four threads are faster from 2^14 upward;
+    ///   * two threads are faster at 2^16 by 1.06 to 1.29 times in two runs;
+    ///   * two threads at 2^17 and 2^18 range from 12 percent slower to 1.45 times faster, and the sign changed
+    ///     between runs.
+    static constexpr std::size_t kFourStepMinSize = 1UZ << 16UZ;
+
+    /// Lengths the four-step can run at. The transform is complex and the length a power of two of at least 4.
+    /// Both factors are then powers of two, and neither batch needs a mixed-radix fallback.
+    [[nodiscard]] static constexpr bool canFourStep(std::size_t n) noexcept { return kTransform == Transform::Complex && n >= 4UZ && std::has_single_bit(n); }
+
+    /// N = N1 * N2 with N1 <= N2 and both powers of two, the two batches as square as the length allows
+    [[nodiscard]] static constexpr std::pair<std::size_t, std::size_t> fourStepFactors(std::size_t n) noexcept {
+        const std::size_t n1 = 1UZ << (static_cast<std::size_t>(std::countr_zero(n)) / 2UZ);
+        return {n1, n / n1};
     }
 
     /// True when the square of n's largest prime factor exceeds n. A mixed-radix engine then falls back on a direct
@@ -271,6 +332,20 @@ struct FFT {
         }
     }
 
+    /// The four-step split of one long transform. Like the PocketFFT backend, it writes through the caller's
+    /// output range. The function returns false for a range that cannot serve, and compute() falls back.
+    template<typename InRange, typename OutRange>
+    bool tryFourStep([[maybe_unused]] const InRange& in, [[maybe_unused]] OutRange&& out) {
+        if constexpr (kTransform != Transform::Complex || !requires {
+                          { out.data() } -> std::convertible_to<TOutput*>;
+                      }) {
+            return false;
+        } else {
+            fourStep_C2C(in, out);
+            return true;
+        }
+    }
+
 private:
     void computeInto(const std::ranges::input_range auto& in, std::ranges::output_range<TOutput> auto& out) {
         if constexpr (requires { out.resize(in.size()); }) {
@@ -294,6 +369,11 @@ private:
             break;
         case FftBackend::PocketFFT:
             if (tryPocketFFT(in, out)) { // false only for an output range this backend cannot address
+                return;
+            }
+            break;
+        case FftBackend::FourStep:
+            if (tryFourStep(in, out)) { // false only for an output range this backend cannot address
                 return;
             }
             break;
@@ -355,6 +435,119 @@ private:
         if (index < N) { // even N, where the Nyquist bin is real and not mirrored, like DC
             out[bin] = TOutput(alignedOutputBuffer[index], ValueType(0));
         }
+    }
+
+    // ------------------------------------------------------------- the four-step split of one long transform
+    //
+    // N = N1 * N2. The record is read as an N1 x N2 row-major array x[i1][i2] = in[i1*N2 + i2]. With n = i1*N2 + i2
+    // and k = k2*N1 + k1 the definition factors exactly, because W_N^(i1*N2*k2*N1) is one.
+    //
+    //   X[k2*N1 + k1] = sum over i2 of W_N^(i2*k1) W_N2^(i2*k2) ( sum over i1 of W_N1^(i1*k1) x[i1][i2] )
+    //
+    // The transform is then three steps. The N2 columns are one batch along axis 0. A pointwise multiply by
+    // W_N^(i1*i2) follows. The N1 rows are a second batch along axis 1. Both batches go through PocketFFT's
+    // multi-dimensional driver. That driver gathers VLEN neighboring transforms into one vector register and
+    // threads the work. One long transform gets neither benefit on its own.
+    //
+    // The second batch leaves Z[k1][k2]. The natural bin order k2*N1 + k1 needs it transposed. The transpose is
+    // folded into that batch's output strides and costs no pass of its own. The batch dimension is k1, with an
+    // output stride of one element. The driver's vector lanes therefore still write neighboring addresses, and
+    // the record is written exactly once. A separate transpose pass would read and write it again.
+    //
+    // Memory traffic per transform is counted in records, 32 MiB each at N = 2^22 for complex<float>. The first
+    // batch reads the input and writes the work buffer. The twiddle pass reads the work buffer and the table and
+    // writes the work buffer. The second batch reads the work buffer and writes the output. That is six records,
+    // against two for one flat transform. This traffic is the cost of using the batched driver. The split is
+    // therefore taken only from kFourStepMinSize upward.
+    //
+    // Each call also allocates. pocketfft::c2c builds two plans per call, because the header's plan cache is compiled
+    // out, and its vectorized passes allocate scratch. A count of operator new, malloc and aligned_alloc calls,
+    // averaged over ten steady-state calls of complex<float> on one thread, gives 190 allocations totaling 1.08 MB
+    // per call at N = 2^16 and 574 totaling 16.9 MB at N = 2^20. Four threads give 232 and 616 per call. SimdFFT
+    // allocates nothing.
+
+    void ensureFourStepTables(std::size_t N) {
+        if (fourStepTwiddles.size() == N) {
+            return;
+        }
+        const auto [n1, n2] = fourStepFactors(N);
+        fourStepWork.resize(N);
+        fourStepTwiddles.resize(N);
+
+        // W_N^(i1*i2), built in double and rounded once. The recurrence in precomputeTwiddleFactors() is not used.
+        // Its error grows with the table's length, and this table is as long as the record. The product i1*i2
+        // stays below N. Splitting it as a*N2 + b makes every entry the product of two exactly rounded reads. The
+        // table then costs N1 + N2 trigonometric calls instead of N.
+        const double                      turns = kInverse ? 2. : -2.;
+        std::vector<std::complex<double>> coarse(n1); // W_N^(a*N2), equal to W_N1^a
+        std::vector<std::complex<double>> fine(n2);   // W_N^b
+        for (std::size_t a = 0UZ; a < n1; ++a) {
+            coarse[a] = std::polar(1., turns * std::numbers::pi * static_cast<double>(a) / static_cast<double>(n1));
+        }
+        for (std::size_t b = 0UZ; b < n2; ++b) {
+            fine[b] = std::polar(1., turns * std::numbers::pi * static_cast<double>(b) / static_cast<double>(N));
+        }
+
+        const std::size_t shift = static_cast<std::size_t>(std::countr_zero(n2));
+        const std::size_t mask  = n2 - 1UZ;
+        for (std::size_t i1 = 0UZ; i1 < n1; ++i1) {
+            for (std::size_t i2 = 0UZ; i2 < n2; ++i2) {
+                const std::size_t          product = i1 * i2;
+                const std::complex<double> w       = coarse[product >> shift] * fine[product & mask];
+                fourStepTwiddles[i1 * n2 + i2]     = TOutput(static_cast<ValueType>(w.real()), static_cast<ValueType>(w.imag()));
+            }
+        }
+    }
+
+    /// The inter-pass multiply, spread over the same threads the two batches use. PocketFFT's threading::thread_map
+    /// is a plain parallel map over its own pool. The split starts no threads beyond those the batches start.
+    void multiplyFourStepTwiddles(std::size_t nThreads) {
+        TOutput* const       data  = fourStepWork.data();
+        const TOutput* const table = fourStepTwiddles.data();
+        const std::size_t    total = fourStepWork.size();
+        pocketfft::detail::threading::thread_map(nThreads, [data, table, total] {
+            const std::size_t index = pocketfft::detail::threading::thread_id();
+            const std::size_t count = pocketfft::detail::threading::num_threads();
+            const std::size_t chunk = (total + count - 1UZ) / count;
+            const std::size_t begin = std::min(total, index * chunk);
+            const std::size_t end   = std::min(total, begin + chunk);
+            for (std::size_t i = begin; i < end; ++i) {
+                data[i] = detail::complex_mult(data[i], table[i]);
+            }
+        });
+    }
+
+    void fourStep_C2C(const auto& in, auto&& out) {
+        using PocketComplex = std::complex<ValueType>;
+        static_assert(sizeof(PocketComplex) == sizeof(TOutput) && alignof(PocketComplex) == alignof(TOutput), "PocketFFT's driver takes std::complex<T>, which must have TOutput's layout to transform the caller's ranges through");
+
+        const std::size_t N = in.size();
+        ensureFourStepTables(N);
+        const auto [n1, n2]        = fourStepFactors(N);
+        const std::size_t nThreads = effectiveThreads();
+
+        const pocketfft::shape_t  shape{n1, n2};
+        const pocketfft::stride_t rowMajor{static_cast<std::ptrdiff_t>(n2 * sizeof(TOutput)), static_cast<std::ptrdiff_t>(sizeof(TOutput))};
+        const pocketfft::stride_t transposed{static_cast<std::ptrdiff_t>(sizeof(TOutput)), static_cast<std::ptrdiff_t>(n1 * sizeof(TOutput))};
+
+        // An input that is already a contiguous range of TOutput is the first batch's source as it is. Any other
+        // input is first converted into the output range, and the second batch overwrites it.
+        const PocketComplex* source = nullptr;
+        if constexpr (requires {
+                          { in.data() } -> std::convertible_to<const TOutput*>;
+                      }) {
+            if constexpr (std::is_same_v<std::remove_cvref_t<std::ranges::range_value_t<std::remove_cvref_t<decltype(in)>>>, TOutput>) {
+                source = reinterpret_cast<const PocketComplex*>(in.data());
+            }
+        }
+        if (source == nullptr) {
+            std::ranges::transform(in, out.begin(), [](const auto& v) { return static_cast<TOutput>(v); });
+            source = reinterpret_cast<const PocketComplex*>(out.data());
+        }
+
+        pocketfft::c2c(shape, rowMajor, rowMajor, pocketfft::shape_t{0UZ}, kPocketForward, source, reinterpret_cast<PocketComplex*>(fourStepWork.data()), ValueType(1), nThreads);
+        multiplyFourStepTwiddles(nThreads);
+        pocketfft::c2c(shape, rowMajor, transposed, pocketfft::shape_t{1UZ}, kPocketForward, reinterpret_cast<const PocketComplex*>(fourStepWork.data()), reinterpret_cast<PocketComplex*>(out.data()), ValueType(1), nThreads);
     }
 
     bool trySimdFFT_C2C(const auto& in, auto&& out, std::size_t N) {
@@ -535,6 +728,8 @@ private:
         std::vector<TOutput, gr::allocator::Aligned<TOutput>>     aCache{};
         std::vector<TOutput, gr::allocator::Aligned<TOutput>>     bCache{};
         std::unique_ptr<PocketPlan>                               pocketPlan{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     fourStepWork{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     fourStepTwiddles{};
     };
 
     // a parked plan holds the whole per-length state, ~16 MB at N = 2^20 for complex<float>, so the count is
@@ -555,6 +750,8 @@ private:
         aCache.swap(plan.aCache);
         bCache.swap(plan.bCache);
         pocketPlan.swap(plan.pocketPlan);
+        fourStepWork.swap(plan.fourStepWork);
+        fourStepTwiddles.swap(plan.fourStepTwiddles);
     }
 
     // the slot that yields the incoming plan takes the outgoing one, so a cached length change is a plain swap
