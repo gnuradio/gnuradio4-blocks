@@ -232,6 +232,22 @@ template<typename TBlock>
     return outSpan.count;
 }
 
+/// @brief An input span whose `streamIndex` is 32 bits, as `std::size_t` is on a 32-bit target. The base span keeps
+/// the full position, so the tags it hands over carry exact relative indices.
+struct NarrowInputSpan : InputSpan<std::uint8_t> {
+    std::uint32_t streamIndex = 0U;
+
+    NarrowInputSpan(std::span<const std::uint8_t> items, std::size_t at, std::span<const gr::Tag> incoming = {}) : InputSpan<std::uint8_t>(items, at, incoming), streamIndex(static_cast<std::uint32_t>(at)) {}
+};
+
+/// @brief An output span whose `streamIndex` is 32 bits. The base span keeps the full position, so a published tag is
+/// recorded at its exact index.
+struct NarrowOutputSpan : OutputSpan<std::uint8_t> {
+    std::uint32_t streamIndex = 0U;
+
+    NarrowOutputSpan(std::span<std::uint8_t> items, std::size_t at, std::vector<gr::Tag>* published) : OutputSpan<std::uint8_t>(items, at, published), streamIndex(static_cast<std::uint32_t>(at)) {}
+};
+
 constexpr std::array<const char*, 2> kOrders{"MsbFirst", "LsbFirst"};
 
 struct Marker {
@@ -765,6 +781,37 @@ const boost::ut::suite<"PackBits"> packBitsTests = [] {
         }));
         expect(eq(static_cast<unsigned>(block._repack.bitsOut), 5U)) << "a rejected width leaves the conversion as it was";
     };
+
+    // Packing eight to one reaches input item 2^32 at output item 2^29, where a 32-bit input index wraps to zero.
+    "a tag past the wrap of a 32-bit input index reaches its item"_test = [] {
+        if constexpr (sizeof(std::size_t) != 8UZ) {
+            return; // the positions below are past 2^32, which a 32-bit std::size_t does not hold
+        }
+        constexpr std::size_t kWrap = static_cast<std::size_t>(1ULL << 32U);
+
+        PackBits                        block = make<PackBits>();
+        const std::size_t               k     = block.input_chunk_size;
+        const std::vector<std::uint8_t> items(2UZ * k, std::uint8_t{1U});
+        std::vector<std::uint8_t>       packed(2UZ);
+        std::vector<gr::Tag>            published;
+        const std::vector<gr::Tag>      wrapTag{gr::Tag{kWrap + k, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::string("past the wrap"))}}}};
+
+        NarrowInputSpan  before(std::span<const std::uint8_t>(items), kWrap - k);
+        NarrowOutputSpan beforeOut(std::span<std::uint8_t>(packed), (kWrap - k) / k, &published);
+        auto             beforeIns  = std::tie(before);
+        auto             beforeOuts = std::tie(beforeOut);
+        block.forwardTags(beforeIns, beforeOuts, items.size());
+
+        NarrowInputSpan  after(std::span<const std::uint8_t>(items), kWrap, std::span<const gr::Tag>(wrapTag));
+        NarrowOutputSpan afterOut(std::span<std::uint8_t>(packed), kWrap / k, &published);
+        auto             afterIns  = std::tie(after);
+        auto             afterOuts = std::tie(afterOut);
+        block.forwardTags(afterIns, afterOuts, items.size());
+
+        expect(eq(after.streamIndex, 0U)) << "the input index has wrapped";
+        expect(fatal(eq(published.size(), 1UZ))) << "the tag is published, not placed on the first output item";
+        expect(eq(published[0].index, kWrap / k + 1UZ)) << "on the output item holding its bit";
+    };
 };
 
 const boost::ut::suite<"UnpackBits"> unpackBitsTests = [] {
@@ -848,6 +895,92 @@ const boost::ut::suite<"UnpackBits"> unpackBitsTests = [] {
         for (std::size_t which = 0UZ; which < at.size(); ++which) {
             expect(eq(oneAtATime.tags[which].index, 8UZ * at[which])) << std::format("a tag on item {} belongs on bit {}", at[which], 8UZ * at[which]);
             expect(eq(allAtOnce.tags[which].index, oneAtATime.tags[which].index)) << "a tag whose bits fall past the call is held, not moved";
+        }
+    };
+
+    "a 32-bit stream index widens to the position past its wrap"_test = [] {
+        using gr::blocks::digital::detail::widenStreamIndex;
+        constexpr std::uint64_t kWrap = 1ULL << 32U;
+
+        expect(eq(widenStreamIndex(kWrap - 8ULL, std::uint32_t{0U}), kWrap)) << "eight items on from 2^32 - 8";
+        expect(eq(widenStreamIndex(3ULL * kWrap + 5ULL, std::uint32_t{20U}), 3ULL * kWrap + 20ULL)) << "the wraps already counted stay";
+        expect(eq(widenStreamIndex(kWrap + 100ULL, std::uint32_t{4U}), 4ULL)) << "a step back is a new stream";
+        expect(eq(widenStreamIndex(kWrap + 100ULL, std::uint64_t{7ULL}), 7ULL)) << "a 64-bit index is its own position";
+    };
+
+    // Unpacking eight to one reaches output item 2^32 at input item 2^29, where a 32-bit output index wraps to zero.
+    "a tag past the wrap of a 32-bit output index reaches its item"_test = [] {
+        if constexpr (sizeof(std::size_t) != 8UZ) {
+            return; // the positions below are past 2^32, which a 32-bit std::size_t does not hold
+        }
+        constexpr std::size_t kInput = static_cast<std::size_t>(1ULL << 29U);
+
+        UnpackBits                      block = make<UnpackBits>();
+        const std::size_t               k     = block.output_chunk_size;
+        const std::vector<std::uint8_t> byte(1UZ, std::uint8_t{0xA5U});
+        std::vector<std::uint8_t>       bits(k);
+        std::vector<gr::Tag>            published;
+        const std::vector<gr::Tag>      wrapTag{gr::Tag{kInput, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::string("past the wrap"))}}}};
+
+        NarrowInputSpan  before(std::span<const std::uint8_t>(byte), kInput - 1UZ);
+        NarrowOutputSpan beforeOut(std::span<std::uint8_t>(bits), k * (kInput - 1UZ), &published);
+        auto             beforeIns  = std::tie(before);
+        auto             beforeOuts = std::tie(beforeOut);
+        block.forwardTags(beforeIns, beforeOuts, 1UZ);
+
+        NarrowInputSpan  after(std::span<const std::uint8_t>(byte), kInput, std::span<const gr::Tag>(wrapTag));
+        NarrowOutputSpan afterOut(std::span<std::uint8_t>(bits), k * kInput, &published);
+        auto             afterIns  = std::tie(after);
+        auto             afterOuts = std::tie(afterOut);
+        block.forwardTags(afterIns, afterOuts, 1UZ);
+
+        expect(eq(afterOut.streamIndex, 0U)) << "the output index has wrapped";
+        expect(fatal(eq(published.size(), 1UZ))) << "the tag is published, not held";
+        expect(eq(published[0].index, k * kInput)) << "on the first of the k items its own item became";
+    };
+
+    // A start or a reset begins a new stream whose span indices begin again near zero. The first stream here ends
+    // past 2^31 items, where a distance back to a small index reads as a short step forward.
+    "a stream restarted after a wide position maps its tags"_test = [] {
+        if constexpr (sizeof(std::size_t) != 8UZ) {
+            return; // the positions below are past 2^32, which a 32-bit std::size_t does not hold
+        }
+        static constexpr std::size_t kLate  = static_cast<std::size_t>(3ULL << 30U);
+        static constexpr std::size_t kFresh = 104UZ;
+
+        // A block turns one input item into outPerIn / inPerOut output items.
+        const auto restarted = [](auto&& block, std::size_t outPerIn, std::size_t inPerOut, std::string_view name, bool useReset) {
+            const std::vector<std::uint8_t> items(8UZ, std::uint8_t{0xA5U});
+            std::vector<std::uint8_t>       out(8UZ);
+            std::vector<gr::Tag>            published;
+
+            NarrowInputSpan  late(std::span<const std::uint8_t>(items), kLate);
+            NarrowOutputSpan lateOut(std::span<std::uint8_t>(out), kLate * outPerIn / inPerOut, &published);
+            auto             lateIns  = std::tie(late);
+            auto             lateOuts = std::tie(lateOut);
+            block.forwardTags(lateIns, lateOuts, 1UZ);
+
+            if (useReset) {
+                block.reset();
+            } else {
+                block.start();
+            }
+
+            const std::vector<gr::Tag> freshTag{gr::Tag{kFresh, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::string("restarted"))}}}};
+            NarrowInputSpan            fresh(std::span<const std::uint8_t>(items), kFresh, std::span<const gr::Tag>(freshTag));
+            NarrowOutputSpan           freshOut(std::span<std::uint8_t>(out), kFresh * outPerIn / inPerOut, &published);
+            auto                       freshIns  = std::tie(fresh);
+            auto                       freshOuts = std::tie(freshOut);
+            block.forwardTags(freshIns, freshOuts, 1UZ);
+
+            boost::ut::expect(boost::ut::fatal(boost::ut::eq(published.size(), 1UZ))) << std::format("{} {}: the tag is published, not held", name, useReset ? "reset" : "start");
+            boost::ut::expect(boost::ut::eq(published[0].index, kFresh * outPerIn / inPerOut)) << std::format("{} {}: on the output item holding its bit", name, useReset ? "reset" : "start");
+        };
+
+        for (const bool useReset : {false, true}) {
+            restarted(make<UnpackBits>(), 8UZ, 1UZ, "UnpackBits", useReset);
+            restarted(make<PackBits>(), 1UZ, 8UZ, "PackBits", useReset);
+            restarted(make<RepackBits>({{"bits_in", 8U}, {"bits_out", 1U}}), 8UZ, 1UZ, "RepackBits", useReset);
         }
     };
 
