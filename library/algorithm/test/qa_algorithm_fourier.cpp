@@ -72,6 +72,29 @@ std::vector<T> deterministicComplexSignal(std::size_t n) {
     return signal;
 }
 
+// The same broadband signal for a real-valued input. Two tones and no symmetry leave every bin occupied.
+template<typename T>
+std::vector<T> deterministicSignal(std::size_t n) {
+    if constexpr (gr::meta::complex_like<T>) {
+        return deterministicComplexSignal<T>(n);
+    } else {
+        std::vector<T> signal(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            signal[i] = static_cast<T>(std::sin(0.7 * static_cast<double>(i) + 0.3) + 0.4 * std::cos(2.9 * static_cast<double>(i)));
+        }
+        return signal;
+    }
+}
+
+template<typename TActual>
+std::vector<std::complex<double>> asDoubleSpectrum(const TActual& spectrum) {
+    std::vector<std::complex<double>> out(spectrum.size());
+    for (std::size_t k = 0; k < spectrum.size(); ++k) {
+        out[k] = std::complex<double>(static_cast<double>(spectrum[k].real()), static_cast<double>(spectrum[k].imag()));
+    }
+    return out;
+}
+
 template<gr::meta::array_or_vector_type T, gr::meta::array_or_vector_type U = T>
 bool equalVectors(const T& v1, const U& v2, double tolerance = std::is_same_v<typename T::value_type, double> ? 1.e-5 : 1e-4) {
     if (v1.size() != v2.size()) {
@@ -346,6 +369,197 @@ const boost::ut::suite<"FFT algorithms and window functions"> windowTests = [] {
         for (std::size_t k = 1UZ; k < N; ++k) {
             expect(approx(std::abs(owned[k]), 0., tolerance)) << std::format("bin {} of a constant input", k);
         }
+    };
+
+    // The PocketFFT backend keeps the native path's result, not only its convention. The two engines factor a length
+    // differently. They agree to rounding and not bit for bit. The bound is on the relative L2 norm of the difference
+    // over the whole spectrum.
+    //
+    // The bound is not the precision's own epsilon. It grows with length because of the native path, not because of
+    // PocketFFT. precomputeTwiddleFactors() builds each stage's table by repeated multiplication, and its error grows
+    // with the table's length. PocketFFT computes every twiddle from an exact trigonometric call in double and rounds
+    // once. The test below, "backend accuracy against a double reference", separates the two. The numbers here are
+    // measured, 5.1e-13 for double and 1.5e-4 for float at n = 65536.
+    "PocketFFT matches the native backend"_test = []<typename T>() {
+        using InType           = typename T::InType;
+        using ValueType        = typename T::OutType::value_type;
+        const double tolerance = std::is_same_v<ValueType, float> ? 5.e-4 : 5.e-12;
+
+        typename T::AlgoType native{};
+        typename T::AlgoType pocket{};
+        native.backend = gr::algorithm::FftBackend::Native;
+        pocket.backend = gr::algorithm::FftBackend::PocketFFT;
+
+        // powers of two, then composite lengths the radix-2 path cannot take: 2 x 5^4, 2^5 x 5^3, 3 x 5 x 7, a prime
+        bool enginesRan = true;
+        for (const std::size_t n : {8UZ, 16UZ, 32UZ, 64UZ, 256UZ, 1024UZ, 4096UZ, 16384UZ, 65536UZ, 1250UZ, 4000UZ, 105UZ, 1009UZ}) {
+            enginesRan           = enginesRan && native.resolveBackend(n) == gr::algorithm::FftBackend::Native && pocket.resolveBackend(n) == gr::algorithm::FftBackend::PocketFFT;
+            const auto signal    = deterministicSignal<InType>(n);
+            const auto reference = asDoubleSpectrum(native.compute(signal));
+            const auto actual    = pocket.compute(signal);
+
+            expect(eq(actual.size(), n)) << std::format("<{}> n={} output size", type_name<T>(), n);
+            expect(lt(relativeL2Error(actual, reference), tolerance)) << std::format("<{}> n={} relative L2 error {}", type_name<T>(), n, relativeL2Error(actual, reference));
+        }
+        expect(enginesRan) << std::format("<{}> each arm ran the engine it names", type_name<T>());
+    } | AllTypesToTest{};
+
+    // Long single-precision transforms at 2^18 and 2^20. The native path holds tables as long as the record, so the
+    // comparison stops at 2^20. The 2^22 length is checked against a direct sum of a few bins below.
+    "PocketFFT matches the native backend at the display lengths"_test = [] {
+        using Cplx = std::complex<float>;
+        gr::algorithm::FFT<Cplx, Cplx> native{};
+        gr::algorithm::FFT<Cplx, Cplx> pocket{};
+        native.backend = gr::algorithm::FftBackend::Native;
+        pocket.backend = gr::algorithm::FftBackend::PocketFFT;
+
+        bool enginesRan = true;
+        for (const std::size_t n : {1UZ << 18UZ, 1UZ << 20UZ}) {
+            enginesRan           = enginesRan && native.resolveBackend(n) == gr::algorithm::FftBackend::Native && pocket.resolveBackend(n) == gr::algorithm::FftBackend::PocketFFT;
+            const auto signal    = deterministicComplexSignal<Cplx>(n);
+            const auto reference = asDoubleSpectrum(native.compute(signal));
+            const auto actual    = pocket.compute(signal);
+            expect(lt(relativeL2Error(actual, reference), 1.e-3)) << std::format("n={} relative L2 error {}", n, relativeL2Error(actual, reference));
+        }
+        expect(enginesRan) << "each arm ran the engine it names";
+    };
+
+    // Which of the two the disagreement above belongs to. Both float backends are measured against the same input
+    // transformed in double precision. The "non-power-of-two forward DFT" case above checks that transform against a
+    // direct DFT. PocketFFT stays near the precision's own epsilon. The error of the native path's twiddle recurrence
+    // grows with the transform length.
+    "backend accuracy against a double reference"_test = [] {
+        using Cplx = std::complex<float>;
+        using gr::algorithm::FftBackend;
+
+        for (const std::size_t n : {4096UZ, 16384UZ, 65536UZ}) {
+            const auto signal = deterministicComplexSignal<Cplx>(n);
+
+            std::vector<std::complex<double>> wide(n);
+            for (std::size_t i = 0; i < n; ++i) {
+                wide[i] = std::complex<double>(static_cast<double>(signal[i].real()), static_cast<double>(signal[i].imag()));
+            }
+            gr::algorithm::FFT<std::complex<double>, std::complex<double>> exact{};
+            exact.backend        = FftBackend::PocketFFT;
+            const auto reference = exact.compute(wide);
+
+            double worstPocket = 0.;
+            bool   enginesRan  = true;
+            for (const auto backend : {FftBackend::Native, FftBackend::Simd, FftBackend::PocketFFT}) {
+                gr::algorithm::FFT<Cplx, Cplx> fft{};
+                fft.backend       = backend;
+                enginesRan        = enginesRan && fft.resolveBackend(n) == backend;
+                const auto error  = relativeL2Error(fft.compute(signal), reference);
+                const auto native = backend == FftBackend::Native;
+                expect(lt(error, native ? 1.e-3 : 1.e-5)) << std::format("n={} backend {} relative L2 error {}", n, static_cast<int>(backend), error);
+                if (backend == FftBackend::PocketFFT) {
+                    worstPocket = error;
+                }
+            }
+            expect(lt(worstPocket, 2.e-6)) << std::format("n={} PocketFFT stays near float epsilon: {}", n, worstPocket);
+            expect(enginesRan) << std::format("n={} each arm ran the engine it names", n);
+        }
+    };
+
+    // the backward direction, both on its own against the native backend and as the round-trip the convention names
+    "PocketFFT backward transform"_test = []<typename TVal>() {
+        using Cplx = std::complex<TVal>;
+        gr::algorithm::FFT<Cplx, Cplx, gr::algorithm::Direction::Backward> native{};
+        gr::algorithm::FFT<Cplx, Cplx, gr::algorithm::Direction::Backward> pocket{};
+        gr::algorithm::FFT<Cplx, Cplx>                                     forward{};
+        native.backend  = gr::algorithm::FftBackend::Native;
+        pocket.backend  = gr::algorithm::FftBackend::PocketFFT;
+        forward.backend = gr::algorithm::FftBackend::PocketFFT;
+
+        const double tolerance = std::is_same_v<TVal, float> ? 1.e-4 : 1.e-12; // the native path's bound, as above
+        for (const std::size_t n : {16UZ, 64UZ, 1024UZ, 4096UZ, 1250UZ, 1009UZ}) {
+            const auto signal    = deterministicComplexSignal<Cplx>(n);
+            const auto reference = asDoubleSpectrum(native.compute(signal));
+            const auto actual    = pocket.compute(signal);
+            expect(lt(relativeL2Error(actual, reference), tolerance)) << std::format("<{}> n={} backward relative L2 error {}", type_name<TVal>(), n, relativeL2Error(actual, reference));
+
+            std::vector<std::complex<double>> scaled(n); // unnormalized: backward(forward(x)) == N*x
+            for (std::size_t i = 0; i < n; ++i) {
+                scaled[i] = std::complex<double>(static_cast<double>(signal[i].real()), static_cast<double>(signal[i].imag())) * static_cast<double>(n);
+            }
+            const auto roundTrip = pocket.compute(forward.compute(signal));
+            expect(lt(relativeL2Error(roundTrip, scaled), tolerance)) << std::format("<{}> n={} round-trip relative L2 error {}", type_name<TVal>(), n, relativeL2Error(roundTrip, scaled));
+        }
+    } | std::tuple<float, double>();
+
+    // real input is forward-only and produces the full N-bin spectrum, mirrored by Hermitian symmetry
+    "PocketFFT real input keeps the full spectrum"_test = []<typename TVal>() {
+        gr::algorithm::FFT<TVal, std::complex<TVal>> pocket{};
+        pocket.backend = gr::algorithm::FftBackend::PocketFFT;
+
+        const auto epsilon = std::numeric_limits<TVal>::epsilon();
+        for (const std::size_t n : {32UZ, 64UZ, 2048UZ, 8192UZ, 105UZ, 1000UZ}) {
+            const auto signal   = deterministicSignal<TVal>(n);
+            const auto spectrum = pocket.compute(signal);
+
+            expect(eq(spectrum.size(), n)) << std::format("<{}> n={} output size", type_name<TVal>(), n);
+            expect(lt(std::abs(spectrum[0].imag()), epsilon)) << std::format("<{}> n={} DC is real", type_name<TVal>(), n);
+
+            const auto scale     = std::abs(spectrum[0]) + TVal(1);
+            TVal       asymmetry = TVal(0);
+            for (std::size_t k = 1; k < n; ++k) {
+                asymmetry = std::max(asymmetry, std::abs(spectrum[k] - std::conj(spectrum[n - k])) / scale);
+            }
+            expect(lt(asymmetry, TVal(8) * epsilon)) << std::format("<{}> n={} worst Hermitian asymmetry {}", type_name<TVal>(), n, asymmetry);
+        }
+    } | std::tuple<float, double>();
+
+    // the plan is the instance's own and is built once per length, not once per compute()
+    "PocketFFT plans once per length"_test = [] {
+        using Cplx = std::complex<float>;
+        gr::algorithm::FFT<Cplx, Cplx> fft{};
+        fft.backend = gr::algorithm::FftBackend::PocketFFT;
+
+        const auto        first = deterministicComplexSignal<Cplx>(4096UZ);
+        const auto        other = deterministicComplexSignal<Cplx>(1024UZ);
+        std::vector<Cplx> outFirst(4096UZ);
+        std::vector<Cplx> outOther(1024UZ);
+
+        for (std::size_t i = 0; i < 64UZ; ++i) {
+            fft.compute(first, outFirst);
+        }
+        expect(eq(fft.pocketPlanBuilds, 1UZ)) << "one plan for 64 compute() calls of one length";
+
+        fft.compute(other, outOther);
+        expect(eq(fft.pocketPlanBuilds, 2UZ)) << "the second length plans once";
+
+        for (std::size_t i = 0; i < 8UZ; ++i) { // the parked plan comes back with the rest of the per-length state
+            fft.compute(first, outFirst);
+            fft.compute(other, outOther);
+        }
+        expect(eq(fft.pocketPlanBuilds, 2UZ)) << "alternating two known lengths plans neither again";
+    };
+
+    // useSimdFFT vetoes every backend except the native path, and only while the backend is left at Auto
+    "backend selection"_test = [] {
+        using Cplx = std::complex<float>;
+        using gr::algorithm::FftBackend;
+        gr::algorithm::FFT<Cplx, Cplx> fft{};
+
+        expect(fft.backend == FftBackend::Auto) << "Auto is the default";
+        expect(fft.useSimdFFT) << "the legacy switch defaults to enabled";
+        expect(fft.resolveBackend(4096UZ) == FftBackend::Simd) << "Auto takes SimdFFT at a short power of two";
+        expect(fft.resolveBackend(1UZ << 22UZ) == FftBackend::Simd) << "and at a display length, where it is still the fastest";
+        expect(fft.resolveBackend(1250UZ) == FftBackend::PocketFFT) << "Auto takes PocketFFT at a composite length SimdFFT rejects";
+        expect(fft.resolveBackend(105UZ) == FftBackend::PocketFFT) << "and at 3 x 5 x 7";
+        expect(fft.resolveBackend(1009UZ) == FftBackend::Native) << "but keeps the native Bluestein where the largest prime factor exceeds the root and the padded length is under three times n";
+        expect(fft.resolveBackend(1049UZ) == FftBackend::PocketFFT) << "and leaves a prime whose padded length is nearly four times n to PocketFFT";
+        expect(fft.resolveBackend(4099UZ) == FftBackend::PocketFFT) << "as it does at four times n";
+
+        fft.useSimdFFT = false;
+        expect(fft.resolveBackend(4096UZ) == FftBackend::Native) << "the legacy switch pins the native path";
+        expect(fft.resolveBackend(1UZ << 22UZ) == FftBackend::Native) << "and pins it at every length";
+
+        fft.backend = FftBackend::PocketFFT;
+        expect(fft.resolveBackend(4096UZ) == FftBackend::PocketFFT) << "an explicit backend outranks the legacy switch";
+
+        fft.backend = FftBackend::Simd;
+        expect(fft.resolveBackend(1009UZ) == FftBackend::Native) << "a size SimdFFT cannot take falls back to the native path";
     };
 
     // amplitude scaling: 1/N over the full spectrum, 2/N over the half spectrum except at DC and Nyquist

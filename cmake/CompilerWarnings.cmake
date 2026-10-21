@@ -4,6 +4,18 @@
 
 function(set_project_warnings target_name)
 
+  # GCC 14 does not apply a header's diagnostic pragma to a warning raised after inlining when the header comes from a
+  # precompiled header. algorithm/fourier/fft.hpp keeps -Wnull-dereference out of the vendored PocketFFT with such a
+  # pragma. A system include does not cover a warning raised after inlining. A target whose precompiled header includes
+  # algorithm/fourier/fft.hpp sets GR_PCH_INCLUDES_POCKETFFT. Under GCC 14 that target compiles without
+  # -Wnull-dereference. GCC 15 and later keep the pragma through a precompiled header; the gate goes when GCC 14 leaves
+  # the supported compilers.
+  set(GCC14_PCH_POCKETFFT
+      "$<AND:$<COMPILE_LANG_AND_ID:CXX,GNU>,$<VERSION_LESS:$<CXX_COMPILER_VERSION>,15>,$<BOOL:$<TARGET_PROPERTY:GR_PCH_INCLUDES_POCKETFFT>>,$<BOOL:$<TARGET_PROPERTY:PRECOMPILE_HEADERS>>,$<NOT:$<BOOL:$<TARGET_PROPERTY:DISABLE_PRECOMPILE_HEADERS>>>>"
+  )
+  set(NO_NULL_DEREFERENCE
+      "$<OR:$<AND:$<BOOL:$<TARGET_PROPERTY:GR_QA_REDUCED_OPTIMIZATION>>,$<NOT:$<CONFIG:Debug>>>,${GCC14_PCH_POCKETFFT}>")
+
   set(MSVC_WARNINGS
       /W4 # Baseline reasonable warnings
       /w14242 # 'identifier': conversion from 'type1' to 'type1', possible loss of data
@@ -45,9 +57,10 @@ function(set_project_warnings target_name)
       -Wsign-conversion # warn on sign conversions
       # warn if a null dereference is detected; unreliable below -O2, so reduced-optimization test targets suppress it
       # explicitly rather than by omission, which also turns it off when an installed SDK exports it as a usage
-      # requirement
-      $<$<NOT:$<AND:$<BOOL:$<TARGET_PROPERTY:GR_QA_REDUCED_OPTIMIZATION>>,$<NOT:$<CONFIG:Debug>>>>:-Wnull-dereference>
-      $<$<AND:$<BOOL:$<TARGET_PROPERTY:GR_QA_REDUCED_OPTIMIZATION>>,$<NOT:$<CONFIG:Debug>>>:-Wno-null-dereference>
+      # requirement; GCC 14 targets whose precompiled header includes PocketFFT also suppress it (see the top of this
+      # function)
+      $<$<NOT:${NO_NULL_DEREFERENCE}>:-Wnull-dereference>
+      $<${NO_NULL_DEREFERENCE}:-Wno-null-dereference>
       -Wdouble-promotion # warn if float is implicit promoted to double
       -Wformat=2 # warn on security issues around functions that format output (ie printf)
       -Wno-unknown-pragmas # ignore IDE, GCC/CLANG specific pragmas
