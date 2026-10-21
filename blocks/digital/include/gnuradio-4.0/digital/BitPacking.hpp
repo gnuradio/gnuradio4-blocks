@@ -2,9 +2,11 @@
 #define GNURADIO_DIGITAL_BIT_PACKING_HPP
 
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <print>
 #include <span>
 #include <string>
@@ -30,6 +32,17 @@ inline void requireFieldWidth(gr::Size_t bits, std::string_view setting) {
     }
 }
 
+/// @brief The 64-bit position of @p index, a stream index that wraps at its own width: @p known moved forward by the
+/// distance from it to @p index, taken modulo that width. A distance of more than half the width is a new stream, and
+/// the result is then @p index. A 64-bit index gives @p index itself.
+template<std::unsigned_integral TIndex>
+[[nodiscard]] constexpr std::uint64_t widenStreamIndex(std::uint64_t known, TIndex index) noexcept {
+    constexpr std::uint64_t kMask = std::numeric_limits<TIndex>::max();
+    const std::uint64_t     wide  = index;
+    const std::uint64_t     step  = (wide - known) & kMask;
+    return step <= kMask / 2U ? known + step : wide;
+}
+
 /**
  * @brief The tag route the three bit-packing blocks share: the offset map, and the tags waiting for their output item.
  *
@@ -42,17 +55,46 @@ inline void requireFieldWidth(gr::Size_t bits, std::string_view setting) {
  * current call and the eighth may not, and at `8:1` unpacking a tag near the end of a call routinely lands past the
  * output span. Order and multiplicity are preserved and no tag is deduplicated. Every key is republished verbatim,
  * a key outside the auto-forward set included.
+ *
+ * The input and output positions are kept in `std::uint64_t`. A 32-bit `std::size_t` makes a span's `streamIndex`
+ * wrap at 2^32 items, and `widenStreamIndex` carries each position past the wrap. A change of the field width or of a
+ * bit order clears the held tags and keeps the positions. A start or a reset drops the tags still held and sets both
+ * positions to zero.
  */
 struct RepackTagRoute {
     std::vector<std::pair<std::uint64_t, property_map>> pending{};
+    std::uint64_t                                       inputIndex  = 0ULL;
+    std::uint64_t                                       outputIndex = 0ULL;
 
     void clear() { pending.clear(); }
 
+    void restart() {
+        pending.clear();
+        inputIndex  = 0ULL;
+        outputIndex = 0ULL;
+    }
+
     template<typename TInputSpans, typename TOutputSpans>
     void forward(const gr::math::BitRepack& cfg, TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
+        // Both positions move on every call, tagged or not, which counts a wrap that falls between two tags.
+        gr::for_each_reader_span(
+            [this](auto& span) {
+                if (span.isSync && span.isConnected) {
+                    inputIndex = widenStreamIndex(inputIndex, span.streamIndex);
+                }
+            },
+            inputSpans);
+        gr::for_each_writer_span(
+            [this](auto& span) {
+                if (span.isSync && span.isConnected) {
+                    outputIndex = widenStreamIndex(outputIndex, span.streamIndex);
+                }
+            },
+            outputSpans);
+
         std::vector<std::pair<std::uint64_t, property_map>> arriving;
         gr::for_each_reader_span(
-            [&arriving, &cfg, processedIn](auto& span) {
+            [this, &arriving, &cfg, processedIn](auto& span) {
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
@@ -62,7 +104,7 @@ struct RepackTagRoute {
                         // forwarding clamps it to offset zero and republishes it, which would duplicate it.
                         continue;
                     }
-                    const std::uint64_t at = static_cast<std::uint64_t>(span.streamIndex) + static_cast<std::uint64_t>(relIndex);
+                    const std::uint64_t at = inputIndex + static_cast<std::uint64_t>(relIndex);
                     arriving.emplace_back(gr::math::mapRepackedOffset(at, cfg.bitsIn, cfg.bitsOut), tagMap.get());
                 }
             },
@@ -78,7 +120,7 @@ struct RepackTagRoute {
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
-                const std::uint64_t base = static_cast<std::uint64_t>(span.streamIndex);
+                const std::uint64_t base = outputIndex;
                 const std::uint64_t end  = base + span.size();
 
                 const auto place = [&](const std::pair<std::uint64_t, property_map>& tag) {
@@ -185,10 +227,10 @@ inert.
 
     void start() {
         configureConversion(); // a block left at its defaults stages nothing, so this is the only call that reaches it
-        _tagRoute.clear();
+        _tagRoute.restart();
     }
 
-    void reset() { _tagRoute.clear(); }
+    void reset() { _tagRoute.restart(); }
 
     void configureConversion() {
         detail::requireFieldWidth(k, "k");
@@ -258,10 +300,10 @@ unchanged: the item rate rises by `k` but the sample rate does not.
 
     void start() {
         configureConversion();
-        _tagRoute.clear();
+        _tagRoute.restart();
     }
 
-    void reset() { _tagRoute.clear(); }
+    void reset() { _tagRoute.restart(); }
 
     void configureConversion() {
         detail::requireFieldWidth(k, "k");
@@ -343,10 +385,10 @@ nothing can trail it.
 
     void start() {
         configureConversion();
-        _tagRoute.clear();
+        _tagRoute.restart();
     }
 
-    void reset() { _tagRoute.clear(); }
+    void reset() { _tagRoute.restart(); }
 
     void configureConversion() {
         detail::requireFieldWidth(bits_in, "bits_in");
