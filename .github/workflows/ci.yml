@@ -42,24 +42,26 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - name: Ensure fork is public
-        if: ${{ github.event.pull_request.head.repo.private }}
-        run: |
-          echo "Private forks are not supported for restyling" >&2
-          exit 1
-
       - uses: actions/checkout@v6
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
-      - uses: restyled-io/actions/setup@v4
-
-      - id: restyler
-        uses: restyled-io/actions/run@v4
+      - uses: actions/setup-python@v7
         with:
-          fail-on-differences: true
+          python-version: "3.14"
+
+      - name: Install the pinned restylers
+        run: python3 .github/ci-tools/restyle.py install --tools "$RUNNER_TEMP/restyle-tools"
+
+      - name: Restyle the changed files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --jq '.[].filename' > "$RUNNER_TEMP/changed-files"
+          python3 .github/ci-tools/restyle.py run --tools "$RUNNER_TEMP/restyle-tools" \
+            --event "$GITHUB_EVENT_PATH" --paths-from "$RUNNER_TEMP/changed-files"
 
   build:
     needs: [dco, restyled]
