@@ -19,6 +19,8 @@ add_basic_test(qa_SampleDelay)
 add_basic_test(qa_SkipHead)
 add_basic_test(qa_IqCorrection)
 gr_pin_test_optimization(qa_IqCorrection BUILD_TYPE)
+# a case runs the swap into the carrier-tracking loop of the sync headers
+target_link_libraries(qa_IqCorrection PRIVATE gr-sync)
 add_basic_test(qa_TriggerBlocks)
 add_basic_test(qa_Decimators)
 add_basic_test(qa_RealToComplex)

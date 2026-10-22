@@ -6,11 +6,13 @@
 #include <complex>
 #include <cstdint>
 #include <format>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <numbers>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gnuradio-4.0/Graph.hpp>
@@ -18,12 +20,14 @@
 #include <gnuradio-4.0/YamlPmt.hpp>
 
 #include <gnuradio-4.0/basic/IqCorrection.hpp>
+#include <gnuradio-4.0/sync/Pll.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 namespace {
 
 using gr::blocks::basic::DcOffsetCorrect;
 using gr::blocks::basic::IqSwap;
+using gr::blocks::sync::PllCarrierTracking;
 using gr::blocks::testing::ProcessFunction;
 using gr::blocks::testing::TagSink;
 using gr::blocks::testing::TagSource;
@@ -152,7 +156,7 @@ struct Marker {
     gr::pmt::Value value;
 };
 
-/// Seven keys at six offsets. `t0` is not in `gr::tag::kDefaultTags`, and the default forwarder of both blocks keeps it.
+/// Seven keys at six offsets. `t0` is not in `gr::tag::kDefaultTags`, and both blocks forward it.
 /// Built per call, because the suite runs at process exit, when namespace-scope objects are already destroyed.
 [[nodiscard]] std::array<Marker, 7UZ> markers() {
     return {{
@@ -196,9 +200,190 @@ struct TaggedRun {
     return run;
 }
 
+/// A unit carrier of `frequency` radians per sample from sample `start` on, with phase `phase + frequency*n` at sample
+/// `n`. The samples before `start` are zero.
+[[nodiscard]] std::vector<CF> burst(std::size_t count, std::size_t start, double frequency, double phase) {
+    std::vector<CF> samples(count);
+    for (std::size_t i = start; i < count; ++i) {
+        samples[i] = std::polar(1.f, static_cast<float>(std::remainder(phase + frequency * static_cast<double>(i), 2.0 * kPi)));
+    }
+    return samples;
+}
+
+/// The value of `key` in `map` as a `double`, or NaN when it holds no `float` or `double`.
+[[nodiscard]] double estimate(const gr::property_map& map, const char* key) {
+    const auto found = map.find(gr::property_map::key_type{key});
+    if (found == map.end()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    if (const double* value = found->second.get_if<double>(); value != nullptr) {
+        return *value;
+    }
+    if (const float* value = found->second.get_if<float>(); value != nullptr) {
+        return static_cast<double>(*value);
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+}
+
+/// What a carrier-tracking loop behind an enabled `IqSwap<CF>` put out: its derotated samples, its phase on each sample
+/// before the update, its frequency after it, and the tags on its derotated output.
+struct LoopRun {
+    bool                 ran = false;
+    std::vector<CF>      derotated;
+    std::vector<float>   phase;
+    std::vector<float>   frequency;
+    std::vector<gr::Tag> tags;
+};
+
+/// Runs `samples`, with `tag` on them, through an enabled `IqSwap<CF>` into a `PllCarrierTracking`.
+[[nodiscard]] LoopRun runSwapIntoLoop(const std::vector<CF>& samples, const gr::Tag& tag) {
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<TagSource<CF, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(samples.size())}, {"values", gr::Tensor<CF>(samples.begin(), samples.end())}});
+    source._tags     = {tag};
+    auto& swap       = graph.emplaceBlock<IqSwap<CF>>({{"enabled", true}});
+    auto& loop       = graph.emplaceBlock<PllCarrierTracking>();
+    auto& derotated  = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_ONE>>({{"name", "derotated"}});
+    auto& phase      = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "phase"}});
+    auto& frequency  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "frequency"}});
+
+    LoopRun run;
+    if (!graph.connect<"out", "in">(source, swap).has_value() || !graph.connect<"out", "in">(swap, loop).has_value() || !graph.connect<"out", "in">(loop, derotated).has_value() || !graph.connect<"phase", "in">(loop, phase).has_value() || !graph.connect<"freq", "in">(loop, frequency).has_value()) {
+        return run;
+    }
+    gr::scheduler::Simple scheduler;
+    run.ran       = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
+    run.derotated = std::vector<CF>(derotated._samples.begin(), derotated._samples.end());
+    run.phase     = std::vector<float>(phase._samples.begin(), phase._samples.end());
+    run.frequency = std::vector<float>(frequency._samples.begin(), frequency._samples.end());
+    run.tags      = derotated._tags;
+    return run;
+}
+
+/// The tags a sink receives at the index of `tag` when 1000 samples carrying it pass through an `IqSwap<CF>`.
+[[nodiscard]] std::vector<gr::Tag> swapTags(bool enabled, const gr::Tag& tag) {
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<TagSource<CF, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 1000U}, {"mark_tag", false}});
+    source._tags     = {tag};
+    auto& swap       = graph.emplaceBlock<IqSwap<CF>>({{"enabled", enabled}});
+    auto& sink       = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+    std::vector<gr::Tag> received;
+    if (!graph.connect<"out", "in">(source, swap).has_value() || !graph.connect<"out", "in">(swap, sink).has_value()) {
+        return received;
+    }
+    gr::scheduler::Simple scheduler;
+    if (!scheduler.exchange(std::move(graph)).has_value() || !scheduler.runAndWait().has_value()) {
+        return received;
+    }
+    std::ranges::copy_if(sink._tags, std::back_inserter(received), [&tag](const gr::Tag& t) { return t.index == tag.index; });
+    return received;
+}
+
+/// The samples and tags a sink gets behind an `IqSwap<CF>` that takes `kSwapCount` samples of CF(1, 2).
+struct SwapRun {
+    bool                 ran = false;
+    std::vector<CF>      samples;
+    std::vector<gr::Tag> tags;
+};
+
+constexpr std::size_t kSwapCount = 1000UZ;
+
+/// Runs `kSwapCount` samples of CF(1, 2), with `tags` on them, through an `IqSwap<CF>` built with `settings`.
+[[nodiscard]] SwapRun swapRun(const gr::property_map& settings, std::vector<gr::Tag> tags) {
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<TagSource<CF, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(kSwapCount)}, {"values", gr::Tensor<CF>{CF(1.f, 2.f)}}});
+    source._tags     = std::move(tags);
+    auto& swap       = graph.emplaceBlock<IqSwap<CF>>(settings);
+    auto& sink       = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+    SwapRun run;
+    if (!graph.connect<"out", "in">(source, swap).has_value() || !graph.connect<"out", "in">(swap, sink).has_value()) {
+        return run;
+    }
+    gr::scheduler::Simple scheduler;
+    run.ran     = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
+    run.samples = std::vector<CF>(sink._samples.begin(), sink._samples.end());
+    run.tags    = sink._tags;
+    return run;
+}
+
+/// Runs `kSwapCount` samples of CF(1, 2), with `tag` on them, through an `IqSwap<CF>` that starts as `enabled`.
+[[nodiscard]] SwapRun swapRun(bool enabled, const gr::Tag& tag) { return swapRun(gr::property_map{{"enabled", enabled}}, {tag}); }
+
 } // namespace
 
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<IqSwap<CF>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
+/// Publishes `kSwapCount` samples of CF(1, 2) and ends the stream. `endTag` sits on the position after the last sample.
+struct SourceTaggingItsEnd : gr::Block<SourceTaggingItsEnd> {
+    gr::PortOut<CF> out;
+
+    GR_MAKE_REFLECTABLE(SourceTaggingItsEnd, out);
+
+    gr::property_map endTag;
+    std::size_t      _sent = 0UZ;
+
+    gr::work::Status processBulk(gr::OutputSpanLike auto& output) {
+        const std::size_t n = std::min(output.size(), kSwapCount - _sent);
+        std::ranges::fill(std::span(output.data(), n), CF(1.f, 2.f));
+        _sent += n;
+        if (_sent == kSwapCount) {
+            output.publishTag(endTag, n);
+        }
+        output.publish(n);
+        return _sent == kSwapCount ? gr::work::Status::DONE : gr::work::Status::OK;
+    }
+};
+
+/// Passes its samples on and records the tags it is handed on the call that ends the stream, which no sample carries.
+struct EndTagRecorder : gr::Block<EndTagRecorder> {
+    gr::PortIn<CF>  in;
+    gr::PortOut<CF> out;
+
+    GR_MAKE_REFLECTABLE(EndTagRecorder, in, out);
+
+    std::vector<gr::Tag> _endTags;
+
+    [[nodiscard]] constexpr CF processOne(CF sample) const noexcept { return sample; }
+
+    template<typename TInputSpans, typename TOutputSpans>
+    void forwardTags(TInputSpans& inputSpans, TOutputSpans& /*outputSpans*/, std::size_t processedIn) {
+        if (processedIn != 0UZ) {
+            return;
+        }
+        gr::for_each_reader_span(
+            [this](auto& inSpan) {
+                for (const gr::Tag& tag : inSpan.rawTags) {
+                    if (tag.index >= inSpan.streamIndex) {
+                        _endTags.push_back(tag);
+                    }
+                }
+            },
+            inputSpans);
+    }
+};
+
+namespace {
+
+/// The tags `EndTagRecorder` is handed on the final call when `endTag` sits on the position after the last sample of a
+/// stream through an enabled `IqSwap<CF>`.
+[[nodiscard]] std::vector<gr::Tag> swapEndTags(const gr::property_map& endTag, bool& ran) {
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<SourceTaggingItsEnd>();
+    source.endTag    = endTag;
+    auto& swap       = graph.emplaceBlock<IqSwap<CF>>({{"enabled", true}});
+    auto& recorder   = graph.emplaceBlock<EndTagRecorder>();
+    auto& sink       = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
+
+    if (!graph.connect<"out", "in">(source, swap).has_value() || !graph.connect<"out", "in">(swap, recorder).has_value() || !graph.connect<"out", "in">(recorder, sink).has_value()) {
+        return {};
+    }
+    gr::scheduler::Simple scheduler;
+    ran = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
+    return recorder._endTags;
+}
+
+} // namespace
+
+static_assert(IqSwap<CF>::hasForwardTagsOverride(), "IqSwap forwards its tags itself, mapping the carrier estimates");
 static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DcOffsetCorrect<CF>>);
 static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DcOffsetCorrect<float>>);
 
@@ -437,6 +622,122 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
             expect(eq(offsets[which], kMarkers[which].at)) << std::format("{} rides through two 1:1 blocks unmoved", kMarkers[which].key);
         }
         expect(eq(declaredRate, 48000.f)) << "DcOffsetCorrect carries the reserved key, so the rate declared downstream becomes its own";
+    };
+
+    "an enabled swap hands a carrier loop the estimates of the swapped carrier"_test = [] {
+        constexpr std::size_t kStart     = 400UZ;
+        constexpr std::size_t kCount     = 2400UZ;
+        constexpr double      kFrequency = 0.1;
+        constexpr double      kPhase     = 0.2;
+        const double          tagged     = std::remainder(kPhase + kFrequency * static_cast<double>(kStart), 2.0 * kPi); // the carrier's phase on the tagged sample
+        const double          swapped    = kPi / 2.0 - tagged;                                                           // the phase of j*conj(x) there
+        const std::vector<CF> carrier    = burst(kCount, kStart, kFrequency, kPhase);
+
+        const gr::property_map estimates{{"phase_est", tagged}, {"freq_est", kFrequency}};
+        const gr::property_map trigger{{"trigger_name", std::string("burst")}, {"trigger_meta_info", estimates}};
+        const LoopRun          top    = runSwapIntoLoop(carrier, gr::Tag{kStart, estimates});
+        const LoopRun          nested = runSwapIntoLoop(carrier, gr::Tag{kStart, trigger});
+        for (const auto& [where, ran] : {std::pair{"at the top level", &top}, std::pair{"inside trigger_meta_info", &nested}}) {
+            const LoopRun& run = *ran;
+            expect(fatal(run.ran && run.derotated.size() == kCount && run.phase.size() == kCount && run.frequency.size() == kCount)) << where;
+
+            expect(lt(std::abs(std::remainder(static_cast<double>(run.phase[kStart]) - swapped, 2.0 * kPi)), 1e-5)) << std::format("{}: the loop takes the swapped phase pi/2 - p on the tagged sample", where);
+            expect(lt(std::abs(static_cast<double>(run.frequency[kStart]) + kFrequency), 1e-4)) << std::format("{}: the loop takes the negated frequency on the tagged sample", where);
+            float worst = 0.f;
+            for (std::size_t i = kStart; i < kCount; ++i) {
+                worst = std::max(worst, std::abs(std::arg(run.derotated[i])));
+            }
+            expect(lt(worst, 1e-3f)) << std::format("{}: the loop holds the swapped carrier from the tagged sample on, worst residual {} rad", where, worst);
+        }
+
+        const auto meta = std::ranges::find_if(nested.tags, [](const gr::Tag& t) { return t.map.contains(gr::property_map::key_type{"trigger_meta_info"}); });
+        expect(fatal(meta != nested.tags.end())) << "the loop forwards the trigger's map";
+        const gr::property_map* forwarded = meta->map.at(gr::property_map::key_type{"trigger_meta_info"}).get_if<gr::property_map>();
+        expect(fatal(forwarded != nullptr));
+        expect(eq(estimate(*forwarded, "phase_est"), swapped)) << "the trigger's phase leaves for the swapped carrier";
+        expect(eq(estimate(*forwarded, "freq_est"), -kFrequency)) << "the trigger's frequency leaves negated";
+    };
+
+    "a disabled swap forwards carrier estimates unchanged"_test = [] {
+        constexpr double       kPhase     = 0.5;
+        constexpr float        kFrequency = 0.25f;
+        const gr::property_map estimates{{"phase_est", kPhase}, {"freq_est", kFrequency}, {"amp_est", 2.f}};
+        gr::property_map       tagged = estimates;
+        tagged.insert_or_assign(gr::property_map::key_type{"trigger_meta_info"}, estimates);
+
+        const std::vector<gr::Tag> passed  = swapTags(false, gr::Tag{100UZ, tagged});
+        const std::vector<gr::Tag> swapped = swapTags(true, gr::Tag{100UZ, tagged});
+        expect(fatal(eq(passed.size(), 1UZ) && eq(swapped.size(), 1UZ)));
+        expect(eq(passed[0].index, 100UZ) && eq(swapped[0].index, 100UZ)) << "the tag stays on its sample";
+        expect(passed[0].map == tagged) << "disabled, every key leaves as it arrived";
+
+        gr::property_map swappedEstimates{{"phase_est", kPi / 2.0 - kPhase}, {"freq_est", -kFrequency}, {"amp_est", 2.f}};
+        gr::property_map want = swappedEstimates;
+        want.insert_or_assign(gr::property_map::key_type{"trigger_meta_info"}, swappedEstimates);
+        expect(swapped[0].map == want) << "enabled, both copies of the phase and frequency change, of the same type, and the amplitude stays";
+        expect(passed[0].map != swapped[0].map) << "the two arms differ";
+    };
+
+    "a tag's setting keys leave with the block's own values through a disabled and an enabled swap"_test = [] {
+        const gr::property_map rejected{{"enabled", std::string("not a bool")}, {"phase_est", 0.5}};
+        for (const bool on : {false, true}) {
+            const SwapRun run   = swapRun(on, gr::Tag{100UZ, rejected});
+            const auto    found = std::ranges::find_if(run.tags, [](const gr::Tag& t) { return t.index == 100UZ && t.map.contains(gr::property_map::key_type{"enabled"}); });
+            expect(fatal(run.ran && found != run.tags.end())) << on;
+            const bool* kept = found->map.at(gr::property_map::key_type{"enabled"}).get_if<bool>();
+            expect(fatal(kept != nullptr)) << on << ": the key leaves with the block's value, of the block's type";
+            expect(eq(*kept, on)) << on << ": and that value is the block's own";
+            expect(eq(estimate(found->map, "phase_est"), on ? kPi / 2.0 - 0.5 : 0.5)) << on << ": the estimate follows the block's state";
+        }
+    };
+
+    "a mapped phase is reduced to [-pi, pi]"_test = [] {
+        for (const double phase : {-3.0, 3.0, -2.0 * kPi + 0.25, 7.0}) {
+            gr::property_map tagged{{"phase_est", phase}, {"trigger_meta_info", gr::property_map{{"phase_est", phase}}}};
+            const SwapRun    run   = swapRun(true, gr::Tag{100UZ, tagged});
+            const auto       found = std::ranges::find_if(run.tags, [](const gr::Tag& t) { return t.index == 100UZ && t.map.contains(gr::property_map::key_type{"phase_est"}); });
+            expect(fatal(run.ran && found != run.tags.end())) << phase;
+            const double mapped = estimate(found->map, "phase_est");
+            expect(le(std::abs(mapped), kPi)) << std::format("{} leaves as {} inside [-pi, pi]", phase, mapped);
+            expect(lt(std::abs(std::remainder(mapped - (kPi / 2.0 - phase), 2.0 * kPi)), 1e-12)) << std::format("{} leaves as pi/2 - p modulo a turn", phase);
+            const gr::property_map* meta = found->map.at(gr::property_map::key_type{"trigger_meta_info"}).get_if<gr::property_map>();
+            expect(fatal(meta != nullptr));
+            expect(eq(estimate(*meta, "phase_est"), mapped)) << "the nested copy is reduced alike";
+        }
+        const SwapRun single = swapRun(true, gr::Tag{100UZ, gr::property_map{{"phase_est", -3.f}}});
+        const auto    found  = std::ranges::find_if(single.tags, [](const gr::Tag& t) { return t.index == 100UZ && t.map.contains(gr::property_map::key_type{"phase_est"}); });
+        expect(fatal(single.ran && found != single.tags.end()));
+        expect(le(std::abs(estimate(found->map, "phase_est")), kPi)) << "a float phase is reduced as well";
+    };
+
+    "an estimate on the position after the last sample is mapped once on the call that ends the stream"_test = [] {
+        const gr::property_map tagged{{"phase_est", 0.5}, {"freq_est", 0.25}, {"end_of_stream", true}};
+        bool                   ran  = false;
+        const auto             tags = swapEndTags(tagged, ran);
+        expect(fatal(ran)) << "the graph ran";
+        const auto hasEstimate = [](const gr::Tag& t) { return t.map.contains(gr::property_map::key_type{"phase_est"}); };
+        expect(fatal(eq(std::ranges::count_if(tags, hasEstimate), std::ptrdiff_t{1}))) << "the estimate reaches the next block once";
+        const auto found = std::ranges::find_if(tags, hasEstimate);
+        expect(eq(found->index, kSwapCount)) << "on the position after the last sample";
+        expect(eq(estimate(found->map, "phase_est"), kPi / 2.0 - 0.5)) << "mapped";
+        expect(eq(estimate(found->map, "freq_est"), -0.25)) << "mapped";
+    };
+
+    "a tag that turns the swap on or off maps the estimate it carries to match its sample"_test = [] {
+        // Tags do not update a key set at construction, so the swap is built without `enabled`.
+        const SwapRun run = swapRun(gr::property_map{}, {gr::Tag{100UZ, gr::property_map{{"enabled", true}, {"phase_est", 0.5}, {"freq_est", 0.25}}}, gr::Tag{200UZ, gr::property_map{{"enabled", false}, {"phase_est", 0.5}, {"freq_est", 0.25}}}});
+        expect(fatal(run.ran && run.samples.size() == kSwapCount));
+        expect(run.samples[99] == CF(1.f, 2.f)) << "the sample before the first tag passes as it arrived";
+        expect(run.samples[100] == CF(2.f, 1.f)) << "the tag at 100 turns the exchange on at its own sample";
+        expect(run.samples[200] == CF(1.f, 2.f)) << "the tag at 200 turns it off at its own sample";
+        for (const auto& [index, on] : {std::pair{100UZ, true}, std::pair{200UZ, false}}) {
+            const auto found = std::ranges::find_if(run.tags, [index](const gr::Tag& t) { return t.index == index && t.map.contains(gr::property_map::key_type{"phase_est"}); });
+            expect(fatal(found != run.tags.end())) << index;
+            expect(eq(estimate(found->map, "phase_est"), on ? kPi / 2.0 - 0.5 : 0.5)) << index << ": the estimate is mapped when its sample is exchanged";
+            expect(eq(estimate(found->map, "freq_est"), on ? -0.25 : 0.25)) << index;
+            const bool* kept = found->map.at(gr::property_map::key_type{"enabled"}).get_if<bool>();
+            expect(fatal(kept != nullptr) && eq(*kept, on)) << index << ": the key leaves with the state its sample ran with";
+        }
     };
 
     "degenerate settings"_test = [] {
