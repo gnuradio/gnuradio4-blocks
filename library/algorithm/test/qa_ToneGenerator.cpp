@@ -358,6 +358,163 @@ const boost::ut::suite toneGeneratorTests = [] {
         std::println("30 s at 1 MS/s: worst sample error {:.3e}, phase error {:.3e} rad; the float accumulator reads {:.7f} s at 1 s, stops at sample {}, stands at {} s and is off by {:.3f}", maxError, phaseError, afterOneS, stallIndex, elapsed, oldError);
     };
 
+    // The settings change while the stream runs. Each case walks a generator, changes a setting, and compares the
+    // next samples with a reference that has the expected phase there. A case reports the worst departure once.
+    constexpr std::array<ToneType, 8>    kAllTypes{ToneType::Const, ToneType::Sin, ToneType::Cos, ToneType::Square, ToneType::Saw, ToneType::Triangle, ToneType::FastSin, ToneType::FastCos};
+    constexpr std::array<std::size_t, 2> kRuns{37UZ, 300UZ}; // under and over the fast phasor's re-seed interval
+    constexpr double                     kFs      = 1000.;
+    constexpr double                     kF1      = 12.3;
+    constexpr double                     kF2      = 37.1;
+    constexpr double                     kPhase   = 0.3;
+    constexpr double                     kTwoPi   = 2. * std::numbers::pi_v<double>;
+    constexpr std::size_t                kCompare = 200UZ;
+    // The reference's start phase rounds once in double (under 4e-15 rad below 30 rad) and 200 phasor steps add
+    // under 1e-13. A phase error of one step is 0.08 rad here.
+    constexpr double kTolerance = 1e-9;
+
+    // the worst difference between the next kCompare samples of both generators
+    const auto worstDeparture = [](ToneGenerator<double>& gen, ToneGenerator<double>& ref) {
+        double worst = 0.;
+        for (std::size_t i = 0UZ; i < kCompare; ++i) {
+            worst = std::max(worst, std::abs(gen.generateSample() - ref.generateSample()));
+        }
+        return worst;
+    };
+    const auto walk = [](ToneGenerator<double>& gen, std::size_t n) {
+        std::vector<double> sink(n);
+        gen.fill(sink);
+    };
+
+    "a frequency change mid-stream continues the phase"_test = [&] {
+        for (const ToneType type : kAllTypes) {
+            for (const std::size_t run : kRuns) {
+                ToneGenerator<double> gen;
+                gen.configure(type, kF1, kFs, kPhase, 1.5, 0.25);
+                walk(gen, run);
+                gen.configure(type, kF2, kFs, kPhase, 1.5, 0.25);
+
+                const double          reached = kPhase + kTwoPi * kF1 * static_cast<double>(run) / kFs;
+                ToneGenerator<double> ref;
+                ref.configure(type, kF2, kFs, reached, 1.5, 0.25);
+                const double worst = worstDeparture(gen, ref);
+                expect(lt(worst, kTolerance)) << std::format("type={} run={} worst departure {:.3e}", static_cast<int>(type), run, worst);
+            }
+        }
+    };
+
+    "a frequency change leaves no step between the last sample and the next"_test = [&] {
+        for (const ToneType type : {ToneType::Sin, ToneType::Cos, ToneType::FastSin, ToneType::FastCos}) {
+            ToneGenerator<double> gen;
+            gen.configure(type, kF1, kFs, 0., 1., 0.);
+            double last = 0.;
+            for (std::size_t i = 0UZ; i < 100UZ; ++i) {
+                last = gen.generateSample();
+            }
+            gen.configure(type, 5. * kF1, kFs, 0., 1., 0.);
+            const double next = gen.generateSample();
+            // the first sample after the change still advances by the old step, so the value moves by at most that step
+            const double bound = kTwoPi * kF1 / kFs + 1e-12;
+            expect(le(std::abs(next - last), bound)) << std::format("type={} last={} next={} bound={}", static_cast<int>(type), last, next, bound);
+        }
+    };
+
+    "a sample rate change mid-stream continues the phase"_test = [&] {
+        for (const ToneType type : kAllTypes) {
+            ToneGenerator<double> gen;
+            gen.configure(type, kF1, kFs, kPhase, 1., 0.);
+            walk(gen, kRuns[0]);
+            gen.configure(type, kF1, 2. * kFs, kPhase, 1., 0.);
+
+            const double          reached = kPhase + kTwoPi * kF1 * static_cast<double>(kRuns[0]) / kFs;
+            ToneGenerator<double> ref;
+            ref.configure(type, kF1, 2. * kFs, reached, 1., 0.);
+            const double worst = worstDeparture(gen, ref);
+            expect(lt(worst, kTolerance)) << std::format("type={} worst departure {:.3e}", static_cast<int>(type), worst);
+        }
+    };
+
+    "a change of amplitude, offset or type leaves the phase where it was"_test = [&] {
+        for (const ToneType type : kAllTypes) {
+            for (const std::size_t run : kRuns) {
+                ToneGenerator<double> gen;
+                gen.configure(type, kF1, kFs, kPhase, 1., 0.);
+                walk(gen, run);
+                gen.configure(type, kF1, kFs, kPhase, 2.5, -0.5);
+
+                ToneGenerator<double> ref;
+                ref.configure(type, kF1, kFs, kPhase, 2.5, -0.5);
+                walk(ref, run);
+                const double worst = worstDeparture(gen, ref);
+                expect(lt(worst, kTolerance)) << std::format("type={} run={} worst departure {:.3e}", static_cast<int>(type), run, worst);
+            }
+        }
+
+        // a change from one waveform to another reads the same phase, whichever of the two is the phasor
+        const std::array<std::array<ToneType, 2>, 3> changes{{{ToneType::FastSin, ToneType::Sin}, {ToneType::Sin, ToneType::FastSin}, {ToneType::Square, ToneType::FastCos}}};
+        for (const auto& [from, to] : changes) {
+            ToneGenerator<double> gen;
+            gen.configure(from, kF1, kFs, kPhase, 1., 0.);
+            walk(gen, kRuns[1]);
+            gen.configure(to, kF1, kFs, kPhase, 1., 0.);
+            ToneGenerator<double> ref;
+            ref.configure(to, kF1, kFs, kPhase, 1., 0.);
+            walk(ref, kRuns[1]);
+            const double worst = worstDeparture(gen, ref);
+            expect(lt(worst, kTolerance)) << std::format("from type {} to type {}, worst departure {:.3e}", static_cast<int>(from), static_cast<int>(to), worst);
+        }
+    };
+
+    "a frequency change at a sample count past 2^63 continues the phase"_test = [&] {
+        for (const ToneType type : kAllTypes) {
+            ToneGenerator<double> gen;
+            gen.configure(type, kF1, kFs, kPhase, 1., 0.);
+            gen._sampleIndex = (1ULL << 63) + 5ULL;
+            // configure() with the same settings re-seeds the phasor at the written count and leaves the Q64 phase where it is
+            gen.configure(type, kF1, kFs, kPhase, 1., 0.);
+
+            // the phase of the next sample, in radians, read from the Q64 state the way the generator forms it
+            const std::uint64_t reachedQ64 = gen._originQ64 + gen._stepQ64 * gen._sampleIndex;
+            const double        reached    = kTwoPi * static_cast<double>(static_cast<std::int64_t>(reachedQ64)) * 0x1p-64;
+
+            gen.configure(type, kF2, kFs, kPhase, 1., 0.);
+            ToneGenerator<double> ref;
+            ref.configure(type, kF2, kFs, reached, 1., 0.);
+            const double worst = worstDeparture(gen, ref);
+            expect(lt(worst, kTolerance)) << std::format("type={} worst departure {:.3e}", static_cast<int>(type), worst);
+        }
+    };
+
+    "a phase change mid-stream shifts the tone by the difference"_test = [&] {
+        for (const ToneType type : kAllTypes) {
+            ToneGenerator<double> gen;
+            gen.configure(type, kF1, kFs, kPhase, 1., 0.);
+            walk(gen, kRuns[0]);
+            gen.configure(type, kF1, kFs, 1.1, 1., 0.);
+
+            ToneGenerator<double> ref;
+            ref.configure(type, kF1, kFs, 1.1, 1., 0.);
+            walk(ref, kRuns[0]);
+            const double worst = worstDeparture(gen, ref);
+            expect(lt(worst, kTolerance)) << std::format("type={} worst departure {:.3e}", static_cast<int>(type), worst);
+        }
+    };
+
+    "reset after a frequency change restarts at the new tone's start phase"_test = [&] {
+        for (const ToneType type : kAllTypes) {
+            ToneGenerator<double> gen;
+            gen.configure(type, kF1, kFs, kPhase, 1., 0.);
+            walk(gen, kRuns[1]);
+            gen.configure(type, kF2, kFs, kPhase, 1., 0.);
+            walk(gen, kRuns[0]);
+            gen.reset();
+
+            ToneGenerator<double> fresh;
+            fresh.configure(type, kF2, kFs, kPhase, 1., 0.);
+            const double worst = worstDeparture(gen, fresh);
+            expect(lt(worst, kTolerance)) << std::format("type={} worst departure {:.3e}", static_cast<int>(type), worst);
+        }
+    };
+
     // configure() and reset() are noexcept and seed a phasor that refuses an increment which is not finite, so
     // every argument that cannot name a tone has to be coerced where it arrives rather than thrown three frames
     // down. A sample rate of zero reaches this through a signal-generator block's own settings.
