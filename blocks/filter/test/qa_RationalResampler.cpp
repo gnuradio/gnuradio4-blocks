@@ -426,6 +426,26 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
         expect(that % (run(block, x) == std::vector<float>{0.25f, 0.5f, 0.0f, 0.0f}));
     };
 
+    "a refused ratio names itself and says what to do"_test = [] {
+        // 44.1 kHz to 2.4 MS/s reduces to 8000/147, whose filter exceeds the tap bound by a factor of four
+        constexpr gr::Size_t kInterpolation = 2400000U;
+        constexpr gr::Size_t kDecimation    = 44100U;
+        const gr::Size_t     g              = std::gcd(kInterpolation, kDecimation);
+        std::string          text;
+        try {
+            std::ignore = makeResampler<float>({{"interpolation", kInterpolation}, {"decimation", kDecimation}});
+        } catch (const std::exception& error) {
+            text = error.what();
+        }
+        std::string missing;
+        for (const std::string& wanted : {std::format("{}/{}", kInterpolation / g, kDecimation / g), std::format("set as {}/{}", kInterpolation, kDecimation), std::format("{} taps", gr::filter::kResamplerMaxTaps), std::string("Chain two RationalResamplers"), std::string("smaller terms")}) {
+            if (!text.contains(wanted)) {
+                missing += std::format(" '{}'", wanted);
+            }
+        }
+        expect(that % missing.empty()) << "the refusal does not contain" << missing << "in:" << text;
+    };
+
     "the group delay is stated in input samples"_test = [] {
         RationalResampler<float> block = makeResampler<float>({{"interpolation", 1U}, {"decimation", 4U}});
         expect(approx(block.groupDelaySamples(), 73.0, 1e-9)) << "147 designed taps at L = 1";

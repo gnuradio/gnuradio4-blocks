@@ -241,6 +241,14 @@ const boost::ut::suite<"polyphase resampler"> polyphaseResamplerTests = [] {
         expect(eq(designResampler(6UZ, 4UZ).designLength, designResampler(3UZ, 2UZ).designLength)) << "and the ratio is reduced before it is designed";
     };
 
+    "a ratio whose filter passes the tap cap is refused at the cap"_test = [] {
+        // 6/1 delivers first at 219 taps, the Kaiser estimate, which lies past this cap
+        constexpr std::size_t kCap   = 201UZ;
+        const ResamplerDesign design = designResampler(6UZ, 1UZ, 0.2, 60.0, 0.1, kCap);
+        expect(!design.ok);
+        expect(eq(static_cast<std::size_t>(design.designLength), kCap | 1UZ)) << "the first odd length past the cap";
+    };
+
     "a rate change of one is a pass-through, not a delta"_test = [] {
         const ResamplerDesign design = designResampler(1UZ, 1UZ);
         expect(eq(design.taps.size(), 1UZ));
