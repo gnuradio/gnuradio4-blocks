@@ -7,10 +7,13 @@
 #include <format>
 #include <limits>
 #include <numbers>
+#include <string>
+#include <string_view>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/Port.hpp>
+#include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/annotated.hpp>
 
 namespace gr::blocks::basic {
@@ -22,6 +25,36 @@ inline constexpr auto kSampleRatePositive = [](float rate) { return rate > 0.f; 
 
 /// @brief The validator of `tau`: true above 0.
 inline constexpr auto kTauPositive = [](double seconds) { return seconds > 0.0; };
+
+/// @brief Maps the estimate under @p key to the swapped signal `j*conj(x)`: a phase `p` to `pi/2 - p`, reduced to
+/// `[-pi, pi]`, and a frequency `f` to `-f`. Removes an estimate held as neither `float` nor `double`.
+inline void swapEstimate(property_map& map, std::string_view key, bool isPhase) {
+    const auto found = map.find(property_map::key_type{key});
+    if (found == map.end()) {
+        return;
+    }
+    if (const double* value = found->second.get_if<double>(); value != nullptr) {
+        found->second = isPhase ? std::remainder(std::numbers::pi / 2.0 - *value, 2.0 * std::numbers::pi) : -*value;
+    } else if (const float* single = found->second.get_if<float>(); single != nullptr) {
+        found->second = isPhase ? std::remainder(std::numbers::pi_v<float> / 2.f - *single, 2.f * std::numbers::pi_v<float>) : -*single;
+    } else {
+        map.erase(found);
+    }
+}
+
+/// @brief Maps `phase_est` and `freq_est` to the swapped signal, at the top level and inside `gr:trigger_meta_info`.
+inline void swapCarrierEstimates(property_map& map) {
+    swapEstimate(map, "phase_est", true);
+    swapEstimate(map, "freq_est", false);
+    for (auto& [key, value] : map) {
+        if (const property_map* meta = value.get_if<property_map>(); meta != nullptr && key == gr::tag::TRIGGER_META_INFO) {
+            property_map swapped = *meta;
+            swapEstimate(swapped, "phase_est", true);
+            swapEstimate(swapped, "freq_est", false);
+            value = pmt::Value(std::move(swapped));
+        }
+    }
+}
 
 } // namespace detail
 
@@ -37,8 +70,15 @@ The block follows a receiver whose hardware or driver exchanges I and Q. Such a 
 `-f`, with its sidebands inverted. The block puts the signal back. It takes complex samples and gives one out for each
 one in. Every tag passes through on its own sample.
 
-`enabled` turns the exchange on, from the next sample the block processes. Disabled, the default, the block passes every
-sample through unchanged. The exchange equals conjugation followed by a quarter turn, `swap(x) = j * conj(x)`.
+`enabled` turns the exchange on, from the next sample the block processes. A change of `enabled` that a tag past the
+first sample of a chunk brings applies from the next chunk on. The input's `min_samples` can keep a chunk from ending at
+such a tag. Disabled, the default, the block passes every sample through unchanged. The exchange equals conjugation
+followed by a quarter turn, `swap(x) = j * conj(x)`.
+
+The carrier estimates `phase_est` and `freq_est` describe the signal they arrive with. While the exchange is on, the
+block maps both to the exchanged signal, at a tag's top level and inside its `gr:trigger_meta_info`. A phase `p` leaves
+as `pi/2 - p`, reduced to `[-pi, pi]`, and a frequency `f` as `-f`, of the same type. An estimate that is neither a
+`float` nor a `double` is dropped.
 )"">;
 
     PortIn<T>  in;
@@ -49,6 +89,48 @@ sample through unchanged. The exchange equals conjugation followed by a quarter 
     GR_MAKE_REFLECTABLE(IqSwap, in, out, enabled);
 
     [[nodiscard]] constexpr T processOne(T sample) const noexcept { return enabled ? T(sample.imag(), sample.real()) : sample; }
+
+    /// Forwards every key of every tag, with the carrier estimates mapped while `enabled` is on. A call over samples
+    /// forwards each tag of its chunk at the sample it arrived on and skips the tags behind the read position, which
+    /// an earlier call forwarded. The call at the end of the stream forwards the tags at or past the read position at
+    /// the end-of-stream index, less their `gr:end_of_stream` key.
+    template<typename TInputSpans, typename TOutputSpans>
+    void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
+        const bool atEnd   = processedIn == 0UZ;
+        const auto forward = [this, atEnd, &outputSpans](const property_map& map, std::size_t offset) {
+            property_map forwarded = map;
+            if (atEnd) {
+                forwarded.erase(static_cast<std::pmr::string>(gr::tag::END_OF_STREAM));
+            }
+            if (enabled) {
+                detail::swapCarrierEstimates(forwarded);
+            }
+            if (forwarded.empty()) {
+                return;
+            }
+            gr::for_each_writer_span([&forwarded, offset](auto& outSpan) { outSpan.publishTag(forwarded, offset); }, outputSpans);
+        };
+        gr::for_each_reader_span(
+            [atEnd, &forward](auto& inSpan) {
+                if (!inSpan.isSync || !inSpan.isConnected) {
+                    return;
+                }
+                if (atEnd) {
+                    for (const auto& [relIndex, tagMapRef] : inSpan.tags()) {
+                        if (relIndex >= 0) {
+                            forward(tagMapRef.get(), 0UZ);
+                        }
+                    }
+                    return;
+                }
+                for (const auto& [relIndex, tagMapRef] : inSpan.tags(inSpan.size())) {
+                    if (relIndex >= 0) {
+                        forward(tagMapRef.get(), static_cast<std::size_t>(relIndex));
+                    }
+                }
+            },
+            inputSpans);
+    }
 };
 
 GR_REGISTER_BLOCK(gr::blocks::basic::DcOffsetCorrect, [T], [ std::complex<float>, float ])
