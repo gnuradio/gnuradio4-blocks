@@ -527,21 +527,77 @@ struct BandLevels {
 /**
  * @brief The shortest odd length that @p delivers accepts, searched from @p start.
  *
- * The length walks up two taps at a time until @p delivers accepts it or it reaches @p maxTaps, and
- * then walks down while the next shorter length is still accepted, never below five. @p start is
- * made odd first. The result is the first odd length at or past @p maxTaps when no shorter length is
- * accepted.
+ * The candidates are the odd lengths from `min(start, 5)` to the last one below @p maxTaps. The
+ * search tries @p start first, made odd and held below @p maxTaps. From an accepted start it steps
+ * down in strides that double until a length is rejected. From a rejected start it steps up one
+ * length at a time for 32 lengths, then in strides that double, until a length is accepted. It then
+ * halves the gap between the last rejected length and the shortest accepted one until the two are
+ * adjacent. Beyond the single steps, the number of lengths tried grows with the logarithm of the
+ * distance from @p start to the result. The result is the first odd length at or past @p maxTaps
+ * when the last candidate is rejected.
+ *
+ * Acceptance is not monotone in length near the shortest accepted length. A lowpass with edges at
+ * 1/15 and 1/12 cycle per sample, 60 dB and 0.1 dB, read with the exact edge scan, is accepted at
+ * 219 and 221 taps, rejected from 223 to 229, and accepted again from 231. At cutoff 0.25,
+ * Kaiser's estimate falls short by up to 54 taps, inside the 64 taps the single steps cover.
+ * Narrower transitions at higher attenuation fall further short: 72 taps for a 1/100 resampler
+ * prototype at 80 dB. From a rejected start within 64 taps below an accepted length, the result is
+ * the first accepted length. Past the single steps, and from an accepted start, the result is an
+ * accepted length whose next shorter length is rejected, and a shorter accepted length may exist.
+ * A rejected last candidate also hides any accepted length below it.
  */
 template<typename Delivers>
 [[nodiscard]] std::size_t shortestOddLength(std::size_t start, std::size_t maxTaps, Delivers&& delivers) {
-    std::size_t use = start | 1UZ;
-    while (use < maxTaps && !delivers(use)) {
-        use += 2UZ;
+    const std::size_t past   = maxTaps | 1UZ;
+    const std::size_t first  = start | 1UZ;
+    const std::size_t lowest = std::min(first, 5UZ);
+    if (maxTaps < 2UZ || past - 2UZ < lowest) {
+        return past;
     }
-    while (use > 5UZ && delivers(use - 2UZ)) {
-        use -= 2UZ;
+    const std::size_t top = past - 2UZ;
+
+    std::size_t rejected = 0UZ;
+    std::size_t accepted = std::min(first, top);
+    if (delivers(accepted)) {
+        for (std::size_t stride = 2UZ; accepted != lowest; stride *= 2UZ) {
+            const std::size_t next = accepted - lowest > stride ? accepted - stride : lowest;
+            if (!delivers(next)) {
+                rejected = next;
+                break;
+            }
+            accepted = next;
+        }
+        if (accepted == lowest) {
+            return accepted;
+        }
+    } else {
+        constexpr std::size_t kSingleSteps = 32UZ;
+        rejected                           = accepted;
+        for (std::size_t step = 1UZ, stride = 2UZ;; ++step) {
+            if (rejected == top) {
+                return past;
+            }
+            const std::size_t next = top - rejected > stride ? rejected + stride : top;
+            if (delivers(next)) {
+                accepted = next;
+                break;
+            }
+            rejected = next;
+            if (step >= kSingleSteps) {
+                stride *= 2UZ;
+            }
+        }
     }
-    return use;
+
+    while (accepted - rejected > 2UZ) {
+        const std::size_t middle = rejected + (accepted - rejected) / 4UZ * 2UZ;
+        if (delivers(middle)) {
+            accepted = middle;
+        } else {
+            rejected = middle;
+        }
+    }
+    return accepted;
 }
 
 /// @brief The shortest odd length whose measured response meets the target, and what it delivers.
@@ -559,9 +615,8 @@ struct LowpassSearch {
  * stated edge at its stated level.
  *
  * Kaiser's estimate marks where a design first touches its target rather than where it clears it,
- * and for wide transitions it is several taps out in either direction, so the length is walked up
- * until a scan says it delivers and then back down while it still does. Stepping two at a time
- * keeps the length odd, which keeps the group delay a whole sample.
+ * and for wide transitions it is several taps out in either direction. `shortestOddLength` searches
+ * from it in either direction. The length stays odd, which keeps the group delay a whole sample.
  *
  * The cost is a response scan per candidate, and a scan is proportional to the length times the
  * grid.

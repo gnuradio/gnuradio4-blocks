@@ -2,12 +2,16 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <complex>
+#include <format>
 #include <limits>
 #include <numbers>
 #include <numeric>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -171,9 +175,97 @@ const boost::ut::suite<"FIR lowpass design"> filterDesignTests = [] {
         expect(eq(shortestOddLength(99UZ, 501UZ, [](std::size_t) { return true; }), 5UZ)) << "the walk down stops at five";
         expect(eq(shortestOddLength(11UZ, 20UZ, [](std::size_t) { return false; }), 21UZ)) << "with nothing accepted, the first odd length past the limit";
 
-        calls       = 0UZ;
-        std::ignore = shortestOddLength(61UZ, 501UZ, accepts);
-        expect(eq(calls, (61UZ - kShortest) / 2UZ + 2UZ)) << "one call at the start, one per step down, and the refused step";
+        calls = 0UZ;
+        expect(eq(shortestOddLength(1001UZ, 501UZ, accepts), kShortest)) << "a start past the limit searches below it";
+        const auto acceptsLong = [&calls](std::size_t n) {
+            ++calls;
+            return n >= 601UZ;
+        };
+        calls = 0UZ;
+        expect(eq(shortestOddLength(1001UZ, 501UZ, acceptsLong), 501UZ)) << "a length past the limit is never tried";
+        expect(eq(calls, 1UZ)) << "only the last length below the limit is tried";
+    };
+
+    "shortestOddLength is the linear search where acceptance is monotone"_test = [] {
+        // The reference tries every odd length from min(start, 5) up, the definition the search keeps.
+        const auto reference = [](std::size_t start, std::size_t maxTaps, std::size_t shortest) {
+            for (std::size_t n = std::min(start | 1UZ, 5UZ); n < maxTaps; n += 2UZ) {
+                if (n >= shortest) {
+                    return n;
+                }
+            }
+            return maxTaps | 1UZ;
+        };
+        std::size_t mismatches = 0UZ;
+        std::string first;
+        for (const std::size_t maxTaps : {2UZ, 3UZ, 20UZ, 21UZ, 501UZ}) {
+            for (std::size_t shortest = 1UZ; shortest <= 601UZ; shortest += 6UZ) {
+                for (std::size_t start = 0UZ; start <= 700UZ; start += 7UZ) {
+                    const auto        accepts = [shortest](std::size_t n) { return n >= shortest; };
+                    const std::size_t found   = shortestOddLength(start, maxTaps, accepts);
+                    const std::size_t want    = reference(start, maxTaps, shortest);
+                    if (found != want && mismatches++ == 0UZ) {
+                        first = std::format("start {} limit {} shortest {}: {} against {}", start, maxTaps, shortest, found, want);
+                    }
+                }
+            }
+        }
+        expect(eq(mismatches, 0UZ)) << first;
+    };
+
+    "shortestOddLength tries a number of lengths that grows with the logarithm of the distance"_test = [] {
+        constexpr std::size_t kMaxTaps = 1UZ << 20;
+        std::size_t           calls    = 0UZ;
+        const auto            accepts  = [&calls](std::size_t shortest) {
+            return [&calls, shortest](std::size_t n) {
+                ++calls;
+                return n >= shortest;
+            };
+        };
+        std::size_t misses = 0UZ;
+        std::string first;
+        const auto  tally = [&misses, &first](std::string_view what, std::size_t found, std::size_t want, std::size_t tried, std::size_t bound) {
+            if ((found != want || tried > bound) && misses++ == 0UZ) {
+                first = std::format("{}: found {} against {}, tried {} against at most {}", what, found, want, tried, bound);
+            }
+        };
+        // a start below the result: 32 single steps, then a doubling stride and a halving gap of the same depth
+        for (const std::size_t shortest : {101UZ, 40001UZ, 900001UZ}) {
+            calls                   = 0UZ;
+            const std::size_t found = shortestOddLength(99UZ, kMaxTaps, accepts(shortest));
+            tally(std::format("up to {}", shortest), found, shortest, calls, 1UZ + 32UZ + 2UZ * static_cast<std::size_t>(std::bit_width((shortest - 99UZ) / 2UZ)));
+        }
+        // a start above the result: a doubling stride down and a halving gap
+        for (const std::size_t start : {101UZ, 40001UZ, 900001UZ}) {
+            calls                   = 0UZ;
+            const std::size_t found = shortestOddLength(start, kMaxTaps, accepts(41UZ));
+            tally(std::format("down from {}", start), found, 41UZ, calls, 1UZ + 2UZ * static_cast<std::size_t>(std::bit_width((start - 41UZ) / 2UZ)));
+        }
+        const auto rejectsAll = [&calls](std::size_t) {
+            ++calls;
+            return false;
+        };
+        calls                   = 0UZ;
+        const std::size_t found = shortestOddLength(99UZ, kMaxTaps, rejectsAll);
+        tally("nothing accepted", found, kMaxTaps | 1UZ, calls, 1UZ + 32UZ + static_cast<std::size_t>(std::bit_width(kMaxTaps / 2UZ)));
+        expect(eq(misses, 0UZ)) << first;
+    };
+
+    "shortestOddLength returns an accepted length whose next shorter one is rejected where acceptance is not monotone"_test = [] {
+        // the pattern of the 6/1 resampler prototype: 219 and 221 accepted, 223 to 229 rejected, 231 on accepted
+        const auto  accepts     = [](std::size_t n) { return n == 219UZ || n == 221UZ || n >= 231UZ; };
+        std::size_t notBoundary = 0UZ;
+        for (std::size_t start = 150UZ; start <= 400UZ; ++start) {
+            const std::size_t found = shortestOddLength(start, 501UZ, accepts);
+            notBoundary += accepts(found) && !accepts(found - 2UZ) ? 0UZ : 1UZ;
+        }
+        expect(eq(notBoundary, 0UZ)) << "starts whose result is not an accepted length after a rejected one";
+
+        std::size_t notFirst = 0UZ;
+        for (std::size_t start = 155UZ; start <= 219UZ; ++start) {
+            notFirst += shortestOddLength(start, 501UZ, accepts) == 219UZ ? 0UZ : 1UZ;
+        }
+        expect(eq(notFirst, 0UZ)) << "starts within 64 taps below 219 that miss the first accepted length past them";
     };
 
     "searchLowpass is shortestOddLength over the grid reading"_test = [] {

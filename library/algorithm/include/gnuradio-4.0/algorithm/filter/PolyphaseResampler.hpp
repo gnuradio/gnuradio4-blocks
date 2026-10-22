@@ -94,6 +94,9 @@
  */
 namespace gr::filter {
 
+/// @brief The longest prototype `designResampler` tries by default, in taps.
+inline constexpr std::size_t kResamplerMaxTaps = 1UZ << 16;
+
 /// @brief The sample types a polyphase branch's dot product is written for.
 template<typename T>
 concept PolyphaseSample = std::is_same_v<T, float> || std::is_same_v<T, double> || std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>;
@@ -264,7 +267,7 @@ struct PolyphaseDesignKey {
  * grid alone; neither is right here. The cutoff has to be settable because a halving stage's cutoff
  * must be exactly `0.25` for its even-offset taps to vanish, and the reading has to be
  * `polyphaseEdgeScan`'s because a narrow transition's stopband peak sits at the stop edge, between
- * grid points, where a grid-only reading flatters the design and lets the walk-down run past the
+ * grid points, where a grid-only reading flatters the design and lets the search stop below the
  * shortest length that truly delivers. Measured on the single-stage decimators below: 3431 taps at
  * `D = 64` against the grid-only reading's 3393, and 6859 against 6779 at `D = 128`.
  */
@@ -303,11 +306,12 @@ struct PolyphaseDesignKey {
  * The length is searched rather than estimated. `fir::design::kaiserLength` gives the length where a
  * design first touches its target rather than where it clears it, up to 1.8 dB short, and the
  * search costs a response scan per candidate, which is a settings-time cost and never a per-sample
- * one. At `147/160` that is a few seconds over ~5800-tap candidates, so the result is memoized by
- * `(l, m, rolloff, attenuationDb, maxRippleDb, maxTaps)`; the first design of a ratio still pays. The
- * memo holds the last eight designs and drops the oldest, so a stream sweeping its rate cannot grow it.
+ * one. At `147/160` the search designs six candidates of about 5800 taps. The result is
+ * memoized by `(l, m, rolloff, attenuationDb, maxRippleDb, maxTaps)`; the first design of a ratio still
+ * pays. The memo holds the last eight designs and drops the oldest, so a stream sweeping its rate cannot
+ * grow it.
  */
-[[nodiscard]] inline ResamplerDesign designResampler(std::size_t interpolation, std::size_t decimation, double rolloff = 0.2, double attenuationDb = 60.0, double maxRippleDb = 0.1, std::size_t maxTaps = 1UZ << 16) {
+[[nodiscard]] inline ResamplerDesign designResampler(std::size_t interpolation, std::size_t decimation, double rolloff = 0.2, double attenuationDb = 60.0, double maxRippleDb = 0.1, std::size_t maxTaps = kResamplerMaxTaps) {
     if (interpolation == 0UZ || decimation == 0UZ) {
         throw std::invalid_argument("designResampler: interpolation and decimation must both be at least one");
     }

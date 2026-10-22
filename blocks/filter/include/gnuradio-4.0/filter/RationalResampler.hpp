@@ -9,6 +9,7 @@
 #include <numeric>
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -113,7 +114,12 @@ lies past the stream's last output leaves at the end-of-stream index, one past t
             m /= g;
             const gr::filter::ResamplerDesign design = gr::filter::designResampler(static_cast<std::size_t>(l), static_cast<std::size_t>(m), static_cast<double>(rolloff.value), static_cast<double>(attenuation_db.value), static_cast<double>(max_ripple_db.value));
             if (!design.ok) {
-                throw gr::exception(std::format("no filter under the tap cap meets {} dB stopband and {} dB ripple for {}/{}", attenuation_db.value, max_ripple_db.value, l, m));
+                const std::uint64_t larger   = std::max(l, m);
+                const std::size_t   estimate = gr::filter::fir::design::kaiserLength(static_cast<double>(attenuation_db.value), static_cast<double>(rolloff.value) * 0.5 / static_cast<double>(larger));
+                const std::string   setAs    = g > 1ULL ? std::format(", set as {}/{}", interpolation.value, decimation.value) : std::string{};
+                throw gr::exception(std::format("no filter of at most {} taps meets {} dB stopband and {} dB ripple at the ratio {}/{}{}. The filter length grows with the larger term, {}, and Kaiser's estimate for this ratio is {} taps. "
+                                                "Chain two RationalResamplers whose ratios multiply to {}/{}, choose rates whose ratio has smaller terms, or relax attenuation_db and max_ripple_db.",
+                    gr::filter::kResamplerMaxTaps, attenuation_db.value, max_ripple_db.value, l, m, setAs, larger, estimate, l, m));
             }
             prototype = design.taps;
         }
