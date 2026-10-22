@@ -1128,4 +1128,86 @@ const boost::ut::suite DataSinkTests = [] {
     };
 };
 
+const boost::ut::suite<"DataSink registry entries"> DataSinkRegistryEntryTests = [] {
+    using namespace boost::ut;
+    using namespace gr;
+    using namespace gr::blocks::basic;
+    using namespace std::string_literals;
+
+    "a DataSink stopped by a run frees its signal name for the next graph"_test = [] {
+        std::optional<Scheduler> sched{std::in_place};
+        {
+            gr::Graph graph;
+            auto&     source = graph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", gr::Size_t{1024}}, {"mark_tag", false}});
+            auto&     first  = graph.emplaceBlock<DataSink<float>>({{"name", "run_sink"}, {"signal_name", "run signal"}});
+            expect(first._registered) << "the first sink registers when its settings apply" << fatal;
+            expect(graph.connect<"out", "in">(source, first).has_value()) << fatal;
+            expect(sched->exchange(std::move(graph)).has_value()) << fatal;
+        }
+        expect(sched->runAndWait().has_value()) << fatal;
+        expect(eq(globalDataSinkRegistry().getStreamingPoller<float>(DataSinkQuery::signalName("run signal")), nullptr)) << "the stopped sink is not found";
+
+        gr::Graph reloaded;
+        auto&     second = reloaded.emplaceBlock<DataSink<float>>({{"name", "reloaded_sink"}, {"signal_name", "run signal"}});
+        expect(second._registered) << "the second sink takes the name" << fatal;
+
+        sched.reset(); // destroys the stopped sink
+        expect(second._registered) << "the stopped sink's destruction keeps the second sink registered";
+        expect(globalDataSinkRegistry().getStreamingPoller<float>(DataSinkQuery::signalName("run signal")) != nullptr) << "the second sink is found";
+    };
+
+    "a DataSink destroyed without a run frees its signal name"_test = [] {
+        {
+            gr::Graph graph;
+            auto&     first = graph.emplaceBlock<DataSink<float>>({{"name", "unrun_sink"}, {"signal_name", "unrun signal"}});
+            expect(first._registered) << "the first sink registers when its settings apply" << fatal;
+        }
+        gr::Graph graph;
+        auto&     second = graph.emplaceBlock<DataSink<float>>({{"name", "unrun_sink_again"}, {"signal_name", "unrun signal"}});
+        expect(second._registered) << "the second sink takes the name" << fatal;
+        expect(globalDataSinkRegistry().getStreamingPoller<float>(DataSinkQuery::signalName("unrun signal")) != nullptr) << "the second sink is found";
+    };
+
+    "a DataSetSink destroyed without a run frees its signal name"_test = [] {
+        {
+            gr::Graph graph;
+            auto&     first = graph.emplaceBlock<DataSetSink<float>>({{"name", "unrun_data_set_sink"}, {"signal_name", "unrun data set"}});
+            expect(first._registered) << "the first sink registers when its settings apply" << fatal;
+        }
+        gr::Graph graph;
+        auto&     second = graph.emplaceBlock<DataSetSink<float>>({{"name", "unrun_data_set_sink_again"}, {"signal_name", "unrun data set"}});
+        expect(second._registered) << "the second sink takes the name" << fatal;
+        expect(globalDataSinkRegistry().getDataSetPoller<float>(DataSinkQuery::signalName("unrun data set")) != nullptr) << "the second sink is found";
+    };
+
+    "a DataSink refused a new signal name and destroyed frees the name it held"_test = [] {
+        {
+            gr::Graph graph;
+            auto&     owner   = graph.emplaceBlock<DataSink<float>>({{"name", "owner_sink"}, {"signal_name", "owned signal"}});
+            auto&     renamed = graph.emplaceBlock<DataSink<float>>({{"name", "renamed_sink"}, {"signal_name", "held signal"}});
+            expect(owner._registered && renamed._registered) << "both sinks register when their settings apply" << fatal;
+
+            // The registry refuses the taken name. The sink's entry stays under the held name, and its signal_name reads the
+            // refused one.
+            expect(renamed.settings().setStaged({{"signal_name", "owned signal"s}}).empty());
+            const bool refused = [&renamed] {
+                try {
+                    std::ignore = renamed.settings().applyStagedParameters();
+                } catch (...) {
+                    return true;
+                }
+                return false;
+            }();
+            expect(refused) << "the registry refuses the taken name" << fatal;
+            expect(eq(renamed.signal_name.value, "owned signal"s)) << "signal_name reads the refused name while the entry stays under the held name";
+        }
+        gr::Graph graph;
+        auto&     heldAgain  = graph.emplaceBlock<DataSink<float>>({{"name", "held_sink_again"}, {"signal_name", "held signal"}});
+        auto&     ownedAgain = graph.emplaceBlock<DataSink<float>>({{"name", "owned_sink_again"}, {"signal_name", "owned signal"}});
+        expect(ownedAgain._registered) << "the owner's name is free";
+        expect(heldAgain._registered) << "the name the refused sink held is free" << fatal;
+        expect(globalDataSinkRegistry().getStreamingPoller<float>(DataSinkQuery::signalName("held signal")) != nullptr) << "the new sink is found under the held name";
+    };
+};
+
 int main() { /* tests are statically executed */ }
