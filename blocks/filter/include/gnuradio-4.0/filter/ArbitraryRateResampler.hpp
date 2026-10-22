@@ -257,10 +257,10 @@ private:
         return _outOrigin + gr::filter::mapArbitraryOffset(at - _inOrigin, _bankSize, _stepOrigin, delayed);
     }
 
-    /// @brief The `min(1, r)` the prototype has to cover: the stated floor where there is one, and the current rate otherwise.
+    /// @brief The `min(1, r)` the prototype has to cover: the smaller of the current rate and the stated floor, where there is one.
     [[nodiscard]] double designTarget() const noexcept {
-        const double floorRate = min_rate > 0.0 ? std::min(1.0, static_cast<double>(min_rate)) : 1.0;
-        return std::min(floorRate, std::min(1.0, static_cast<double>(rate)));
+        const double floorRate = min_rate > 0.0 ? static_cast<double>(min_rate) : 1.0;
+        return std::min({1.0, floorRate, static_cast<double>(rate)}); // AppleClang 21 reports nested two-argument std::min calls here as returning the address of a temporary
     }
 
     /**
