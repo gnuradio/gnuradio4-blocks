@@ -14,7 +14,9 @@
 #include <span>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include <gnuradio-4.0/BlockRegistry.hpp>
@@ -23,6 +25,8 @@
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/Tag.hpp>
 
+#include <gnuradio-4.0/GrBasicBlocks.hpp>
+#include <gnuradio-4.0/GrNetworkBlocks.hpp>
 #include <gnuradio-4.0/basic/DataSink.hpp>
 
 // The module's example graphs, run as what they describe: two halves of one flowgraph, in two schedulers, talking
@@ -32,6 +36,9 @@
 // The endpoint in the files is a fixed ipc:// path, because a file a person reads has to name a real endpoint. The
 // test rewrites it to a path unique to this process before loading, since two ctest runs sharing one socket file
 // would be a hazard that has nothing to do with what is under test.
+//
+// The graphs name their blocks by id. The test calls the init function of the basic and network families, so the
+// binary needs both libraries and a linker that drops unused libraries keeps them.
 
 namespace {
 
@@ -98,6 +105,15 @@ struct Runner {
 const boost::ut::suite<"stream link example graphs"> streamLinkExampleTests = [] {
     using namespace boost::ut;
     using namespace gr::blocks::basic;
+
+    "the families the example graphs name are registered"_test = [] {
+        auto& registry = gr::globalBlockRegistry();
+        std::ignore    = gr::blocklib::initGrBasicBlocks(registry);
+        std::ignore    = gr::blocklib::initGrNetworkBlocks(registry);
+        for (const std::string_view id : {"gr::blocks::network::StreamPacketSource<complex<float32>>", "gr::blocks::network::StreamPacketSink<complex<float32>>", "gr::blocks::network::MessagePacketSource", "gr::blocks::network::MessagePacketSink", "gr::blocks::basic::Abs<complex<float32>>", "gr::blocks::basic::DataSink<float32>", "gr::blocks::basic::SignalGenerator<complex<float32>>"}) {
+            expect(registry.contains(id)) << id;
+        }
+    };
 
     // Both halves carry the message pair beside the stream pair, so this also gates the case a unit test cannot
     // reach: two blocks whose only ports are the framework's message ports, inside a running graph.

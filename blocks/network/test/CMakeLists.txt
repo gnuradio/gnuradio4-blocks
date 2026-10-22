@@ -26,8 +26,8 @@ if(GR4_NETWORK_HAVE_LIBZMQ)
   target_link_libraries(qa_MessagePacketIO PRIVATE gr-network gr-testing)
   set_tests_properties(qa_MessagePacketIO PROPERTIES TIMEOUT 120)
 
-  # the example graphs are loaded by id through the global registry, so the shared library of every family they name has
-  # to be loaded for those ids to resolve
+  # the example graphs are loaded by id through the global registry. The test calls the init function of every family
+  # they name, which takes a symbol from each shared library, so a linker that drops unused libraries keeps them
   add_ut_test(qa_StreamPacketGraphs)
   target_link_libraries(
     qa_StreamPacketGraphs
