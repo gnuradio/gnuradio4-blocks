@@ -91,10 +91,14 @@ template<std::floating_point F>
  * N, the Nyquist bin. An odd N has no Nyquist bin. The fold is applied in power. A one-sided density then integrates
  * to the same total as the two-sided density.
  *
- * The function adds to `out` and does not clear it. A caller averages segments by accumulating into one buffer.
+ * The function adds to `out` and does not clear it. A caller averages segments by accumulating into one buffer. An
+ * empty spectrum leaves `out` unchanged.
  */
 template<std::floating_point F>
 constexpr void accumulatePowerSpectrum(std::span<const std::complex<F>> spectrum, F scale, bool oneSided, std::span<F> out) noexcept {
+    if (spectrum.empty()) {
+        return;
+    }
     const std::size_t n       = spectrum.size();
     const std::size_t bins    = std::min(out.size(), oneSided ? n / 2UZ + 1UZ : n);
     const std::size_t nyquist = n % 2UZ == 0UZ ? n / 2UZ : n;
