@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <complex>
+#include <concepts>
 #include <cstdint>
 #include <numbers>
 #include <type_traits>
@@ -22,6 +23,44 @@ template<typename R, typename U>
         return value;
     } else {
         return static_cast<R>(value);
+    }
+}
+
+/// the unsigned type that holds an integer `T` modulo 2^N, at least as wide as `unsigned int`; a narrower unsigned
+/// type would promote to `int` and its products would overflow
+template<std::integral T>
+using wrap_t = decltype(std::make_unsigned_t<T>{} + 0U);
+
+/// a simd vector of integers
+template<typename V>
+concept integral_simd = meta::any_simd<V> && std::integral<typename V::value_type>;
+
+/// `-x`; an integer result is taken modulo 2^N
+template<typename V>
+[[nodiscard]] constexpr V negate(const V& x) noexcept {
+    if constexpr (integral_simd<V>) {
+        using U = vir::stdx::rebind_simd_t<wrap_t<typename V::value_type>, V>;
+        return vir::stdx::static_simd_cast<V>(U(0) - vir::stdx::static_simd_cast<U>(x));
+    } else if constexpr (std::is_integral_v<V>) {
+        using U = wrap_t<V>;
+        return static_cast<V>(U{0} - static_cast<U>(x));
+    } else {
+        return -x;
+    }
+}
+
+/// `y * scale + offset`; an integer result is taken modulo 2^N
+template<typename V, typename S>
+[[nodiscard]] constexpr V affine(const V& y, const S& scale, const S& offset) noexcept {
+    if constexpr (integral_simd<V>) {
+        using E = wrap_t<typename V::value_type>;
+        using U = vir::stdx::rebind_simd_t<E, V>;
+        return vir::stdx::static_simd_cast<V>(vir::stdx::static_simd_cast<U>(y) * U(static_cast<E>(scale)) + U(static_cast<E>(offset)));
+    } else if constexpr (std::is_integral_v<V>) {
+        using U = wrap_t<V>;
+        return static_cast<V>(static_cast<U>(y) * static_cast<U>(scale) + static_cast<U>(offset));
+    } else {
+        return narrow<V>(y * scale + offset);
     }
 }
 
@@ -89,7 +128,7 @@ struct Negate {
     static constexpr bool kSimd = true;
     template<typename V, typename B>
     [[nodiscard]] static constexpr V apply(const V& x, const B& /*block*/) noexcept {
-        return narrow<V>(-x);
+        return negate(x);
     }
 };
 
@@ -103,11 +142,17 @@ struct Abs {
         if constexpr (meta::any_simd<V>) {
             if constexpr (std::is_unsigned_v<typename V::value_type>) {
                 return x;
+            } else if constexpr (integral_simd<V>) {
+                V result                = x;
+                where(x < V(0), result) = negate(x);
+                return result;
             } else {
                 return vir::stdx::abs(x);
             }
         } else if constexpr (std::is_unsigned_v<V>) {
             return x;
+        } else if constexpr (std::is_integral_v<V>) {
+            return x < V{0} ? negate(x) : x;
         } else {
             return narrow<meta::fundamental_base_value_type_t<V>>(std::abs(x));
         }
@@ -444,8 +489,9 @@ struct Imag {
  * `in` has the type `T`. `out` has the result type of `op`, which is `T` or the real type of a complex `T`. The
  * block forwards every tag key, less the keys of `unary::DroppedKeys<op, R>`.
  *
- * `scale` and `offset` have the output type. At 1 and 0 the output is `op(in)` exactly. Integer results wrap in the
- * type: the lowest value of a signed type negates to itself.
+ * `scale` and `offset` have the output type. At 1 and 0 the output is `op(in)` exactly. Integer results of `Negate`,
+ * `Abs` and the scale and offset step wrap in the type: the lowest value of a signed type negates to itself. No
+ * other operation is registered for an integer type.
  */
 template<typename op, typename T>
 struct Unary : unary::ports_of<op, Unary<op, T>, T, typename op::template result<T>>::type {
@@ -469,7 +515,7 @@ struct Unary : unary::ports_of<op, Unary<op, T>, T, typename op::template result
     requires(kSimdPath)
     [[nodiscard]] constexpr V processOne(const V& x) const noexcept {
         const V y = op::apply(x, *this);
-        return _affine ? unary::narrow<V>(y * scale.value + offset.value) : y;
+        return _affine ? unary::affine(y, scale.value, offset.value) : y;
     }
 
     [[nodiscard]] constexpr R processOne(const T& x) const noexcept
@@ -484,7 +530,7 @@ struct Unary : unary::ports_of<op, Unary<op, T>, T, typename op::template result
             const R& s = scale.value;
             return R(y.real() * s.real() - y.imag() * s.imag(), y.real() * s.imag() + y.imag() * s.real()) + offset.value;
         } else {
-            return unary::narrow<R>(y * scale.value + offset.value);
+            return unary::affine(y, scale.value, offset.value);
         }
     }
 };
