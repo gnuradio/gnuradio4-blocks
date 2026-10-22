@@ -493,12 +493,11 @@ def copy_tree(paths, root):
 def changed_paths(args):
     if args.base:
         out = subprocess.run(
-            ["git", "diff", "--name-only", f"{args.base}...HEAD"],
+            ["git", "diff", "--name-only", "-z", f"{args.base}...HEAD"],
             capture_output=True,
-            text=True,
             check=True,
-        ).stdout
-        return out.splitlines()
+        ).stdout.decode("utf-8", errors="surrogateescape")
+        return [p for p in out.split("\0") if p]
     if args.paths_from:
         with open(args.paths_from) as f:
             return [line for line in f.read().splitlines() if line]
@@ -506,6 +505,9 @@ def changed_paths(args):
 
 
 def command_run(args):
+    # The formatters run in a temporary directory.
+    # A relative PATH entry names nothing there.
+    args.tools = os.path.abspath(args.tools)
     venv_python = os.path.join(args.tools, "venv", "bin", "python")
     if os.path.realpath(sys.prefix) != os.path.realpath(
         os.path.join(args.tools, "venv")
@@ -639,6 +641,9 @@ def main():
     )
     run.add_argument("paths", nargs="*")
     args = parser.parse_args()
+    # Git gives names as bytes. A name that is not UTF-8 prints as those bytes.
+    sys.stdout.reconfigure(errors="surrogateescape")
+    sys.stderr.reconfigure(errors="surrogateescape")
     if (
         args.command == "run"
         and sum(map(bool, [args.base, args.paths_from, args.paths])) != 1
