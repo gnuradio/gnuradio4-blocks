@@ -10,6 +10,8 @@ add_ut_test(qa_ExpressionBulk)
 target_link_libraries(qa_ExpressionBulk PRIVATE gr-math gr-testing)
 add_ut_test(qa_Rotator)
 target_link_libraries(qa_Rotator PRIVATE gr-math gr-testing)
+add_ut_test(qa_Unary)
+target_link_libraries(qa_Unary PRIVATE gr-math-headers)
 
 # one graph file per Unary alias, one for the forwarded tags, and three for an int16 scale, a complex scale and an
 # offset alone; each chain a VectorSource into the alias into an ExpectSink
