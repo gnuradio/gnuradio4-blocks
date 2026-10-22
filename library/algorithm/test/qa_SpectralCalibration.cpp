@@ -214,6 +214,20 @@ const boost::ut::suite<"SpectralCalibration"> calibrationTests = [] {
         }
     };
 
+    "an empty spectrum leaves the output unchanged, one-sided and two-sided"_test = [] {
+        // The empty view sits at the end of a filled buffer. A read of its first element reads past the buffer.
+        const std::vector<CF>     buffer(4UZ, CF(1.f, 1.f));
+        const std::span<const CF> empty(buffer.data() + buffer.size(), 0UZ);
+        const std::vector<float>  before = {1.f, 2.f, 3.f, 4.f};
+
+        std::vector<float> oneSided = before;
+        std::vector<float> twoSided = before;
+        accumulatePowerSpectrum(empty, 1.f, true, std::span<float>(oneSided));
+        accumulatePowerSpectrum(empty, 1.f, false, std::span<float>(twoSided));
+        expect(oneSided == before) << "a one-sided accumulation of an empty spectrum changed the output";
+        expect(twoSided == before) << "a two-sided accumulation of an empty spectrum changed the output";
+    };
+
     "a degenerate window gives a NaN scale and no division by zero"_test = [] {
         const std::vector<float> zeros(16UZ, 0.f);
         const auto               scale = spectralScale(std::span<const float>(zeros), kSampleRate);
