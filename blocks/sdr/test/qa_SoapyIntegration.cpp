@@ -7,10 +7,12 @@
 #include <complex>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <numbers>
 #include <numeric>
 #include <optional>
 #include <print>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -40,6 +42,30 @@ struct KeepFirstOfChunk : gr::Block<KeepFirstOfChunk, gr::Resampling<>> {
             output[i] = input[i * ratio];
         }
         return gr::work::Status::OK;
+    }
+};
+
+// Publishes `n_samples` clock samples, then ends its stream on the first call after `endWhen` returns true. The
+// end-of-stream tag follows the last sample on a call that publishes no samples.
+struct ClockEndingOnCue : gr::Block<ClockEndingOnCue> {
+    gr::PortOut<std::uint8_t> out;
+    gr::Size_t                n_samples = 100U;
+
+    GR_MAKE_REFLECTABLE(ClockEndingOnCue, out, n_samples);
+
+    std::function<bool()> endWhen;
+    gr::Size_t            _sent = 0U;
+
+    gr::work::Status processBulk(gr::OutputSpanLike auto& output) {
+        if (_sent < n_samples) {
+            const std::size_t n = std::min(output.size(), static_cast<std::size_t>(n_samples - _sent));
+            std::ranges::fill(std::span(output.data(), n), std::uint8_t{0});
+            output.publish(n);
+            _sent += static_cast<gr::Size_t>(n);
+            return gr::work::Status::OK;
+        }
+        output.publish(0UZ);
+        return endWhen && endWhen() ? gr::work::Status::DONE : gr::work::Status::INSUFFICIENT_INPUT_ITEMS;
     }
 };
 
@@ -469,7 +495,80 @@ const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
         auto ret = runWithWatchdog(sched, std::chrono::seconds{4}, &watchdogFired);
         expect(ret.has_value());
         expect(!watchdogFired.load(std::memory_order_acquire)) << "the clock's end of stream stops the source before the watchdog does";
-        expect(gt(sink._nSamplesProduced, gr::Size_t{0})) << "should have received samples before clk_in EoS";
+    };
+
+    "an end of stream alone on clk_in, after its last sample was read, stops SoapySource"_test = [] {
+        gr::Graph            flow;
+        constexpr gr::Size_t nClockSamples = 100;
+
+        auto& clock  = flow.emplaceBlock<ClockEndingOnCue>({{"n_samples", nClockSamples}});
+        auto& source = flow.emplaceBlock<SoapySource<CF32, 1UZ>>({
+            {"device", "loopback"},
+            {"device_parameter", std::string("device_mode=rx_only")},
+            {"sample_rate", 1e6f},
+            {"frequency", std::vector{100e3}},
+            {"rx_gains", std::vector{0.}},
+        });
+        auto& sink   = flow.emplaceBlock<TagSink<CF32, ProcessFunction::USE_PROCESS_BULK>>({
+            {"n_samples_expected", gr::Size_t{0}},
+            {"log_tags", false},
+            {"log_samples", false},
+        });
+
+        // The clock ends only after the source has read every clock sample. Its end-of-stream tag then arrives alone.
+        std::atomic<bool> endedAfterRead{false};
+        clock.endWhen = [&source, &endedAfterRead] {
+            const bool allRead = source.clk_in.streamReader().position() == static_cast<std::size_t>(nClockSamples);
+            endedAfterRead.store(allRead, std::memory_order_release);
+            return allRead;
+        };
+
+        expect(flow.connect<"out", "clk_in">(clock, source).has_value());
+        expect(flow.connect<"out", "in">(source, sink).has_value());
+
+        Sched             sched;
+        std::atomic<bool> watchdogFired{false};
+        expect(sched.exchange(std::move(flow)).has_value());
+        expect(runWithWatchdog(sched, std::chrono::seconds{4}, &watchdogFired).has_value());
+        expect(endedAfterRead.load(std::memory_order_acquire)) << "the clock ended after the source read its last sample";
+        expect(!watchdogFired.load(std::memory_order_acquire)) << "the end of stream on a call without clock samples stops the source before the watchdog does";
+    };
+
+    "an end of stream on clk_in stops SoapySource while every device read returns nothing"_test = [] {
+        gr::Graph            flow;
+        constexpr gr::Size_t nClockSamples = 100;
+
+        auto& clock = flow.emplaceBlock<ClockEndingOnCue>({{"n_samples", nClockSamples}});
+        // In loopback mode with nothing written, every read of the device times out.
+        auto& source = flow.emplaceBlock<SoapySource<CF32, 1UZ>>({
+            {"device", "loopback"},
+            {"sample_rate", 1e6f},
+            {"frequency", std::vector{100e3}},
+            {"rx_gains", std::vector{0.}},
+        });
+        auto& sink   = flow.emplaceBlock<TagSink<CF32, ProcessFunction::USE_PROCESS_BULK>>({
+            {"n_samples_expected", gr::Size_t{0}},
+            {"log_tags", false},
+            {"log_samples", false},
+        });
+
+        std::atomic<bool> endedAfterRead{false};
+        clock.endWhen = [&source, &endedAfterRead] {
+            const bool allRead = source.clk_in.streamReader().position() == static_cast<std::size_t>(nClockSamples);
+            endedAfterRead.store(allRead, std::memory_order_release);
+            return allRead;
+        };
+
+        expect(flow.connect<"out", "clk_in">(clock, source).has_value());
+        expect(flow.connect<"out", "in">(source, sink).has_value());
+
+        Sched             sched;
+        std::atomic<bool> watchdogFired{false};
+        expect(sched.exchange(std::move(flow)).has_value());
+        expect(runWithWatchdog(sched, std::chrono::seconds{4}, &watchdogFired).has_value());
+        expect(endedAfterRead.load(std::memory_order_acquire)) << "the source read the clock samples although no device read returned samples";
+        expect(!watchdogFired.load(std::memory_order_acquire)) << "the clock end of stream stops the source before the watchdog does";
+        expect(eq(sink._nSamplesProduced, gr::Size_t{0})) << "no device read returned samples";
     };
 
     "DC blocker removes DC offset from rxOnly tone"_test = [] {

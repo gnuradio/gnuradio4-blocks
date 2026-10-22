@@ -317,10 +317,12 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
                 const std::size_t nRead = readSize(max_chunk_size, capacity, outWriter.available(), mtu);
                 if (nRead == 0UZ) {
                     std::this_thread::sleep_for(std::chrono::microseconds(200));
+                    drainClockInput(clkReader, clkTagRdr);
                     continue;
                 }
                 auto span = outWriter.template tryReserve<SpanReleasePolicy::ProcessNone>(nRead);
                 if (span.empty()) {
+                    drainClockInput(clkReader, clkTagRdr);
                     continue;
                 }
 
@@ -329,15 +331,18 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
                 int       ret     = _rxStream.readStream(flags, time_ns, max_time_out_us, std::span<T>(span.data(), span.size()));
 
                 if (ret == SOAPY_SDR_TIMEOUT) {
+                    drainClockInput(clkReader, clkTagRdr);
                     continue;
                 }
                 if (ret < 0) {
                     if (!handleStreamError(ret)) {
                         break;
                     }
+                    drainClockInput(clkReader, clkTagRdr);
                     continue;
                 }
                 if (ret == 0) {
+                    drainClockInput(clkReader, clkTagRdr);
                     continue;
                 }
 
@@ -389,6 +394,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
                 const std::size_t nRead = readSize(max_chunk_size, capacity, room, mtu);
                 if (nRead == 0UZ) {
                     std::this_thread::sleep_for(std::chrono::microseconds(200));
+                    drainClockInput(clkReader, clkTagRdr);
                     continue;
                 }
 
@@ -399,6 +405,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
                     outSpans.push_back(w.get().template tryReserve<SpanReleasePolicy::ProcessNone>(nRead));
                 }
                 if (std::ranges::any_of(outSpans, [](const auto& s) { return s.empty(); })) {
+                    drainClockInput(clkReader, clkTagRdr);
                     continue;
                 }
 
@@ -407,15 +414,18 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
                 int       ret     = _rxStream.readStreamIntoBufferList(flags, time_ns, static_cast<long>(max_time_out_us.value), outSpans);
 
                 if (ret == SOAPY_SDR_TIMEOUT) {
+                    drainClockInput(clkReader, clkTagRdr);
                     continue;
                 }
                 if (ret < 0) {
                     if (!handleStreamError(ret)) {
                         break;
                     }
+                    drainClockInput(clkReader, clkTagRdr);
                     continue;
                 }
                 if (ret == 0) {
+                    drainClockInput(clkReader, clkTagRdr);
                     continue;
                 }
 
@@ -460,12 +470,12 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         gr::atomic_ref(_ioThreadDone).notify_all();
     }
 
+    /// Takes the clock input's tags and samples. A trigger time sets the offset of the clock from the wall clock, a
+    /// trigger name sets the name the timing tags carry, and an end-of-stream tag ends the read loop. The samples are
+    /// discarded. The read loop calls this on every pass, as the end-of-stream tag can arrive alone after the last
+    /// sample.
     void drainClockInput(auto& clkReader, auto& clkTagRdr) {
         if (!clk_in.isConnected()) {
-            return;
-        }
-        auto nAvailable = clkReader.available();
-        if (nAvailable == 0) {
             return;
         }
 
@@ -494,9 +504,11 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
             }
         }
 
-        std::ignore  = tagData.consume(nTagsConsumed);
-        auto clkSpan = clkReader.get(nAvailable);
-        std::ignore  = clkSpan.consume(nAvailable);
+        std::ignore = tagData.consume(nTagsConsumed);
+        if (const std::size_t nAvailable = clkReader.available(); nAvailable > 0UZ) {
+            auto clkSpan = clkReader.get(nAvailable);
+            std::ignore  = clkSpan.consume(nAvailable);
+        }
 
         if (_clockEosReceived) {
             _ioStopRequested.store(true, std::memory_order_release);
