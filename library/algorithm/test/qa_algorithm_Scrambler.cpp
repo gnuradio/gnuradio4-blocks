@@ -14,17 +14,14 @@
 #include <string_view>
 #include <vector>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
 #include <gnuradio-4.0/algorithm/digital/Scrambler.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 namespace {
 
 using gr::digital::applyProfile;
-using gr::digital::BitOrder;
-using gr::digital::BitRepack;
 using gr::digital::configureExplicit;
 using gr::digital::configureMonitor;
-using gr::digital::configureRepack;
 using gr::digital::configureScrambler;
 using gr::digital::degreeOf;
 using gr::digital::delayListFromTaps;
@@ -32,7 +29,6 @@ using gr::digital::kProfiles;
 using gr::digital::minDelayOf;
 using gr::digital::profileByName;
 using gr::digital::ProfileFamily;
-using gr::digital::repack;
 using gr::digital::resetScrambler;
 using gr::digital::scramble;
 using gr::digital::ScramblerConfig;
@@ -44,6 +40,10 @@ using gr::digital::SequenceSource;
 using gr::digital::tapCountOf;
 using gr::digital::TapMask;
 using gr::digital::tapsFromDelayList;
+using gr::math::BitOrder;
+using gr::math::BitRepack;
+using gr::math::configureRepack;
+using gr::math::repack;
 
 constexpr BitOrder kOrders[] = {BitOrder::MsbFirst, BitOrder::LsbFirst};
 
@@ -163,6 +163,75 @@ constexpr std::string_view kMultiplicative[] = {"18,23", "5,23", "14,17", "4,7",
         primes.push_back(value);
     }
     return primes;
+}
+
+/// The characteristic polynomial of the delays in @p taps, `x^n` plus `x^(n-d)` for each delay `d`, as a bit mask with
+/// bit `i` the coefficient of `x^i`. The sequence `s[k] = XOR of s[k-d]` has it as its recursion.
+[[nodiscard]] std::uint64_t characteristicOf(TapMask taps) {
+    const std::uint8_t degree = degreeOf(taps);
+    std::uint64_t      poly   = std::uint64_t{1} << degree;
+    for (std::uint8_t delay = 1U; delay <= degree; ++delay) {
+        if ((taps >> (delay - 1U)) & 1ULL) {
+            poly |= std::uint64_t{1} << (degree - delay);
+        }
+    }
+    return poly;
+}
+
+/// The product of @p a and @p b modulo @p poly of degree @p degree, over GF(2).
+[[nodiscard]] std::uint64_t multiplyModulo(std::uint64_t a, std::uint64_t b, std::uint64_t poly, std::uint8_t degree) {
+    std::uint64_t product = 0ULL;
+    for (int bit = degree - 1; bit >= 0; --bit) {
+        product <<= 1U;
+        if ((product >> degree) & 1ULL) {
+            product ^= poly;
+        }
+        if ((b >> bit) & 1ULL) {
+            product ^= a;
+        }
+    }
+    return product;
+}
+
+/// `x^exponent` modulo @p poly of degree @p degree, over GF(2).
+[[nodiscard]] std::uint64_t powerOfX(std::uint64_t exponent, std::uint64_t poly, std::uint8_t degree) {
+    std::uint64_t result = 1ULL;
+    std::uint64_t base   = multiplyModulo(2ULL, 1ULL, poly, degree);
+    for (; exponent != 0ULL; exponent >>= 1U) {
+        if (exponent & 1ULL) {
+            result = multiplyModulo(result, base, poly, degree);
+        }
+        base = multiplyModulo(base, base, poly, degree);
+    }
+    return result;
+}
+
+/// True when `x` has order exactly @p period modulo the characteristic polynomial of @p taps: `x^period` is one and
+/// `x^(period/q)` is not, for each prime `q` of @p period.
+[[nodiscard]] bool xHasOrder(TapMask taps, std::size_t period) {
+    const std::uint64_t poly   = characteristicOf(taps);
+    const std::uint8_t  degree = degreeOf(taps);
+    bool                exact  = powerOfX(period, poly, degree) == 1ULL;
+    for (const std::size_t prime : primeDivisors(period)) {
+        exact = exact && powerOfX(period / prime, poly, degree) != 1ULL;
+    }
+    return exact;
+}
+
+/// The bits of @p bits from index `degree` on that break `s[k] = XOR of s[k-d]` over the delays of @p taps.
+[[nodiscard]] std::size_t recursionBreaks(std::span<const std::uint8_t> bits, TapMask taps) {
+    const std::uint8_t degree = degreeOf(taps);
+    std::size_t        breaks = 0UZ;
+    for (std::size_t k = degree; k < bits.size(); ++k) {
+        std::uint8_t sum = 0U;
+        for (std::uint8_t delay = 1U; delay <= degree; ++delay) {
+            if ((taps >> (delay - 1U)) & 1ULL) {
+                sum = static_cast<std::uint8_t>(sum ^ bits[k - delay]);
+            }
+        }
+        breaks += sum == bits[k] ? 0UZ : 1UZ;
+    }
+    return breaks;
 }
 
 /// The stream divided into calls of @p chunk items, with a reset every @p period items when that is not zero.
@@ -318,13 +387,23 @@ const boost::ut::suite<"scrambler"> scramblerTests = [] {
         expect(that % (hexOf(sequenceItems(figure, 8UZ)) != wrongPhase)) << "and that is not the sequence the standard's figure prints";
     };
 
-    // Every named additive generator is maximal length, walked over one full period.
+    // Every named additive generator is maximal length. Its output follows the recursion of its delays, and `x` has
+    // order 2^n - 1 modulo their characteristic polynomial, which gives every nonzero seed that period. The generators
+    // up to degree 17 are also walked over one full period.
     "every named generator is maximal length"_test = [] {
+        constexpr std::uint8_t kMostWalkedDegree = 17U;
+        constexpr std::size_t  kRecursionBits    = 4096UZ;
         for (const Entry& entry : kAdditive) {
-            const std::uint8_t degree = degreeOf(tapsFromDelayList(entry.taps));
+            const TapMask      taps   = tapsFromDelayList(entry.taps);
+            const std::uint8_t degree = degreeOf(taps);
             const std::size_t  period = entry.period;
 
             expect(that % (maskOf(degree) == period)) << std::format("{}: the period must be 2^{} - 1", entry.name, degree);
+            expect(eq(recursionBreaks(sequenceBits(entry.taps, entry.seed, kRecursionBits), taps), 0UZ)) << std::format("{}: the output follows the recursion of its delays", entry.name);
+            expect(xHasOrder(taps, period)) << std::format("{}: x has order 2^{} - 1 modulo the characteristic polynomial", entry.name, degree);
+            if (degree > kMostWalkedDegree) {
+                continue;
+            }
 
             const auto  bits = sequenceBits(entry.taps, entry.seed, period + 400UZ);
             std::size_t ones = 0UZ;

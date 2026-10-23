@@ -11,6 +11,7 @@
 #include <tuple>
 #include <vector>
 
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 #include <gnuradio-4.0/digital/BitPacking.hpp>
 
 // A regrouping costs what the bits cost, not what the items cost: one period of `lcm(bitsIn, bitsOut)` bits is the
@@ -57,16 +58,16 @@ template<typename TBlock>
     return data;
 }
 
-[[nodiscard]] gr::digital::BitRepack kernelFor(unsigned bitsIn, unsigned bitsOut, gr::digital::BitOrder orderIn, gr::digital::BitOrder orderOut) {
-    gr::digital::BitRepack config;
-    gr::digital::configureRepack(config, bitsIn, bitsOut, orderIn, orderOut);
+[[nodiscard]] gr::math::BitRepack kernelFor(unsigned bitsIn, unsigned bitsOut, gr::math::BitOrder orderIn, gr::math::BitOrder orderOut) {
+    gr::math::BitRepack config;
+    gr::math::configureRepack(config, bitsIn, bitsOut, orderIn, orderOut);
     return config;
 }
 
 } // namespace
 
 int main() {
-    using gr::digital::BitOrder;
+    using gr::math::BitOrder;
 
     const std::vector<std::uint8_t> input = randomItems();
     std::vector<std::uint8_t>       output(kMaxOutItems);
@@ -107,16 +108,16 @@ int main() {
     };
 
     /// @brief A kernel arm, which is how the two forms of the eight-bit shapes are put side by side.
-    const auto kernel = [&arms, &input, &output](std::string label, const gr::digital::BitRepack& config, bool general) {
+    const auto kernel = [&arms, &input, &output](std::string label, const gr::math::BitRepack& config, bool general) {
         const std::size_t outItems = kItemsPerCall * config.bitsIn / config.bitsOut;
         arms.push_back({std::move(label),
             [&config, &input, &output, outItems, general] {
                 const std::span<const std::uint8_t> in(input);
                 const std::span<std::uint8_t>       out(output.data(), outItems);
                 if (general) {
-                    gr::digital::detail::repackGeneral(config, in, out);
+                    gr::math::detail::repackGeneral(config, in, out);
                 } else {
-                    gr::digital::repack(config, in, out);
+                    gr::math::repack(config, in, out);
                 }
                 return static_cast<double>(output[outItems / 2UZ]);
             },
@@ -131,8 +132,8 @@ int main() {
         block(shapes[i].label, repackers[i], shapes[i].bitsIn, shapes[i].bitsOut);
     }
 
-    const std::array<gr::digital::BitRepack, 4UZ> eightBit{kernelFor(1U, 8U, BitOrder::MsbFirst, BitOrder::MsbFirst), kernelFor(1U, 8U, BitOrder::MsbFirst, BitOrder::LsbFirst), kernelFor(8U, 1U, BitOrder::MsbFirst, BitOrder::MsbFirst), kernelFor(8U, 1U, BitOrder::LsbFirst, BitOrder::MsbFirst)};
-    const std::array<std::string_view, 4UZ>       eightBitLabels{"pack 1:8 msb_first", "pack 1:8 lsb_first", "unpack 8:1 msb_first", "unpack 8:1 lsb_first"};
+    const std::array<gr::math::BitRepack, 4UZ> eightBit{kernelFor(1U, 8U, BitOrder::MsbFirst, BitOrder::MsbFirst), kernelFor(1U, 8U, BitOrder::MsbFirst, BitOrder::LsbFirst), kernelFor(8U, 1U, BitOrder::MsbFirst, BitOrder::MsbFirst), kernelFor(8U, 1U, BitOrder::LsbFirst, BitOrder::MsbFirst)};
+    const std::array<std::string_view, 4UZ>    eightBitLabels{"pack 1:8 msb_first", "pack 1:8 lsb_first", "unpack 8:1 msb_first", "unpack 8:1 lsb_first"};
     for (std::size_t i = 0UZ; i < eightBit.size(); ++i) {
         kernel(std::format("{}, 64-bit form", eightBitLabels[i]), eightBit[i], false);
         kernel("  the same, general loop", eightBit[i], true);

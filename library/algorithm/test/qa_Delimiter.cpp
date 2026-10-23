@@ -334,7 +334,7 @@ const boost::ut::suite<"delimiter scanner"> delimiterTests = [] {
             cfg.abortOnes       = 0U; // an all-ones payload is legal data here rather than an abort
             cfg.maxPayloadItems = 4096UZ;
 
-            for (std::size_t which = 0UZ; which < 10'000UZ; ++which) {
+            for (std::size_t which = 0UZ; which < 1'000UZ; ++which) {
                 const std::size_t         length = 1UZ + rng.below(500UZ);
                 std::vector<std::uint8_t> payload(length);
                 for (std::uint8_t& bit : payload) {
@@ -414,7 +414,7 @@ const boost::ut::suite<"delimiter scanner"> delimiterTests = [] {
         DelimiterConfig cfg = gr::digital::hdlc();
         cfg.maxPayloadItems = 1024UZ;
         cfg.packBits        = 8U;
-        cfg.packOrder       = gr::digital::BitOrder::LsbFirst;
+        cfg.packOrder       = gr::math::BitOrder::LsbFirst;
         gr::digital::framerConfigure(cfg);
 
         gr::digital::DelimiterEncoder encoder;

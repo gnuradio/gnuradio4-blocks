@@ -24,7 +24,7 @@
 #include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/annotated.hpp>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 #include <gnuradio-4.0/algorithm/digital/Scrambler.hpp>
 
@@ -35,17 +35,17 @@ namespace detail {
 /// @brief The settings the generator is built from, which are exactly the ones a change to reconfigures and resets.
 /// `reset_tag_key` and `reset_tag_value` are deliberately absent: they select an epoch boundary rather than move one.
 struct ScramblerSettings {
-    std::string           profile{};
-    std::string           taps{};
-    std::string           seed{};
-    std::string           sequence{};
-    bool                  sequenceRepeat = true;
-    gr::Size_t            bitsPerItem    = 8U;
-    gr::digital::BitOrder bitOrder       = gr::digital::BitOrder::MsbFirst;
-    gr::Size_t            resetPeriod    = 0U;
-    bool                  invertOutput   = false;
-    gr::Size_t            forceAfter     = 0U;
-    std::string           monitorDelays{};
+    std::string        profile{};
+    std::string        taps{};
+    std::string        seed{};
+    std::string        sequence{};
+    bool               sequenceRepeat = true;
+    gr::Size_t         bitsPerItem    = 8U;
+    gr::math::BitOrder bitOrder       = gr::math::BitOrder::MsbFirst;
+    gr::Size_t         resetPeriod    = 0U;
+    bool               invertOutput   = false;
+    gr::Size_t         forceAfter     = 0U;
+    std::string        monitorDelays{};
 
     [[nodiscard]] bool operator==(const ScramblerSettings&) const = default;
 };
@@ -109,7 +109,7 @@ inline void configureScrambler(ScramblerState& state, const ScramblerSettings& w
         throw gr::exception(std::format("bits_per_item is the significant bits of an item and must be in [1, 8], got {}", bitsPerItem));
     }
 
-    const gr::digital::BitOrder order = wanted.bitOrder;
+    const gr::math::BitOrder order = wanted.bitOrder;
 
     if (state.configured && wanted == state.applied) {
         return; // nothing the generator is built from moved, so the register stays where the stream left it
@@ -349,7 +349,7 @@ being an involution with no status to report.
     Annotated<std::string, "sequence", Doc<"the mask outright, as hexadecimal byte pairs such as \"FF E1 1D 9A\" read MSB first, 1 to 2^20 bits; an alternative to taps and to profile">, Visible>      sequence{};
     Annotated<bool, "sequence_repeat", Doc<"whether an explicit sequence tiles the epoch; false covers its first S bits and counts every item past them in nUnscrambledItems">>                         sequence_repeat = true;
     Annotated<gr::Size_t, "bits_per_item", Unit<"bit">, Doc<"significant bits per item, [1,8]; an item's remaining bits are ignored on input and zero on output">>                                      bits_per_item   = 8U;
-    Annotated<gr::digital::BitOrder, "bit_order", Doc<"how each item's field is traversed, which is not a byte order">>                                                                                 bit_order       = gr::digital::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "bit_order", Doc<"how each item's field is traversed, which is not a byte order">>                                                                                    bit_order       = gr::math::BitOrder::MsbFirst;
     Annotated<std::string, "reset_tag_key", Doc<"tag key marking an epoch boundary, the reset applying before the tagged item; empty disables the tag-driven reset">>                                   reset_tag_key   = std::string(gr::tag::TRIGGER_NAME.shortKey());
     Annotated<std::string, "reset_tag_value", Doc<"if non-empty, the tag's value at that key must be a string equal to this, which narrows the boundary to one detector; empty matches any">>           reset_tag_value{};
     Annotated<gr::Size_t, "reset_period", Unit<"items">, Doc<"items per epoch, counted from the last reset of any cause; 0 disables the periodic reset">>                                               reset_period = 0U;
@@ -467,7 +467,7 @@ consumed, and `sample_rate` leaves with the value it arrived with.
     Annotated<std::string, "taps", Doc<"feedback delays, decimal and comma-separated as in \"18,23\"; each in [1,64], distinct, at least one, and there is no default">, Visible>                                            taps{};
     Annotated<std::string, "seed", Doc<"the `degree` bits assumed to precede the stream, '0'/'1' oldest first; empty means all zeros, which is a legitimate history here">, Visible>                                         seed{};
     Annotated<gr::Size_t, "bits_per_item", Unit<"bit">, Doc<"significant bits per item, [1,8]; an item's remaining bits are ignored on input and zero on output">>                                                           bits_per_item          = 8U;
-    Annotated<gr::digital::BitOrder, "bit_order", Doc<"how each item's field is traversed, which is not a byte order">>                                                                                                      bit_order              = gr::digital::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "bit_order", Doc<"how each item's field is traversed, which is not a byte order">>                                                                                                         bit_order              = gr::math::BitOrder::MsbFirst;
     Annotated<bool, "invert_output", Doc<"complement every bit of the scrambled stream; the 'v' the V-series family carries, and the descrambler must carry the same value">>                                                invert_output          = false;
     Annotated<gr::Size_t, "force_transition_after", Unit<"items">, Doc<"N: inject a complement at the Nth consecutive item over which the monitored comparison stayed zero, [2,4096]; 0 disables the rule and its cost">>    force_transition_after = 0U;
     Annotated<std::string, "monitor_delays", Doc<"the two transmitted-stream delays 'p,q' the monitor compares, distinct and each in [1,64]; required when force_transition_after is non-zero and refused when it is zero">> monitor_delays{};
@@ -548,7 +548,7 @@ consumed, and `sample_rate` leaves with the value it arrived with.
     Annotated<std::string, "taps", Doc<"feedback delays, decimal and comma-separated as in \"18,23\"; each in [1,64], distinct, at least one, and there is no default">, Visible>                                    taps{};
     Annotated<std::string, "seed", Doc<"the `degree` bits assumed to precede the stream, '0'/'1' oldest first; empty means all zeros, and a wrong seed costs only the first `degree` bits">, Visible>                seed{};
     Annotated<gr::Size_t, "bits_per_item", Unit<"bit">, Doc<"significant bits per item, [1,8]; an item's remaining bits are ignored on input and zero on output">>                                                   bits_per_item          = 8U;
-    Annotated<gr::digital::BitOrder, "bit_order", Doc<"how each item's field is traversed, which is not a byte order">>                                                                                              bit_order              = gr::digital::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "bit_order", Doc<"how each item's field is traversed, which is not a byte order">>                                                                                                 bit_order              = gr::math::BitOrder::MsbFirst;
     Annotated<bool, "invert_output", Doc<"the scrambler's 'v', undone here; the two ends must carry the same value">>                                                                                                invert_output          = false;
     Annotated<gr::Size_t, "force_transition_after", Unit<"items">, Doc<"N, the scrambler's; the monitor runs on the received stream, which is the scrambler's transmitted one, so the two counters agree">>          force_transition_after = 0U;
     Annotated<std::string, "monitor_delays", Doc<"the two delays 'p,q' the monitor compares, the scrambler's; required when force_transition_after is non-zero and refused when it is zero">>                        monitor_delays{};

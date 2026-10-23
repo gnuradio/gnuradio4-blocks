@@ -10,7 +10,7 @@
 #include <string>
 #include <string_view>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 /**
  * @brief The Manchester line code, both live conventions, from one XOR constant.
@@ -147,7 +147,7 @@ inline constexpr ManchesterConvention dali = ManchesterConvention::Ieee8023;
 struct ManchesterConfig {
     ManchesterConvention convention  = ManchesterConvention::Ieee8023;
     std::uint8_t         bitsPerItem = 8U;
-    BitOrder             order       = BitOrder::MsbFirst;
+    gr::math::BitOrder   order       = gr::math::BitOrder::MsbFirst;
     std::uint8_t         chipPhase   = 0U; ///< the pairing grid `resetManchester()` restores, 0 or 1
 
     std::uint8_t                     k     = 1U; ///< the XOR constant of the convention
@@ -171,10 +171,10 @@ inline void resetManchester(ManchesterConfig& cfg) noexcept {
 namespace detail {
 
 /// @brief The bit position of the @p index-th bit of a @p width-bit item under @p order, which is the whole of what an order means.
-[[nodiscard]] constexpr unsigned streamPosition(unsigned index, unsigned width, BitOrder order) noexcept { return order == BitOrder::MsbFirst ? width - 1U - index : index; }
+[[nodiscard]] constexpr unsigned streamPosition(unsigned index, unsigned width, gr::math::BitOrder order) noexcept { return order == gr::math::BitOrder::MsbFirst ? width - 1U - index : index; }
 
 /// @brief The two output items @p item encodes to, the first in the high byte, packed in @p order and masked to @p width.
-[[nodiscard]] constexpr std::uint16_t chipPairItems(unsigned item, unsigned width, unsigned k, BitOrder order) noexcept {
+[[nodiscard]] constexpr std::uint16_t chipPairItems(unsigned item, unsigned width, unsigned k, gr::math::BitOrder order) noexcept {
     unsigned first  = 0U;
     unsigned second = 0U;
     for (unsigned i = 0U; i < width; ++i) {
@@ -209,7 +209,7 @@ namespace detail {
  * sample path carries none. It is 512 bytes, fixed by the item type rather than by a threshold, and
  * is built once here and never resized.
  */
-inline void configureManchester(ManchesterConfig& cfg, ManchesterConvention convention, unsigned bitsPerItem, BitOrder order, unsigned chipPhase = 0U) {
+inline void configureManchester(ManchesterConfig& cfg, ManchesterConvention convention, unsigned bitsPerItem, gr::math::BitOrder order, unsigned chipPhase = 0U) {
     if (bitsPerItem < 1U || bitsPerItem > 8U) {
         throw std::invalid_argument("gr::digital::configureManchester: bitsPerItem must be in [1, 8], got " + std::to_string(bitsPerItem));
     }
@@ -235,10 +235,10 @@ namespace detail {
 
 /// @brief The definition itself, one bit at a time, written independently of the table the sample path reads.
 inline void encodeReference(const ManchesterConfig& cfg, std::span<const std::uint8_t> in, std::span<std::uint8_t> out) noexcept {
-    const unsigned    width = static_cast<unsigned>(cfg.bitsPerItem);
-    const unsigned    k     = static_cast<unsigned>(cfg.k);
-    const BitOrder    order = cfg.order;
-    const std::size_t count = std::min(in.size(), out.size() / 2UZ);
+    const unsigned           width = static_cast<unsigned>(cfg.bitsPerItem);
+    const unsigned           k     = static_cast<unsigned>(cfg.k);
+    const gr::math::BitOrder order = cfg.order;
+    const std::size_t        count = std::min(in.size(), out.size() / 2UZ);
 
     for (std::size_t n = 0UZ; n < count; ++n) {
         unsigned first  = 0U;
@@ -285,7 +285,7 @@ inline void decodeAligned(const ManchesterConfig& cfg, std::span<const std::uint
     const unsigned width     = static_cast<unsigned>(cfg.bitsPerItem);
     const unsigned mask      = (1U << width) - 1U;
     const unsigned broadcast = cfg.k != 0U ? mask : 0U;
-    const bool     msbFirst  = cfg.order == BitOrder::MsbFirst;
+    const bool     msbFirst  = cfg.order == gr::math::BitOrder::MsbFirst;
 
     for (std::size_t i = 0UZ; i < count; ++i) {
         const unsigned early = static_cast<unsigned>(in[2UZ * i]) & mask;
@@ -311,10 +311,10 @@ inline void decodeAligned(const ManchesterConfig& cfg, std::span<const std::uint
  * two input items, which is what keeps the ratio constant across a grid change.
  */
 inline void decodeReference(ManchesterConfig& cfg, std::span<const std::uint8_t> in, std::span<std::uint8_t> out, std::span<std::uint8_t> violation) noexcept {
-    const unsigned    width = static_cast<unsigned>(cfg.bitsPerItem);
-    const unsigned    k     = static_cast<unsigned>(cfg.k);
-    const BitOrder    order = cfg.order;
-    const std::size_t count = std::min({in.size() / 2UZ, out.size(), violation.size()});
+    const unsigned           width = static_cast<unsigned>(cfg.bitsPerItem);
+    const unsigned           k     = static_cast<unsigned>(cfg.k);
+    const gr::math::BitOrder order = cfg.order;
+    const std::size_t        count = std::min({in.size() / 2UZ, out.size(), violation.size()});
 
     std::uint8_t carry    = cfg.carry;
     bool         hasCarry = cfg.hasCarry;

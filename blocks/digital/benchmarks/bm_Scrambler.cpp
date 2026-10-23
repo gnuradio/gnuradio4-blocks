@@ -11,6 +11,7 @@
 #include <tuple>
 #include <vector>
 
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 #include <gnuradio-4.0/digital/Scrambler.hpp>
 
 // The cost of a scrambler is proportional to the bits it moves and not to the items carrying them, so every arm is
@@ -72,7 +73,7 @@ template<typename TBlock>
 /// @brief The kernel the block of the same configuration holds, for the reference loop to run against.
 [[nodiscard]] gr::digital::ScramblerConfig kernelFor(const Entry& entry, gr::digital::ScramblerMode mode, unsigned bitsPerItem) {
     gr::digital::ScramblerConfig config;
-    gr::digital::configureScrambler(config, gr::digital::tapsFromDelayList(entry.taps), gr::digital::seedFromBitString(seedFor(entry), static_cast<std::uint8_t>(entry.degree)), mode, bitsPerItem, gr::digital::BitOrder::MsbFirst);
+    gr::digital::configureScrambler(config, gr::digital::tapsFromDelayList(entry.taps), gr::digital::seedFromBitString(seedFor(entry), static_cast<std::uint8_t>(entry.degree)), mode, bitsPerItem, gr::math::BitOrder::MsbFirst);
     return config;
 }
 

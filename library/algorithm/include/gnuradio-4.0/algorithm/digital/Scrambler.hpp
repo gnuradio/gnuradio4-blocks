@@ -12,7 +12,7 @@
 #include <string_view>
 #include <vector>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 /**
  * @brief The two scrambler families over GF(2), from one register definition and three recursions.
@@ -321,22 +321,22 @@ enum class ProfileFamily : std::uint8_t { Additive, Multiplicative };
  * a guess.
  */
 struct ScramblerProfile {
-    std::string_view name;
-    ProfileFamily    family;
-    TapMask          taps;
-    std::uint64_t    seed;
-    std::uint8_t     bitsPerItem;
-    BitOrder         order;
-    std::string_view unrecorded;
+    std::string_view   name;
+    ProfileFamily      family;
+    TapMask            taps;
+    std::uint64_t      seed;
+    std::uint8_t       bitsPerItem;
+    gr::math::BitOrder order;
+    std::string_view   unrecorded;
 };
 
 /// @brief The named profiles, in the order `profileByName` lists them when it does not find one.
 inline constexpr std::array<ScramblerProfile, 5> kProfiles{{
-    {"ccsds131", ProfileFamily::Additive, standard::ccsds131, seedFromBitString("11111111", 8U), 8U, BitOrder::MsbFirst, ""},                 //
-    {"ccsds131_17", ProfileFamily::Additive, standard::ccsds131_17, seedFromBitString("00011100011100011", 17U), 8U, BitOrder::MsbFirst, ""}, //
-    {"pn9", ProfileFamily::Additive, standard::pn9, seedFromBitString("111111111", 9U), 8U, BitOrder::LsbFirst, ""},                          //
-    {"si4463", ProfileFamily::Additive, standard::si4463, seedFromBitString("111100001", 9U), 8U, BitOrder::LsbFirst, ""},                    //
-    {"g3ruh", ProfileFamily::Multiplicative, standard::g3ruh, 0ULL, 8U, BitOrder::MsbFirst, ""}                                               //
+    {"ccsds131", ProfileFamily::Additive, standard::ccsds131, seedFromBitString("11111111", 8U), 8U, gr::math::BitOrder::MsbFirst, ""},                 //
+    {"ccsds131_17", ProfileFamily::Additive, standard::ccsds131_17, seedFromBitString("00011100011100011", 17U), 8U, gr::math::BitOrder::MsbFirst, ""}, //
+    {"pn9", ProfileFamily::Additive, standard::pn9, seedFromBitString("111111111", 9U), 8U, gr::math::BitOrder::LsbFirst, ""},                          //
+    {"si4463", ProfileFamily::Additive, standard::si4463, seedFromBitString("111100001", 9U), 8U, gr::math::BitOrder::LsbFirst, ""},                    //
+    {"g3ruh", ProfileFamily::Multiplicative, standard::g3ruh, 0ULL, 8U, gr::math::BitOrder::MsbFirst, ""}                                               //
 }};
 
 /// @brief The profile named @p name, or `std::invalid_argument` listing every name there is.
@@ -368,11 +368,11 @@ inline constexpr std::array<ScramblerProfile, 5> kProfiles{{
  * fixed here, so no allocation, lock, division or modulo runs per item.
  */
 struct ScramblerConfig {
-    TapMask       taps        = 0ULL;
-    std::uint64_t seed        = 0ULL;
-    ScramblerMode mode        = ScramblerMode::Additive;
-    std::uint8_t  bitsPerItem = 8U;
-    BitOrder      order       = BitOrder::MsbFirst;
+    TapMask            taps        = 0ULL;
+    std::uint64_t      seed        = 0ULL;
+    ScramblerMode      mode        = ScramblerMode::Additive;
+    std::uint8_t       bitsPerItem = 8U;
+    gr::math::BitOrder order       = gr::math::BitOrder::MsbFirst;
 
     std::uint8_t                 degree      = 0U;   ///< the largest delay, and the register width
     std::uint8_t                 minDelay    = 0U;   ///< the smallest delay
@@ -433,7 +433,7 @@ inline void resetScrambler(ScramblerConfig& cfg) noexcept {
  * `degree` bits of the sequence, so the recursion is run backwards `degree` steps to recover the
  * history that produces them, and the sample path then carries no prologue at all.
  */
-inline void configureScrambler(ScramblerConfig& cfg, TapMask taps, std::uint64_t seed, ScramblerMode mode, unsigned bitsPerItem, BitOrder order) {
+inline void configureScrambler(ScramblerConfig& cfg, TapMask taps, std::uint64_t seed, ScramblerMode mode, unsigned bitsPerItem, gr::math::BitOrder order) {
     if (taps == 0ULL) {
         throw std::invalid_argument("gr::digital::configureScrambler: the tap set must name at least one delay");
     }
@@ -602,7 +602,7 @@ inline void applyProfile(ScramblerConfig& cfg, std::string_view name, ScramblerM
  * @p sequence must hold between 1 and 2^20 bits, most significant bit first, and `bitsPerItem` must be in `[1, 8]`.
  * Anything else throws `std::invalid_argument` and leaves @p cfg as it was.
  */
-inline void configureExplicit(ScramblerConfig& cfg, std::span<const std::uint8_t> sequence, std::size_t bitCount, unsigned bitsPerItem, BitOrder order, bool repeat) {
+inline void configureExplicit(ScramblerConfig& cfg, std::span<const std::uint8_t> sequence, std::size_t bitCount, unsigned bitsPerItem, gr::math::BitOrder order, bool repeat) {
     constexpr std::size_t kMaxBits = 1UZ << 20;
 
     if (bitCount == 0UZ || bitCount > kMaxBits) {
@@ -719,9 +719,9 @@ inline constexpr std::array<std::uint8_t, 256> kReversedByte = [] {
 
 /// @brief The `width` significant bits of @p item as a field holding the stream's first bit at position `width-1`.
 /// Its own inverse, so the same call turns a field back into an item.
-[[nodiscard]] inline std::uint8_t streamField(std::uint8_t item, unsigned width, BitOrder order) noexcept {
+[[nodiscard]] inline std::uint8_t streamField(std::uint8_t item, unsigned width, gr::math::BitOrder order) noexcept {
     const unsigned field = static_cast<unsigned>(item) & ((1U << width) - 1U);
-    return order == BitOrder::MsbFirst ? static_cast<std::uint8_t>(field) : kReversedByte[static_cast<std::size_t>(field) << (8U - width)];
+    return order == gr::math::BitOrder::MsbFirst ? static_cast<std::uint8_t>(field) : kReversedByte[static_cast<std::size_t>(field) << (8U - width)];
 }
 
 /// @brief The next @p count feedback bits, oldest at position `count-1`, read from @p reg alone.
@@ -795,13 +795,13 @@ inline void generateTable(ScramblerConfig& cfg, std::span<std::uint8_t> sequence
 /// @brief An explicit sequence that does not repeat: the table read once, then a zero mask and a counted item.
 /// The phase does not wrap, so it says how far into the epoch the stream has gone rather than where in a period it is.
 inline void generateExplicitOnce(ScramblerConfig& cfg, std::span<std::uint8_t> sequence) noexcept {
-    const unsigned      width  = static_cast<unsigned>(cfg.bitsPerItem);
-    const std::uint32_t field  = (1U << width) - 1U;
-    const std::size_t   length = cfg.tablePeriod;
-    const std::uint8_t* buffer = cfg.table.data();
-    const BitOrder      order  = cfg.order;
-    std::size_t         phase  = cfg.phase;
-    std::size_t         missed = 0UZ;
+    const unsigned           width  = static_cast<unsigned>(cfg.bitsPerItem);
+    const std::uint32_t      field  = (1U << width) - 1U;
+    const std::size_t        length = cfg.tablePeriod;
+    const std::uint8_t*      buffer = cfg.table.data();
+    const gr::math::BitOrder order  = cfg.order;
+    std::size_t              phase  = cfg.phase;
+    std::size_t              missed = 0UZ;
 
     for (std::uint8_t& item : sequence) {
         std::uint32_t bits = 0U;
@@ -900,11 +900,11 @@ inline void descrambleItems(ScramblerConfig& cfg, std::span<const std::uint8_t> 
 /// @brief The multiplicative descrambler at eight bits per item and `degree <= 56`: a rolling 64-bit window of received
 /// bits, from which each delay's byte is one shift and one mask, so the whole item is `tapCount` shifted XORs.
 inline void descrambleBytes(ScramblerConfig& cfg, std::span<const std::uint8_t> in, std::span<std::uint8_t> out) noexcept {
-    const std::uint8_t* delays = cfg.delays.data();
-    const std::size_t   taps   = static_cast<std::size_t>(cfg.tapCount);
-    const std::size_t   count  = std::min(in.size(), out.size());
-    const BitOrder      order  = cfg.order;
-    std::uint64_t       window = cfg.reg;
+    const std::uint8_t*      delays = cfg.delays.data();
+    const std::size_t        taps   = static_cast<std::size_t>(cfg.tapCount);
+    const std::size_t        count  = std::min(in.size(), out.size());
+    const gr::math::BitOrder order  = cfg.order;
+    std::uint64_t            window = cfg.reg;
 
     for (std::size_t i = 0UZ; i < count; ++i) {
         const std::uint32_t source = streamField(in[i], 8U, order);
@@ -928,25 +928,25 @@ inline void descrambleBytes(ScramblerConfig& cfg, std::span<const std::uint8_t> 
 /// which is the block's output when scrambling and its input when descrambling, and that is the whole of their
 /// difference here.
 inline void scrambleMonitored(ScramblerConfig& cfg, std::span<const std::uint8_t> in, std::span<std::uint8_t> out) noexcept {
-    const unsigned      width    = static_cast<unsigned>(cfg.bitsPerItem);
-    const TapMask       taps     = cfg.taps;
-    const std::uint64_t mask     = cfg.regMask;
-    const BitOrder      order    = cfg.order;
-    const bool          received = cfg.mode == ScramblerMode::MultiplicativeDescramble;
-    const unsigned      invert   = cfg.invertOutput ? 1U : 0U;
-    const std::uint32_t modulus  = cfg.forceAfter;
-    const unsigned      shiftP   = cfg.monitorP == 0U ? 0U : static_cast<unsigned>(cfg.monitorP) - 1U;
-    const unsigned      shiftQ   = cfg.monitorQ == 0U ? 0U : static_cast<unsigned>(cfg.monitorQ) - 1U;
-    const std::size_t   count    = std::min(in.size(), out.size());
-    std::uint64_t       reg      = cfg.reg;
-    std::uint64_t       window   = cfg.monitorWindow;
-    std::uint32_t       counter  = cfg.forceCounter;
-    std::size_t         fired    = 0UZ;
+    const unsigned           width    = static_cast<unsigned>(cfg.bitsPerItem);
+    const TapMask            taps     = cfg.taps;
+    const std::uint64_t      mask     = cfg.regMask;
+    const gr::math::BitOrder order    = cfg.order;
+    const bool               received = cfg.mode == ScramblerMode::MultiplicativeDescramble;
+    const unsigned           invert   = cfg.invertOutput ? 1U : 0U;
+    const std::uint32_t      modulus  = cfg.forceAfter;
+    const unsigned           shiftP   = cfg.monitorP == 0U ? 0U : static_cast<unsigned>(cfg.monitorP) - 1U;
+    const unsigned           shiftQ   = cfg.monitorQ == 0U ? 0U : static_cast<unsigned>(cfg.monitorQ) - 1U;
+    const std::size_t        count    = std::min(in.size(), out.size());
+    std::uint64_t            reg      = cfg.reg;
+    std::uint64_t            window   = cfg.monitorWindow;
+    std::uint32_t            counter  = cfg.forceCounter;
+    std::size_t              fired    = 0UZ;
 
     for (std::size_t i = 0UZ; i < count; ++i) {
         unsigned item = 0U;
         for (unsigned bit = 0U; bit < width; ++bit) {
-            const unsigned position = order == BitOrder::MsbFirst ? width - 1U - bit : bit;
+            const unsigned position = order == gr::math::BitOrder::MsbFirst ? width - 1U - bit : bit;
             const unsigned feedback = static_cast<unsigned>(std::popcount(reg & taps)) & 1U;
             const unsigned source   = (static_cast<unsigned>(in[i]) >> position) & 1U;
             const unsigned force    = modulus != 0U && counter == modulus - 1U ? 1U : 0U;
@@ -985,7 +985,7 @@ inline void scrambleReference(ScramblerConfig& cfg, std::span<const std::uint8_t
     for (std::size_t i = 0UZ; i < count; ++i) {
         unsigned item = 0U;
         for (unsigned bit = 0U; bit < width; ++bit) {
-            const unsigned position = cfg.order == BitOrder::MsbFirst ? width - 1U - bit : bit;
+            const unsigned position = cfg.order == gr::math::BitOrder::MsbFirst ? width - 1U - bit : bit;
             const unsigned feedback = static_cast<unsigned>(std::popcount(reg & taps)) & 1U;
             const unsigned source   = (static_cast<unsigned>(in[i]) >> position) & 1U;
             const unsigned result   = source ^ feedback;

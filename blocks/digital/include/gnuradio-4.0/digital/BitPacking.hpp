@@ -2,9 +2,11 @@
 #define GNURADIO_DIGITAL_BIT_PACKING_HPP
 
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <print>
 #include <span>
 #include <string>
@@ -18,7 +20,7 @@
 #include <gnuradio-4.0/Port.hpp>
 #include <gnuradio-4.0/annotated.hpp>
 
-#include <gnuradio-4.0/algorithm/digital/BitPacking.hpp>
+#include <gnuradio-4.0/algorithm/math/BitPacking.hpp>
 
 namespace gr::blocks::digital {
 
@@ -28,6 +30,17 @@ inline void requireFieldWidth(gr::Size_t bits, std::string_view setting) {
     if (bits < 1U || bits > 8U) {
         throw gr::exception(std::format("{} is a field width in bits and must be in [1, 8], got {}", setting, bits));
     }
+}
+
+/// @brief The 64-bit position of @p index, a stream index that wraps at its own width: @p known moved forward by the
+/// distance from it to @p index, taken modulo that width. A distance of more than half the width is a new stream, and
+/// the result is then @p index. A 64-bit index gives @p index itself.
+template<std::unsigned_integral TIndex>
+[[nodiscard]] constexpr std::uint64_t widenStreamIndex(std::uint64_t known, TIndex index) noexcept {
+    constexpr std::uint64_t kMask = std::numeric_limits<TIndex>::max();
+    const std::uint64_t     wide  = index;
+    const std::uint64_t     step  = (wide - known) & kMask;
+    return step <= kMask / 2U ? known + step : wide;
 }
 
 /**
@@ -42,17 +55,46 @@ inline void requireFieldWidth(gr::Size_t bits, std::string_view setting) {
  * current call and the eighth may not, and at `8:1` unpacking a tag near the end of a call routinely lands past the
  * output span. Order and multiplicity are preserved and no tag is deduplicated. Every key is republished verbatim,
  * a key outside the auto-forward set included.
+ *
+ * The input and output positions are kept in `std::uint64_t`. A 32-bit `std::size_t` makes a span's `streamIndex`
+ * wrap at 2^32 items, and `widenStreamIndex` carries each position past the wrap. A change of the field width or of a
+ * bit order clears the held tags and keeps the positions. A start or a reset drops the tags still held and sets both
+ * positions to zero.
  */
 struct RepackTagRoute {
     std::vector<std::pair<std::uint64_t, property_map>> pending{};
+    std::uint64_t                                       inputIndex  = 0ULL;
+    std::uint64_t                                       outputIndex = 0ULL;
 
     void clear() { pending.clear(); }
 
+    void restart() {
+        pending.clear();
+        inputIndex  = 0ULL;
+        outputIndex = 0ULL;
+    }
+
     template<typename TInputSpans, typename TOutputSpans>
-    void forward(const gr::digital::BitRepack& cfg, TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
+    void forward(const gr::math::BitRepack& cfg, TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
+        // Both positions move on every call, tagged or not, which counts a wrap that falls between two tags.
+        gr::for_each_reader_span(
+            [this](auto& span) {
+                if (span.isSync && span.isConnected) {
+                    inputIndex = widenStreamIndex(inputIndex, span.streamIndex);
+                }
+            },
+            inputSpans);
+        gr::for_each_writer_span(
+            [this](auto& span) {
+                if (span.isSync && span.isConnected) {
+                    outputIndex = widenStreamIndex(outputIndex, span.streamIndex);
+                }
+            },
+            outputSpans);
+
         std::vector<std::pair<std::uint64_t, property_map>> arriving;
         gr::for_each_reader_span(
-            [&arriving, &cfg, processedIn](auto& span) {
+            [this, &arriving, &cfg, processedIn](auto& span) {
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
@@ -62,8 +104,8 @@ struct RepackTagRoute {
                         // forwarding clamps it to offset zero and republishes it, which would duplicate it.
                         continue;
                     }
-                    const std::uint64_t at = static_cast<std::uint64_t>(span.streamIndex) + static_cast<std::uint64_t>(relIndex);
-                    arriving.emplace_back(gr::digital::mapRepackedOffset(at, cfg.bitsIn, cfg.bitsOut), tagMap.get());
+                    const std::uint64_t at = inputIndex + static_cast<std::uint64_t>(relIndex);
+                    arriving.emplace_back(gr::math::mapRepackedOffset(at, cfg.bitsIn, cfg.bitsOut), tagMap.get());
                 }
             },
             inputSpans);
@@ -78,7 +120,7 @@ struct RepackTagRoute {
                 if (!span.isSync || !span.isConnected) {
                     return;
                 }
-                const std::uint64_t base = static_cast<std::uint64_t>(span.streamIndex);
+                const std::uint64_t base = outputIndex;
                 const std::uint64_t end  = base + span.size();
 
                 const auto place = [&](const std::pair<std::uint64_t, property_map>& tag) {
@@ -102,12 +144,12 @@ struct RepackTagRoute {
 };
 
 /// @brief Whole periods of the conversion; the framework hands exact chunks, so the counts agree or the contract is broken.
-inline void convertWholePeriods(const gr::digital::BitRepack& cfg, std::span<const std::uint8_t> input, std::span<std::uint8_t> output, std::string_view block) {
+inline void convertWholePeriods(const gr::math::BitRepack& cfg, std::span<const std::uint8_t> input, std::span<std::uint8_t> output, std::string_view block) {
     const std::size_t periods = input.size() / cfg.inChunk;
     if (periods * cfg.outChunk != output.size()) {
         throw gr::exception(std::format("{}: {} input items yield {} outputs, not the {} reserved", block, input.size(), periods * cfg.outChunk, output.size()));
     }
-    gr::digital::repack(cfg, input, output);
+    gr::math::repack(cfg, input, output);
 }
 
 /**
@@ -121,18 +163,18 @@ inline void convertWholePeriods(const gr::digital::BitRepack& cfg, std::span<con
  * output chunk for it either way, so an empty @p input is ordinary here: no period, no stranded bit, nothing written
  * and nothing reported. The count returned, never the room offered, is what the caller publishes.
  */
-[[nodiscard]] inline std::size_t convertTail(const gr::digital::BitRepack& cfg, std::span<const std::uint8_t> input, std::span<std::uint8_t> output, bool pad, std::string_view block) {
+[[nodiscard]] inline std::size_t convertTail(const gr::math::BitRepack& cfg, std::span<const std::uint8_t> input, std::span<std::uint8_t> output, bool pad, std::string_view block) {
     const std::size_t periods = std::min(input.size() / cfg.inChunk, output.size() / cfg.outChunk);
     const std::size_t taken   = periods * static_cast<std::size_t>(cfg.inChunk);
     const std::size_t made    = periods * static_cast<std::size_t>(cfg.outChunk);
-    gr::digital::repack(cfg, input.first(taken), output.first(made));
+    gr::math::repack(cfg, input.first(taken), output.first(made));
 
     const std::size_t stranded  = (input.size() - taken) * static_cast<std::size_t>(cfg.bitsIn);
     const std::size_t remainder = stranded % static_cast<std::size_t>(cfg.bitsOut);
     if (!pad && remainder != 0UZ) {
         std::println(stderr, "{}: {} trailing bits are dropped at end of stream, short of one {}-bit output item", block, remainder, cfg.bitsOut);
     }
-    return made + gr::digital::repackTail(cfg, input.subspan(taken), output.subspan(made), pad);
+    return made + gr::math::repackTail(cfg, input.subspan(taken), output.subspan(made), pad);
 }
 
 } // namespace detail
@@ -168,12 +210,12 @@ inert.
     PortOut<std::uint8_t> out;
 
     Annotated<gr::Size_t, "k", Unit<"bits">, Doc<"bits gathered into each output item, in [1, 8]">, Visible>                        k             = 8U;
-    Annotated<gr::digital::BitOrder, "bit_order", Doc<"which end of the k-bit field the stream's first bit takes">>                 bit_order     = gr::digital::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "bit_order", Doc<"which end of the k-bit field the stream's first bit takes">>                    bit_order     = gr::math::BitOrder::MsbFirst;
     Annotated<bool, "flush_partial", Doc<"emit the final incomplete output item with its unfilled positions zero; inert at k = 1">> flush_partial = true;
 
     GR_MAKE_REFLECTABLE(PackBits, in, out, k, bit_order, flush_partial);
 
-    gr::digital::BitRepack _repack{};
+    gr::math::BitRepack    _repack{};
     detail::RepackTagRoute _tagRoute{};
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
@@ -185,15 +227,15 @@ inert.
 
     void start() {
         configureConversion(); // a block left at its defaults stages nothing, so this is the only call that reaches it
-        _tagRoute.clear();
+        _tagRoute.restart();
     }
 
-    void reset() { _tagRoute.clear(); }
+    void reset() { _tagRoute.restart(); }
 
     void configureConversion() {
         detail::requireFieldWidth(k, "k");
 
-        gr::digital::configureRepack(_repack, 1U, k, gr::digital::BitOrder::MsbFirst, bit_order);
+        gr::math::configureRepack(_repack, 1U, k, gr::math::BitOrder::MsbFirst, bit_order);
         this->input_chunk_size  = _repack.inChunk;
         this->output_chunk_size = _repack.outChunk;
     }
@@ -241,12 +283,12 @@ unchanged: the item rate rises by `k` but the sample rate does not.
     PortOut<std::uint8_t> out;
 
     Annotated<gr::Size_t, "k", Unit<"bits">, Doc<"significant bits per input item, spread over k outputs; in [1, 8]">, Visible> k             = 8U;
-    Annotated<gr::digital::BitOrder, "bit_order", Doc<"which end of the k-bit field leaves first">>                             bit_order     = gr::digital::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "bit_order", Doc<"which end of the k-bit field leaves first">>                                bit_order     = gr::math::BitOrder::MsbFirst;
     Annotated<bool, "flush_partial", Doc<"inert here: one input item is a whole period, so no input can trail one">>            flush_partial = true;
 
     GR_MAKE_REFLECTABLE(UnpackBits, in, out, k, bit_order, flush_partial);
 
-    gr::digital::BitRepack _repack{};
+    gr::math::BitRepack    _repack{};
     detail::RepackTagRoute _tagRoute{};
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
@@ -258,15 +300,15 @@ unchanged: the item rate rises by `k` but the sample rate does not.
 
     void start() {
         configureConversion();
-        _tagRoute.clear();
+        _tagRoute.restart();
     }
 
-    void reset() { _tagRoute.clear(); }
+    void reset() { _tagRoute.restart(); }
 
     void configureConversion() {
         detail::requireFieldWidth(k, "k");
 
-        gr::digital::configureRepack(_repack, k, 1U, bit_order, gr::digital::BitOrder::MsbFirst);
+        gr::math::configureRepack(_repack, k, 1U, bit_order, gr::math::BitOrder::MsbFirst);
         this->input_chunk_size  = _repack.inChunk;
         this->output_chunk_size = _repack.outChunk;
     }
@@ -321,15 +363,15 @@ nothing can trail it.
     PortIn<std::uint8_t>  in;
     PortOut<std::uint8_t> out;
 
-    Annotated<gr::Size_t, "bits_in", Unit<"bits">, Doc<"significant bits per input item, in [1, 8]">, Visible>                                              bits_in          = 1U;
-    Annotated<gr::Size_t, "bits_out", Unit<"bits">, Doc<"significant bits per output item, in [1, 8]">, Visible>                                            bits_out         = 8U;
-    Annotated<gr::digital::BitOrder, "input_bit_order", Doc<"traversal of each input field: MsbFirst reads position bits_in-1 first, LsbFirst position 0">> input_bit_order  = gr::digital::BitOrder::MsbFirst;
-    Annotated<gr::digital::BitOrder, "output_bit_order", Doc<"traversal of each output field, independent of the input's">>                                 output_bit_order = gr::digital::BitOrder::MsbFirst;
-    Annotated<bool, "flush_partial", Doc<"emit the final incomplete output item zero-padded; inert when bits_out divides bits_in">>                         flush_partial    = true;
+    Annotated<gr::Size_t, "bits_in", Unit<"bits">, Doc<"significant bits per input item, in [1, 8]">, Visible>                                           bits_in          = 1U;
+    Annotated<gr::Size_t, "bits_out", Unit<"bits">, Doc<"significant bits per output item, in [1, 8]">, Visible>                                         bits_out         = 8U;
+    Annotated<gr::math::BitOrder, "input_bit_order", Doc<"traversal of each input field: MsbFirst reads position bits_in-1 first, LsbFirst position 0">> input_bit_order  = gr::math::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "output_bit_order", Doc<"traversal of each output field, independent of the input's">>                                 output_bit_order = gr::math::BitOrder::MsbFirst;
+    Annotated<bool, "flush_partial", Doc<"emit the final incomplete output item zero-padded; inert when bits_out divides bits_in">>                      flush_partial    = true;
 
     GR_MAKE_REFLECTABLE(RepackBits, in, out, bits_in, bits_out, input_bit_order, output_bit_order, flush_partial);
 
-    gr::digital::BitRepack _repack{};
+    gr::math::BitRepack    _repack{};
     detail::RepackTagRoute _tagRoute{};
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
@@ -343,18 +385,18 @@ nothing can trail it.
 
     void start() {
         configureConversion();
-        _tagRoute.clear();
+        _tagRoute.restart();
     }
 
-    void reset() { _tagRoute.clear(); }
+    void reset() { _tagRoute.restart(); }
 
     void configureConversion() {
         detail::requireFieldWidth(bits_in, "bits_in");
         detail::requireFieldWidth(bits_out, "bits_out");
-        const gr::digital::BitOrder orderIn  = input_bit_order;
-        const gr::digital::BitOrder orderOut = output_bit_order;
+        const gr::math::BitOrder orderIn  = input_bit_order;
+        const gr::math::BitOrder orderOut = output_bit_order;
 
-        gr::digital::configureRepack(_repack, bits_in, bits_out, orderIn, orderOut);
+        gr::math::configureRepack(_repack, bits_in, bits_out, orderIn, orderOut);
         this->input_chunk_size  = _repack.inChunk;
         this->output_chunk_size = _repack.outChunk;
     }
@@ -399,16 +441,16 @@ struct RecordRepackBits : Block<RecordRepackBits> {
     PortIn<DataSet<std::uint8_t>, Async>  in;
     PortOut<DataSet<std::uint8_t>, Async> out;
 
-    Annotated<gr::Size_t, "bits_in", Unit<"bits">, Doc<"significant bits per input item, in [1, 8]">, Visible>                                              bits_in          = 1U;
-    Annotated<gr::Size_t, "bits_out", Unit<"bits">, Doc<"significant bits per output item, in [1, 8]">, Visible>                                            bits_out         = 8U;
-    Annotated<gr::digital::BitOrder, "input_bit_order", Doc<"traversal of each input field: MsbFirst reads position bits_in-1 first, LsbFirst position 0">> input_bit_order  = gr::digital::BitOrder::MsbFirst;
-    Annotated<gr::digital::BitOrder, "output_bit_order", Doc<"traversal of each output field, independent of the input's">>                                 output_bit_order = gr::digital::BitOrder::MsbFirst;
+    Annotated<gr::Size_t, "bits_in", Unit<"bits">, Doc<"significant bits per input item, in [1, 8]">, Visible>                                           bits_in          = 1U;
+    Annotated<gr::Size_t, "bits_out", Unit<"bits">, Doc<"significant bits per output item, in [1, 8]">, Visible>                                         bits_out         = 8U;
+    Annotated<gr::math::BitOrder, "input_bit_order", Doc<"traversal of each input field: MsbFirst reads position bits_in-1 first, LsbFirst position 0">> input_bit_order  = gr::math::BitOrder::MsbFirst;
+    Annotated<gr::math::BitOrder, "output_bit_order", Doc<"traversal of each output field, independent of the input's">>                                 output_bit_order = gr::math::BitOrder::MsbFirst;
 
     GR_MAKE_REFLECTABLE(RecordRepackBits, in, out, bits_in, bits_out, input_bit_order, output_bit_order);
 
-    gr::digital::BitOrder _inOrder    = gr::digital::BitOrder::MsbFirst;
-    gr::digital::BitOrder _outOrder   = gr::digital::BitOrder::MsbFirst;
-    bool                  _configured = false;
+    gr::math::BitOrder _inOrder    = gr::math::BitOrder::MsbFirst;
+    gr::math::BitOrder _outOrder   = gr::math::BitOrder::MsbFirst;
+    bool               _configured = false;
 
     // Plain members, read by the owning thread and by QA, and reported once at stop().
     std::uint64_t nRecords        = 0ULL; ///< records published on `out`
@@ -460,9 +502,9 @@ struct RecordRepackBits : Block<RecordRepackBits> {
             }
             for (std::size_t bit = 0UZ; bit < totalBits; ++bit) {
                 const std::size_t inItem  = bit / widthIn;
-                const unsigned    inPos   = _inOrder == gr::digital::BitOrder::MsbFirst ? widthIn - 1U - static_cast<unsigned>(bit % widthIn) : static_cast<unsigned>(bit % widthIn);
+                const unsigned    inPos   = _inOrder == gr::math::BitOrder::MsbFirst ? widthIn - 1U - static_cast<unsigned>(bit % widthIn) : static_cast<unsigned>(bit % widthIn);
                 const std::size_t outItem = bit / widthOut;
-                const unsigned    outPos  = _outOrder == gr::digital::BitOrder::MsbFirst ? widthOut - 1U - static_cast<unsigned>(bit % widthOut) : static_cast<unsigned>(bit % widthOut);
+                const unsigned    outPos  = _outOrder == gr::math::BitOrder::MsbFirst ? widthOut - 1U - static_cast<unsigned>(bit % widthOut) : static_cast<unsigned>(bit % widthOut);
                 grouped.signal_values[outItem] |= static_cast<std::uint8_t>(((record.signal_values[inItem] >> inPos) & 1U) << outPos);
             }
 

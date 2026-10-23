@@ -1,5 +1,5 @@
-#ifndef GNURADIO_ALGORITHM_BIT_PACKING_HPP
-#define GNURADIO_ALGORITHM_BIT_PACKING_HPP
+#ifndef GNURADIO_ALGORITHM_MATH_BIT_PACKING_HPP
+#define GNURADIO_ALGORITHM_MATH_BIT_PACKING_HPP
 
 #include <algorithm>
 #include <array>
@@ -61,7 +61,7 @@
  * brings the order of the bytes inside that item with it, which is machine endianness and is exactly
  * what the bit order here is not.
  */
-namespace gr::digital {
+namespace gr::math {
 
 /// @brief Which end of a `w`-bit field the stream's first bit occupies.
 enum class BitOrder : std::uint8_t { MsbFirst, LsbFirst };
@@ -125,10 +125,10 @@ struct BitRepack {
  */
 inline void configureRepack(BitRepack& cfg, unsigned bitsIn, unsigned bitsOut, BitOrder orderIn, BitOrder orderOut) {
     if (bitsIn < 1U || bitsIn > 8U) {
-        throw std::invalid_argument("gr::digital::configureRepack: bitsIn must be in [1, 8], got " + std::to_string(bitsIn));
+        throw std::invalid_argument("gr::math::configureRepack: bitsIn must be in [1, 8], got " + std::to_string(bitsIn));
     }
     if (bitsOut < 1U || bitsOut > 8U) {
-        throw std::invalid_argument("gr::digital::configureRepack: bitsOut must be in [1, 8], got " + std::to_string(bitsOut));
+        throw std::invalid_argument("gr::math::configureRepack: bitsOut must be in [1, 8], got " + std::to_string(bitsOut));
     }
 
     const unsigned common = std::gcd(bitsIn, bitsOut);
@@ -298,6 +298,6 @@ inline void repack(const BitRepack& cfg, std::span<const std::uint8_t> in, std::
     return whole * bitsIn + (remainder * bitsIn) / bitsOut;
 }
 
-} // namespace gr::digital
+} // namespace gr::math
 
-#endif // GNURADIO_ALGORITHM_BIT_PACKING_HPP
+#endif // GNURADIO_ALGORITHM_MATH_BIT_PACKING_HPP
