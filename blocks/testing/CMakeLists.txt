@@ -20,6 +20,7 @@ gr_add_block_library(
   include/gnuradio-4.0/testing/GraphTestBlocks.hpp
   include/gnuradio-4.0/testing/PerformanceMonitor.hpp
   include/gnuradio-4.0/testing/SettingsChangeRecorder.hpp
+  include/gnuradio-4.0/testing/VectorSink.hpp
   LINK_LIBRARIES
   gnuradio4::gr-testing
   gnuradio4::gnuradio-algorithm)
