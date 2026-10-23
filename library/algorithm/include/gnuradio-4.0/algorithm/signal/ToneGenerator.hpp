@@ -21,7 +21,8 @@ enum class ToneType : int { Const, Sin, Cos, Square, Saw, Triangle, FastSin, Fas
  * Sin/Cos call std::sin/std::cos per sample (high precision, no drift).
  * FastSin/FastCos step interleaved recursive phasors instead: one complex multiply a sample, amortized over the
  * lane group, and a re-seed from an exact phase on a fixed cadence to bound the drift.
- * output(t) = A * waveform(2*pi*f*t + phase) + O.
+ * output[n] = A * waveform(theta[n]) + O, where theta starts at `phase` on reset() and advances by
+ * 2*pi*f/sampleRate each sample.
  * A frequency at or below zero, a sample rate that is not finite and positive, and a phase that is not finite
  * are coerced at configure time rather than refused; the generator then holds its constant value.
  *
@@ -64,7 +65,7 @@ struct ToneGenerator {
     // The instant is formed from that count in fixed point, so that reducing it to one cycle is the wrap the
     // arithmetic performs anyway rather than a subtraction of two large numbers.
     std::uint64_t _stepQ64          = 0ULL; ///< frac(f/sampleRate) in Q64 cycles, set in configure()
-    std::uint64_t _originQ64        = 0ULL; ///< frac(phase/(2*pi)) in Q64 cycles, set in configure()
+    std::uint64_t _originQ64        = 0ULL; ///< origin + step * n is the phase of sample n in Q64 cycles; configure() moves it to keep the phase
     double        _radiansPerSample = 0.;   ///< 2*pi*f/sampleRate, the increment the phasor path is seeded with
 
     // Recursive phasor state for FastSin/FastCos
@@ -75,6 +76,10 @@ struct ToneGenerator {
     /// so a sample rate of zero would otherwise cross three `noexcept` frames as a throw. A rate that is not
     /// finite and positive, or a frequency that is not finite, leaves the generator on its constant value the way
     /// a frequency at or below zero already does; a phase that is not finite is taken as zero.
+    ///
+    /// On a running generator a change of frequency, sample rate, type, amplitude or offset keeps the phase
+    /// continuous: the next sample has the phase the old settings would have given it. A change of `phase` shifts
+    /// the waveform by the new value minus the old one. `reset()` restarts the waveform at `phase`.
     void configure(ToneType type, F frequency, F sampleRate, F phase, F amplitude, F offset) noexcept {
         const double f     = static_cast<double>(frequency);
         const double fs    = static_cast<double>(sampleRate);
@@ -83,6 +88,8 @@ struct ToneGenerator {
         const bool usableRate  = std::isfinite(fs) && fs > 0.;
         const bool usableTone  = usableRate && std::isfinite(f) && f > 0.;
         const bool usablePhase = std::isfinite(start);
+
+        const std::uint64_t oldStartQ64 = startQ64();
 
         _frequency = frequency;
         _amplitude = amplitude;
@@ -95,14 +102,19 @@ struct ToneGenerator {
         const double hi = usableTone ? f / fs : 0.;
         const double lo = usableTone ? std::fma(-hi, fs, f) / fs : 0.;
 
-        _stepQ64          = toFixedCycles(hi, lo);
-        _originQ64        = toFixedCycles(usablePhase ? start / kTwoPi : 0., 0.);
+        // The phase at index n is origin + step * n modulo one cycle. Adding (oldStep - newStep) * n to the origin
+        // leaves that value unchanged for the current index, and the wrap of the 64-bit arithmetic does the reduction.
+        // The second term adds the change of the phase setting.
+        const std::uint64_t newStepQ64 = toFixedCycles(hi, lo);
+        _originQ64 += (_stepQ64 - newStepQ64) * _sampleIndex + (startQ64() - oldStartQ64);
+        _stepQ64          = newStepQ64;
         _radiansPerSample = kTwoPi * hi;
         initPhasor();
     }
 
     void reset() noexcept {
         _sampleIndex = 0ULL;
+        _originQ64   = startQ64();
         initPhasor();
     }
 
@@ -223,7 +235,11 @@ private:
         return phasor;
     }
 
-    void initPhasor() noexcept { _tone.configure(_radiansPerSample, static_cast<double>(_phase)); }
+    /// the phase setting in Q64 cycles
+    [[nodiscard]] std::uint64_t startQ64() const noexcept { return toFixedCycles(std::isfinite(_phase) ? static_cast<double>(_phase) / kTwoPi : 0., 0.); }
+
+    /// seeds the phasor at the phase of the sample about to be emitted
+    void initPhasor() noexcept { _tone.configure(_radiansPerSample, kTwoPi * cyclesNow()); }
 
     constexpr void advanceState() noexcept { ++_sampleIndex; }
 
