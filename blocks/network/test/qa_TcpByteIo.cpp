@@ -426,6 +426,7 @@ const boost::ut::suite<"TcpByteIo"> tcpByteIoTests = [] {
         expect(stagingThrows<TcpByteSource>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}, {"reconnect_ms", gr::Size_t{0U}}})) << "a zero reconnect interval spends the thread on nothing else";
         expect(stagingThrows<TcpByteSource>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}, {"connect_timeout_ms", gr::Size_t{0U}}})) << "a zero connect timeout abandons every attempt before it can be answered";
         expect(!stagingThrows<TcpByteSource>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}}));
+        expect(!stagingThrows<TcpByteSource>({{"endpoint", std::string("127.0.0.1:5555")}, {"queue_bytes", gr::Size_t{4096U}}, {"idle_timeout_ms", gr::Size_t{0U}}})) << "an idle deadline of 0 disables it";
     };
 
     // Criterion 8: the byte transport is transparent, in either role assignment, including a second peer refused.
@@ -871,6 +872,136 @@ const boost::ut::suite<"TcpByteIo"> tcpByteIoTests = [] {
         expect(eq(counted.bytes, std::uint64_t{kQueueBytes})) << "the source read more than its queue had room for";
         expect(eq(counted.bytesDropped, std::uint64_t{0ULL})) << "backpressure shed bytes it had already taken off the wire";
         expect(eq(counted.socketErrors, std::uint64_t{0ULL}));
+    };
+
+    "a peer that connects and sends nothing is dropped at idle_timeout_ms and the next peer is served"_test = [] {
+        constexpr auto      kIdle = 300ms;
+        const std::uint16_t port  = reservePort();
+
+        gr::Graph graph;
+        auto&     source    = graph.emplaceBlock<TcpByteSource>({{"endpoint", endpointFor(port)}, {"bind", true}, {"queue_bytes", gr::Size_t{4096U}}, {"idle_timeout_ms", gr::Size_t{static_cast<std::uint32_t>(kIdle.count())}}});
+        auto&     collector = graph.emplaceBlock<ByteVectorSink>();
+        expect(graph.connect<"out", "in">(source, collector).has_value());
+
+        GraphRunner runner(std::move(graph));
+
+        RawStream  silent;
+        const auto connectedAt = std::chrono::steady_clock::now();
+        silent.connectTo(port);
+        expect(silent.closedByPeer(3000ms)) << "a peer that sent nothing kept the slot past idle_timeout_ms";
+        expect(std::chrono::steady_clock::now() - connectedAt >= kIdle) << "the peer was dropped before idle_timeout_ms had passed";
+
+        const std::vector<std::uint8_t> bytes{0x11U, 0x22U, 0x33U};
+        RawStream                       next;
+        next.connectTo(port);
+        next.send(bytes);
+        expect(waitFor([&collector, &bytes] { return collector.count() >= bytes.size(); }, 3000ms)) << "the peer after the dropped one was not served";
+        runner.stop();
+
+        expect(eq(source.counters().idleDrops, std::uint64_t{1ULL}));
+        expect(eq(source.counters().peersRefused, std::uint64_t{0ULL})) << "the next peer connected after the drop and must not be refused";
+        expect(that % (collector.take() == bytes));
+    };
+
+    // The byte source has no body deadline. The idle deadline drops a peer that stops partway through what it sends.
+    "a peer that falls silent is dropped idle_timeout_ms after its last byte"_test = [] {
+        constexpr auto      kIdle = 300ms;
+        const std::uint16_t port  = reservePort();
+
+        gr::Graph graph;
+        auto&     source    = graph.emplaceBlock<TcpByteSource>({{"endpoint", endpointFor(port)}, {"bind", true}, {"queue_bytes", gr::Size_t{4096U}}, {"idle_timeout_ms", gr::Size_t{static_cast<std::uint32_t>(kIdle.count())}}});
+        auto&     collector = graph.emplaceBlock<ByteVectorSink>();
+        expect(graph.connect<"out", "in">(source, collector).has_value());
+
+        GraphRunner runner(std::move(graph));
+
+        const std::vector<std::uint8_t> before{0x11U, 0x22U, 0x33U};
+        const std::vector<std::uint8_t> after{0x44U, 0x55U};
+        RawStream                       stalled;
+        stalled.connectTo(port);
+        const auto lastByteAt = std::chrono::steady_clock::now();
+        stalled.send(before);
+        expect(waitFor([&collector, &before] { return collector.count() >= before.size(); }, 3000ms)) << "the first peer's bytes never reached the graph";
+        expect(stalled.closedByPeer(3000ms)) << "a peer that fell silent kept the slot past idle_timeout_ms";
+        expect(std::chrono::steady_clock::now() - lastByteAt >= kIdle) << "the peer was dropped before idle_timeout_ms had passed since its last byte";
+
+        RawStream next;
+        next.connectTo(port);
+        next.send(after);
+        expect(waitFor([&collector, &before, &after] { return collector.count() >= before.size() + after.size(); }, 3000ms)) << "the peer after the dropped one was not served";
+        runner.stop();
+
+        expect(eq(source.counters().idleDrops, std::uint64_t{1ULL}));
+        expect(eq(source.counters().disconnects, std::uint64_t{1ULL}));
+        std::vector<std::uint8_t> expected = before;
+        expected.insert(expected.end(), after.begin(), after.end());
+        expect(that % (collector.take() == expected));
+    };
+
+    // The idle deadline applies only to an accepted peer.
+    "a connection the source made is kept however long the server is quiet"_test = [] {
+        constexpr auto kIdle    = 200ms;
+        const int      listener = ::socket(AF_INET, SOCK_STREAM, 0);
+        expect(listener >= 0) << "the test could not open a listening socket";
+        ::sockaddr_in address{};
+        address.sin_family      = AF_INET;
+        address.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+        address.sin_port        = 0;
+        expect(::bind(listener, reinterpret_cast<const ::sockaddr*>(&address), static_cast<::socklen_t>(sizeof(address))) == 0);
+        expect(::listen(listener, 4) == 0);
+        ::socklen_t length = static_cast<::socklen_t>(sizeof(address));
+        expect(::getsockname(listener, reinterpret_cast<::sockaddr*>(&address), &length) == 0);
+        const std::uint16_t port = ::ntohs(address.sin_port);
+
+        TcpByteSource source({{"endpoint", endpointFor(port)}, {"bind", false}, {"queue_bytes", gr::Size_t{4096U}}, {"reconnect_ms", gr::Size_t{10U}}, {"idle_timeout_ms", gr::Size_t{static_cast<std::uint32_t>(kIdle.count())}}});
+        source.settings().init();
+        std::ignore = source.settings().applyStagedParameters();
+        source.start();
+
+        ::pollfd item{.fd = listener, .events = POLLIN, .revents = 0};
+        expect(::poll(&item, 1UL, 5000) > 0) << "the source never connected to the test's server";
+        const int accepted = ::accept(listener, nullptr, nullptr);
+        expect(accepted >= 0) << "the test could not accept the source's connection";
+        std::this_thread::sleep_for(kIdle * 3); // a listening source would have dropped an accepted peer in this time
+
+        const std::vector<std::uint8_t> bytes{0x11U, 0x22U, 0x33U};
+        expect(::send(accepted, bytes.data(), bytes.size(), MSG_NOSIGNAL) == static_cast<::ssize_t>(bytes.size()));
+        expect(waitFor([&source, &bytes] { return source.counters().bytes >= bytes.size(); }, 3000ms)) << "the quiet connection was not the one the bytes arrived on";
+        const auto counted = source.counters();
+        source.stop();
+        std::ignore = ::close(accepted);
+        std::ignore = ::close(listener);
+
+        expect(eq(counted.idleDrops, std::uint64_t{0ULL})) << "a connection the source made was dropped as idle";
+        expect(eq(counted.disconnects, std::uint64_t{0ULL}));
+        expect(eq(counted.reconnects, std::uint64_t{0ULL}));
+    };
+
+    "a peer that sends more often than idle_timeout_ms is kept"_test = [] {
+        constexpr auto        kIdle  = 500ms;
+        constexpr std::size_t kSends = 12UZ;
+        const std::uint16_t   port   = reservePort();
+
+        gr::Graph graph;
+        auto&     source    = graph.emplaceBlock<TcpByteSource>({{"endpoint", endpointFor(port)}, {"bind", true}, {"queue_bytes", gr::Size_t{4096U}}, {"idle_timeout_ms", gr::Size_t{static_cast<std::uint32_t>(kIdle.count())}}});
+        auto&     collector = graph.emplaceBlock<ByteVectorSink>();
+        expect(graph.connect<"out", "in">(source, collector).has_value());
+
+        GraphRunner runner(std::move(graph));
+
+        RawStream peer;
+        peer.connectTo(port);
+        for (std::size_t i = 0UZ; i < kSends; ++i) {
+            const std::array<std::uint8_t, 1UZ> one{static_cast<std::uint8_t>(i)};
+            peer.send(one);
+            std::this_thread::sleep_for(kIdle / 5); // the sends span more than twice the deadline
+        }
+        expect(waitFor([&collector] { return collector.count() >= kSends; }, 3000ms)) << "the kept peer's bytes did not all arrive";
+        runner.stop();
+
+        expect(eq(source.counters().idleDrops, std::uint64_t{0ULL})) << "a peer that sent within every deadline was dropped";
+        expect(eq(source.counters().disconnects, std::uint64_t{0ULL}));
+        expect(eq(collector.count(), kSends));
     };
 };
 

@@ -246,6 +246,22 @@ struct RawStream {
         return bytes;
     }
 
+    /// @brief True once the block has closed this connection: a read returns end of stream or an error.
+    [[nodiscard]] bool closedByPeer(std::chrono::milliseconds deadline = 5000ms) const {
+        const auto until = std::chrono::steady_clock::now() + deadline;
+        while (std::chrono::steady_clock::now() < until) {
+            ::pollfd item{.fd = fd, .events = POLLIN, .revents = 0};
+            if (::poll(&item, 1UL, 50) > 0) {
+                std::uint8_t    scratch  = 0U;
+                const ::ssize_t received = ::recv(fd, &scratch, 1UZ, MSG_DONTWAIT);
+                if (received == 0 || (received < 0 && errno != EAGAIN && errno != EINTR)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     void close() {
         if (fd >= 0) {
             std::ignore = ::close(fd);
@@ -1201,6 +1217,181 @@ const boost::ut::suite<"SocketPacketIOLifecycle"> socketLifecycleTests = [] {
 
         expect(eq(source.nPeersRefused, std::uint64_t{1ULL}));
         expect(eq(source.nPacketsPublished, std::uint64_t{2ULL}));
+    };
+
+    "a peer that connects and sends nothing is dropped at idle_timeout_ms and the next peer is served"_test = [] {
+        constexpr auto      kIdle = 300ms;
+        const std::uint16_t port  = reservePort(SOCK_STREAM);
+
+        gr::Graph graph;
+        auto&     source    = graph.emplaceBlock<TcpPacketSource<std::uint8_t>>({{"endpoint", endpointFor(port)}, {"bind", true}, {"max_message_bytes", kBound}, {"idle_timeout_ms", gr::Size_t{static_cast<std::uint32_t>(kIdle.count())}}});
+        auto&     collector = graph.emplaceBlock<PacketVectorSink<std::uint8_t>>();
+        expect(graph.connect<"out", "in">(source, collector).has_value());
+
+        GraphRunner runner(std::move(graph));
+        RawStream   silent;
+        const auto  connectedAt = std::chrono::steady_clock::now();
+        silent.connectTo(port);
+        expect(silent.closedByPeer(3000ms)) << "a peer that sent nothing kept the slot past idle_timeout_ms";
+        expect(std::chrono::steady_clock::now() - connectedAt >= kIdle) << "the peer was dropped before idle_timeout_ms had passed";
+
+        RawStream next;
+        next.connectTo(port);
+        const std::array<std::uint8_t, 2> payload{1U, 2U};
+        next.write(uint8Envelope(payload, 1ULL));
+        expect(waitFor([&collector] { return collector.count() >= 1UZ; }, 3000ms)) << "the peer after the dropped one was not served";
+        runner.stop();
+
+        expect(eq(source.nIdlePeersDropped, std::uint64_t{1ULL}));
+        expect(eq(source.nStalledPeersDropped, std::uint64_t{0ULL}));
+        expect(eq(source.nPeersRefused, std::uint64_t{0ULL})) << "the next peer connected after the drop and must not be refused";
+        expect(eq(source.nPacketsPublished, std::uint64_t{1ULL}));
+    };
+
+    // Only the body deadline can drop the peer below: it sends a byte more often than idle_timeout_ms and never
+    // finishes the body.
+    "a peer that leaves an envelope incomplete is dropped at body_timeout_ms and the next peer is served"_test = [] {
+        constexpr auto      kIdle = 1000ms;
+        constexpr auto      kBody = 300ms;
+        const std::uint16_t port  = reservePort(SOCK_STREAM);
+
+        gr::Graph graph;
+        auto&     source    = graph.emplaceBlock<TcpPacketSource<std::uint8_t>>({{"endpoint", endpointFor(port)}, {"bind", true}, {"max_message_bytes", kBound}, {"idle_timeout_ms", gr::Size_t{static_cast<std::uint32_t>(kIdle.count())}}, {"body_timeout_ms", gr::Size_t{static_cast<std::uint32_t>(kBody.count())}}});
+        auto&     collector = graph.emplaceBlock<PacketVectorSink<std::uint8_t>>();
+        expect(graph.connect<"out", "in">(source, collector).has_value());
+
+        GraphRunner runner(std::move(graph));
+        RawStream   stalled;
+        stalled.connectTo(port);
+        const std::vector<std::uint8_t> wide(128UZ, 0x3CU);
+        const std::vector<std::uint8_t> envelope  = uint8Envelope(wide, 1ULL);
+        const std::size_t               half      = envelope.size() - wide.size() / 2UZ;
+        const auto                      startedAt = std::chrono::steady_clock::now();
+        stalled.write(std::span<const std::uint8_t>(envelope).first(half)); // a header and half a body
+
+        bool        closed = false;
+        std::size_t sent   = half;
+        const auto  until  = startedAt + 3000ms;
+        while (!closed && sent < envelope.size() && std::chrono::steady_clock::now() < until) {
+            closed = stalled.closedByPeer(kIdle / 10);
+            if (!closed) {
+                std::ignore = ::send(stalled.fd, envelope.data() + sent, 1UZ, MSG_NOSIGNAL);
+                ++sent;
+            }
+        }
+        expect(closed) << "a peer that left its envelope incomplete kept the slot past body_timeout_ms";
+        expect(lt(sent, envelope.size())) << "the trickle finished the envelope, so the case did not hold one incomplete";
+        expect(std::chrono::steady_clock::now() - startedAt >= kBody) << "the peer was dropped before body_timeout_ms had passed";
+
+        RawStream next;
+        next.connectTo(port);
+        const std::array<std::uint8_t, 3> resumed{9U, 9U, 9U};
+        next.write(uint8Envelope(resumed, 2ULL));
+        expect(waitFor([&collector] { return collector.count() >= 1UZ; }, 3000ms)) << "the peer after the dropped one was not served";
+        runner.stop();
+
+        expect(eq(source.nStalledPeersDropped, std::uint64_t{1ULL}));
+        expect(eq(source.nIdlePeersDropped, std::uint64_t{0ULL})) << "the trickle kept the idle deadline from firing, so only the body deadline could drop the peer";
+        expect(eq(source.nTruncatedEnvelopes, std::uint64_t{1ULL})) << "the incomplete envelope was not discarded whole";
+        expect(eq(source.nPeersRefused, std::uint64_t{0ULL}));
+        const std::vector<gr::Packet<std::uint8_t>> packets = collector.take();
+        expect(eq(packets.size(), 1UZ));
+        expect(!packets.empty() && sequenceOf(packets.front()) == 2ULL) << "the one packet published is the next peer's";
+    };
+
+    // Bytes the magic scan passes over leave the idle clock running.
+    "a peer that trickles bytes holding no magic is dropped at idle_timeout_ms and the next peer is served"_test = [] {
+        constexpr auto      kIdle = 300ms;
+        const std::uint16_t port  = reservePort(SOCK_STREAM);
+
+        gr::Graph graph;
+        auto&     source    = graph.emplaceBlock<TcpPacketSource<std::uint8_t>>({{"endpoint", endpointFor(port)}, {"bind", true}, {"max_message_bytes", kBound}, {"idle_timeout_ms", gr::Size_t{static_cast<std::uint32_t>(kIdle.count())}}});
+        auto&     collector = graph.emplaceBlock<PacketVectorSink<std::uint8_t>>();
+        expect(graph.connect<"out", "in">(source, collector).has_value());
+
+        GraphRunner runner(std::move(graph));
+        RawStream   noisy;
+        const auto  connectedAt = std::chrono::steady_clock::now();
+        noisy.connectTo(port);
+        const std::array<std::uint8_t, 8UZ> burst{}; // more bytes than the magic scan keeps back
+        noisy.write(burst);
+
+        bool         closed = false;
+        std::size_t  sent   = 0UZ;
+        std::uint8_t noise  = 0U;
+        while (!closed && std::chrono::steady_clock::now() < connectedAt + 3000ms) {
+            closed = noisy.closedByPeer(kIdle / 6);
+            if (!closed && ::send(noisy.fd, &noise, 1UZ, MSG_NOSIGNAL) == 1) {
+                ++sent;
+            }
+        }
+        expect(closed) << "a peer that trickled bytes holding no magic kept the slot past idle_timeout_ms";
+        expect(ge(sent, 2UZ)) << "the peer sent too few bytes to show that bytes alone do not restart the idle clock";
+        expect(std::chrono::steady_clock::now() - connectedAt >= kIdle) << "the peer was dropped before idle_timeout_ms had passed";
+
+        RawStream next;
+        next.connectTo(port);
+        const std::array<std::uint8_t, 2> payload{1U, 2U};
+        next.write(uint8Envelope(payload, 1ULL));
+        expect(waitFor([&collector] { return collector.count() >= 1UZ; }, 3000ms)) << "the peer after the dropped one was not served";
+        runner.stop();
+
+        expect(eq(source.nIdlePeersDropped, std::uint64_t{1ULL}));
+        expect(gt(source.nBytesSkipped, std::uint64_t{0ULL})) << "the noise never reached the magic scan";
+        expect(eq(source.nPeersRefused, std::uint64_t{0ULL}));
+        expect(eq(source.nPacketsPublished, std::uint64_t{1ULL}));
+    };
+
+    // The deadlines apply only to a listening source's accepted peer.
+    "a connection the source made is kept however long the server is quiet"_test = [] {
+        constexpr auto    kIdle = 200ms;
+        const RawListener server;
+
+        TcpPacketSource<std::uint8_t> source({{"endpoint", server.endpoint()}, {"bind", false}, {"max_message_bytes", kBound}, {"reconnect_ms", gr::Size_t{10U}}, {"idle_timeout_ms", gr::Size_t{static_cast<std::uint32_t>(kIdle.count())}}, {"body_timeout_ms", gr::Size_t{static_cast<std::uint32_t>(kIdle.count())}}});
+        source.settings().init();
+        std::ignore = source.settings().applyStagedParameters();
+        source.start();
+
+        const RawStream accepted(server.acceptOne());
+        expect(accepted.fd >= 0) << "the source never connected to the test's server";
+        std::this_thread::sleep_for(kIdle * 3); // a listening source would have dropped an accepted peer in this time
+
+        const std::array<std::uint8_t, 2> payload{1U, 2U};
+        accepted.write(uint8Envelope(payload, 1ULL));
+        expect(waitFor([&source] { return source.nEnvelopesReceived >= 1ULL; }, 3000ms)) << "the quiet connection was not the one the envelope arrived on";
+        source.stop();
+
+        expect(eq(source.nIdlePeersDropped, std::uint64_t{0ULL})) << "a connection the source made was dropped as idle";
+        expect(eq(source.nDisconnects, std::uint64_t{0ULL}));
+        expect(eq(source.nReconnects, std::uint64_t{0ULL}));
+    };
+
+    "a peer that sends whole envelopes more often than the deadlines is kept"_test = [] {
+        constexpr auto        kDeadline = 500ms;
+        constexpr std::size_t kSends    = 12UZ;
+        const std::uint16_t   port      = reservePort(SOCK_STREAM);
+        const auto            deadline  = gr::Size_t{static_cast<std::uint32_t>(kDeadline.count())};
+
+        gr::Graph graph;
+        auto&     source    = graph.emplaceBlock<TcpPacketSource<std::uint8_t>>({{"endpoint", endpointFor(port)}, {"bind", true}, {"max_message_bytes", kBound}, {"idle_timeout_ms", deadline}, {"body_timeout_ms", deadline}});
+        auto&     collector = graph.emplaceBlock<PacketVectorSink<std::uint8_t>>();
+        expect(graph.connect<"out", "in">(source, collector).has_value());
+
+        GraphRunner runner(std::move(graph));
+        RawStream   peer;
+        peer.connectTo(port);
+        const std::array<std::uint8_t, 2> payload{1U, 2U};
+        for (std::size_t i = 0UZ; i < kSends; ++i) {
+            peer.write(uint8Envelope(payload, i + 1UZ));
+            std::this_thread::sleep_for(kDeadline / 5); // the sends span more than twice the deadline
+        }
+        expect(waitFor([&collector] { return collector.count() >= kSends; }, 3000ms)) << "the kept peer's envelopes did not all arrive";
+        runner.stop();
+
+        expect(eq(source.nIdlePeersDropped, std::uint64_t{0ULL})) << "a peer that sent within every deadline was dropped";
+        expect(eq(source.nStalledPeersDropped, std::uint64_t{0ULL}));
+        expect(eq(source.nDisconnects, std::uint64_t{0ULL}));
+        expect(eq(source.nPacketsPublished, std::uint64_t{kSends}));
     };
 
     // The fault behind the ERROR status: the listening socket the reader owns stops being one it can accept on. It has
