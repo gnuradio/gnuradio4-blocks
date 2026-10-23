@@ -44,8 +44,8 @@ The block is one symbol in, one symbol out, so every input tag key passes throug
     PortIn<std::complex<F>> in;
     PortOut<std::uint8_t>   out;
 
-    Annotated<std::string, "constellation", detail::ConstellationSettingsDoc, Visible> constellation = std::string("qpsk");
-    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, for 'psk' and 'qam'">>     arity         = 4U;
+    Annotated<std::string, "constellation", ConstellationSettingsDoc, Visible>         constellation = std::string("qpsk");
+    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, read by 'psk' and 'qam'">> arity         = 4U;
     Annotated<F, "phase_offset", Unit<"rad">, Doc<"rotation of the 'psk' point set">>  phase_offset  = F{0};
     Annotated<gr::Size_t, "label_xor", Doc<"label offset of the 'psk' point set">>     label_xor     = 0U;
     Annotated<std::vector<F>, "points", Doc<"interleaved re,im for 'custom'">>         points{};
@@ -59,7 +59,7 @@ The block is one symbol in, one symbol out, so every input tag key passes throug
 
     void start() { rebuild(); }
 
-    void rebuild() { _constellation = detail::build<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization); }
+    void rebuild() { _constellation = constellationFromSettings<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization); }
 
     [[nodiscard]] std::size_t bitsPerSymbol() const { return _constellation.bitsPerSymbol(); }
 
@@ -92,8 +92,8 @@ precondition. `max_log` is the default and needs no transcendental; it is exact 
     PortIn<std::complex<F>> in;
     PortOut<F>              out;
 
-    Annotated<std::string, "constellation", detail::ConstellationSettingsDoc, Visible>                             constellation = std::string("qpsk");
-    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, for 'psk' and 'qam'">>                                 arity         = 4U;
+    Annotated<std::string, "constellation", ConstellationSettingsDoc, Visible>                                     constellation = std::string("qpsk");
+    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, read by 'psk' and 'qam'">>                             arity         = 4U;
     Annotated<F, "phase_offset", Unit<"rad">, Doc<"rotation of the 'psk' point set">>                              phase_offset  = F{0};
     Annotated<gr::Size_t, "label_xor", Doc<"label offset of the 'psk' point set">>                                 label_xor     = 0U;
     Annotated<std::vector<F>, "points", Doc<"interleaved re,im for 'custom'">>                                     points{};
@@ -119,7 +119,7 @@ precondition. `max_log` is the default and needs no transcendental; it is exact 
             throw gr::exception(std::format("soft_algorithm must be 'max_log' or 'exact', got '{}'", soft_algorithm.value));
         }
         _algorithm     = soft_algorithm == "exact" ? gr::digital::SoftAlgorithm::Exact : gr::digital::SoftAlgorithm::MaxLog;
-        _constellation = detail::build<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization);
+        _constellation = constellationFromSettings<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization);
         _bits          = _constellation.bitsPerSymbol();
 
         this->input_chunk_size  = 1U;
@@ -191,8 +191,8 @@ The block is one symbol in, one symbol out, so every input tag key passes throug
     PortIn<std::uint8_t>     in;
     PortOut<std::complex<F>> out;
 
-    Annotated<std::string, "constellation", detail::ConstellationSettingsDoc, Visible> constellation = std::string("qpsk");
-    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, for 'psk' and 'qam'">>     arity         = 4U;
+    Annotated<std::string, "constellation", ConstellationSettingsDoc, Visible>         constellation = std::string("qpsk");
+    Annotated<gr::Size_t, "arity", Unit<"symbols">, Doc<"M, read by 'psk' and 'qam'">> arity         = 4U;
     Annotated<F, "phase_offset", Unit<"rad">, Doc<"rotation of the 'psk' point set">>  phase_offset  = F{0};
     Annotated<gr::Size_t, "label_xor", Doc<"label offset of the 'psk' point set">>     label_xor     = 0U;
     Annotated<std::vector<F>, "points", Doc<"interleaved re,im for 'custom'">>         points{};
@@ -206,7 +206,7 @@ The block is one symbol in, one symbol out, so every input tag key passes throug
 
     void start() { rebuild(); }
 
-    void rebuild() { _constellation = detail::build<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization); }
+    void rebuild() { _constellation = constellationFromSettings<F>(constellation, arity, phase_offset, label_xor, std::span<const F>(points.value), normalization); }
 
     [[nodiscard]] std::size_t bitsPerSymbol() const { return _constellation.bitsPerSymbol(); }
 
