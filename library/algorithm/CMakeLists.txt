@@ -2,6 +2,13 @@ add_library(gnuradio-algorithm INTERFACE)
 add_library(gnuradio4::gnuradio-algorithm ALIAS gnuradio-algorithm)
 target_include_directories(gnuradio-algorithm INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
                                                         $<INSTALL_INTERFACE:include/>)
+# fourier/fft.hpp includes the vendored PocketFFT at its installed path below gnuradio-4.0/. That path cannot collide
+# with a pocketfft installed on the system. It resolves from the include root alone. A consumer that finds this project
+# through pkg-config needs no include directory beyond -I${includedir}. The source tree mirrors the installed layout
+# under third_party/include/. That directory is a system include because the vendored sources do not pass this project's
+# warning flags.
+target_include_directories(gnuradio-algorithm SYSTEM
+                           INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../third_party/include/>)
 install(
   TARGETS gnuradio-algorithm
   EXPORT ${GR4_EXPORT_NAME}
@@ -13,6 +20,10 @@ install(
 install(
   FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/meta/UncertainValue.hpp"
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gnuradio-4.0/meta"
+  COMPONENT Devel)
+install(
+  DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/include/gnuradio-4.0/third_party/pocketfft"
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gnuradio-4.0/third_party"
   COMPONENT Devel)
 
 # gnuradio-core carries MemoryAllocators/Message/HistoryBuffer/Tensor/DataSet, which the public headers of this target
