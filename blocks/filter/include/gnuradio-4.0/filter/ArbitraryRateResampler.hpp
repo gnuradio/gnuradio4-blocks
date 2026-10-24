@@ -19,7 +19,6 @@
 
 #include <gnuradio-4.0/algorithm/filter/ArbitraryResampler.hpp>
 
-#include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
 #include <gnuradio-4.0/filter/TagDelay.hpp>
 
 namespace gr::blocks::filter {

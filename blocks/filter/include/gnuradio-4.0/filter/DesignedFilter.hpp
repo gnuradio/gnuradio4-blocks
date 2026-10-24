@@ -20,7 +20,6 @@
 #include <gnuradio-4.0/algorithm/filter/FilterDesign.hpp>
 
 #include <gnuradio-4.0/filter/FirFilter.hpp>
-#include <gnuradio-4.0/filter/NamespaceCompatibility.hpp>
 
 namespace gr::blocks::filter {
 

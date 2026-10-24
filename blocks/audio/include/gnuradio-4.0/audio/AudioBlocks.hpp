@@ -26,8 +26,6 @@
 #include <thread>
 #include <vector>
 
-#include <gnuradio-4.0/audio/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::audio {
 
 GR_REGISTER_BLOCK(gr::blocks::audio::AudioSource, [T], [ float, int16_t ])

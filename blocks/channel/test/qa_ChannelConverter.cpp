@@ -180,7 +180,7 @@ const boost::ut::suite<"converter models"> converterTests = [] {
         using gr::blocks::channel::test::keysCrossing;
         using gr::blocks::channel::test::keysOtherThan;
 
-        expect(keysCrossing<gr::testing::Copy<C>>() == keysOtherThan({})) << "every test key crosses a block that drops none";
+        expect(keysCrossing<gr::blocks::testing::Copy<C>>() == keysOtherThan({})) << "every test key crosses a block that drops none";
         expect(keysCrossing<Nonlinearity<C>>({{"model", "Saleh"}}) == keysOtherThan({"phase_est"}));
     };
 };

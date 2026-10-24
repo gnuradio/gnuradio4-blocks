@@ -16,8 +16,6 @@
 #include <gnuradio-4.0/Port.hpp>
 #include <gnuradio-4.0/annotated.hpp>
 
-#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::basic {
 
 GR_REGISTER_BLOCK(gr::blocks::basic::Throttle, [T], [ float, std::complex<float>, std::int16_t, std::uint8_t ])

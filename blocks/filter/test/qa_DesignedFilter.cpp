@@ -230,9 +230,9 @@ const boost::ut::suite<"DesignedFilter"> designedFilterTests = [] {
     };
 
     "a stated rate wins over stream tags; the stream's tags still ride through"_test = [] {
-        using gr::testing::ProcessFunction;
-        using gr::testing::TagSink;
-        using gr::testing::TagSource;
+        using gr::blocks::testing::ProcessFunction;
+        using gr::blocks::testing::TagSink;
+        using gr::blocks::testing::TagSource;
 
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 65536U}, {"mark_tag", false}});

@@ -13,8 +13,6 @@
 #include <format>
 #include <gnuradio-4.0/meta/formatter.hpp>
 
-#include <gnuradio-4.0/testing/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::testing {
 
 GR_REGISTER_BLOCK("gr::blocks::testing::ImChartMonitor", gr::blocks::testing::ImChartMonitor, [T], [float]);

@@ -22,8 +22,6 @@
 #include <thread>
 #include <typeinfo>
 
-#include <gnuradio-4.0/basic/NamespaceCompatibility.hpp>
-
 namespace gr::blocks::basic {
 
 enum class OverflowPolicy : std::uint8_t {
