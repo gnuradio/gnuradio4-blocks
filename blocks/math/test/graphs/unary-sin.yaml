@@ -1,0 +1,42 @@
+# Sin: out = sin(in), in radians.
+#   0 pi/2 -pi/6 pi -> 0 1 -0.5 0
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32
+        - 0.0
+        - 1.5707963267948966
+        - -0.5235987755982988
+        - 3.141592653589793
+  - id: gr::blocks::math::Sin<float32>
+    parameters:
+      name: sin_f32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_f32
+      expected: !!float32 [0.0, 1.0, -0.5, 0.0]
+      relative_tolerance: 1e-6
+      tolerance: 1e-6
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source_f64
+      values: !!float64
+        - 0.0
+        - 1.5707963267948966
+        - -0.5235987755982988
+        - 3.141592653589793
+  - id: gr::blocks::math::Sin<float64>
+    parameters:
+      name: sin_f64
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink_f64
+      expected: !!float64 [0.0, 1.0, -0.5, 0.0]
+      relative_tolerance: 1e-12
+      tolerance: 1e-12
+connections:
+  - [source_f32, out, sin_f32, in]
+  - [sin_f32, out, sink_f32, in]
+  - [source_f64, out, sin_f64, in]
+  - [sin_f64, out, sink_f64, in]

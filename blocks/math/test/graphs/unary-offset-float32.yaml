@@ -1,0 +1,18 @@
+# Negate<float32> with offset 10 and scale 1: out = -in + 10.
+#   1.5 0 -2.25 -> 8.5 10 12.25, each exact in float32. The sink takes no tolerance.
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source
+      values: !!float32 [1.5, 0.0, -2.25]
+  - id: gr::blocks::math::Negate<float32>
+    parameters:
+      name: negate
+      offset: !!float32 10.0
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink
+      expected: !!float32 [8.5, 10.0, 12.25]
+connections:
+  - [source, out, negate, in]
+  - [negate, out, sink, in]

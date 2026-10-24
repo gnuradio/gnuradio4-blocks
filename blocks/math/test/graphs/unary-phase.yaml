@@ -1,0 +1,29 @@
+# Phase: out = arg(in) in radians, complex in, float32 out.
+#   (1,0) (0,1) (-1,0) (0,-1) (1,1) -> 0 pi/2 pi -pi/2 pi/4
+blocks:
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: source_c32
+      values: !!complex32
+        - (1.0, 0.0)
+        - (0.0, 1.0)
+        - (-1.0, 0.0)
+        - (0.0, -1.0)
+        - (1.0, 1.0)
+  - id: gr::blocks::math::Phase<complex<float32>>
+    parameters:
+      name: phase_c32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_c32
+      expected: !!float32
+        - 0.0
+        - 1.5707963267948966
+        - 3.141592653589793
+        - -1.5707963267948966
+        - 0.7853981633974483
+      relative_tolerance: 1e-6
+      tolerance: 1e-6
+connections:
+  - [source_c32, out, phase_c32, in]
+  - [phase_c32, out, sink_c32, in]

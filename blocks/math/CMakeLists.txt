@@ -1,8 +1,14 @@
+# the math headers without the expression library, for a module that uses Unary.hpp alone
+add_library(gr-math-headers INTERFACE)
+add_library(gnuradio4::gr-math-headers ALIAS gr-math-headers)
+target_link_libraries(gr-math-headers INTERFACE gnuradio4::gnuradio-core)
+target_include_directories(gr-math-headers INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
+                                                     $<INSTALL_INTERFACE:include/>)
+install(TARGETS gr-math-headers EXPORT gnuradio4Targets)
+
 add_library(gr-math INTERFACE)
 add_library(gnuradio4::gr-math ALIAS gr-math)
-target_link_libraries(gr-math INTERFACE gnuradio4::gnuradio-core gnuradio4::gnuradio-algorithm gnuradio4::exprtk)
-target_include_directories(gr-math INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
-                                             $<INSTALL_INTERFACE:include/>)
+target_link_libraries(gr-math INTERFACE gr-math-headers gnuradio4::gnuradio-algorithm gnuradio4::exprtk)
 install(TARGETS gr-math EXPORT gnuradio4Targets)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/math"
         DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gnuradio-4.0")
@@ -15,6 +21,7 @@ gr_add_block_library(
   include/gnuradio-4.0/math/ExpressionBlocks.hpp
   include/gnuradio-4.0/math/Math.hpp
   include/gnuradio-4.0/math/Rotator.hpp
+  include/gnuradio-4.0/math/Unary.hpp
   LINK_LIBRARIES
   gr-math)
 

@@ -1,0 +1,50 @@
+# Square: out = in * in.
+#   real:    -3 0 0.5 2          -> 9 0 0.25 4
+#   complex: (1,1) (0,2) (-3,0)  -> (0,2) (-4,0) (9,0), since (1+j)^2 = 2j and (2j)^2 = -4
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32 [-3.0, 0.0, 0.5, 2.0]
+  - id: gr::blocks::math::Square<float32>
+    parameters:
+      name: square_f32
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_f32
+      expected: !!float32 [9.0, 0.0, 0.25, 4.0]
+  - id: gr::blocks::testing::VectorSource<float64>
+    parameters:
+      name: source_f64
+      values: !!float64 [-3.0, 0.0, 0.5, 2.0]
+  - id: gr::blocks::math::Square<float64>
+    parameters:
+      name: square_f64
+  - id: gr::blocks::testing::ExpectSink<float64>
+    parameters:
+      name: sink_f64
+      expected: !!float64 [9.0, 0.0, 0.25, 4.0]
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: source_c32
+      values: !!complex32
+        - (1.0, 1.0)
+        - (0.0, 2.0)
+        - (-3.0, 0.0)
+  - id: gr::blocks::math::Square<complex<float32>>
+    parameters:
+      name: square_c32
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: sink_c32
+      expected: !!complex32
+        - (0.0, 2.0)
+        - (-4.0, 0.0)
+        - (9.0, 0.0)
+connections:
+  - [source_f32, out, square_f32, in]
+  - [square_f32, out, sink_f32, in]
+  - [source_f64, out, square_f64, in]
+  - [square_f64, out, sink_f64, in]
+  - [source_c32, out, square_c32, in]
+  - [square_c32, out, sink_c32, in]
