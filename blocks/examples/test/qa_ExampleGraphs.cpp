@@ -9,7 +9,6 @@
 #include <format>
 #include <fstream>
 #include <future>
-#include <map>
 #include <memory>
 #include <print>
 #include <span>
@@ -107,21 +106,6 @@ void registerGraphFamilies() {
     return result;
 }
 
-/// @brief Loads a graph that is checked and never run.
-///
-/// A DataSink adds its signal_name to the global sink registry when its settings are applied, and removes it when it
-/// stops. A sink that is loaded and destroyed without running stays registered under its name, and the next sink that
-/// takes the name is refused. Every DataSink of a graph loaded here takes an empty name, which the registry skips.
-[[nodiscard]] gr::meta::indirect<gr::Graph> loadForInspection(std::string_view text) {
-    gr::BlockSettings overrides;
-    for (const FileBlock& entry : fileBlocks(text)) {
-        if (entry.id.starts_with("gr::blocks::basic::DataSink<")) {
-            overrides.emplace(entry.name, gr::property_map{{"signal_name", std::string{}}});
-        }
-    }
-    return gr::loadGrc(gr::globalPluginLoader(), text, overrides);
-}
-
 /// @brief Expects the loaded graph to hold one block per entry of the file, each under the name and id of its entry.
 void expectBlocksUnderTheirIds(const gr::Graph& graph, std::string_view text) {
     using namespace boost::ut;
@@ -186,7 +170,7 @@ const boost::ut::suite<"example graphs"> exampleGraphTests = [] {
         expect(std::ranges::contains(gr::examples::kExampleGraphs, kFmRadioMono, &gr::examples::ExampleGraph::fileName)) << "the graphs are embedded";
         for (const auto& [fileName, text] : gr::examples::kExampleGraphs) {
             std::println("loading {}", fileName);
-            auto graph = loadForInspection(text);
+            auto graph = gr::loadGrc(gr::globalPluginLoader(), text);
             expectBlocksUnderTheirIds(*graph, text);
         }
     };
@@ -197,7 +181,7 @@ const boost::ut::suite<"example graphs"> exampleGraphTests = [] {
         for (const auto& [fileName, text] : gr::examples::kExampleGraphs) {
             const std::string installed = readFile(INSTALLED_EXAMPLE_GRAPHS_PATH, fileName);
             expect(eq(std::string_view{installed}, text)) << std::format("the installed {} is the source file", fileName);
-            auto graph = loadForInspection(installed);
+            auto graph = gr::loadGrc(gr::globalPluginLoader(), installed);
             expectBlocksUnderTheirIds(*graph, installed);
         }
     };
@@ -215,7 +199,7 @@ const boost::ut::suite<"example graphs"> exampleGraphTests = [] {
 
         std::string refusal;
         try {
-            auto graph = loadForInspection(text);
+            auto graph = gr::loadGrc(gr::globalPluginLoader(), text);
         } catch (const std::exception& error) {
             refusal = error.what();
         }
