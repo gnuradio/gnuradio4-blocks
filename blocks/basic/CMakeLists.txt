@@ -4,10 +4,13 @@ set(GrBasicBlocks_HDRS
     include/gnuradio-4.0/basic/DataSetToPacket.hpp
     include/gnuradio-4.0/basic/DataSetToStream.hpp
     include/gnuradio-4.0/basic/DataSink.hpp
+    include/gnuradio-4.0/basic/Decimators.hpp
     include/gnuradio-4.0/basic/FunctionGenerator.hpp
     include/gnuradio-4.0/basic/MessageDebug.hpp
     include/gnuradio-4.0/basic/SampleDelay.hpp
+    include/gnuradio-4.0/basic/IqCorrection.hpp
     include/gnuradio-4.0/basic/PacketToDataSet.hpp
+    include/gnuradio-4.0/basic/RealToComplex.hpp
     include/gnuradio-4.0/basic/Selector.hpp
     include/gnuradio-4.0/basic/SignalGenerator.hpp
     include/gnuradio-4.0/basic/SkipHead.hpp

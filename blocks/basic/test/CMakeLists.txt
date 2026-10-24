@@ -17,7 +17,13 @@ endif()
 add_basic_test(qa_MessageDebug)
 add_basic_test(qa_SampleDelay)
 add_basic_test(qa_SkipHead)
+add_basic_test(qa_IqCorrection)
+gr_pin_test_optimization(qa_IqCorrection BUILD_TYPE)
+# a case runs the swap into the carrier-tracking loop of the sync headers
+target_link_libraries(qa_IqCorrection PRIVATE gr-sync)
 add_basic_test(qa_TriggerBlocks)
+add_basic_test(qa_Decimators)
+add_basic_test(qa_RealToComplex)
 add_basic_test(qa_Throttle)
 set_property(TEST qa_Throttle PROPERTY RESOURCE_LOCK rt)
 
@@ -48,3 +54,11 @@ if(TARGET GrBasicBlocksShared)
     PLUGIN_DIRS
     "$<TARGET_FILE_DIR:GrBasicBlocksShared>")
 endif()
+
+# RealToComplex moves its tags by the conversion's delay and forwards the ones past its last output at the end-of-stream
+# index
+gr_add_graph_test(
+  graph_basic_real_to_complex_end_tags
+  graphs/real-to-complex-end-tags.yaml
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrBasicBlocksShared>)

@@ -8,6 +8,8 @@
 #include <numbers>
 #include <print>
 #include <span>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include <gnuradio-4.0/analog/Squelch.hpp>
@@ -293,6 +295,23 @@ const boost::ut::suite<"PowerSquelch"> powerSquelchTests = [] {
         expect(throws([] { std::ignore = makeSquelch<CF>({{"alpha", 0.0}}); })) << "zero alpha";
         expect(throws([] { std::ignore = makeSquelch<CF>({{"alpha", 1.5}}); })) << "alpha above one";
         expect(throws([] { std::ignore = makeSquelch<CF>({{"averaging_time_s", 0.02}, {"sample_rate", 0.f}}); })) << "zero sample_rate with a time constant";
+    };
+
+    "the coefficient helper returns its refusal, and the block throws the same text"_test = [] {
+        using gr::blocks::analog::detail::averagerCoefficient;
+        expect(eq(averagerCoefficient(0.25, 0.0, 48000.0).value_or(0.0), 0.25)) << "with no time constant the coefficient is alpha";
+        expect(eq(averagerCoefficient(0.25, 0.02, 48000.0).value_or(0.0), 1.0 - std::exp(-1.0 / 960.0))) << "with one it follows from the rate";
+
+        for (const auto& [settings, refused] : {std::pair{gr::property_map{{"alpha", 1.5}}, averagerCoefficient(1.5, 0.0, 48000.0)}, std::pair{gr::property_map{{"averaging_time_s", 0.02}, {"sample_rate", 0.f}}, averagerCoefficient(1e-4, 0.02, 0.0)}, std::pair{gr::property_map{{"averaging_time_s", 1e12}, {"sample_rate", 48000.f}}, averagerCoefficient(1e-4, 1e12, 48000.0)}}) {
+            expect(!refused.has_value()) << "the helper returns an error and throws nothing";
+            std::string thrown;
+            try {
+                std::ignore = makeSquelch<CF>(settings);
+            } catch (const gr::exception& error) {
+                thrown = error.message;
+            }
+            expect(eq(thrown, refused.has_value() ? std::string() : refused.error().message)) << "the settings application throws the helper's text";
+        }
     };
 
     "nanoseconds per sample"_test = [] {
