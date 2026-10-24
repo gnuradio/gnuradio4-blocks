@@ -1,0 +1,35 @@
+# VectorSource into RateProbe, one chain for a real and one for a complex type. A Throttle at 2048 samples per
+# second, in chunks of 64, hands probe_f32 the 512 samples in eight work calls over a quarter second. probe_f32 has
+# no minimum interval, opens its interval at the first call and measures at the calls after it.
+# probe_c32 keeps the default interval and does not measure in this run. The run passes when the graph ends on its
+# own.
+blocks:
+  - id: gr::blocks::testing::VectorSource<float32>
+    parameters:
+      name: source_f32
+      values: !!float32 [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
+      repeat: !!uint32 64
+  - id: gr::blocks::basic::Throttle<float32>
+    parameters:
+      name: throttle_f32
+      sample_rate: !!float32 2048.0
+      max_items_per_chunk: !!uint32 64
+  - id: gr::blocks::basic::RateProbe<float32>
+    parameters:
+      name: probe_f32
+      min_update_ms: !!float32 0.0
+  - id: gr::blocks::testing::VectorSource<complex<float32>>
+    parameters:
+      name: source_c32
+      values: !!complex32
+        - (1.0, -1.0)
+        - (0.0, 0.0)
+        - (-2.5, 3.0)
+      repeat: !!uint32 100
+  - id: gr::blocks::basic::RateProbe<complex<float32>>
+    parameters:
+      name: probe_c32
+connections:
+  - [source_f32, out, throttle_f32, in]
+  - [throttle_f32, out, probe_f32, in]
+  - [source_c32, out, probe_c32, in]
