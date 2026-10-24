@@ -23,9 +23,9 @@
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/audio/AudioBlocks.hpp>
+#include <gnuradio-4.0/basic/NullSources.hpp>
 #include <gnuradio-4.0/fileio/WavBlocks.hpp>
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
-#include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 #ifdef __GNUC__
@@ -750,7 +750,7 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
 
     "an AudioSink whose device cannot be opened fails the run with the reason"_test = [] {
         gr::Graph graph;
-        auto&     source = graph.emplaceBlock<gr::blocks::testing::ConstantSource<float>>({{"default_value", 0.5f}});
+        auto&     source = graph.emplaceBlock<gr::blocks::basic::ConstantSource<float>>({{"default_value", 0.5f}});
         auto&     sink   = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(1)}, {"backend", std::string("nosuchbackend")}});
         expect(graph.connect<"out", "in">(source, sink).has_value());
 

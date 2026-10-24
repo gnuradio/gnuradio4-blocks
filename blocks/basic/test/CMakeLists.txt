@@ -48,3 +48,5 @@ if(TARGET GrBasicBlocksShared)
     PLUGIN_DIRS
     "$<TARGET_FILE_DIR:GrBasicBlocksShared>")
 endif()
+
+gr_add_graph_test(graph_basic_null_head_expect graphs/null-head-expect.yaml)

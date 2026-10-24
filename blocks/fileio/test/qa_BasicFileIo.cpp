@@ -3,6 +3,7 @@
 #include <gnuradio-4.0/fileio/BasicFileIo.hpp>
 
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/basic/NullSources.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
 
 #include "FileOpenCounter.hpp"
@@ -58,6 +59,7 @@ void runTest(const gr::blocks::fileio::Mode mode) {
     using namespace boost::ut;
     using namespace gr::blocks::fileio;
     using namespace gr::blocks::testing;
+    using gr::blocks::basic::ConstantSource;
     using scheduler = gr::scheduler::Simple<>;
 
     constexpr gr::Size_t nSamples    = 1024U;
@@ -175,6 +177,7 @@ std::expected<void, gr::Error> writeFloatFile(const std::string& fileName, const
     using namespace boost::ut;
     using namespace gr::blocks::fileio;
     using namespace gr::blocks::testing;
+    using gr::blocks::basic::ConstantSource;
 
     gr::Graph flow;
     auto&     source   = flow.emplaceBlock<ConstantSource<float>>({{"n_samples_max", nSamples}});
@@ -282,6 +285,7 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
     "round-trip of a recording larger than one output span"_test = [] {
         using namespace gr::blocks::fileio;
         using namespace gr::blocks::testing;
+        using gr::blocks::basic::ConstantSource;
         using scheduler = gr::scheduler::Simple<>;
 
         constexpr gr::Size_t nSamples = 100'000U; // 24x the 4096-sample output ring: one span cannot hold it
