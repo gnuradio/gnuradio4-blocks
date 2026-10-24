@@ -17,6 +17,7 @@ endif()
 add_basic_test(qa_MessageDebug)
 add_basic_test(qa_SampleDelay)
 add_basic_test(qa_SkipHead)
+add_basic_test(qa_TagDebug)
 add_basic_test(qa_TriggerBlocks)
 add_basic_test(qa_Throttle)
 set_property(TEST qa_Throttle PROPERTY RESOURCE_LOCK rt)
@@ -47,4 +48,13 @@ if(TARGET GrBasicBlocksShared)
     graphs/skip-head.yaml
     PLUGIN_DIRS
     "$<TARGET_FILE_DIR:GrBasicBlocksShared>")
+endif()
+
+# the graph names a basic block, and the case loads the basic plugin beside the testing one
+if(TARGET GrBasicBlocksShared)
+  gr_add_graph_test(
+    graph_basic_TagDebug
+    graphs/tag-debug.yaml
+    PLUGIN_DIRS
+    $<TARGET_FILE_DIR:GrBasicBlocksShared>)
 endif()
