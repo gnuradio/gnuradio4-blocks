@@ -675,7 +675,7 @@ int main() {
         for (std::size_t i = pad; i < 63UZ - roots; ++i) {
             full[i] = static_cast<std::uint8_t>((5UZ * i + 3UZ) & 0x3FUZ);
         }
-        gr::fec::ReedSolomon6<roots>::encode(full, 0UZ);
+        expect(gr::fec::ReedSolomon6<roots>::encode(full, 0UZ)) << "the unshortened word is inside the field and encodes";
 
         const std::vector<std::uint8_t> wire(full.begin() + static_cast<std::ptrdiff_t>(pad), full.end());
         const auto                      out = runBlock<RsDecode>({{"roots", gr::Size_t{roots}}, {"pad", gr::Size_t{pad}}}, {record(wire)}, [](const RsDecode& block) {

@@ -180,10 +180,20 @@ struct ReedSolomon {
     }
 
     /// Write the parity symbols over the information symbols already in `block`, leaving a
-    /// codeword. The first `pad` symbols are the shortening and must be zero.
-    static constexpr void encode(Block& block, std::size_t pad = 0UZ) noexcept {
+    /// codeword, and return true. The first `pad` symbols are the shortening and must be zero.
+    /// An information symbol above `2^M - 1` is refused: the result is false and `block`,
+    /// parity included, is untouched.
+    [[nodiscard]] static constexpr bool encode(Block& block, std::size_t pad = 0UZ) noexcept {
         constexpr auto& gf = detail::kGf<SymbolBits, FieldPoly>;
         constexpr auto  g  = generator();
+
+        if constexpr (SymbolBits < 8UZ) {
+            for (std::size_t i = pad; i < kBlock - Roots; ++i) {
+                if (static_cast<std::size_t>(block[i]) > kBlock) {
+                    return false;
+                }
+            }
+        }
 
         std::array<std::uint8_t, Roots> parity{};
         for (std::size_t i = pad; i < kBlock - Roots; ++i) {
@@ -202,10 +212,12 @@ struct ReedSolomon {
         for (std::size_t j = 0UZ; j < Roots; ++j) {
             block[kBlock - Roots + j] = parity[j];
         }
+        return true;
     }
 
     /// Correct `block` in place. The first `pad` symbols are the shortening the air did not
-    /// carry and must be zero on entry.
+    /// carry and must be zero on entry. A block holding a symbol above `2^M - 1` is refused: the
+    /// result is not `valid` and `block` is untouched.
     static RsResult decode(Block& block, std::size_t pad = 0UZ) noexcept { return correct(block, {}, pad); }
 
     /// Correct `block` in place, the symbols at the block indices in `erasures` taken as erased:
@@ -216,8 +228,8 @@ struct ReedSolomon {
     /// values that clear all `Roots` syndromes. `valid` then says only that, and an error among the
     /// other symbols goes undetected. With fewer erasures, damage past the bound can fail the checks
     /// and leave the result not `valid`. A position outside `[pad, kBlock)`, a position named twice,
-    /// or a list of more than `Roots` positions is refused: the result is not `valid` and `block` is
-    /// untouched. No erasures is `decode`.
+    /// a list of more than `Roots` positions, or a symbol above `2^M - 1` anywhere in `block` is
+    /// refused: the result is not `valid` and `block` is untouched. No erasures is `decode`.
     static RsResult decodeWithErasures(Block& block, std::span<const std::size_t> erasures, std::size_t pad = 0UZ) noexcept {
         if (erasures.size() > Roots) {
             return {};
@@ -236,6 +248,15 @@ private:
     static RsResult correct(Block& block, std::span<const std::size_t> erasures, std::size_t pad) noexcept {
         constexpr auto& gf = detail::kGf<SymbolBits, FieldPoly>;
         RsResult        result;
+
+        // A symbol above 2^M - 1 is not an element of the field.
+        if constexpr (SymbolBits < 8UZ) {
+            for (const std::uint8_t symbol : block) {
+                if (static_cast<std::size_t>(symbol) > kBlock) {
+                    return result;
+                }
+            }
+        }
 
         // Syndromes: the received polynomial evaluated at the generator's own roots.
         std::array<std::uint8_t, Roots> syndrome{};
