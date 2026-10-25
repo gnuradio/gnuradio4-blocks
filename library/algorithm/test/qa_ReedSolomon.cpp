@@ -128,6 +128,12 @@ void checkInvariants(const std::array<std::uint8_t, 63UZ>& received, const std::
     }
 }
 
+/// Encodes `block` and records a failure if the encoder refuses it.
+template<typename Code>
+void encodeAccepted(typename Code::Block& block, std::size_t pad) {
+    boost::ut::expect(Code::encode(block, pad)) << "an information word inside the field encodes";
+}
+
 std::uint64_t rng = 0xB5026F5AA96619E9ULL;
 
 std::uint64_t next() {
@@ -148,7 +154,7 @@ void exercise(const char* name, std::size_t pad, unsigned trials) {
         for (std::size_t i = pad; i < info; ++i) {
             clean[i] = static_cast<std::uint8_t>(next() & 0x3FU);
         }
-        Code::encode(clean, pad);
+        encodeAccepted<Code>(clean, pad);
 
         // a clean block must decode with nothing corrected
         {
@@ -258,7 +264,7 @@ template<typename Code>
     for (std::size_t i = pad; i < Code::kBlock - Code::kRoots; ++i) {
         block[i] = static_cast<std::uint8_t>(engine() & Code::kBlock);
     }
-    Code::encode(block, pad);
+    encodeAccepted<Code>(block, pad);
     return block;
 }
 
@@ -379,7 +385,7 @@ const boost::ut::suite<"reed-solomon"> reedSolomonTests = [] {
             for (std::size_t i = pad; i < info; ++i) {
                 block[i] = static_cast<std::uint8_t>((7UZ * (i - pad) + 5UZ) & 0x3FUZ);
             }
-            Code::encode(block, pad);
+            encodeAccepted<Code>(block, pad);
             bool same = true;
             for (std::size_t i = 0UZ; i < Code::kRoots; ++i) {
                 if (block[info + i] != expectVals[i]) {
@@ -411,7 +417,7 @@ const boost::ut::suite<"reed-solomon"> reedSolomonTests = [] {
         for (std::size_t i = 39UZ; i < 51UZ; ++i) {
             full[i] = static_cast<std::uint8_t>((3UZ * i) & 0x3FUZ);
         }
-        ReedSolomon6<12UZ>::encode(full, 0UZ);
+        encodeAccepted<ReedSolomon6<12UZ>>(full, 0UZ);
 
         std::array<std::uint8_t, 63UZ> received = full;
         for (std::size_t i = 0UZ; i < 39UZ; ++i) {
@@ -558,7 +564,7 @@ const boost::ut::suite<"reed-solomon"> reedSolomonTests = [] {
             for (std::size_t i = pad; i < 223UZ; ++i) {
                 block[i] = static_cast<std::uint8_t>(engine());
             }
-            Code::encode(block, pad);
+            encodeAccepted<Code>(block, pad);
             for (std::size_t i = 0UZ; i < Code::kRoots; ++i) {
                 nonZero += evaluateCcsds<Code>(block, Code::rootExponent(i)) == 0U ? 0UZ : 1UZ;
             }
@@ -576,8 +582,8 @@ const boost::ut::suite<"reed-solomon"> reedSolomonTests = [] {
                 shortened[i]              = symbol;
                 filled[i]                 = symbol;
             }
-            Code::encode(shortened, pad);
-            Code::encode(filled, 0UZ);
+            encodeAccepted<Code>(shortened, pad);
+            encodeAccepted<Code>(filled, 0UZ);
             for (std::size_t i = pad; i < Code::kBlock; ++i) {
                 mismatches += shortened[i] == filled[i] ? 0UZ : 1UZ;
             }
@@ -596,7 +602,7 @@ const boost::ut::suite<"reed-solomon"> reedSolomonTests = [] {
                 information[i] = static_cast<std::uint8_t>(engine());
             }
             typename Code::Block sent = information;
-            Code::encode(sent);
+            encodeAccepted<Code>(sent, 0UZ);
 
             typename Code::Block received = sent;
             for (const std::size_t position : distinctPositions(engine, errors, 0UZ)) {
@@ -859,6 +865,110 @@ const boost::ut::suite<"reed-solomon"> reedSolomonTests = [] {
         std::vector<std::size_t> twelve(12UZ);
         std::iota(twelve.begin(), twelve.end(), 40UZ);
         accepted(twelve, "twelve erasures, as many as the roots");
+    };
+
+    "a block holding a symbol outside GF(64) is refused and left untouched"_test = [] {
+        using Code                = ReedSolomon6<12UZ>;
+        constexpr std::size_t pad = 39UZ;
+        std::mt19937_64       engine{0x0FFULL};
+        const Code::Block     clean = randomCodeword<Code>(engine, pad);
+
+        // Every byte value above 2^6 - 1, in the padding and at the first, a middle and the last carried position.
+        constexpr std::array<std::size_t, 4UZ> positions{0UZ, pad, 50UZ, Code::kBlock - 1UZ};
+        constexpr std::size_t                  carried          = 3UZ;
+        constexpr std::size_t                  outside          = 256UZ - (Code::kBlock + 1UZ);
+        const auto                             refusedUntouched = [](const RsResult& r, const Code::Block& out, const Code::Block& in) { return !r.valid && r.errors == 0U && !r.pad_corrupted && out == in ? 1UZ : 0UZ; };
+
+        std::size_t viaDecode       = 0UZ;
+        std::size_t viaOtherErasure = 0UZ;
+        std::size_t viaOwnErasure   = 0UZ;
+        for (std::size_t symbol = Code::kBlock + 1UZ; symbol <= 0xFFUZ; ++symbol) {
+            for (const std::size_t position : positions) {
+                Code::Block received = clean;
+                received[position]   = static_cast<std::uint8_t>(symbol);
+
+                Code::Block block = received;
+                viaDecode += refusedUntouched(Code::decode(block, pad), block, received);
+
+                const std::array<std::size_t, 1UZ> other{45UZ};
+                block = received;
+                viaOtherErasure += refusedUntouched(Code::decodeWithErasures(block, other, pad), block, received);
+
+                if (position >= pad) {
+                    const std::array<std::size_t, 1UZ> own{position};
+                    block = received;
+                    viaOwnErasure += refusedUntouched(Code::decodeWithErasures(block, own, pad), block, received);
+                }
+            }
+        }
+        expect(eq(viaDecode, positions.size() * outside)) << "decode refuses every such block";
+        expect(eq(viaOtherErasure, positions.size() * outside)) << "decodeWithErasures refuses it with another position erased";
+        expect(eq(viaOwnErasure, carried * outside)) << "and with the outside symbol's own position erased";
+    };
+
+    "a block whose symbols are all in GF(64) decodes, the symbol 2^M - 1 included"_test = [] {
+        using Code                = ReedSolomon6<12UZ>;
+        constexpr std::size_t pad = 39UZ;
+        Code::Block           clean{};
+        for (std::size_t i = pad; i < Code::kBlock - Code::kRoots; ++i) {
+            clean[i] = static_cast<std::uint8_t>(i % 2UZ == 0UZ ? Code::kBlock : i);
+        }
+        encodeAccepted<Code>(clean, pad);
+
+        Code::Block untouched = clean;
+        expect(that % (Code::decode(untouched, pad).valid && untouched == clean)) << "a codeword holding the symbol 2^M - 1 decodes untouched";
+
+        // Errors up to the limit, each one setting a symbol below 2^M - 1 to 2^M - 1.
+        Code::Block received = clean;
+        for (std::size_t k = 0UZ; k < Code::kCorrectable; ++k) {
+            received[pad + 2UZ * k] = static_cast<std::uint8_t>(Code::kBlock);
+        }
+        Code::Block    corrected = received;
+        const RsResult r         = Code::decode(corrected, pad);
+        expect(that % (r.valid && r.errors == Code::kCorrectable && corrected == clean)) << "errors to 2^M - 1 inside the limit are corrected";
+
+        const std::array<std::size_t, 1UZ> erased{pad};
+        Code::Block                        viaErasures = received;
+        const RsResult                     e           = Code::decodeWithErasures(viaErasures, erased, pad);
+        expect(that % (e.valid && e.errors == Code::kCorrectable && viaErasures == clean)) << "and with one of them named as an erasure";
+    };
+
+    "encode refuses an information symbol outside GF(64) and encodes the symbol 2^M - 1"_test = [] {
+        using Code                = ReedSolomon6<12UZ>;
+        constexpr std::size_t pad = 39UZ;
+        std::mt19937_64       engine{0xE4CULL};
+        const Code::Block     codeword = randomCodeword<Code>(engine, pad);
+
+        // Every byte value above 2^6 - 1, at the first, a middle and the last information position.
+        constexpr std::array<std::size_t, 3UZ> positions{pad, 45UZ, Code::kBlock - Code::kRoots - 1UZ};
+        constexpr std::size_t                  outside = 256UZ - (Code::kBlock + 1UZ);
+        std::size_t                            refused = 0UZ;
+        for (std::size_t symbol = Code::kBlock + 1UZ; symbol <= 0xFFUZ; ++symbol) {
+            for (const std::size_t position : positions) {
+                Code::Block received = codeword;
+                received[position]   = static_cast<std::uint8_t>(symbol);
+                Code::Block block    = received;
+                const bool  encoded  = Code::encode(block, pad);
+                refused += !encoded && block == received ? 1UZ : 0UZ;
+            }
+        }
+        expect(eq(refused, positions.size() * outside)) << "every such block is refused with its parity untouched";
+
+        Code::Block largest{};
+        for (std::size_t i = pad; i < Code::kBlock - Code::kRoots; ++i) {
+            largest[i] = static_cast<std::uint8_t>(Code::kBlock);
+        }
+        Code::Block encoded = largest;
+        expect(that % Code::encode(encoded, pad)) << "information symbols of 2^M - 1 encode";
+        expect(that % (isCodeword<Code>(encoded) && std::equal(largest.begin(), largest.end() - static_cast<std::ptrdiff_t>(Code::kRoots), encoded.begin()))) << "into a codeword that keeps the information";
+        Code::Block    decoded = encoded;
+        const RsResult r       = Code::decode(decoded, pad);
+        expect(that % (r.valid && r.errors == 0U && decoded == encoded)) << "and the codeword decodes untouched";
+
+        // The parity symbols are outputs: a byte outside the field there is overwritten.
+        Code::Block overParity = largest;
+        overParity.back()      = 0xFFU;
+        expect(that % (Code::encode(overParity, pad) && overParity == encoded)) << "a parity symbol outside the field before encode does not refuse the block";
     };
 };
 

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -56,7 +57,10 @@ template<typename TKernel>
 inline void rsEncodeThrough(std::span<std::uint8_t> word, std::size_t pad) {
     typename TKernel::Block block{};
     std::copy_n(word.begin(), TKernel::kBlock, block.begin());
-    TKernel::encode(block, pad);
+    // RsEncode masks each information item with the code's mask. A masked item is an element of
+    // the field, and encode accepts every block of them.
+    [[maybe_unused]] const bool encoded = TKernel::encode(block, pad);
+    assert(encoded);
     std::copy_n(block.begin(), TKernel::kBlock, word.begin());
 }
 
