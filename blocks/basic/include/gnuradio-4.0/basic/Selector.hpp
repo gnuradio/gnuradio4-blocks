@@ -106,26 +106,20 @@ you can set the `backPressure` property to false.
             std::print("{}: configuration changed: n_inputs {} -> {}, n_outputs {} -> {}\n", this->name, oldSettings.at("n_inputs"),    //
                 newSettings.contains("n_inputs") ? newSettings.at("n_inputs").value_or("same"s) : "same"s, oldSettings.at("n_outputs"), //
                 newSettings.contains("n_outputs") ? newSettings.at("n_outputs").value_or("same"s) : "same"s);
-            inputs.resize(n_inputs);
-            outputs.resize(n_outputs);
         }
         // The routing depends on the port counts as much as on the maps, and `newSettings` names only what moved, so
-        // it is rebuilt and range-checked from the members rather than when a map key happens to be named.
-        assert(map_in.value.size() == map_out.value.size() && "map_in and map_out must have the same length");
-        _internalMappingInOut.clear();
-        _internalMappingOutIn.clear();
-
+        // it is rebuilt and range-checked from the members rather than when a map key happens to be named. Every pair
+        // is checked before the ports or the routing change. A refused map or port count leaves both unchanged.
         if (map_in.value.size() != map_out.value.size()) {
             throw std::invalid_argument("Input and output map need to have the same number of elements");
         }
 
-        std::set<std::pair<gr::Size_t, gr::Size_t>> duplicateSet{};
+        std::set<std::pair<gr::Size_t, gr::Size_t>>     duplicateSet{};
+        std::map<std::size_t, std::vector<std::size_t>> mappingInOut{};
+        std::map<std::size_t, std::vector<std::size_t>> mappingOutIn{};
         for (auto i : std::views::iota(static_cast<std::size_t>(0), map_in.value.size())) {
             gr::Size_t inIdx  = map_in.value[i];
             gr::Size_t outIdx = map_out.value[i];
-
-            _internalMappingInOut[inIdx].push_back(outIdx);
-            _internalMappingOutIn[outIdx].push_back(inIdx);
 
             if (!duplicateSet.insert({inIdx, outIdx}).second) { // check for duplicates
                 throw std::invalid_argument(std::format("Duplicate pair (in:{}, out:{}) at i={}", inIdx, outIdx, i));
@@ -137,7 +131,15 @@ you can set the `backPressure` property to false.
             if (outIdx >= n_outputs) {
                 throw std::invalid_argument(std::format("map_out[{}] = {} is >= n_outputs ({})", i, outIdx, n_outputs));
             }
+
+            mappingInOut[inIdx].push_back(outIdx);
+            mappingOutIn[outIdx].push_back(inIdx);
         }
+
+        inputs.resize(n_inputs);
+        outputs.resize(n_outputs);
+        _internalMappingInOut = std::move(mappingInOut);
+        _internalMappingOutIn = std::move(mappingOutIn);
     }
 
     template<gr::InputSpanLike TInSpan, gr::OutputSpanLike TOutSpan>

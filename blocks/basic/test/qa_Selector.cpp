@@ -181,6 +181,40 @@ const boost::ut::suite SelectorTest = [] {
         expect(block._internalMappingInOut == internal_mapping_t{{0U, {outputMap[0]}}, {1U, {outputMap[1]}}});
     };
 
+    "a refused map leaves the ports and the routing as they were"_test = [] {
+        struct Refused {
+            std::string      what;
+            gr::property_map settings;
+        };
+        // The first two maps are refused at their last pair, after pairs the routing would take.
+        const std::vector<Refused> refusals{
+            {"a pair past the output count", {{"map_in", std::vector<gr::Size_t>{0U, 1U, 2U}}, {"map_out", std::vector<gr::Size_t>{0U, 1U, 2U}}}},
+            {"a duplicate pair", {{"map_in", std::vector<gr::Size_t>{2U, 0U, 2U}}, {"map_out", std::vector<gr::Size_t>{1U, 0U, 1U}}}},
+            {"an output count the maps exceed", {{"n_outputs", gr::Size_t{1U}}}},
+            {"maps of unequal length", {{"map_in", std::vector<gr::Size_t>{0U, 1U, 2U}}, {"map_out", std::vector<gr::Size_t>{0U, 1U}}}},
+        };
+        for (const auto& refused : refusals) {
+            Selector<double> block({{"n_inputs", 3U}, {"n_outputs", 2U}, {"map_in", std::vector<gr::Size_t>{0U, 1U}}, {"map_out", std::vector<gr::Size_t>{1U, 0U}}});
+            block.init(block.progress);
+            const auto inOut = block._internalMappingInOut;
+            const auto outIn = block._internalMappingOutIn;
+            expect(fatal(eq(inOut.size(), 2UZ)));
+
+            expect(block.settings().setStaged(refused.settings).empty()) << refused.what;
+            bool wasRefused = false;
+            try {
+                wasRefused = !block.settings().applyStagedParameters().failedParameters.empty();
+            } catch (const std::exception&) {
+                wasRefused = true;
+            }
+            expect(wasRefused) << refused.what;
+            expect(eq(block.inputs.size(), 3UZ)) << refused.what;
+            expect(eq(block.outputs.size(), 2UZ)) << refused.what;
+            expect(block._internalMappingInOut == inOut) << refused.what << "keeps the input-to-output routing";
+            expect(block._internalMappingOutIn == outIn) << refused.what << "keeps the output-to-input routing";
+        }
+    };
+
     gr::Tag tag1{1, {{"key1", "value1"}}};
     gr::Tag tag2{2, {{"key2", "value2"}}};
     gr::Tag tag3{3, {{"key3", "value3"}}};
