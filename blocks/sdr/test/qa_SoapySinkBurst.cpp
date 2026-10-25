@@ -26,7 +26,8 @@
  *
  * The sink writes to the loopback device, which records every write with the count asked for, the count taken and
  * the flags and time the write carried. The test opens the device with the block's own arguments and gets the same
- * device object. It reads that record through the SoapySDR API. Every case names the loopback driver alone.
+ * device object. It reads that record through the SoapySDR API. Every case names the loopback driver alone. The last
+ * case reads the size of each write after max_chunk_size changes while the sink runs.
  */
 
 using namespace boost::ut;
@@ -315,6 +316,51 @@ void expectBurstWrites(std::string_view scenario, const std::vector<Write>& writ
     }
 }
 
+// Streams nSamples on each of nPorts inputs to a sink on a transmit-only loopback device. The sink starts at a
+// max_chunk_size of chunk. A second thread raises it to raised once the sink runs. The device takes no sample until the
+// sink has applied the raise. Every write it takes follows the raise. Returns the writes the device received.
+template<std::size_t nPorts>
+requires(nPorts == 1UZ || nPorts == 2UZ)
+std::vector<Write> transmitAfterChunkRaise(std::size_t nSamples, std::uint32_t chunk, std::uint32_t raised) {
+    const std::string parameters = std::format("device_mode=tx_only,num_channels={},record_writes=true", nPorts);
+    soapy::Kwargs     kwargs{{"driver", "loopback"}};
+    kwargs.merge(soapy::parseKwargsString(parameters));
+    auto probe = soapy::Device::make(kwargs);
+    expect(fatal(probe.has_value())) << "the probe must open the device the block will open";
+    std::ignore = probe->writeSetting("write_log", "");
+    std::ignore = probe->writeSetting("hold_writes", "true");
+
+    gr::Graph flow;
+    auto&     sink = flow.emplaceBlock<gr::blocks::sdr::SoapySink<CF32, nPorts>>({{"device", std::string("loopback")}, {"device_parameter", parameters}, {"sample_rate", 1e6f}, {"num_channels", static_cast<gr::Size_t>(nPorts)}, {"max_chunk_size", chunk}});
+    for (std::size_t port = 0UZ; port < nPorts; ++port) {
+        auto& source = flow.emplaceBlock<TaggedSource>({{"n_samples_max", static_cast<gr::Size_t>(nSamples)}, {"mark_tag", false}});
+        if constexpr (nPorts == 1UZ) {
+            expect(fatal(flow.connect<"out", "in">(source, sink).has_value()));
+        } else {
+            const bool connected = port == 0UZ ? flow.connect<"out", "in#0">(source, sink).has_value() : flow.connect<"out", "in#1">(source, sink).has_value();
+            expect(fatal(connected));
+        }
+    }
+
+    auto raise = std::jthread([&device = *probe, &sink, raised](std::stop_token stoken) {
+        while (!stoken.stop_requested() && !gr::lifecycle::isActive(sink.state())) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        std::ignore = sink.settings().setStaged({{"max_chunk_size", raised}});
+        while (!stoken.stop_requested() && sink.settings().changed()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        std::ignore = device.writeSetting("hold_writes", "false");
+    });
+
+    gr::scheduler::Simple<> sched;
+    expect(fatal(sched.exchange(std::move(flow)).has_value()));
+    expect(runToEnd(sched)) << std::format("{} port(s) raised to {}: the stream ends and the sink stops by itself", nPorts, raised);
+    raise.request_stop();
+    raise.join();
+    return writeLog(*probe);
+}
+
 } // namespace
 
 const boost::ut::suite<"SoapySink transmit bursts"> burstTests = [] {
@@ -472,6 +518,22 @@ const boost::ut::suite<"SoapySink transmit bursts"> burstTests = [] {
         expect(fatal(sched.exchange(std::move(flow)).has_value()));
         expect(runToEnd(sched)) << "the streams end and the sink stops by itself";
         expectBurstWrites("two channels", writeLog(*probe), kSamples, {499UZ, 999UZ}, {{0UZ, kFirstBurstTimeNs}, {500UZ, kSecondBurstTimeNs}});
+    };
+
+    "a max_chunk_size raised while the sink runs leaves every write at the size the run started with"_test = [] {
+        static constexpr std::size_t   kSamples            = 20000UZ;
+        static constexpr std::uint32_t kChunk              = 64U;
+        const auto                     expectStartingChunk = [](const std::vector<Write>& writes, std::size_t nPorts, std::uint32_t raised) {
+            expect(eq(samplesTaken(writes), kSamples)) << std::format("{} port(s) raised to {}: the device took every sample once", nPorts, raised);
+            expect(fatal(!writes.empty()));
+            const auto largest = std::ranges::max(writes, {}, &Write::requested);
+            expect(le(largest.requested, std::size_t{kChunk})) << std::format("{} port(s) raised to {}: the write at {} asks for {} samples", nPorts, raised, largest.first, largest.requested);
+        };
+        // The staging ring holds four chunks, rounded up to whole pages. One raise stays inside it and one goes past.
+        for (const std::uint32_t raised : {kChunk * 4U, kChunk * 64U}) {
+            expectStartingChunk(transmitAfterChunkRaise<1UZ>(kSamples, kChunk, raised), 1UZ, raised);
+            expectStartingChunk(transmitAfterChunkRaise<2UZ>(kSamples, kChunk, raised), 2UZ, raised);
+        }
     };
 };
 

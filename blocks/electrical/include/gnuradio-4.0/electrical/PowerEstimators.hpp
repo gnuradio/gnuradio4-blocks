@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <vector>
 
@@ -45,10 +46,10 @@ applies low-pass filters to calculate average values, and outputs decimated resu
     std::vector<PortOut<T>> I_rms{nPhases};
 
     // settings
-    Annotated<float, "sample_rate", Unit<"Hz">>                                                                         sample_rate{10'000.f};
-    Annotated<float, "high pass", Unit<"Hz">, Doc<"AC-input coupling (rejects ADC DC-bias)">>                           high_pass{2.f};
-    Annotated<float, "low pass", Unit<"Hz">, Doc<"Upper Low-Pass Frequency">>                                           low_pass{90.f};
-    Annotated<gr::Size_t, "decimation factor", Doc<"1: none, i.e. preserving the relationship: N_out = N_in/decimate">> decimate{100U};
+    Annotated<float, "sample_rate", Unit<"Hz">>                                                                                                          sample_rate{10'000.f};
+    Annotated<float, "high pass", Unit<"Hz">, Doc<"AC-input coupling (rejects ADC DC-bias)">>                                                            high_pass{2.f};
+    Annotated<float, "low pass", Unit<"Hz">, Doc<"Upper Low-Pass Frequency">>                                                                            low_pass{90.f};
+    Annotated<gr::Size_t, "decimation factor", Doc<"input samples per output value of each metric">, Limits<1U, std::numeric_limits<gr::Size_t>::max()>> decimate{100U};
 
     GR_MAKE_REFLECTABLE(PowerMetrics, U, I, P, Q, S, U_rms, I_rms, sample_rate, high_pass, low_pass, decimate);
 

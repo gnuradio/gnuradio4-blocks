@@ -1,6 +1,8 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <random>
 
 #include <format>
@@ -255,6 +257,53 @@ const boost::ut::suite<"Power Metrics Estimators"> powerEstimatorTests = [] {
         const std::size_t lastIdx = nOut - 1UZ;
         expect(approx(spanRmsU[0][lastIdx], V_rms, 1.0f)) << std::format("without the high-pass the DC input must reach U_rms, got {}", spanRmsU[0][lastIdx]);
         expect(approx(spanRmsI[0][lastIdx], I_rms, 1.0f)) << std::format("without the high-pass the DC input must reach I_rms, got {}", spanRmsI[0][lastIdx]);
+    };
+
+    "PowerMetrics refuses a decimation factor of zero and keeps the factor it had"_test = [] {
+        using T                        = float;
+        constexpr std::size_t kNPhases = 1UZ;
+        constexpr gr::Size_t  kFactor  = 10U;
+
+        PowerMetrics<T, kNPhases> block({{"decimate", kFactor}});
+        block.init(block.progress);
+        expect(fatal(eq(block.decimate.value, kFactor)));
+
+        std::ignore  = block.settings().setStaged({{"decimate", gr::Size_t{0U}}});
+        bool refused = false;
+        try {
+            refused = !block.settings().applyStagedParameters().failedParameters.empty();
+        } catch (const std::exception&) {
+            refused = true;
+        }
+        expect(refused) << "the factor of zero is refused";
+        expect(fatal(eq(block.decimate.value, kFactor))) << "the refused factor leaves the factor the block had";
+        expect(eq(block.input_chunk_size, kFactor));
+        block.start();
+
+        const std::size_t nIn = 4UZ * kFactor;
+        std::vector<T>    voltage(nIn, V_rms);
+        std::vector<T>    current(nIn, I_rms);
+        std::vector<T>    activePowerVec(nIn), reactivePowerVec(nIn), apparentPowerVec(nIn), rmsCurrentVec(nIn);
+        std::vector<T>    rmsVoltageVec(nIn, std::numeric_limits<T>::quiet_NaN());
+
+        std::vector<std::span<const T>> inVoltage{std::span<const T>(voltage)};
+        std::vector<std::span<const T>> inCurrent{std::span<const T>(current)};
+        std::vector<std::span<T>>       outActive{std::span<T>(activePowerVec)};
+        std::vector<std::span<T>>       outReactive{std::span<T>(reactivePowerVec)};
+        std::vector<std::span<T>>       outApparent{std::span<T>(apparentPowerVec)};
+        std::vector<std::span<T>>       outRmsU{std::span<T>(rmsVoltageVec)};
+        std::vector<std::span<T>>       outRmsI{std::span<T>(rmsCurrentVec)};
+
+        std::span<std::span<const T>> spanInVoltage(inVoltage);
+        std::span<std::span<const T>> spanInCurrent(inCurrent);
+        std::span<std::span<T>>       spanActive(outActive);
+        std::span<std::span<T>>       spanReactive(outReactive);
+        std::span<std::span<T>>       spanApparent(outApparent);
+        std::span<std::span<T>>       spanRmsU(outRmsU);
+        std::span<std::span<T>>       spanRmsI(outRmsI);
+
+        expect(block.processBulk(spanInVoltage, spanInCurrent, spanActive, spanReactive, spanApparent, spanRmsU, spanRmsI) == gr::work::Status::OK);
+        expect(eq(std::ranges::count_if(rmsVoltageVec, [](T value) { return !std::isnan(value); }), static_cast<std::ptrdiff_t>(nIn / kFactor))) << "one output for each factor's worth of inputs";
     };
 
     "PowerFactor"_test = []<typename TestParam>() {

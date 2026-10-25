@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <format>
 #include <initializer_list>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -395,6 +396,52 @@ const boost::ut::suite<"Basic[Decimating]Filter"> BasicFilterTests = [] {
         expect(eq(decimator.input_chunk_size, decimationFactor));
 
         expect(eq(sink.count, static_cast<gr::Size_t>(10)));
+    };
+
+    "Decimator refuses a factor of zero and keeps the factor it had"_test = [] {
+        constexpr gr::Size_t                 kFactor = 5U;
+        gr::blocks::filter::Decimator<float> decimator({{"decim", kFactor}});
+        decimator.init(decimator.progress);
+        expect(fatal(eq(decimator.decim, kFactor)));
+
+        std::ignore  = decimator.settings().setStaged({{"decim", gr::Size_t{0U}}});
+        bool refused = false;
+        try {
+            refused = !decimator.settings().applyStagedParameters().failedParameters.empty();
+        } catch (const std::exception&) {
+            refused = true;
+        }
+        expect(refused) << "the factor of zero is refused";
+        expect(fatal(eq(decimator.decim, kFactor))) << "the refused factor leaves the factor the block had";
+        expect(eq(decimator.input_chunk_size, kFactor));
+
+        const std::vector<float> input(4UZ * kFactor, 1.0f);
+        std::vector<float>       output(input.size(), 0.0f);
+        decimator.filterSamples(input, output);
+        expect(eq(std::ranges::count(output, 1.0f), static_cast<std::ptrdiff_t>(input.size() / kFactor))) << "one output for each factor's worth of inputs";
+    };
+
+    "BasicDecimatingFilter refuses a factor of zero and keeps the factor it had"_test = [] {
+        constexpr gr::Size_t                             kFactor = 5U;
+        gr::blocks::filter::BasicDecimatingFilter<float> filter({{"decimate", kFactor}});
+        filter.init(filter.progress);
+        expect(fatal(eq(filter.decimate, kFactor)));
+
+        std::ignore  = filter.settings().setStaged({{"decimate", gr::Size_t{0U}}});
+        bool refused = false;
+        try {
+            refused = !filter.settings().applyStagedParameters().failedParameters.empty();
+        } catch (const std::exception&) {
+            refused = true;
+        }
+        expect(refused) << "the factor of zero is refused";
+        expect(fatal(eq(filter.decimate, kFactor))) << "the refused factor leaves the factor the block had";
+        expect(eq(filter.input_chunk_size, kFactor));
+
+        const std::vector<float> input(4UZ * kFactor, 1.0f);
+        std::vector<float>       output(input.size(), std::numeric_limits<float>::quiet_NaN());
+        filter.filterSamples(input, output);
+        expect(eq(std::ranges::count_if(output, [](float value) { return !std::isnan(value); }), static_cast<std::ptrdiff_t>(input.size() / kFactor))) << "one output for each factor's worth of inputs";
     };
 };
 

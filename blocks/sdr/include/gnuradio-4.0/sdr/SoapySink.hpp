@@ -33,6 +33,7 @@ struct SoapySink : Block<SoapySink<T, nPorts>> {
     using Description = Doc<R"(SoapySDR sink block for SDR hardware.
 Supports single and multi-channel TX via SoapySDR's device-agnostic API.
 Uses a dedicated IO thread to decouple hardware latency from the scheduler.
+Every write of a run holds at most the max_chunk_size the block had when it started.
 Shares the underlying SoapySDR device handle with SoapySource when both use
 the same driver string, enabling full-duplex TX/RX operation.
 
@@ -115,6 +116,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
     std::atomic<bool>                           _activationFailed{false};
     gr::Error                                   _activationError{}; // written before _activationFailed is set
     soapy::detail::DeviceRegistry::Registration _activation;
+    std::size_t                                 _chunkSize = 0UZ; // max_chunk_size as the run started
 
     // The io loop runs for as long as the block is active, so a teardown that never asked it to stop, which
     // is what a scheduler that ends in ERROR leaves behind, waits for a thread that never exits.
@@ -171,8 +173,9 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
         configureTaper();
         reinitDevice();
 
+        _chunkSize          = static_cast<std::size_t>(max_chunk_size.value);
         std::size_t nCh     = (nPorts != std::dynamic_extent) ? nPorts : static_cast<std::size_t>(num_channels.value);
-        std::size_t bufSize = std::bit_ceil(static_cast<std::size_t>(max_chunk_size) * 4UZ);
+        std::size_t bufSize = std::bit_ceil(_chunkSize * 4UZ);
         _stagingBuffers.clear();
         _stagingWriters.clear();
         _stagingReaders.clear();
@@ -244,7 +247,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
             std::ignore = input.consume(input.size());
             return gr::work::Status::OK;
         }
-        auto nToWrite = std::min(input.size(), static_cast<std::size_t>(max_chunk_size));
+        auto nToWrite = std::min(input.size(), _chunkSize);
         if (nToWrite == 0UZ) {
             return gr::work::Status::INSUFFICIENT_INPUT_ITEMS;
         }
@@ -278,7 +281,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
         for (const auto& input : inputs) {
             minSize = std::min(minSize, input.size());
         }
-        const std::size_t nToWrite = std::min(minSize, static_cast<std::size_t>(max_chunk_size));
+        const std::size_t nToWrite = std::min(minSize, _chunkSize);
         if (nToWrite == 0UZ) {
             return gr::work::Status::INSUFFICIENT_INPUT_ITEMS;
         }
@@ -586,7 +589,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
 
     void ioWriteLoop() {
         thread_pool::thread::setThreadName(std::format("soapy_tx:{}", this->name.value));
-        std::vector<T> txScratch(static_cast<std::size_t>(max_chunk_size));
+        std::vector<T> txScratch(_chunkSize);
 
         if constexpr (nPorts == 1U) {
             while (lifecycle::isActive(this->state())) {
@@ -597,7 +600,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
                     std::this_thread::yield();
                     continue;
                 }
-                auto nToWrite = std::min(static_cast<std::size_t>(avail), static_cast<std::size_t>(max_chunk_size));
+                auto nToWrite = std::min(static_cast<std::size_t>(avail), _chunkSize);
                 auto rSpan    = _stagingReaders[0].get(nToWrite);
                 auto nActual  = std::min(rSpan.size(), nToWrite);
                 if (nActual == 0UZ) {
@@ -616,7 +619,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
             }
         } else {
             std::size_t                 nCh = _stagingReaders.size();
-            std::vector<std::vector<T>> chScratch(nCh, std::vector<T>(static_cast<std::size_t>(max_chunk_size)));
+            std::vector<std::vector<T>> chScratch(nCh, std::vector<T>(_chunkSize));
 
             while (lifecycle::isActive(this->state())) {
                 this->applyChangedSettings();
@@ -700,7 +703,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
             return {0UZ, true};
         }
 
-        const std::size_t nToWrite     = std::min(minAvail, static_cast<std::size_t>(max_chunk_size));
+        const std::size_t nToWrite     = std::min(minAvail, _chunkSize);
         const auto        savedPhase   = _taper._phase;
         const auto        savedRampPos = _taper._rampPosition;
 
@@ -837,7 +840,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
                 if (avail == 0UZ) {
                     break;
                 }
-                auto nToWrite      = std::min(static_cast<std::size_t>(avail), static_cast<std::size_t>(max_chunk_size));
+                auto nToWrite      = std::min(static_cast<std::size_t>(avail), _chunkSize);
                 auto rSpan         = _stagingReaders[0].get(nToWrite);
                 auto nActual       = std::min(rSpan.size(), nToWrite);
                 auto [written, ok] = taperAndWrite(rSpan.begin(), nActual, scratch);
@@ -856,7 +859,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
                 }
             }
         } else {
-            std::vector<std::vector<T>> chScratch(_stagingReaders.size(), std::vector<T>(static_cast<std::size_t>(max_chunk_size)));
+            std::vector<std::vector<T>> chScratch(_stagingReaders.size(), std::vector<T>(_chunkSize));
             const std::size_t           budget  = stalledWriteBudget();
             std::size_t                 stalled = 0UZ;
             while (true) {
