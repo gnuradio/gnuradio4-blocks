@@ -6,7 +6,9 @@
 #include <concepts>
 #include <expected>
 #include <functional>
+#include <limits>
 #include <numbers>
+#include <optional>
 #include <ranges>
 #include <source_location>
 #include <span>
@@ -53,7 +55,7 @@ struct BurstTaper {
     BurstTaper() = default;
 
     explicit BurstTaper(TaperType type, T rampTimeSec = T{0}, T sampleRateHz = T{1}, T param = T{0}) {
-        if (rampTimeSec >= T{0} && sampleRateHz > T{0}) {
+        if (rampTimeSec >= T{0} && sampleRateHz > T{0} && rampSampleCount(rampTimeSec, sampleRateHz).has_value()) {
             _taperType  = type;
             _rampTime   = rampTimeSec;
             _sampleRate = sampleRateHz;
@@ -63,16 +65,19 @@ struct BurstTaper {
     }
 
     [[nodiscard]] std::expected<void, gr::Error> configure(TaperType type, T rampTimeSec, T sampleRateHz, T param = T{0}, std::source_location location = std::source_location::current()) {
-        if (rampTimeSec < T{0}) {
+        if (!(rampTimeSec >= T{0})) {
             return std::unexpected(gr::Error(std::format("rampTime must be non-negative, got {}", rampTimeSec), location));
         }
-        if (sampleRateHz <= T{0}) {
-            return std::unexpected(gr::Error(std::format("sampleRate must be positive, got {}", sampleRateHz), location));
+        if (!(sampleRateHz > T{0}) || !std::isfinite(sampleRateHz)) {
+            return std::unexpected(gr::Error(std::format("sampleRate must be positive and finite, got {}", sampleRateHz), location));
+        }
+        const std::optional<std::size_t> nSamples = rampSampleCount(rampTimeSec, sampleRateHz);
+        if (!nSamples.has_value()) {
+            return std::unexpected(gr::Error(std::format("rampTime*sampleRate = {}*{} is more samples than std::size_t counts", rampTimeSec, sampleRateHz), location));
         }
         if constexpr (N != std::dynamic_extent) {
-            auto nSamples = static_cast<std::size_t>(std::round(rampTimeSec * sampleRateHz));
-            if (nSamples != N) {
-                return std::unexpected(gr::Error(std::format("fixed ramp length {} does not match rampTime*sampleRate = {}", N, nSamples), location));
+            if (*nSamples != N) {
+                return std::unexpected(gr::Error(std::format("fixed ramp length {} does not match rampTime*sampleRate = {}", N, *nSamples), location));
             }
         }
         _taperType  = type;
@@ -82,6 +87,16 @@ struct BurstTaper {
         reset();
         buildCoefficients();
         return {};
+    }
+
+    // The ramp's length in samples, rounded. Empty when the product is negative, NaN or not
+    // below the largest std::size_t.
+    [[nodiscard]] static std::optional<std::size_t> rampSampleCount(T rampTimeSec, T sampleRateHz) noexcept {
+        const T nSamples = std::round(rampTimeSec * sampleRateHz);
+        if (!(nSamples >= T{0} && nSamples < static_cast<T>(std::numeric_limits<std::size_t>::max()))) {
+            return std::nullopt;
+        }
+        return static_cast<std::size_t>(nSamples);
     }
 
     constexpr void reset() noexcept {

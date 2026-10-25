@@ -7,6 +7,8 @@
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <set>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -39,9 +41,12 @@ the same driver string, enabling full-duplex TX/RX operation.
 What reaches the device: sample_rate and frequency always; every other device setting only when the
 caller gives it a value, which leaves the device's own gain, bandwidth, antenna, correction and AGC state
 unchanged. A setting the caller gives is applied whatever that value is. A block restored from a fully
-serialized settings map has been given every setting that map holds, and a setting changed while the block
-runs is given by that change. tx_gain_elements names the driver's gain elements directly and is applied in
-the order the driver lists them, after the AGC state.
+serialized settings map has been given every setting that map holds. A setting changed while the block
+runs reaches the device then. gain_mode, frequency_correction and dc_offset_mode reach the device at a start
+when the caller gave them at construction or changed them while the block was stopped. A change to one of
+them made by a settings message or setStaged() while the block runs is not written again at a later start. A
+settings().set() call counts the key as given from then on. tx_gain_elements names the driver's gain elements
+directly and is applied in the order the driver lists them, after the AGC state.
 
 Two tags mark transmit bursts. A write ends at a sample tagged tx_eob = true and carries SOAPY_SDR_END_BURST. A
 tx_eob = true can also arrive with the end of the stream, one past its last sample. It ends the burst at the last sample
@@ -53,7 +58,8 @@ time goes with the first sample alone. The block ignores tx_sob, because SoapySD
 after an end of burst. A tag on any input applies to every channel at that sample. The block ignores a tx_eob that is
 not a bool and a tx_time that is not an integer from 0 to 2^63 - 1. It reports the first such tag of a run on its
 message port. The burst taper ramps up the stream's first samples and ramps down after its last. It does not shape the
-bursts in between. No ramp-down follows a stream whose last sample ended a burst.)">;
+bursts in between. No ramp-down follows a stream whose last sample ended a burst. The taper takes its settings when the
+block starts. The start fails when the taper refuses them.)">;
 
     using TSizeChecker  = Limits<std::uint32_t{1}, std::numeric_limits<std::uint32_t>::max(), [](std::uint32_t x) { return std::has_single_bit(x); }>;
     using TBasePort     = PortIn<T>;
@@ -92,7 +98,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
     Annotated<bool, "verbose_underflow", Doc<"log each underflow event">>                                                                  verbose_underflow     = false;
     Annotated<bool, "log_device_state", Doc<"log what the device holds once, after setup">>                                                log_device_state      = true;
     Annotated<bool, "burst_taper_enabled", Doc<"enable TX burst taper (ramp up/down on start/shutdown)">>                                  burst_taper_enabled   = false;
-    Annotated<float, "burst_ramp_time", Unit<"s">, Doc<"taper ramp duration">>                                                             burst_ramp_time       = 0.001f;
+    Annotated<float, "burst_ramp_time", Unit<"s">, Doc<"taper ramp duration">, Limits<0.f, std::numeric_limits<float>::max()>>             burst_ramp_time       = 0.001f;
     Annotated<std::string, "burst_taper_type", Doc<"None, Linear, RaisedCosine, Tukey, Gaussian, Mushroom, MushroomSine">>                 burst_taper_type      = std::string("RaisedCosine");
     Annotated<float, "burst_shape_param", Doc<"taper shape parameter (type-dependent)">>                                                   burst_shape_param     = 1.0f;
     Annotated<bool, "burst_safety_rampdown", Doc<"force ramp-down on EoS/shutdown if taper not Off">>                                      burst_safety_rampdown = true;
@@ -108,6 +114,9 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
     bool                                        _ioThreadDone = true;
     std::atomic<bool>                           _ioThreadStarted{false};
     algorithm::BurstTaper<float>                _taper;
+    std::set<std::string>                       _changedWhileStopped;         // keys a settings change carried with no device open
+    bool                                        _taperInUse          = false; // burst_taper_enabled as the run started
+    bool                                        _safetyRampDownInUse = false; // burst_safety_rampdown as the run started
     std::vector<StagingBuffer>                  _stagingBuffers;
     std::vector<StagingWriter>                  _stagingWriters;
     std::vector<StagingReader>                  _stagingReaders;
@@ -151,9 +160,11 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
     bool                  _endBurstOwed     = false; // the device took a burst's last sample without END_BURST
     bool                  _burstTagReported = false; // mistyped burst tag reported this run (scheduler thread only)
 
-    // Throws when the device cannot be opened, configured or activated. On a shared device the stream can activate
-    // after start() returns, and work() then reports a refusal as ERROR.
+    // Throws when the burst taper is enabled and refuses its ramp time or sample rate, or when the device cannot be
+    // opened, configured or activated. On a shared device the stream can activate after start() returns, and work()
+    // then reports a refusal as ERROR. The settings staged while the block was stopped are applied first.
     void start() {
+        this->applyChangedSettings(false);
         _underflowCount.store(0U, std::memory_order_relaxed);
         _stalledWrites.store(0UZ, std::memory_order_relaxed);
         _rampAbandoned.store(false, std::memory_order_relaxed);
@@ -541,6 +552,9 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
 
     void settingsChanged(const property_map& /*oldSettings*/, property_map& newSettings, property_map& /*forwardSettings*/) {
         if (!_device.get()) {
+            for (const auto& [key, value] : newSettings) {
+                _changedWhileStopped.emplace(key);
+            }
             return;
         }
         // A key is named here only because a settings change carried it, which makes it the caller's
@@ -722,7 +736,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
         for (std::size_t ch = 0UZ; ch < nCh; ++ch) {
             const T* samples = &(*rSpans[ch].begin());
             if (transformsSamples()) {
-                if (burst_taper_enabled) {
+                if (_taperInUse) {
                     _taper._phase        = savedPhase;
                     _taper._rampPosition = savedRampPos;
                 }
@@ -784,11 +798,11 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
         }
     }
 
-    // A CF32 sample is saturated on every write and any sample is tapered while the taper is enabled. An integer
+    // A CF32 sample is saturated on every write and any sample is tapered while the run uses the taper. An integer
     // sample with the taper off goes to the device straight from the staging buffer.
-    [[nodiscard]] bool transformsSamples() const noexcept { return std::is_same_v<T, std::complex<float>> || burst_taper_enabled; }
+    [[nodiscard]] bool transformsSamples() const noexcept { return std::is_same_v<T, std::complex<float>> || _taperInUse; }
 
-    // Copies n samples, tapered while the taper is enabled and saturated for the device. Once the taper is on, its
+    // Copies n samples, tapered while the run uses the taper and saturated for the device. Once the taper is on, its
     // envelope is 1, and the samples are copied and saturated in one pass. The samples of a ramp are tapered one by
     // one and then saturated in place.
     //
@@ -797,7 +811,7 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
     // wraps to the opposite sign. Saturating here keeps every driver inside the contract.
     void prepareForDevice(const T* from, T* to, std::size_t n) {
         std::size_t nTapered = 0UZ;
-        if (burst_taper_enabled) {
+        if (_taperInUse) {
             for (; nTapered < n && !_taper.isOn(); ++nTapered) {
                 to[nTapered] = scaled(from[nTapered], _taper.processOne());
             }
@@ -887,16 +901,19 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
     // No ramp-down follows a stream whose last sample ended a burst. The transmitter is idle then, and a ramp-down
     // would key it for a burst of its own.
     void completeSafetyRampDown(std::vector<T>& scratch) {
-        if (!burst_taper_enabled || !burst_safety_rampdown || _taper.isOff() || _burstEnded) {
+        if (!_taperInUse || !_safetyRampDownInUse || _taper.isOff() || _burstEnded) {
             return;
         }
         std::println(stderr, "[SoapySink] forced safety ramp-down on shutdown (upstream did not taper)");
         std::ignore = _taper.setTarget(false, true);
 
+        // The ramp-down sends at most the taper's ramp length, and at most one second of samples.
         constexpr float kMaxSafetyRampSec = 1.0f;
-        auto            maxSamples        = static_cast<std::size_t>(std::min(burst_ramp_time.value, kMaxSafetyRampSec) * sample_rate);
-        if (burst_ramp_time > kMaxSafetyRampSec) {
-            std::println(stderr, "[SoapySink] safety ramp-down clamped to 1s (configured: {}s)", burst_ramp_time.value);
+        const float     maxRampSamples    = kMaxSafetyRampSec * _taper.sampleRate();
+        std::size_t     maxSamples        = _taper.rampLength();
+        if (static_cast<float>(maxSamples) > maxRampSamples) {
+            maxSamples = static_cast<std::size_t>(maxRampSamples);
+            std::println(stderr, "[SoapySink] safety ramp-down clamped to 1s (configured: {}s)", _taper.rampTime());
         }
 
         // taper from the last transmitted sample, not from a zeroed buffer: tapering silence emits
@@ -964,17 +981,20 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
 
     [[nodiscard]] T lastTransmitted(std::size_t channel) const { return channel < _lastTransmitted.size() ? _lastTransmitted[channel] : T{}; }
 
+    // Takes the burst_* settings for the run. A change to them while the block runs applies at its next start().
     void configureTaper() {
+        _taperInUse          = false;
+        _safetyRampDownInUse = burst_safety_rampdown;
         if (!burst_taper_enabled) {
             _taper.reset();
             return;
         }
         auto type = parseTaperType(burst_taper_type.value);
         if (auto r = _taper.configure(type, burst_ramp_time, sample_rate, burst_shape_param); !r) {
-            this->emitErrorMessage("configureTaper()", r.error());
-            return;
+            failStart(std::format("burst taper: {}", r.error().message));
         }
         std::ignore = _taper.setTarget(true);
+        _taperInUse = true;
     }
 
     static algorithm::TaperType parseTaperType(const std::string& name) {
@@ -1301,7 +1321,11 @@ bursts in between. No ramp-down follows a stream whose last sample ended a burst
     // it empty. Its emptiness therefore cannot stand for "nothing was written": settings that hold no
     // parameters at all have an empty set for the other reason, and the count of stored parameter sets,
     // which a written map and a constructed block both raise above zero, is what tells the two apart.
+    // A key a settings change carried while no device was open is the caller's as well.
     [[nodiscard]] bool isSetByCaller(std::string_view key) {
+        if (_changedWhileStopped.contains(std::string(key))) {
+            return true;
+        }
         if (this->settings().getNStoredParameters() == 0U) {
             return false;
         }
