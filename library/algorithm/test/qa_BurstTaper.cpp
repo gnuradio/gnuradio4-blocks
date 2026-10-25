@@ -1,7 +1,10 @@
 #include <boost/ut.hpp>
 
+#include <limits>
 #include <memory_resource>
 #include <numeric>
+#include <string>
+#include <utility>
 
 #include <gnuradio-4.0/algorithm/BurstTaper.hpp>
 #include <gnuradio-4.0/algorithm/ImChart.hpp>
@@ -314,6 +317,39 @@ const boost::ut::suite<"BurstTaper"> burstTaperTests = [] {
         "rejects negative sampleRate"_test = [] {
             Taper taper;
             expect(!taper.configure(TaperType::Linear, 0.01f, -1000.f).has_value());
+        };
+
+        "rejects a NaN sampleRate or rampTime and keeps the ramp it had"_test = [] {
+            constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
+            for (const auto& [rampTime, sampleRate] : {std::pair{0.01f, kNaN}, std::pair{kNaN, 1000.f}, std::pair{0.f, kNaN}}) {
+                Taper taper;
+                expect(taper.configure(TaperType::Linear, 0.01f, 1000.f).has_value());
+                const std::size_t configured = taper.rampLength();
+                expect(!taper.configure(TaperType::Linear, rampTime, sampleRate).has_value()) << std::format("rampTime {} s at {} Hz", rampTime, sampleRate);
+                expect(eq(taper.rampLength(), configured)) << std::format("rampTime {} s at {} Hz", rampTime, sampleRate);
+            }
+        };
+
+        "rejects an infinite sampleRate as a sample rate"_test = [] {
+            constexpr float kInf = std::numeric_limits<float>::infinity();
+            Taper           reference;
+            const auto      nonPositive = reference.configure(TaperType::Linear, 0.f, 0.f);
+            expect(fatal(!nonPositive.has_value()));
+            const std::string rateReason = nonPositive.error().message.substr(0UZ, nonPositive.error().message.find(' '));
+            for (const float rampTime : {0.f, 0.01f}) {
+                Taper      taper;
+                const auto refused = taper.configure(TaperType::Linear, rampTime, kInf);
+                expect(!refused.has_value() && refused.error().message.starts_with(rateReason)) << std::format("rampTime {} s at an infinite rate is refused for its rate", rampTime);
+            }
+        };
+
+        "rejects a ramp longer than std::size_t counts"_test = [] {
+            const float rampTime   = std::numeric_limits<float>::max();
+            const float sampleRate = 1000.f;
+            Taper       taper;
+            expect(gt(static_cast<double>(rampTime) * static_cast<double>(sampleRate), static_cast<double>(std::numeric_limits<std::size_t>::max())));
+            expect(!taper.configure(TaperType::Linear, rampTime, sampleRate).has_value());
+            expect(eq(taper.rampLength(), 0UZ));
         };
 
         "rampTime=0 produces instant transition (rampLength=0)"_test = [] {
