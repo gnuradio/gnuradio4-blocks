@@ -8,8 +8,13 @@
 #   discriminator gain                = 240000 / (2*pi*75000) = 0.5092958
 #   audio decimation                  = 5, for 240 kHz / 5 = 48 kHz
 #
-# A new front-end rate goes into both sample_rate entries. A channel decimation that keeps the
-# channel rate at 240 kHz leaves the rest unchanged. Otherwise the discriminator gain is
+# rf_source writes its rate as gr:sample_rate on its first sample. The channel filter and the
+# audio resampler scale that rate by their decimation. tuner, deemphasis and audio_sink couple
+# their sample_rate to gr:sample_rate in tag_couplings. Each takes the rate that reaches it.
+# Their sample_rate entries hold until the first sample arrives.
+#
+# A new front-end rate goes into the sample_rate of rf_source. A channel decimation that keeps
+# the channel rate at 240 kHz leaves the rest unchanged. Otherwise the discriminator gain is
 # channel rate / (2*pi*75000) and the audio decimation is channel rate / 48000. The
 # discriminator gain maps the 75 kHz peak deviation of broadcast FM to an audio level of 1. The
 # de-emphasis tau is 75 us in the Americas and Korea and 50 us elsewhere.
@@ -41,6 +46,8 @@ blocks:
       name: tuner
       sample_rate: !!float32 1920000.0
       frequency_shift: !!float32 0.0
+    tag_couplings:
+      sample_rate: gr:sample_rate
   - id: gr::blocks::filter::StagedDecimator<complex<float32>>
     parameters:
       name: channel
@@ -60,11 +67,15 @@ blocks:
       name: deemphasis
       sample_rate: !!float32 48000.0
       tau: !!float64 7.5e-05
+    tag_couplings:
+      sample_rate: gr:sample_rate
   - id: gr::blocks::basic::DataSink<float32>
     parameters:
       name: audio_sink
       signal_name: fm_audio
       sample_rate: !!float32 48000.0
+    tag_couplings:
+      sample_rate: gr:sample_rate
 connections:
   - [rf_source, out, tuner, in]
   - [tuner, out, channel, in]

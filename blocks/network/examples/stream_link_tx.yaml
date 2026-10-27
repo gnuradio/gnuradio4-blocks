@@ -20,10 +20,10 @@
 # max_items bounds one packet at 4096 samples, so latency across the link is a number this file
 # states rather than a consequence of how the scheduler happened to chunk the stream.
 #
-# sample_rate on the sink is what the far end learns the rate from. A stream that tags its own rate
-# needs it; SignalGenerator carries its rate in a setting and never tags it, so without this the
-# receiving half would have no way to know how fast the samples it is handed are meant to be. A tag
-# in the stream always wins over the setting.
+# The far end learns the rate from the sink. SignalGenerator writes its rate as gr:sample_rate on
+# its first sample, and the sink states that rate on every packet. The sink states its own
+# sample_rate setting where the stream states no rate, as behind a front end that writes no rate
+# tag. A rate tag in the stream wins over the setting.
 #
 # The second block on the second endpoint carries the other half of what a flowgraph is: its
 # message plane. Everything a host application sends into this graph - a settings change, a

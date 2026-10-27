@@ -11,6 +11,9 @@
 # max_message_bytes has no default and must be stated: libzmq's own bound is no limit, so a source
 # that omitted it would let a peer's claimed length size an allocation before this block saw a byte.
 #
+# level_sink couples its sample_rate to gr:sample_rate in tag_couplings and takes the rate the
+# sending half stated. Its sample_rate entry holds until the first sample arrives.
+#
 # message_rx is the control path's far end: what the sending half's message_tx published is emitted
 # here into this graph's own message plane, where the scheduler forwards it the way it forwards any
 # block's messages - which is how a host application reads and sets the blocks in this process. It
@@ -40,6 +43,8 @@ blocks:
       name: level_sink
       signal_name: link_level
       sample_rate: !!float32 2000000.0
+    tag_couplings:
+      sample_rate: gr:sample_rate
   - id: gr::blocks::network::MessagePacketSource
     parameters:
       name: message_rx
