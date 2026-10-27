@@ -11,6 +11,7 @@
 #include <functional>
 #include <iomanip>
 #include <limits>
+#include <numbers>
 #include <random>
 #include <string>
 #include <tuple>
@@ -1440,6 +1441,98 @@ const boost::ut::suite<"SVD Jacobi on hard inputs"> _svd_jacobi_hard = [] {
         expectSvdHolds(scaledMatrix<T>(2UZ, 2UZ, 1, {1, 1, 0, 0}), svd::Algorithm::Jacobi, {std::sqrt(2.0L), 0.0L}, "[[1, 1], [0, 0]]");
         expectSvdHolds(scaledMatrix<T>(2UZ, 3UZ, 1, {1, 0, 0, 0, 0, 0}), svd::Algorithm::Jacobi, {1.0L, 0.0L}, "[[1, 0, 0], [0, 0, 0]]");
     } | AllTypes{};
+};
+
+const boost::ut::suite<"SVD Golub-Reinsch on hard inputs"> _svd_golub_reinsch_hard = [] {
+    using namespace boost::ut;
+    using namespace boost::ut::literals;
+    using gr::Tensor;
+    using RealTypes = std::tuple<float, double>;
+
+    "Golub-Reinsch clears a zero at the top of the bidiagonal"_test = []<typename T> {
+        // B = [[0, 1], [0, 0]]: the row rotation moves the superdiagonal entry onto the diagonal
+        expectSvdHolds(scaledMatrix<T>(2UZ, 2UZ, 1, {0, 1, 0, 0}), svd::Algorithm::GolubReinsch, {1.0L, 0.0L}, "[[0, 1], [0, 0]]");
+    } | RealTypes{};
+
+    "Golub-Reinsch clears a zero at the bottom of the bidiagonal"_test = []<typename T> {
+        // B = [[1, 1], [0, 0]]: the column rotation moves the superdiagonal entry onto the diagonal
+        expectSvdHolds(scaledMatrix<T>(2UZ, 2UZ, 1, {1, 1, 0, 0}), svd::Algorithm::GolubReinsch, {std::sqrt(2.0L), 0.0L}, "[[1, 1], [0, 0]]");
+    } | RealTypes{};
+
+    // the next two cases run detail::svdGolubReinsch on the unscaled input
+    "Golub-Reinsch forms the shift without overflow"_test = []<typename T> {
+        using RealT       = gr::meta::fundamental_base_value_type_t<T>;
+        const RealT scale = std::sqrt(std::sqrt(std::numeric_limits<RealT>::max()));
+        // the squared products of the entries, 4 s^4 and 5 s^4, exceed the largest finite value
+        expectSvdHolds(scaledMatrix<T>(2UZ, 2UZ, scale, {2, 1, 0, 1}), svd::Algorithm::GolubReinsch, upperTriangularSingularValues(static_cast<long double>(scale)), "s = max^(1/4)", true);
+    } | RealTypes{};
+
+    "Golub-Reinsch tests the diagonal against the size of the block"_test = []<typename T> {
+        using RealT       = gr::meta::fundamental_base_value_type_t<T>;
+        const RealT eps   = std::numeric_limits<RealT>::epsilon();
+        const RealT scale = eps * eps / RealT{4};
+        // every entry lies below 2 eps^2
+        expectSvdHolds(scaledMatrix<T>(2UZ, 2UZ, scale, {2, 1, 0, 1}), svd::Algorithm::GolubReinsch, upperTriangularSingularValues(static_cast<long double>(scale)), "s = eps^2 / 4", true);
+    } | RealTypes{};
+
+    "Golub-Reinsch deflates a block of rounding residue"_test = [] {
+        // the 32 x 33 Hankel matrix of 64 samples of a tone of period 10 has rank 2
+        Tensor<float> A({32UZ, 33UZ});
+        for (std::size_t i = 0UZ; i < 32UZ; ++i) {
+            for (std::size_t j = 0UZ; j < 33UZ; ++j) {
+                const double phase = 2.0 * std::numbers::pi * static_cast<double>(i + j) / 10.0 + 0.4;
+                A[i, j]            = static_cast<float>(0.3 * std::sin(phase));
+            }
+        }
+        expectSvdHolds(A, svd::Algorithm::GolubReinsch, {}, "Hankel of a tone of period 10");
+    };
+
+    "Golub-Reinsch keeps the relative accuracy of a block far below the largest entry"_test = []<typename T> {
+        using RealT   = gr::meta::fundamental_base_value_type_t<T>;
+        const RealT a = std::is_same_v<RealT, float> ? static_cast<RealT>(1e-9f) : static_cast<RealT>(1e-20);
+        // A = [[1, 0, 0], [0, a, a], [0, 0, a]] with a below eps: the lower block has the singular values a (sqrt(5) +- 1) / 2
+        const long double              al    = static_cast<long double>(a);
+        const long double              root5 = std::sqrt(5.0L);
+        const std::vector<long double> expected{1.0L, al * (root5 + 1.0L) / 2.0L, al * (root5 - 1.0L) / 2.0L};
+        const Tensor<T>                A = scaledMatrix<T>(3UZ, 3UZ, 1, {1, 0, 0, 0, al, al, 0, 0, al});
+        expectSvdHolds(A, svd::Algorithm::GolubReinsch, expected, "[[1, 0, 0], [0, a, a], [0, 0, a]]");
+
+        svd::Config<RealT> config;
+        config.algorithm = svd::Algorithm::GolubReinsch;
+        Tensor<T>     U, V;
+        Tensor<RealT> S;
+        expect(gesvd(U, S, V, A, config) == svd::Status::Success);
+        expect(eq(S.size(), expected.size()));
+        // each small singular value within the bound relative to itself
+        const long double unit = 3.0L * static_cast<long double>(std::numeric_limits<RealT>::epsilon());
+        for (std::size_t l = 1UZ; l < std::min(S.size(), expected.size()); ++l) {
+            expect(le(std::abs(static_cast<long double>(S[l]) - expected[l]) / (expected[l] * unit), kRatioBound)) << "relative error of singular value" << l;
+        }
+    } | RealTypes{};
+
+    "Golub-Reinsch keeps a small singular value under a loose tolerance"_test = []<typename T> {
+        using RealT           = gr::meta::fundamental_base_value_type_t<T>;
+        const RealT tolerance = std::is_same_v<RealT, float> ? static_cast<RealT>(1e-2f) : static_cast<RealT>(1e-6);
+        const RealT d         = tolerance / RealT{10};
+        // A = [[1, 1], [0, d]]: sigma_1 sigma_2 = d and sigma_1^2 + sigma_2^2 = 2 + d^2
+        const long double dl     = static_cast<long double>(d);
+        const long double sumSq  = 2.0L + dl * dl;
+        const long double sigma1 = std::sqrt((sumSq + std::sqrt(sumSq * sumSq - 4.0L * dl * dl)) / 2.0L);
+
+        const Tensor<T>    A = scaledMatrix<T>(2UZ, 2UZ, 1, {1, 1, 0, static_cast<long double>(d)});
+        svd::Config<RealT> config;
+        config.algorithm = svd::Algorithm::GolubReinsch;
+        config.tolerance = tolerance;
+        Tensor<T>       U, V;
+        Tensor<RealT>   S;
+        const auto      status = gesvd(U, S, V, A, config);
+        const SvdRatios ratios = ratiosOf(A, status, U, S, V, {sigma1, dl / sigma1});
+        // the loose tolerance bounds the reconstruction error; sigma_2 keeps the bound of the default tolerance
+        const long double unit = 2.0L * static_cast<long double>(std::numeric_limits<RealT>::epsilon());
+        expect(ratios.status == svd::Status::Success);
+        expect(le(ratios.reconstruction * unit, static_cast<long double>(tolerance))) << "reconstruction";
+        expect(le(ratios.singularValues, kRatioBound)) << "singular values";
+    } | RealTypes{};
 };
 
 const boost::ut::suite<"GolubReinsch Internals -- Regression Tests"> _gr_internals = [] {

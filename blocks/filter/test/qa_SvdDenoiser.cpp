@@ -65,6 +65,23 @@ const boost::ut::suite<"SvdDenoiser Block"> svdDenoiserBlockTests = [] {
         expect(std::isfinite(outputs.back())) << "output should be finite";
     };
 
+    "SvdDenoiser float filters a clean tone of period 10"_test = [] {
+        // each full window holds a 32 x 33 Hankel matrix of rank 2
+        constexpr std::size_t kSamples = 256UZ;
+        SvdDenoiser<float>    denoiser;
+        denoiser.start();
+
+        std::vector<float> outputs;
+        expect(nothrow([&] {
+            for (std::size_t i = 0UZ; i < kSamples; ++i) {
+                const double phase = 2.0 * std::numbers::pi * static_cast<double>(i) / 10.0 + 0.4;
+                outputs.push_back(filterOne(denoiser, static_cast<float>(0.3 * std::sin(phase))));
+            }
+        }));
+        expect(eq(outputs.size(), kSamples));
+        expect(std::ranges::all_of(outputs, [](float sample) { return std::isfinite(sample); })) << "output should be finite";
+    };
+
     "SvdDenoiser denoising quality"_test = [] {
         constexpr std::size_t N  = 512UZ;
         constexpr double      fs = 1000.0;
