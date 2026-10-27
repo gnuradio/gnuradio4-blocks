@@ -129,9 +129,8 @@ first sample, counted by this block from its own start; it is what lets the far 
 packet swallowed instead of only that something was lost. `packet_tags` carries the tags standing in the chunk as a
 list of `{offset, map}` entries, offsets relative to the chunk's first sample, maps copied key for key with nothing
 filtered. `sample_rate` is stated on every packet once the stream has stated one, so a subscriber that joined
-mid-stream learns the rate at once rather than waiting for the next tag to come round. Where the stream states none —
-the tree's own `SignalGenerator` carries its rate in a setting and never tags it — the `sample_rate` setting is
-stated instead; a tag always wins over it, because a tag is the more local truth.
+mid-stream learns the rate at once rather than waiting for the next tag to come round. Where the stream states none,
+the `sample_rate` setting is stated instead. A `gr:sample_rate` tag in the stream wins over the setting.
 
 The framework delivers those tags in one of two shapes and the block reads both. A block with no forward tag
 propagation has its input span cut at the next tag, so the ordinary case is one tag at relative index 0; where tags
