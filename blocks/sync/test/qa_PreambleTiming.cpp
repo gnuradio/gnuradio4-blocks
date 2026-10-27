@@ -328,7 +328,7 @@ struct TagSink : gr::Block<TagSink> {
     return values;
 }
 
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<PreambleTiming<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
+static_assert(PreambleTiming<float>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
 
 } // namespace qa_preamble_timing
 
@@ -385,8 +385,8 @@ const boost::ut::suite<"PreambleTiming"> preambleTimingTests = [] {
         PreambleTiming<float> unnamed  = make<PreambleTiming<float>>(defaults(kPreamble));
         const Capture         untagged = drive(unnamed, std::span<const float>(stream));
         expect(eq(untagged.tags.size(), 1UZ)) << fatal;
-        expect(untagged.tags[0].map.find(gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey())) == untagged.tags[0].map.end()) << "an unnamed detector writes no trigger, so a framer downstream does not resynchronize on a timing preset";
-        expect(untagged.tags[0].map.find(gr::property_map::key_type(gr::tag::TRIGGER_OFFSET.shortKey())) == untagged.tags[0].map.end()) << "and none of the trigger pair without the other";
+        expect(untagged.tags[0].map.find(gr::property_map::key_type(gr::tag::TRIGGER_NAME.key())) == untagged.tags[0].map.end()) << "an unnamed detector writes no trigger, so a framer downstream does not resynchronize on a timing preset";
+        expect(untagged.tags[0].map.find(gr::property_map::key_type(gr::tag::TRIGGER_OFFSET.key())) == untagged.tags[0].map.end()) << "and none of the trigger pair without the other";
         expect(eq(clockPayload(untagged.tags[0].map).size(), 2UZ)) << "the timing payload is written either way";
 
         gr::property_map withLabel                             = defaults(kPreamble);
@@ -397,13 +397,13 @@ const boost::ut::suite<"PreambleTiming"> preambleTimingTests = [] {
         expect(eq(run.tags.size(), 1UZ)) << fatal;
 
         const gr::property_map& map   = run.tags[0].map;
-        const auto              named = map.find(gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()));
+        const auto              named = map.find(gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()));
         expect(named != map.end()) << fatal;
         const auto* label = named->second.get_if<std::pmr::string>();
         expect(label != nullptr) << "trigger_name is a string" << fatal;
         expect(eq(std::string(label->data(), label->size()), std::string("preamble")));
 
-        const auto delay = map.find(gr::property_map::key_type(gr::tag::TRIGGER_OFFSET.shortKey()));
+        const auto delay = map.find(gr::property_map::key_type(gr::tag::TRIGGER_OFFSET.key()));
         expect(delay != map.end()) << fatal;
         const auto* seconds = delay->second.get_if<float>();
         expect(seconds != nullptr) << "trigger_offset is a float, and the key declares seconds" << fatal;

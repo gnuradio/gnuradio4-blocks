@@ -80,14 +80,26 @@ struct CarriedTag {
     property_map map{};
 };
 
-/// @brief The value of `sample_rate` in @p map, at the type the vocabulary declares, however the key is spelled.
+/// @brief The rate a stream tag states: the `float` under `gr:sample_rate`.
 ///
-/// A tag map may carry the framework's prefixed `gr:sample_rate` or the short form the vocabulary uses; both name one
-/// key, so both are read. A value at another type is not a sample rate and is left alone — it still crosses inside
-/// the tag it belongs to, where the far end sees exactly what the near end did.
+/// A key spelled `sample_rate` without the prefix is an ordinary key and states no rate. A value at another type is
+/// not a sample rate and is left alone — it still crosses inside the tag it belongs to.
+[[nodiscard]] inline std::optional<float> tagSampleRate(const property_map& map) noexcept {
+    if (const auto entry = map.find(std::string_view(gr::tag::SAMPLE_RATE.key())); entry != map.end()) {
+        if (const float* rate = entry->second.get_if<float>(); rate != nullptr) {
+            return *rate;
+        }
+    }
+    return std::nullopt;
+}
+
+/// @brief The rate a packet's metadata map states, at the type the vocabulary declares, however the key is spelled.
+///
+/// The vocabulary spells the key `sample_rate`, and a record name also accepts `gr:sample_rate`. Both are read. A
+/// value at another type is not a sample rate and is left alone.
 [[nodiscard]] inline std::optional<float> sampleRateOf(const property_map& map) noexcept {
     for (const auto& [key, value] : map) {
-        if (gr::dataset::shortKey(std::string_view(key)) == gr::tag::SAMPLE_RATE.shortKey()) {
+        if (gr::dataset::recordName(std::string_view(key)) == gr::tag::SAMPLE_RATE.name()) {
             if (const float* rate = value.get_if<float>(); rate != nullptr) {
                 return *rate;
             }
@@ -360,7 +372,7 @@ private:
                 continue; // the span's tag view is bounded by the span, so this is defensive and costs one compare
             }
             _spanTags.emplace_back(offset, tagMapRef.get());
-            if (const std::optional<float> rate = detail::streampacket::sampleRateOf(_spanTags.back().map); rate.has_value()) {
+            if (const std::optional<float> rate = detail::streampacket::tagSampleRate(_spanTags.back().map); rate.has_value()) {
                 _sampleRate = rate;
             }
         }
@@ -374,7 +386,7 @@ private:
         // the stream's own statement wins over the setting: a tag is the more local truth, and the setting exists
         // for the producers that carry their rate in their settings alone and never tag it
         if (const std::optional<float> rate = _sampleRate.has_value() ? _sampleRate : _statedRate; rate.has_value()) {
-            map.insert_or_assign(property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), pmt::Value(*rate));
+            map.insert_or_assign(property_map::key_type(gr::tag::SAMPLE_RATE.name()), pmt::Value(*rate));
         }
         if (lastTag == firstTag) {
             return map; // an absent key rather than an empty list: the common chunk carries no tags at all
@@ -437,14 +449,14 @@ struct StreamPacketSource : Block<StreamPacketSource<T>, NoTagPropagation> {
 
 This is where the flowgraph edge `StreamPacketSink` cut resumes. The payload becomes samples on `out` and every
 carried tag is republished at the same offset it had, so a tag that stood at sample k of the sender's stream stands
-at sample k of this one. `sample_rate` is republished as a tag whenever the value changes, which for a subscriber
+at sample k of this one. `gr:sample_rate` is republished as a tag whenever the value changes, which for a subscriber
 that joined mid-stream is at its first sample: the rate is a fact the receiving half needs before it can do anything
 with the samples, and a subscriber has no way to ask for it.
 
 **A gap is announced, never spliced.** A packet lost inside libzmq costs nothing at either end and is invisible in
 the payloads, so the block reconstructs the loss instead: `sequence` says how many packets went missing and
 `stream_position` says exactly which samples they held. One tag is published at the next sample, carrying
-`n_dropped_samples` (the framework's own key, so a block downstream that already understands dropped samples needs
+`gr:n_dropped_samples` (the framework's own key, so a block downstream that already understands dropped samples needs
 no new vocabulary), `packets_lost` and `stream_position` — the absolute index of the first missing sample, so the
 missing span is `[stream_position, stream_position + n_dropped_samples)`. The check runs where the packet is
 published rather than where it arrives, so a packet the in-process queue shed is announced by the same mechanism as
@@ -694,7 +706,7 @@ private:
             // stated on every packet by the sink, republished only when it changes; for a subscriber that joined
             // mid-stream that is its first sample, which is the case the rate has to cross for
             _publishedRate = arrival.sampleRate;
-            _prologue.insert_or_assign(property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), pmt::Value(*arrival.sampleRate));
+            _prologue.insert_or_assign(property_map::key_type(gr::tag::SAMPLE_RATE.key()), pmt::Value(*arrival.sampleRate));
         }
         if (arrival.samples.empty()) {
             std::lock_guard lock(_mutex);

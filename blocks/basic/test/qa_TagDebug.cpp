@@ -11,6 +11,7 @@
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/Tag.hpp>
 
 #include <gnuradio-4.0/basic/TagDebug.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
@@ -23,6 +24,7 @@ using gr::blocks::testing::TagSink;
 using gr::blocks::testing::TagSource;
 
 constexpr gr::Size_t  kSamples   = 1000U;
+constexpr float       kRate      = 1000.f;
 constexpr std::size_t kMaxChunk  = 64UZ;
 constexpr std::size_t kMidStream = 600UZ;
 constexpr std::size_t kMinChunk  = 40UZ; // above kMidStream % kMaxChunk and at most kSamples % kMaxChunk
@@ -51,12 +53,19 @@ struct Run {
         gr::Tag{kMidStream, gr::property_map{{"second", gr::pmt::Value(std::int32_t{42})}}}};
 }
 
+/// The tags TagDebug sees: the source's `gr:sample_rate` tag on its first sample, then @p tags.
+[[nodiscard]] std::vector<gr::Tag> seenTags(const std::vector<gr::Tag>& tags) {
+    std::vector<gr::Tag> seen{gr::Tag{0UZ, gr::property_map{{gr::tag::SAMPLE_RATE.key(), gr::pmt::Value(kRate)}}}};
+    seen.insert(seen.end(), tags.begin(), tags.end());
+    return seen;
+}
+
 /// Runs a TagSource of the ramp 0, 1, ... with @p tags through a TagDebug into a TagSink. The input port of the
 /// TagDebug takes at most kMaxChunk samples per call. A tag past kMaxChunk reaches a later work call. A @p minChunk
 /// above 0 sets the least number of samples the input port takes per call.
 [[nodiscard]] Run runThrough(const std::vector<gr::Tag>& tags, gr::property_map debugSettings, std::size_t minChunk = 0UZ) {
     gr::Graph graph;
-    auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
+    auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"sample_rate", kRate}, {"mark_tag", false}});
     source._tags     = tags;
     debugSettings.insert_or_assign("name", gr::pmt::Value(std::string("debug")));
     auto& debug          = graph.emplaceBlock<TagDebug<float>>(std::move(debugSettings));
@@ -87,6 +96,14 @@ struct Run {
 }
 
 [[nodiscard]] std::string lineFor(const gr::Tag& tag) { return std::format("debug tag at {}: {}\n", tag.index, tag.map); }
+
+[[nodiscard]] std::string linesFor(const std::vector<gr::Tag>& tags) {
+    std::string lines;
+    for (const gr::Tag& tag : tags) {
+        lines += lineFor(tag);
+    }
+    return lines;
+}
 
 [[nodiscard]] bool holds(const std::vector<gr::Tag>& received, const gr::Tag& wanted) {
     for (const gr::Tag& tag : received) {
@@ -121,9 +138,10 @@ const boost::ut::suite<"TagDebug"> tagDebugTests = [] {
         expect(run.samples == ramp) << "the samples arrive unchanged";
         expect(holds(run.tags, tags[0])) << "the tag at 0 is forwarded at 0";
         expect(holds(run.tags, tags[1])) << std::format("the tag at {} is forwarded at {}", kMidStream, kMidStream);
-        expect(eq(run.nTags, gr::Size_t{2U}));
-        expect(eq(run.nTagsFromSettings, gr::Size_t{2U})) << "a settings get reads the counter";
-        expect(eq(run.printed, lineFor(tags[0]) + lineFor(tags[1]))) << run.printed;
+        const std::vector<gr::Tag> seen = seenTags(tags);
+        expect(eq(run.nTags, static_cast<gr::Size_t>(seen.size())));
+        expect(eq(run.nTagsFromSettings, static_cast<gr::Size_t>(seen.size()))) << "a settings get reads the counter";
+        expect(eq(run.printed, linesFor(seen))) << run.printed;
     };
 
     "a tag inside a work call prints with its stream index"_test = [] {
@@ -134,8 +152,9 @@ const boost::ut::suite<"TagDebug"> tagDebugTests = [] {
 
         expect(eq(run.samples.size(), static_cast<std::size_t>(kSamples))) << "every sample arrives";
         expect(holds(run.tags, tags[1])) << std::format("the tag at {} is forwarded at {}", kMidStream, kMidStream);
-        expect(eq(run.nTags, gr::Size_t{2U}));
-        expect(eq(run.printed, lineFor(tags[0]) + lineFor(tags[1]))) << run.printed;
+        const std::vector<gr::Tag> seen = seenTags(tags);
+        expect(eq(run.nTags, static_cast<gr::Size_t>(seen.size())));
+        expect(eq(run.printed, linesFor(seen))) << run.printed;
     };
 
     "key_filter counts and prints only the tags holding the key"_test = [] {
@@ -152,8 +171,9 @@ const boost::ut::suite<"TagDebug"> tagDebugTests = [] {
         const std::vector<gr::Tag> tags = twoTags();
         const Run                  run  = runThrough(tags, {{"display", false}});
 
-        expect(eq(run.nTags, gr::Size_t{2U}));
-        expect(eq(run.nTagsFromSettings, gr::Size_t{2U}));
+        const std::vector<gr::Tag> seen = seenTags(tags);
+        expect(eq(run.nTags, static_cast<gr::Size_t>(seen.size())));
+        expect(eq(run.nTagsFromSettings, static_cast<gr::Size_t>(seen.size())));
         expect(run.printed.empty()) << run.printed;
         expect(holds(run.tags, tags[0]) && holds(run.tags, tags[1])) << "the tags are still forwarded";
     };

@@ -348,8 +348,8 @@ const boost::ut::suite<"SvdDenoiser tag placement"> svdTagPlacementTests = [] {
         for (const Case& c : {Case{64U, 0.25f, 31UZ}, Case{16U, 1.0f, 15UZ}}) {
             gr::Graph graph;
             auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", true}});
-            source._tags.emplace_back(kAt, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("impulse")}});
-            source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}, {gr::property_map::key_type{"tx_eob"}, true}});
+            source._tags.emplace_back(kAt, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("impulse")}});
+            source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_META_INFO.key()}, std::string("last")}, {gr::property_map::key_type{gr::tag::TX_EOB.key()}, true}});
             auto& block = graph.emplaceBlock<SvdDenoiser<float>>({{"window_size", c.window}, {"hop_fraction", c.hopFraction}, {"energy_fraction", 2.0f}});
             auto  sinks = gr::blocks::filter::testing::connectEndSinks<float>(graph, block);
             expect(graph.connect<"out", "in">(source, block).has_value());
@@ -361,8 +361,8 @@ const boost::ut::suite<"SvdDenoiser tag placement"> svdTagPlacementTests = [] {
             const std::string label = std::format("W = {}, hop fraction {}", c.window, c.hopFraction);
             const auto        head  = std::span<const float>(sinks->end._samples).first(3UZ * kAt);
             expect(eq(static_cast<std::size_t>(std::ranges::max_element(head) - head.begin()), kAt + c.lag)) << label << ": the impulse on the lagged output";
-            expect(that % (sinks->end.offsetsOf("trigger_name") == std::vector<std::size_t>{kAt + c.lag})) << label << ": the tag with it";
-            gr::blocks::filter::testing::expectAtStreamEnd(*sinks, kSamples, {"trigger_meta_info", "tx_eob"}, label);
+            expect(that % (sinks->end.offsetsOf(gr::tag::TRIGGER_NAME.key()) == std::vector<std::size_t>{kAt + c.lag})) << label << ": the tag with it";
+            gr::blocks::filter::testing::expectAtStreamEnd(*sinks, kSamples, {gr::tag::TRIGGER_META_INFO.key(), gr::tag::TX_EOB.key()}, label);
         }
     };
 };

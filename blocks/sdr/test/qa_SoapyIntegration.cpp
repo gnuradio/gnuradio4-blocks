@@ -272,7 +272,8 @@ std::optional<std::size_t> firstDifference(const std::vector<CF32>& received, co
 // Sends each channel's pattern through a sink on the loopback device. Returns what the device's receiver holds once
 // the sink has stopped. In loopback mode that is every sample the sink sent. The probe opens the device with the
 // sink's arguments first. The two then share the device, and the device outlives the sink. Each source carries the
-// tags. When settingsAfterRun is given, it receives the sink's settings once the run has ended.
+// tags. A tag key that names a writable sink setting couples that setting to the key. When settingsAfterRun is given,
+// it receives the sink's settings once the run has ended.
 template<std::size_t nChannels>
 requires(nChannels == 1UZ || nChannels == 2UZ)
 std::array<std::vector<CF32>, nChannels> transmitThroughLoopback(const std::string& parameters, gr::property_map settings, const std::array<std::vector<CF32>, nChannels>& patterns, gr::Size_t nSamples, const std::vector<gr::Tag>& tags = {}, gr::property_map* settingsAfterRun = nullptr) {
@@ -286,8 +287,17 @@ std::array<std::vector<CF32>, nChannels> transmitThroughLoopback(const std::stri
     settings.insert_or_assign(std::pmr::string("device_parameter"), parameters);
     settings.insert_or_assign(std::pmr::string("num_channels"), static_cast<gr::Size_t>(nChannels));
 
-    gr::Graph                      flow;
-    auto&                          sink = flow.emplaceBlock<gr::blocks::sdr::SoapySink<CF32, nChannels>>(std::move(settings));
+    gr::Graph        flow;
+    auto&            sink = flow.emplaceBlock<gr::blocks::sdr::SoapySink<CF32, nChannels>>(std::move(settings));
+    gr::property_map couplings;
+    for (const gr::Tag& tag : tags) {
+        for (const auto& entry : tag.map) {
+            if (sink.settings().writableMembers().contains(std::string(entry.first))) {
+                couplings.insert_or_assign(entry.first, gr::pmt::Value(std::string(entry.first)));
+            }
+        }
+    }
+    sink.settings().setTagCouplings(couplings);
     std::array<Source*, nChannels> sources{};
     for (std::size_t ch = 0UZ; ch < nChannels; ++ch) {
         sources[ch]        = std::addressof(flow.emplaceBlock<Source>({{"n_samples_max", nSamples}, {"values", gr::Tensor<CF32>(patterns[ch].begin(), patterns[ch].end())}}));
@@ -425,7 +435,7 @@ const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
             {"chunk_size", gr::Size_t{100}},
         });
         clock.tags  = {
-            {0, {{std::pmr::string(gr::tag::TRIGGER_NAME.shortKey()), std::pmr::string("GPS_PPS")}, {std::pmr::string(gr::tag::TRIGGER_TIME.shortKey()), std::uint64_t{1'000'000'000ULL}}}},
+            {0, {{std::pmr::string(gr::tag::TRIGGER_NAME.key()), std::pmr::string("GPS_PPS")}, {std::pmr::string(gr::tag::TRIGGER_TIME.key()), std::uint64_t{1'000'000'000ULL}}}},
         };
 
         auto& source = flow.emplaceBlock<SoapySource<CF32, 1UZ>>({
@@ -457,7 +467,7 @@ const boost::ut::suite<"SoapySource + Loopback"> integrationTests = [] {
         // verify at least one tag carries the forwarded clock name
         bool foundClockTag = false;
         for (const auto& tag : sink._tags) {
-            auto nameIt = tag.map.find(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey()));
+            auto nameIt = tag.map.find(std::pmr::string(gr::tag::TRIGGER_NAME.key()));
             if (nameIt != tag.map.end()) {
                 if (auto* name = nameIt->second.get_if<std::pmr::string>()) {
                     if (*name == "GPS_PPS") {
@@ -703,12 +713,12 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
 
         // The loopback's MTU is its buffer size, larger than max_chunk_size. A read is max_chunk_size.
         const std::size_t nRead  = received.maxChunkSize;
-        const auto        timing = tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey());
+        const auto        timing = tagIndices(received.tags, gr::tag::TRIGGER_TIME.key());
         expect(evenlySpaced(timing, nRead)) << std::format("{} timing tags, {} samples per read", timing.size(), nRead);
 
         // Every kOverflowEvery-th read reports an overflow and delivers nothing. Its tag sits where the next read
         // starts, after the kOverflowEvery - 1 reads before it.
-        const auto overflows = tagIndices(received.tags, "rx_overflow");
+        const auto overflows = tagIndices(received.tags, gr::tag::RX_OVERFLOW.key());
         expect(!overflows.empty()) << "the device reported overflows";
         for (std::size_t i = 0UZ; i < overflows.size(); ++i) {
             expect(eq(overflows[i], (i + 1UZ) * (kOverflowEvery - 1UZ) * nRead)) << std::format("overflow tag {}", i);
@@ -719,7 +729,7 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
         constexpr std::uint32_t kMaxChunkSize = 2048U;
         const auto              received      = receive("device_mode=rx_only", {{"max_chunk_size", kMaxChunkSize}}, 20'000U);
         expect(!firstPhaseBreak(received.samples, kFrequency, static_cast<double>(kRate)).has_value());
-        expect(evenlySpaced(tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey()), kMaxChunkSize));
+        expect(evenlySpaced(tagIndices(received.tags, gr::tag::TRIGGER_TIME.key()), kMaxChunkSize));
     };
 
     // The output buffer is no whole number of these reads. A read that finds less room than a full read is shorter,
@@ -729,7 +739,7 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
         const auto            received = receive(std::format("device_mode=rx_only,buffer_size={}", kMtu), {}, 60'000U);
         expect(!firstPhaseBreak(received.samples, kFrequency, static_cast<double>(kRate)).has_value());
         const std::size_t nRead  = received.maxChunkSize - received.maxChunkSize % kMtu;
-        const auto        timing = tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey());
+        const auto        timing = tagIndices(received.tags, gr::tag::TRIGGER_TIME.key());
         expect(fatal(ge(timing.size(), 2UZ)));
         expect(eq(timing[0], 0UZ));
         expect(eq(timing[1], nRead)) << "the first read finds the whole buffer free";
@@ -744,7 +754,7 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
         const auto received = receive("device_mode=rx_only", {{"max_chunk_size", std::uint32_t{1U << 20U}}}, 200'000U);
         expect(!firstPhaseBreak(received.samples, kFrequency, static_cast<double>(kRate)).has_value());
         const std::size_t nRead = received.outputCapacity / 2UZ;
-        expect(evenlySpaced(tagIndices(received.tags, gr::tag::TRIGGER_TIME.shortKey()), nRead)) << std::format("{} samples per read", nRead);
+        expect(evenlySpaced(tagIndices(received.tags, gr::tag::TRIGGER_TIME.key()), nRead)) << std::format("{} samples per read", nRead);
     };
 
     // A decimator by ten leaves up to nine samples unread in the source's output buffer. A read of the whole buffer
@@ -835,7 +845,7 @@ const boost::ut::suite<"SoapySource read path"> readPathTests = [] {
             expect(ge(sink->_samples.size(), std::size_t{nSamples}));
             const auto brokenAt = firstPhaseBreak(sink->_samples, frequency, static_cast<double>(kRate));
             expect(!brokenAt.has_value()) << std::format("the {} Hz tone breaks at sample {}", frequency, brokenAt.value_or(0UZ));
-            expect(evenlySpaced(tagIndices(sink->_tags, gr::tag::TRIGGER_TIME.shortKey()), nRead)) << std::format("{} Hz channel", frequency);
+            expect(evenlySpaced(tagIndices(sink->_tags, gr::tag::TRIGGER_TIME.key()), nRead)) << std::format("{} Hz channel", frequency);
         }
     };
 };

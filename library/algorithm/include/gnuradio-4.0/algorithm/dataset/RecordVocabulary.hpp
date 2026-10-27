@@ -11,8 +11,8 @@ namespace gr::dataset {
 
 // The record-metadata vocabulary: the keys a record's metadata map may carry and the type each key holds.
 
-/// @brief The key without the `gr:` prefix the framework carries internally, which the short form compares equal to.
-[[nodiscard]] inline constexpr std::string_view shortKey(std::string_view key) noexcept {
+/// @brief The record name a key spells: the key without a `gr:` prefix. A record accepts both spellings of a name.
+[[nodiscard]] inline constexpr std::string_view recordName(std::string_view key) noexcept {
     constexpr std::string_view prefix = "gr:";
     return key.starts_with(prefix) ? key.substr(prefix.size()) : key;
 }
@@ -21,21 +21,21 @@ namespace gr::dataset {
 enum class VocabularyType : std::uint8_t { NotVocabulary, Float, Double, String, Size, UInt64, Bool };
 
 /// @brief The type `key` is declared to hold in the record-metadata vocabulary, or `NotVocabulary` when no vocabulary
-/// key is spelled that way. Nine keys take a reserved stream key's spelling and its declared type; twelve are the
+/// key is spelled that way. Nine keys take a reserved tag's name and its declared type; twelve are the
 /// vocabulary's own. Every type is fixed-width or a string, because a metadata map that crosses a process boundary is
 /// a wire format.
 [[nodiscard]] inline VocabularyType vocabularyType(std::string_view key) noexcept {
     using enum VocabularyType;
-    if (key == tag::SAMPLE_RATE.shortKey() || key == tag::SIGNAL_MIN.shortKey() || key == tag::SIGNAL_MAX.shortKey()) {
+    if (key == tag::SAMPLE_RATE.name() || key == tag::SIGNAL_MIN.name() || key == tag::SIGNAL_MAX.name()) {
         return Float;
     }
-    if (key == tag::FREQUENCY.shortKey()) {
+    if (key == tag::FREQUENCY.name()) {
         return Double;
     }
-    if (key == tag::SIGNAL_NAME.shortKey() || key == tag::SIGNAL_QUANTITY.shortKey() || key == tag::SIGNAL_UNIT.shortKey() || key == tag::TRIGGER_NAME.shortKey()) {
+    if (key == tag::SIGNAL_NAME.name() || key == tag::SIGNAL_QUANTITY.name() || key == tag::SIGNAL_UNIT.name() || key == tag::TRIGGER_NAME.name()) {
         return String;
     }
-    if (key == tag::N_DROPPED_SAMPLES.shortKey()) {
+    if (key == tag::N_DROPPED_SAMPLES.name()) {
         return Size;
     }
     if (key == "protocol" || key == "discontinuity" || key == "discard_reason" || key == "source_id") {

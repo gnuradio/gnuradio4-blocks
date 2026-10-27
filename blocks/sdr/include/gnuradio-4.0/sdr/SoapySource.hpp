@@ -90,7 +90,7 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     Annotated<gr::Size_t, "max_fragment_count", Doc<"max consecutive fragments before stop (0 = disable)">>          max_fragment_count   = 100U;
     Annotated<bool, "verbose_overflow", Doc<"log each overflow event">>                                              verbose_overflow     = false;
     Annotated<bool, "log_device_state", Doc<"log what the device holds once, after setup">>                          log_device_state     = true;
-    Annotated<std::string, "trigger_name", Doc<"tag trigger_name for free-running wallclock mode">>                  trigger_name         = std::string("SDR_WALLCLOCK");
+    Annotated<std::string, "trigger_name", Doc<"tag gr:trigger_name for free-running wallclock mode">>               trigger_name         = std::string("SDR_WALLCLOCK");
     Annotated<bool, "emit_timing_tags", Doc<"emit timing tags on every chunk">>                                      emit_timing_tags     = true;
     Annotated<bool, "emit_meta_info", Doc<"include device/clock metadata in timing tags">>                           emit_meta_info       = true;
     Annotated<float, "tag_interval", Unit<"s">, Doc<"minimum interval between timing tags (0 = every chunk)">>       tag_interval         = 1.0f;
@@ -149,12 +149,12 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
         if (newSettings.contains("frequency")) {
             applyFrequency();
             if (!frequency->empty()) {
-                forwardSettings.insert_or_assign(std::pmr::string("frequency"), frequency->front());
+                forwardSettings.insert_or_assign(std::pmr::string(tag::FREQUENCY.key()), frequency->front());
             }
         }
         if (newSettings.contains("sample_rate")) {
             applySampleRate();
-            forwardSettings.insert_or_assign(std::pmr::string("sample_rate"), sample_rate.value);
+            forwardSettings.insert_or_assign(std::pmr::string(tag::SAMPLE_RATE.key()), sample_rate.value);
             _dcFilterDirty.store(true, std::memory_order_release);
             _rateEstimatorDirty.store(true, std::memory_order_release);
         }
@@ -482,14 +482,14 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
 
         for (const auto& clkTag : tagData) {
             ++nTagsConsumed;
-            if (auto it = clkTag.map.find(std::pmr::string(tag::TRIGGER_TIME.shortKey())); it != clkTag.map.end()) {
+            if (auto it = clkTag.map.find(std::pmr::string(tag::TRIGGER_TIME.key())); it != clkTag.map.end()) {
                 if (auto* timePtr = it->second.template get_if<std::uint64_t>()) {
                     auto triggerUtcNs = static_cast<std::int64_t>(*timePtr);
                     _clockOffsetNs    = triggerUtcNs - static_cast<std::int64_t>(detail::wallClockNs());
                     _clockOffsetValid = true;
                 }
             }
-            if (auto it = clkTag.map.find(std::pmr::string(tag::TRIGGER_NAME.shortKey())); it != clkTag.map.end()) {
+            if (auto it = clkTag.map.find(std::pmr::string(tag::TRIGGER_NAME.key())); it != clkTag.map.end()) {
                 if (auto* namePtr = it->second.template get_if<std::pmr::string>()) {
                     if (!namePtr->empty()) {
                         _clockTriggerName = std::string(*namePtr);
@@ -543,9 +543,9 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
 
             if (_rateEstimator._initialised && ppm_estimator_cutoff > 0.f) {
                 float ppmNow = _rateEstimator.estimatedPpm();
-                tag::put(tagMap, "sample_rate", static_cast<float>(_rateEstimator.estimatedRate()));
+                tag::put(tagMap, tag::SAMPLE_RATE, static_cast<float>(_rateEstimator.estimatedRate()));
                 if (!frequency->empty()) {
-                    tag::put(tagMap, "frequency", frequency->front() * (1.0 + static_cast<double>(ppmNow) * 1e-6));
+                    tag::put(tagMap, tag::FREQUENCY, frequency->front() * (1.0 + static_cast<double>(ppmNow) * 1e-6));
                 }
                 tag::put(tagMap, "ppm_error", ppmNow);
                 _ppmLastEmitted = ppmNow;
@@ -948,12 +948,12 @@ Tested with RTL-SDR and LimeSDR drivers.)">;
     void emitOverflowTag() {
         if constexpr (nPorts == 1U) {
             auto tagMap = out.makeTagMap();
-            tag::put(tagMap, "rx_overflow", true);
+            tag::put(tagMap, tag::RX_OVERFLOW, true);
             out.publishTag(std::move(tagMap), 0UZ);
         } else {
             for (std::size_t ch = 0UZ; ch < out.size(); ++ch) {
                 auto tagMap = out[ch].makeTagMap();
-                tag::put(tagMap, "rx_overflow", true);
+                tag::put(tagMap, tag::RX_OVERFLOW, true);
                 out[ch].publishTag(std::move(tagMap), 0UZ);
             }
         }

@@ -51,7 +51,7 @@ struct Encoded {
     gr::Tensor<gr::pmt::Value> tags;
     for (std::size_t i = 0UZ; i < nTags; ++i) {
         gr::property_map inner;
-        inner.insert_or_assign(gr::property_map::key_type("trigger_name"), gr::pmt::Value(std::string("burst")));
+        inner.insert_or_assign(gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), gr::pmt::Value(std::string("burst")));
         gr::property_map entry;
         entry.insert_or_assign(gr::property_map::key_type("offset"), gr::pmt::Value(static_cast<std::uint64_t>(i)));
         entry.insert_or_assign(gr::property_map::key_type("map"), gr::pmt::Value(std::move(inner)));

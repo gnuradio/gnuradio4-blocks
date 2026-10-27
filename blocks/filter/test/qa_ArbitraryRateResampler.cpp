@@ -131,14 +131,14 @@ template<typename T>
 
 [[nodiscard]] gr::property_map tagWithRate(std::size_t which, float rateIn) {
     gr::property_map map = tagKey(which);
-    map.insert_or_assign(gr::property_map::key_type{gr::tag::SAMPLE_RATE.shortKey()}, gr::pmt::Value(rateIn));
+    map.insert_or_assign(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}, gr::pmt::Value(rateIn));
     return map;
 }
 
-/// @brief The `sample_rate` values of the published tags carrying @p key, in publication order.
+/// @brief The `gr:sample_rate` values of the published tags carrying @p key, in publication order.
 [[nodiscard]] std::vector<float> ratesOf(const std::vector<gr::Tag>& tags, std::string_view key) {
     const gr::property_map::key_type wanted{key};
-    const gr::property_map::key_type rateKey{gr::tag::SAMPLE_RATE.shortKey()};
+    const gr::property_map::key_type rateKey{gr::tag::SAMPLE_RATE.key()};
 
     std::vector<float> rates;
     for (const gr::Tag& tag : tags) {
@@ -368,8 +368,7 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         for (const double rate : {0.2, 1.7}) {
             gr::Graph graph;
 
-            auto& source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 2000U}, {"mark_tag", false}});
-            source._tags.emplace_back(200UZ, gr::property_map{{gr::property_map::key_type{gr::tag::SAMPLE_RATE.shortKey()}, gr::pmt::Value(kRateIn)}});
+            auto& source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 2000U}, {"mark_tag", false}, {"sample_rate", kRateIn}});
 
             auto& resampler = graph.emplaceBlock<ArbitraryRateResampler<float>>({{"rate", rate}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, rate)}});
             auto& sink      = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
@@ -383,10 +382,7 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
 
             std::vector<float> rates;
             for (const gr::Tag& seenTag : sink._tags) {
-                if (seenTag.index == 0UZ) {
-                    continue; // the source announces its own rate at offset 0
-                }
-                if (const auto found = seenTag.map.find(gr::property_map::key_type{gr::tag::SAMPLE_RATE.shortKey()}); found != seenTag.map.end()) {
+                if (const auto found = seenTag.map.find(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}); found != seenTag.map.end()) {
                     rates.push_back(found->second.value_or(0.f));
                 }
             }
@@ -509,8 +505,8 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
 
         const std::vector<float> rate{static_cast<float>(kAfter * static_cast<double>(kRateIn))};
         // the rate crosses with the tag it arrived in, scaled by the rate in force where its sample is consumed
-        expect(that % (ratesOf(controlRun.result.tags, "sample_rate") == rate));
-        expect(that % (ratesOf(probeRun.result.tags, "sample_rate") == rate)) << "and the rate is the one of the stream the block hands on where it is published";
+        expect(that % (ratesOf(controlRun.result.tags, gr::tag::SAMPLE_RATE.key()) == rate));
+        expect(that % (ratesOf(probeRun.result.tags, gr::tag::SAMPLE_RATE.key()) == rate)) << "and the rate is the one of the stream the block hands on where it is published";
     };
 
     "a tag moves whole by the delay, its rate with its trigger, and a retune arrives on the delayed sample"_test = [] {
@@ -521,21 +517,21 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         for (const double rate : {0.5, 1.7}) {
             ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", rate}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototype}});
             gr::property_map              opening; // a source's opening tag, with the stream's rate and the trigger of its first sample
-            opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
-            opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
+            opening.insert_or_assign(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}, 48000.0f);
+            opening.insert_or_assign(gr::property_map::key_type{gr::tag::TRIGGER_TIME.key()}, std::uint64_t{1000});
             gr::property_map retune; // a mid-stream retune
-            retune.insert_or_assign(gr::property_map::key_type{"frequency"}, 1.0e8);
+            retune.insert_or_assign(gr::property_map::key_type{gr::tag::FREQUENCY.key()}, 1.0e8);
             const std::vector<gr::Tag> tags{gr::Tag{0UZ, opening}, gr::Tag{100UZ, retune}};
             const std::vector<float>   x(400UZ, 0.0f);
             const auto                 got = test::runAsync<float>(block, std::span<const float>(x), 8UZ, 4UZ, std::span<const gr::Tag>(tags));
 
             const std::size_t first  = narrowIndex<std::size_t>(mapArbitraryOffset(0ULL, kBank, stepFor(kBank, rate), delayedPhase(prototype)));
-            const bool        oneTag = std::ranges::any_of(got.tags, [](const gr::Tag& t) { return t.map.contains(gr::property_map::key_type{"sample_rate"}) && t.map.contains(gr::property_map::key_type{"trigger_time"}); });
+            const bool        oneTag = std::ranges::any_of(got.tags, [](const gr::Tag& t) { return t.map.contains(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}) && t.map.contains(gr::property_map::key_type{gr::tag::TRIGGER_TIME.key()}); });
 
-            expect(that % (got.offsetsOf("sample_rate") == std::vector<std::size_t>{first})) << std::format("r = {}: the rate moves by the delay", rate);
-            expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{first})) << std::format("r = {}: the trigger moves by the delay", rate);
+            expect(that % (got.offsetsOf(gr::tag::SAMPLE_RATE.key()) == std::vector<std::size_t>{first})) << std::format("r = {}: the rate moves by the delay", rate);
+            expect(that % (got.offsetsOf(gr::tag::TRIGGER_TIME.key()) == std::vector<std::size_t>{first})) << std::format("r = {}: the trigger moves by the delay", rate);
             expect(oneTag) << std::format("r = {}: the rate and the trigger leave as one tag", rate);
-            expect(that % (got.offsetsOf("frequency") == std::vector<std::size_t>{narrowIndex<std::size_t>(mapArbitraryOffset(100ULL, kBank, stepFor(kBank, rate), delayedPhase(prototype)))})) << std::format("r = {}: the retune arrives on the delayed sample", rate);
+            expect(that % (got.offsetsOf(gr::tag::FREQUENCY.key()) == std::vector<std::size_t>{narrowIndex<std::size_t>(mapArbitraryOffset(100ULL, kBank, stepFor(kBank, rate), delayedPhase(prototype)))})) << std::format("r = {}: the retune arrives on the delayed sample", rate);
         }
     };
 
@@ -551,8 +547,8 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
 
             gr::Graph graph;
             auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
-            source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
-            source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+            source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("burst")}});
+            source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TX_EOB.key()}, true}});
             auto& block = graph.emplaceBlock<ArbitraryRateResampler<float>>(settings);
             auto  sinks = filter_test::connectEndSinks<float>(graph, block);
 
@@ -563,7 +559,7 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
 
-            filter_test::expectAtStreamEnd(*sinks, outputs, {"trigger_name", "tx_eob"}, std::format("r = {}", rate));
+            filter_test::expectAtStreamEnd(*sinks, outputs, {gr::tag::TRIGGER_NAME.key(), gr::tag::TX_EOB.key()}, std::format("r = {}", rate));
         }
     };
 
@@ -579,8 +575,8 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
 
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
-        source._tags.emplace_back(500UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}});
-        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+        source._tags.emplace_back(500UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_META_INFO.key()}, std::string("mid")}});
+        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TX_EOB.key()}, true}});
         auto& block = graph.emplaceBlock<ArbitraryRateResampler<float>>(settings);
         auto  sinks = filter_test::connectEndSinks<float>(graph, block);
 
@@ -590,9 +586,9 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
-        filter_test::expectAtStreamEnd(*sinks, outputs, {"tx_eob"}, "r = 0.5, 1001 inputs"); // the count of a stream without tags
-        expect(eq(sinks->end.offsetsOf("trigger_meta_info").size(), 1UZ)) << "the tag inside the stream on one output";
-        expect(that % (filter_test::offsetsOf(sinks->samples._tags, "trigger_meta_info") == sinks->end.offsetsOf("trigger_meta_info"))) << "a sample-by-sample consumer sees a tag on its sample";
+        filter_test::expectAtStreamEnd(*sinks, outputs, {gr::tag::TX_EOB.key()}, "r = 0.5, 1001 inputs"); // the count of a stream without tags
+        expect(eq(sinks->end.offsetsOf(gr::tag::TRIGGER_META_INFO.key()).size(), 1UZ)) << "the tag inside the stream on one output";
+        expect(that % (filter_test::offsetsOf(sinks->samples._tags, gr::tag::TRIGGER_META_INFO.key()) == sinks->end.offsetsOf(gr::tag::TRIGGER_META_INFO.key()))) << "a sample-by-sample consumer sees a tag on its sample";
     };
 
     "tags an upstream block leaves at its end-of-stream index pass to this block's end-of-stream index"_test = [] {
@@ -601,10 +597,10 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         constexpr std::size_t      kBank = 32UZ;
         const gr::property_map     settings{{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, 0.5)}};
         const std::size_t          outputs = makeResampler<float>(settings).outputsFor(250UZ);
-        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
+        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_META_INFO.key()}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TX_EOB.key()}, true}}}};
         const auto                 run = filter_test::runChained<gr::blocks::filter::FirFilter<float, float>, ArbitraryRateResampler<float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}}, settings, 1000U, tags);
-        filter_test::expectAtStreamEnd(run, outputs, {"trigger_name", "tx_eob"}, "M = 4, then r = 0.5");
-        expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
+        filter_test::expectAtStreamEnd(run, outputs, {gr::tag::TRIGGER_NAME.key(), gr::tag::TX_EOB.key()}, "M = 4, then r = 0.5");
+        expect(eq(run.sampleOffsetsOf(gr::tag::TRIGGER_META_INFO.key()).size(), 1UZ)) << "a tag inside the stream reaches a sample";
     };
 
     "a stop request publishes no held tag and makes no output"_test = [] {
@@ -613,7 +609,7 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
         constexpr std::size_t         kBank = 32UZ;
         ArbitraryRateResampler<float> block = makeResampler<float>({{"rate", 0.5}, {"bank_size", static_cast<gr::Size_t>(kBank)}, {"taps", prototypeFor(kBank, 0.5)}});
         const std::vector<float>      input(120UZ, 1.0f);
-        const std::vector<gr::Tag>    tags{{99UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("last")}}}};
+        const std::vector<gr::Tag>    tags{{99UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("last")}}}};
         std::vector<float>            output(64UZ);
         test::Capture<float>          beforeStop;
         test::Capture<float>          atStop;

@@ -38,8 +38,8 @@ GR_REGISTER_BLOCK(gr::blocks::measurement::PhaseUnwrap)
  * The block tracks the phase of a complex stream over a run of any length. For each input sample it writes the whole
  * turns since the origin to `cycles` and the residual phase on `[-pi, pi)` to `phase`. It never adds the two. The
  * count stays exact, and the residual keeps a `float`'s precision. `unwrappedRadians()` adds them in `double` for the
- * current sample. The first call publishes a `signal_unit` tag on each output, an empty unit on `cycles` and `rad` on
- * `phase`.
+ * current sample. The first call publishes a `gr:signal_unit` tag on each output, an empty unit on `cycles` and `rad`
+ * on `phase`.
  *
  * The unwrap is correct while the true phase advances by less than `pi` per sample (`|f| < fs/2`). A step whose
  * magnitude exceeds `max_step_fraction * pi` is suspect. A sample with a non-finite component repeats the current
@@ -48,8 +48,8 @@ GR_REGISTER_BLOCK(gr::blocks::measurement::PhaseUnwrap)
  *
  * `origin` 'first_sample' reports the first sample's own phase, and 'zero' subtracts the first sample's phase from
  * every phase. A change of `origin` sets the count to zero, and the next sample sets the origin again. A change of
- * `max_step_fraction` applies from the next sample. With `reset_on_discontinuity` set, an `n_dropped_samples` tag sets
- * the count to zero at the tagged sample, and that sample sets the origin again.
+ * `max_step_fraction` applies from the next sample. With `reset_on_discontinuity` set, a `gr:n_dropped_samples` tag
+ * sets the count to zero at the tagged sample, and that sample sets the origin again.
  *
  * `nSuspectSteps()` counts the suspect steps, and `lastSuspectIndex()` gives the stream index of the last one.
  * `nNonFiniteSamples()` counts the samples with a non-finite component, and `nResets()` the resets of either cause.
@@ -61,7 +61,7 @@ struct PhaseUnwrap : Block<PhaseUnwrap> {
 
 The block writes one cycle count and one residual per input sample on two ports and never adds them.
 `nSuspectSteps()` counts the steps whose magnitude exceeds `max_step_fraction * pi` and each step across non-finite
-samples. With `reset_on_discontinuity` set, an `n_dropped_samples` tag sets the count to zero.
+samples. With `reset_on_discontinuity` set, a `gr:n_dropped_samples` tag sets the count to zero.
 )"">;
 
     PortIn<std::complex<float>> in;
@@ -70,7 +70,7 @@ samples. With `reset_on_discontinuity` set, an `n_dropped_samples` tag sets the 
 
     Annotated<std::string, "origin", Visible, Doc<"phase origin, 'first_sample' or 'zero'">>                                                                          origin                 = std::string("first_sample");
     Annotated<double, "max_step_fraction", Visible, Doc<"suspect-step threshold as a fraction of pi, in (0, 1]">, Limits<0.0, 1.0, detail::kMaxStepFractionPositive>> max_step_fraction      = 0.9;
-    Annotated<bool, "reset_on_discontinuity", Visible, Doc<"reset the cycle count at an n_dropped_samples tag">>                                                      reset_on_discontinuity = true;
+    Annotated<bool, "reset_on_discontinuity", Visible, Doc<"reset the cycle count at a gr:n_dropped_samples tag">>                                                    reset_on_discontinuity = true;
 
     GR_MAKE_REFLECTABLE(PhaseUnwrap, in, cycles, phase, origin, max_step_fraction, reset_on_discontinuity);
 
@@ -93,7 +93,7 @@ samples. With `reset_on_discontinuity` set, an `n_dropped_samples` tag sets the 
     std::atomic<std::uint64_t> _nNonFinite{0ULL};
     std::atomic<std::int64_t>  _lastSuspect{-1LL}; ///< -1 until the first suspect step
 
-    bool _taggedUnits{false}; ///< the `signal_unit` tags are published
+    bool _taggedUnits{false}; ///< the `gr:signal_unit` tags are published
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         gr::measurement::UnwrapOrigin nextOrigin = _origin;
@@ -158,8 +158,8 @@ samples. With `reset_on_discontinuity` set, an `n_dropped_samples` tag sets the 
         }
 
         if (!_taggedUnits) {
-            cyclesSpan.publishTag(property_map{{std::pmr::string(gr::tag::SIGNAL_UNIT.shortKey()), pmt::Value(std::string(""))}}, 0UZ);
-            phaseSpan.publishTag(property_map{{std::pmr::string(gr::tag::SIGNAL_UNIT.shortKey()), pmt::Value(std::string("rad"))}}, 0UZ);
+            cyclesSpan.publishTag(property_map{{std::pmr::string(gr::tag::SIGNAL_UNIT.key()), pmt::Value(std::string(""))}}, 0UZ);
+            phaseSpan.publishTag(property_map{{std::pmr::string(gr::tag::SIGNAL_UNIT.key()), pmt::Value(std::string("rad"))}}, 0UZ);
             _taggedUnits = true;
         }
 
@@ -172,7 +172,7 @@ samples. With `reset_on_discontinuity` set, an `n_dropped_samples` tag sets the 
                 if (at < base || at >= base + n) {
                     continue;
                 }
-                if (tag.map.find(gr::tag::N_DROPPED_SAMPLES.shortKey()) == tag.map.end()) {
+                if (tag.map.find(gr::tag::N_DROPPED_SAMPLES.key()) == tag.map.end()) {
                     continue;
                 }
                 const std::uint64_t offset = at - base;

@@ -28,7 +28,7 @@ struct Rotator : gr::Block<Rotator<T>> {
 
 This block supports either `phase_increment` in radians per sample (x) or relative `frequency_shift` in Hz for a
 given 'sample_rate' in Hz (N.B sample_rate is normalised to '1' by default).
-A `frequency` key on a passing tag is retuned by the same shift, so it keeps describing the center of the stream it
+A `gr:frequency` key on a passing tag is retuned by the same shift, so it keeps describing the center of the stream it
 is attached to.
  )"">;
 
@@ -75,14 +75,13 @@ is attached to.
     // same amount in the opposite direction: what sits at the output's zero frequency arrived at -'frequency_shift'.
     template<typename TInputSpans, typename TOutputSpans>
     void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t /*processedIn*/) {
-        std::optional<property_map> cachedSettings;
         gr::for_each_reader_span(
             [&](auto& inSpan) {
                 if (!inSpan.isSync || !inSpan.isConnected) {
                     return;
                 }
                 for (const auto& [relIndex, tagMapRef] : inSpan.tags(1UZ)) {
-                    property_map forwarded = this->filterAndSubstituteTag(tagMapRef.get(), cachedSettings);
+                    property_map forwarded = this->filterAndSubstituteTag(tagMapRef.get());
                     if (forwarded.empty()) {
                         continue;
                     }
@@ -95,7 +94,7 @@ is attached to.
     }
 
     void retuneCenterFrequency(property_map& tagMap) const noexcept {
-        auto it = tagMap.find(gr::tag::FREQUENCY.shortKey());
+        auto it = tagMap.find(gr::tag::FREQUENCY.key());
         if (it == tagMap.end()) {
             return;
         }

@@ -38,7 +38,7 @@ blocks:
       expected: [1.0, 2.0, 3.0]
       expected_tags:
         3:
-          end_of_stream: true
+          "gr:end_of_stream": true
       tags_exact: true
 connections:
   - [source, out, tagged, in]

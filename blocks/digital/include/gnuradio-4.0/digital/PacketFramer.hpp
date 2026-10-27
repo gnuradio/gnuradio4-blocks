@@ -33,7 +33,7 @@ struct PacketFramer : Block<PacketFramer<T>, NoTagPropagation> {
     using Description = Doc<R""(
 @brief Cuts packets out of a triggered stream using a header that carries the length, one `DataSet<T>` per packet.
 
-Three states: Search discards items while watching for a trigger tag whose `trigger_name` matches, Armed collects
+Three states: Search discards items while watching for a trigger tag whose `gr:trigger_name` matches, Armed collects
 `trigger_to_header + headerItems()` items and parses them, Payload accumulates the parsed length and publishes. The
 header is parsed in line, so it must be in the same domain as the payload.
 
@@ -69,7 +69,7 @@ selected is a settings error rather than a harmless extra, and says so.
     Annotated<gr::Size_t, "check_items", Unit<"items">, Doc<"trailing check items the field does not count; only meaningful under 'payload'">>                                                     check_items        = 0U;
     Annotated<gr::Size_t, "frame_prefix_items", Unit<"items">, Doc<"frame items ahead of the payload the field does count; only under 'whole_frame', and 0 means the header's own item count">>    frame_prefix_items = 0U;
     Annotated<gr::Size_t, "trigger_to_header", Unit<"items">, Doc<"items from the tag to the header: 0 after an access-code detector, N after a preamble one">>                                    trigger_to_header  = 0U;
-    Annotated<std::string, "trigger", Doc<"the trigger_name that starts a packet; empty accepts any trigger tag">>                                                                                 trigger{};
+    Annotated<std::string, "trigger", Doc<"the gr:trigger_name that starts a packet; empty accepts any trigger tag">>                                                                              trigger{};
 
     GR_MAKE_REFLECTABLE(PacketFramer, in, out, max_payload_items, header_format, fixed_payload_items, length_bits, byte_order, flags_position, count_covers, count_unit_items, check_items, frame_prefix_items, trigger_to_header, trigger);
 
@@ -202,7 +202,7 @@ selected is a settings error rather than a harmless extra, and says so.
     }
 
     [[nodiscard]] bool matches(const property_map& tagMap) const {
-        const auto entry = tagMap.find(property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()));
+        const auto entry = tagMap.find(property_map::key_type(gr::tag::TRIGGER_NAME.key()));
         if (entry == tagMap.end()) {
             return false;
         }
@@ -225,12 +225,12 @@ selected is a settings error rather than a harmless extra, and says so.
         for (const auto& [key, value] : parsed.meta) {
             meta.insert_or_assign(key, value);
         }
-        meta.insert_or_assign(property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), triggerName());
+        meta.insert_or_assign(property_map::key_type(gr::tag::TRIGGER_NAME.name()), triggerName());
         meta.insert_or_assign(property_map::key_type("sync_errors"), syncErrors());
         meta.insert_or_assign(property_map::key_type("header_ok"), pmt::Value(true));
         meta.insert_or_assign(property_map::key_type("sample_start"), pmt::Value(static_cast<std::uint64_t>(payloadStart)));
 
-        if (const auto entry = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_TIME.shortKey())); entry != _triggerMeta.end()) {
+        if (const auto entry = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_TIME.key())); entry != _triggerMeta.end()) {
             if (const auto* stamp = entry->second.template get_if<std::uint64_t>(); stamp != nullptr) {
                 _packet.timestamp = static_cast<std::int64_t>(*stamp);
             }
@@ -244,13 +244,13 @@ selected is a settings error rather than a harmless extra, and says so.
     }
 
     [[nodiscard]] pmt::Value triggerName() const {
-        const auto entry = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()));
+        const auto entry = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_NAME.key()));
         return entry == _triggerMeta.end() ? pmt::Value(std::string_view{}) : entry->second;
     }
 
-    /// @brief The Hamming distance the detector reported, which travels inside `trigger_meta_info`.
+    /// @brief The Hamming distance the detector reported, which travels inside `gr:trigger_meta_info`.
     [[nodiscard]] pmt::Value syncErrors() const {
-        const auto outer = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_META_INFO.shortKey()));
+        const auto outer = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_META_INFO.key()));
         if (outer != _triggerMeta.end()) {
             if (const auto* nested = outer->second.template get_if<property_map>(); nested != nullptr) {
                 if (const auto inner = nested->find(property_map::key_type("sync_errors")); inner != nested->end()) {

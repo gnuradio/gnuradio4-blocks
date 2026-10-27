@@ -485,20 +485,20 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
             StagedDecimator<float> block = makeBlock<float>({{"decimation", decimation}});
             const std::uint64_t    delay = pathDelay(block);
             gr::property_map       opening; // a source's opening tag, with the stream's rate and the trigger of its first sample
-            opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
-            opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
+            opening.insert_or_assign(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}, 48000.0f);
+            opening.insert_or_assign(gr::property_map::key_type{gr::tag::TRIGGER_TIME.key()}, std::uint64_t{1000});
             gr::property_map retune; // a mid-stream retune
-            retune.insert_or_assign(gr::property_map::key_type{"frequency"}, 1.0e8);
+            retune.insert_or_assign(gr::property_map::key_type{gr::tag::FREQUENCY.key()}, 1.0e8);
             const std::vector<gr::Tag> tags{gr::Tag{0UZ, opening}, gr::Tag{3UZ * decimation, retune}};
             const std::vector<float>   x(narrowIndex<std::size_t>(delay + 40ULL * decimation), 0.0f);
             const auto                 y = run(block, x, 4UZ, std::span<const gr::Tag>(tags));
 
             const std::size_t first  = narrowIndex<std::size_t>(mapResampledOffset(delay, 1ULL, decimation));
-            const bool        oneTag = std::ranges::any_of(y.tags, [](const gr::Tag& t) { return t.map.contains(gr::property_map::key_type{"sample_rate"}) && t.map.contains(gr::property_map::key_type{"trigger_time"}); });
-            expect(that % (y.offsetsOf("sample_rate") == std::vector<std::size_t>{first})) << std::format("D = {}: the rate moves by the delay", decimation);
-            expect(that % (y.offsetsOf("trigger_time") == std::vector<std::size_t>{first})) << std::format("D = {}: the trigger moves by the delay", decimation);
+            const bool        oneTag = std::ranges::any_of(y.tags, [](const gr::Tag& t) { return t.map.contains(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}) && t.map.contains(gr::property_map::key_type{gr::tag::TRIGGER_TIME.key()}); });
+            expect(that % (y.offsetsOf(gr::tag::SAMPLE_RATE.key()) == std::vector<std::size_t>{first})) << std::format("D = {}: the rate moves by the delay", decimation);
+            expect(that % (y.offsetsOf(gr::tag::TRIGGER_TIME.key()) == std::vector<std::size_t>{first})) << std::format("D = {}: the trigger moves by the delay", decimation);
             expect(oneTag) << std::format("D = {}: the rate and the trigger leave as one tag", decimation);
-            expect(that % (y.offsetsOf("frequency") == std::vector<std::size_t>{narrowIndex<std::size_t>(mapResampledOffset(3ULL * decimation + delay, 1ULL, decimation))})) << std::format("D = {}: the retune arrives on the delayed sample", decimation);
+            expect(that % (y.offsetsOf(gr::tag::FREQUENCY.key()) == std::vector<std::size_t>{narrowIndex<std::size_t>(mapResampledOffset(3ULL * decimation + delay, 1ULL, decimation))})) << std::format("D = {}: the retune arrives on the delayed sample", decimation);
         }
     };
 
@@ -589,8 +589,7 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         constexpr float       kRateOut = kRateIn / static_cast<float>(kD);
         gr::Graph             graph;
 
-        auto& source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 4000U}, {"mark_tag", false}});
-        source._tags.emplace_back(200UZ, gr::property_map{{gr::property_map::key_type{gr::tag::SAMPLE_RATE.shortKey()}, gr::pmt::Value(kRateIn)}});
+        auto& source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 4000U}, {"mark_tag", false}, {"sample_rate", kRateIn}});
 
         auto& decimator = graph.emplaceBlock<StagedDecimator<float>>({{"decimation", static_cast<gr::Size_t>(kD)}});
         auto& sink      = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
@@ -604,10 +603,7 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
 
         std::vector<float> rates;
         for (const gr::Tag& published : sink._tags) {
-            if (published.index == 0UZ) {
-                continue; // the source announces its own rate at offset 0
-            }
-            if (const auto found = published.map.find(gr::property_map::key_type{gr::tag::SAMPLE_RATE.shortKey()}); found != published.map.end()) {
+            if (const auto found = published.map.find(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}); found != published.map.end()) {
                 rates.push_back(found->second.value_or(0.f));
             }
         }
@@ -666,8 +662,8 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         constexpr std::size_t kOutputs = 1000UZ; // 8000 inputs at D = 8
         gr::Graph             graph;
         auto&                 source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
-        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
-        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("burst")}});
+        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TX_EOB.key()}, true}});
         auto& block = graph.emplaceBlock<StagedDecimator<float>>({{"decimation", 8U}});
         auto  sinks = filter_test::connectEndSinks<float>(graph, block);
 
@@ -678,7 +674,7 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
-        filter_test::expectAtStreamEnd(*sinks, kOutputs, {"trigger_name", "tx_eob"}, "D = 8");
+        filter_test::expectAtStreamEnd(*sinks, kOutputs, {gr::tag::TRIGGER_NAME.key(), gr::tag::TX_EOB.key()}, "D = 8");
     };
 
     "a tag on the partial last chunk leaves at the end-of-stream index"_test = [] {
@@ -688,9 +684,9 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         constexpr std::size_t kOutputs = 1000UZ;
         gr::Graph             graph;
         auto&                 source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
-        source._tags.emplace_back(4000UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}});
-        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
-        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+        source._tags.emplace_back(4000UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_META_INFO.key()}, std::string("mid")}});
+        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("burst")}});
+        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TX_EOB.key()}, true}});
         auto& block = graph.emplaceBlock<StagedDecimator<float>>({{"decimation", 8U}});
         auto  sinks = filter_test::connectEndSinks<float>(graph, block);
 
@@ -700,18 +696,18 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
-        filter_test::expectAtStreamEnd(*sinks, kOutputs, {"trigger_name", "tx_eob"}, "D = 8, 8005 inputs"); // the whole chunks' outputs, the count of a stream without tags
-        expect(eq(sinks->end.offsetsOf("trigger_meta_info").size(), 1UZ)) << "the tag inside the stream on one output";
-        expect(that % (filter_test::offsetsOf(sinks->samples._tags, "trigger_meta_info") == sinks->end.offsetsOf("trigger_meta_info"))) << "a sample-by-sample consumer sees a tag on its sample";
+        filter_test::expectAtStreamEnd(*sinks, kOutputs, {gr::tag::TRIGGER_NAME.key(), gr::tag::TX_EOB.key()}, "D = 8, 8005 inputs"); // the whole chunks' outputs, the count of a stream without tags
+        expect(eq(sinks->end.offsetsOf(gr::tag::TRIGGER_META_INFO.key()).size(), 1UZ)) << "the tag inside the stream on one output";
+        expect(that % (filter_test::offsetsOf(sinks->samples._tags, gr::tag::TRIGGER_META_INFO.key()) == sinks->end.offsetsOf(gr::tag::TRIGGER_META_INFO.key()))) << "a sample-by-sample consumer sees a tag on its sample";
     };
 
     "tags an upstream block leaves at its end-of-stream index pass to this block's end-of-stream index"_test = [] {
         // A FirFilter at M = 4 publishes the trigger and the burst end on the last inputs at index 250, where no sample
         // is. The D = 2 ladder passes them to its own end-of-stream index, 125.
-        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
+        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_META_INFO.key()}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TX_EOB.key()}, true}}}};
         const auto                 run = filter_test::runChained<FirFilter<float, float>, StagedDecimator<float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}}, {{"decimation", 2U}}, 1000U, tags);
-        filter_test::expectAtStreamEnd(run, 125UZ, {"trigger_name", "tx_eob"}, "M = 4, then D = 2");
-        expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
+        filter_test::expectAtStreamEnd(run, 125UZ, {gr::tag::TRIGGER_NAME.key(), gr::tag::TX_EOB.key()}, "M = 4, then D = 2");
+        expect(eq(run.sampleOffsetsOf(gr::tag::TRIGGER_META_INFO.key()).size(), 1UZ)) << "a tag inside the stream reaches a sample";
     };
 
     "under a stop request the epilogue publishes nothing, and a call publishes its outputs' tags"_test = [] {
@@ -719,11 +715,11 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         // outputs of its call. It lies among the 100 outputs of the next 800 inputs.
         const auto                 make = [] { return makeBlock<float>({{"decimation", 8U}}); };
         const std::vector<float>   input(880UZ, 1.0f);
-        const std::vector<gr::Tag> tags{{79UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("last")}}}};
+        const std::vector<gr::Tag> tags{{79UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("last")}}}};
         auto                       probe = make();
         expect(gt(pathDelay(probe), 16ULL));
         expect(lt(pathDelay(probe), 800ULL));
-        filter_test::expectStopCost(make, std::span<const float>(input).first(80UZ), std::span<const float>(input).subspan(80UZ), tags, 8UZ, 1UZ, "trigger_name");
+        filter_test::expectStopCost(make, std::span<const float>(input).first(80UZ), std::span<const float>(input).subspan(80UZ), tags, 8UZ, 1UZ, gr::tag::TRIGGER_NAME.key());
     };
 
     "a rebuild to a ladder already built designs nothing new"_test = [] {

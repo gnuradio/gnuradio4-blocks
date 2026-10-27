@@ -30,7 +30,7 @@ using gr::blocks::measurement::PhaseUnwrap;
 using CF = std::complex<float>;
 
 /// @brief A unit tone at a stated rate in cycles per sample and a stated starting phase, in bursts of a stated size.
-/// It can publish one `n_dropped_samples` tag and one tag of settings at stated stream indices.
+/// It can publish one `gr:n_dropped_samples` tag and one tag of settings at stated stream indices.
 struct ToneSource : gr::Block<ToneSource> {
     gr::PortOut<CF> out;
 
@@ -58,7 +58,7 @@ struct ToneSource : gr::Block<ToneSource> {
             outSpan[k]         = CF(static_cast<float>(std::cos(phase)), static_cast<float>(std::sin(phase)));
         }
         if (tagDrop && dropAt >= at && dropAt < at + take) {
-            outSpan.publishTag(gr::property_map{{std::pmr::string(gr::tag::N_DROPPED_SAMPLES.shortKey()), gr::pmt::Value(gr::Size_t{100U})}}, dropAt - at);
+            outSpan.publishTag(gr::property_map{{std::pmr::string(gr::tag::N_DROPPED_SAMPLES.key()), gr::pmt::Value(gr::Size_t{100U})}}, dropAt - at);
         }
         if (!settingsTag.empty() && settingsAt >= at && settingsAt < at + take) {
             outSpan.publishTag(settingsTag, settingsAt - at);
@@ -115,14 +115,19 @@ struct Scene {
     std::size_t      settingsAt = 0UZ;
 };
 
-/// @brief Runs a tone through `PhaseUnwrap` into two collectors. The counters are read while the scheduler holds the
-/// graph.
+/// @brief Runs a tone through `PhaseUnwrap` into two collectors. Each setting the scene's tag names follows the tag key
+/// of that name. The counters are read while the scheduler holds the graph.
 [[nodiscard]] Run runScene(gr::property_map settings, const Scene& scene) {
-    gr::Graph graph;
-    auto&     source     = graph.emplaceBlock<ToneSource>();
-    auto&     block      = graph.emplaceBlock<PhaseUnwrap>(std::move(settings));
-    auto&     cyclesSink = graph.emplaceBlock<Collector<std::int64_t>>();
-    auto&     phaseSink  = graph.emplaceBlock<Collector<float>>();
+    gr::Graph        graph;
+    auto&            source = graph.emplaceBlock<ToneSource>();
+    auto&            block  = graph.emplaceBlock<PhaseUnwrap>(std::move(settings));
+    gr::property_map couplings;
+    for (const auto& entry : scene.settingsTag) {
+        couplings.insert_or_assign(entry.first, gr::pmt::Value(std::string(entry.first)));
+    }
+    block.settings().setTagCouplings(couplings);
+    auto& cyclesSink = graph.emplaceBlock<Collector<std::int64_t>>();
+    auto& phaseSink  = graph.emplaceBlock<Collector<float>>();
 
     source.cyclesPerSample = scene.cyclesPerSample;
     source.phaseOffset     = scene.phaseOffset;
@@ -439,8 +444,8 @@ const boost::ut::suite<"PhaseUnwrap"> phaseUnwrapTests = [] {
     "a refused max_step_fraction or batch changes nothing the block computes"_test = [] {
         constexpr std::size_t kHalf  = 1000UZ;
         const auto            stream = toneSamples(0.42, 2UZ * kHalf);
-        // An n_dropped_samples tag in the second half pins reset_on_discontinuity, which the refused batch carries.
-        const std::vector<gr::Tag> drop{gr::Tag{1500UZ, gr::property_map{{std::pmr::string(gr::tag::N_DROPPED_SAMPLES.shortKey()), gr::pmt::Value(gr::Size_t{10U})}}}};
+        // A gr:n_dropped_samples tag in the second half pins reset_on_discontinuity, which the refused batch carries.
+        const std::vector<gr::Tag> drop{gr::Tag{1500UZ, gr::property_map{{std::pmr::string(gr::tag::N_DROPPED_SAMPLES.key()), gr::pmt::Value(gr::Size_t{10U})}}}};
 
         for (const auto& [refused, what] : {std::pair{gr::property_map{{"max_step_fraction", 0.0}}, "max_step_fraction 0"}, std::pair{gr::property_map{{"max_step_fraction", 0.5}, {"reset_on_discontinuity", false}, {"origin", std::string("elsewhere")}}, "a batch with a refused origin"}}) {
             PhaseUnwrap reference;
@@ -586,7 +591,7 @@ const boost::ut::suite<"PhaseUnwrap"> phaseUnwrapTests = [] {
     };
 
     // At 0.04 cycles per sample a three-sample gap moves the phase by 0.32*pi, below the default 0.9*pi. The stream
-    // starts at 0.96*pi. The gap at 599 and 600 crosses a call boundary. An n_dropped_samples tag at 800 follows the
+    // starts at 0.96*pi. The gap at 599 and 600 crosses a call boundary. A gr:n_dropped_samples tag at 800 follows the
     // gap at 798 and 799, and the gap at 0 has no finite sample before it.
     "each gap of non-finite samples counts once among the suspect steps"_test = [] {
         constexpr std::size_t kSamples = 1000UZ;
@@ -596,7 +601,7 @@ const boost::ut::suite<"PhaseUnwrap"> phaseUnwrapTests = [] {
         for (const std::size_t at : {0UZ, 100UZ, 400UZ, 401UZ, 402UZ, 599UZ, 600UZ, 798UZ, 799UZ}) {
             spoiled[at] = CF{std::numeric_limits<float>::quiet_NaN(), 0.f};
         }
-        const std::vector<gr::Tag> drop{gr::Tag{800UZ, gr::property_map{{std::pmr::string(gr::tag::N_DROPPED_SAMPLES.shortKey()), gr::pmt::Value(gr::Size_t{10U})}}}};
+        const std::vector<gr::Tag> drop{gr::Tag{800UZ, gr::property_map{{std::pmr::string(gr::tag::N_DROPPED_SAMPLES.key()), gr::pmt::Value(gr::Size_t{10U})}}}};
 
         std::vector<std::int64_t> cycles(kSamples);
         std::vector<float>        phase(kSamples);
@@ -620,9 +625,9 @@ const boost::ut::suite<"PhaseUnwrap"> phaseUnwrapTests = [] {
 
     "the two outputs carry their signal_unit, rad on phase and an empty unit on cycles"_test = [] {
         const Run r = run(gr::property_map{}, 0.1, 2000UZ, 4096UZ);
-        std::println("signal_unit: cycles '{}', phase '{}'", tagString(r.cycleTags, 0ULL, "signal_unit"), tagString(r.phaseTags, 0ULL, "signal_unit"));
-        expect(eq(tagString(r.cycleTags, 0ULL, "signal_unit"), std::string(""))) << "a whole-turn count has no unit";
-        expect(eq(tagString(r.phaseTags, 0ULL, "signal_unit"), std::string("rad"))) << "the residual is in radians";
+        std::println("signal_unit: cycles '{}', phase '{}'", tagString(r.cycleTags, 0ULL, gr::tag::SIGNAL_UNIT.key()), tagString(r.phaseTags, 0ULL, gr::tag::SIGNAL_UNIT.key()));
+        expect(eq(tagString(r.cycleTags, 0ULL, gr::tag::SIGNAL_UNIT.key()), std::string(""))) << "a whole-turn count has no unit";
+        expect(eq(tagString(r.phaseTags, 0ULL, gr::tag::SIGNAL_UNIT.key()), std::string("rad"))) << "the residual is in radians";
     };
 
     "any burst size gives bit-identical outputs and counters"_test = [] {

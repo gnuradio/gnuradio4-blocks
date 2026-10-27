@@ -189,7 +189,7 @@ struct Scene {
     const std::vector<CF> known   = qpsk(trainingLength, seed + 1ULL);
     for (std::size_t f = 0UZ; f < frames; ++f) {
         std::ranges::copy(known, std::next(symbols.begin(), static_cast<std::ptrdiff_t>(f * frameLength)));
-        scene.triggers.emplace_back(f * frameLength, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("frame")}});
+        scene.triggers.emplace_back(f * frameLength, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("frame")}});
     }
     scene.received = throughFilter(std::span<const CF>(symbols), std::span<const CF>(kChannel));
     scene.training = interleave(std::span<const CF>(known));
@@ -221,7 +221,8 @@ struct Run {
     std::ranges::sort(source._tags, std::ranges::less{}, &gr::Tag::index);
 
     auto& equalizer = graph.emplaceBlock<LinearEqualizer<float>>(std::move(settings));
-    auto& sink      = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_BULK>>({{"name", "TagSink"}});
+    equalizer.settings().setTagCouplings({{"freeze", std::string("freeze")}});
+    auto& sink = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_BULK>>({{"name", "TagSink"}});
 
     boost::ut::expect(graph.connect<"out", "in">(source, equalizer).has_value());
     boost::ut::expect(graph.connect<"out", "in">(equalizer, sink).has_value());
@@ -379,7 +380,7 @@ const boost::ut::suite<"linear equalizer"> linearEqualizerTests = [] {
         for (const std::vector<std::size_t>& placement : kPlacements) {
             std::vector<gr::Tag> triggers;
             for (const std::size_t at : placement) {
-                triggers.emplace_back(at, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("frame")}});
+                triggers.emplace_back(at, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("frame")}});
             }
             const auto wanted = placement.size();
 
@@ -457,8 +458,7 @@ const boost::ut::suite<"linear equalizer"> linearEqualizerTests = [] {
 
         const Scene scene = frameScene(1UZ, kSymbols, 64UZ, 4242ULL);
 
-        // the impairment is built into the scene rather than placed in the graph, because a block standing between the
-        // source and the equalizer forwards only the tag keys it owns itself and `freeze` is not one of them
+        // the impairment is built into the scene
         FrequencyOffset<CF> rotator({{"sample_rate", 1.0f}, {"frequency_offset", kRotation}});
         init(rotator);
         std::vector<CF> rotated(scene.received.size());
@@ -501,7 +501,7 @@ const boost::ut::suite<"linear equalizer"> linearEqualizerTests = [] {
         }
 
         const std::vector<float>   training = interleave(std::span<const CF>(symbols).first(kTraining));
-        const std::vector<gr::Tag> triggers{gr::Tag{0UZ, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("frame")}}}};
+        const std::vector<gr::Tag> triggers{gr::Tag{0UZ, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("frame")}}}};
 
         // a trigger at input t starts the training run at output (t + group delay) / sps, so the reference the block
         // adapts against sits at a decision delay of the group delay counted in symbols, which is what is measured here
@@ -579,7 +579,7 @@ const boost::ut::suite<"linear equalizer"> linearEqualizerTests = [] {
 
         std::vector<gr::Tag> triggers;
         for (const std::size_t at : kOffset) {
-            triggers.emplace_back(at, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("frame")}});
+            triggers.emplace_back(at, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("frame")}});
         }
 
         for (const gr::Size_t sps : {1U, 2U}) {
@@ -595,7 +595,7 @@ const boost::ut::suite<"linear equalizer"> linearEqualizerTests = [] {
             for (const std::size_t at : kOffset) {
                 wanted.push_back(at / static_cast<std::size_t>(sps));
             }
-            expect(that % (offsetsOf(run.tags, gr::tag::TRIGGER_NAME.shortKey()) == wanted)) << std::format("sps {}: a tag at input t arrives at output t/sps", sps);
+            expect(that % (offsetsOf(run.tags, gr::tag::TRIGGER_NAME.key()) == wanted)) << std::format("sps {}: a tag at input t arrives at output t/sps", sps);
         }
     };
 

@@ -624,21 +624,23 @@ const boost::ut::suite<"PolarizationCombiner"> polarizationCombinerTests = [] {
     };
 
     "a sample_rate outside its limits on a tag is refused, and the run goes on at the accepted rate"_test = [] {
-        // The tag sits on branch 0 at a window boundary. The valid arm shows that a sample_rate tag takes effect.
+        // The tag sits on branch 0 at a window boundary. The block's sample_rate is coupled to gr:sample_rate. The valid
+        // arm shows that the tag takes effect.
         constexpr std::size_t kWindow = 1024UZ;
         constexpr std::size_t kAt     = 2UZ * kWindow;
         Rng                   rng(0xcafeULL);
         const Branches        b      = twoBranch(rng, 4UZ * kWindow, CF{1.f, 0.f}, CF{0.5f, 0.f}, 1., 0.1);
         const auto            tagged = [&b](float rate) {
             gr::Graph graph;
-            auto&     src0   = graph.emplaceBlock<SampleSource<CF>>();
-            auto&     src1   = graph.emplaceBlock<SampleSource<CF>>();
-            auto&     block  = graph.emplaceBlock<PolarizationCombiner>({{"window", gr::Size_t{kWindow}}});
-            auto&     outS   = graph.emplaceBlock<Collector<CF>>();
-            auto&     recS   = graph.emplaceBlock<RecordSink>();
+            auto&     src0  = graph.emplaceBlock<SampleSource<CF>>();
+            auto&     src1  = graph.emplaceBlock<SampleSource<CF>>();
+            auto&     block = graph.emplaceBlock<PolarizationCombiner>({{"window", gr::Size_t{kWindow}}});
+            auto&     outS  = graph.emplaceBlock<Collector<CF>>();
+            auto&     recS  = graph.emplaceBlock<RecordSink>();
+            block.settings().setTagCouplings({{gr::tag::SAMPLE_RATE.name(), std::string(gr::tag::SAMPLE_RATE.key())}});
             src0.samples     = b.r0;
             src0.burst       = 512UZ;
-            src0.settingsTag = {{"sample_rate", rate}};
+            src0.settingsTag = {{gr::tag::SAMPLE_RATE.key(), rate}};
             src0.settingsAt  = kAt;
             src1.samples     = b.r1;
             src1.burst       = 512UZ;

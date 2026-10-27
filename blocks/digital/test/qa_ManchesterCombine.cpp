@@ -211,9 +211,9 @@ struct Combined {
     return at;
 }
 
-/// @brief The `sample_rate` a tag carries, or a value no rate takes.
+/// @brief The `gr:sample_rate` a tag carries, or a value no rate takes.
 [[nodiscard]] float sampleRateOf(const gr::Tag& tag) {
-    const auto entry = tag.map.find(gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()));
+    const auto entry = tag.map.find(gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()));
     if (entry == tag.map.end()) {
         return -1.0F;
     }
@@ -346,7 +346,7 @@ const boost::ut::suite<"ManchesterCombine"> manchesterCombineTests = [] {
         const std::vector<int>         data  = dataBits(512UZ, 5ULL);
         const std::vector<int>         chips = manchesterChips(std::span<const int>(data));
         const std::vector<float>       soft  = detected(std::span<const int>(chips));
-        const std::array<gr::Tag, 1UZ> rated{gr::Tag{0UZ, {{gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), 800.0F}}}};
+        const std::array<gr::Tag, 1UZ> rated{gr::Tag{0UZ, {{gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()), 800.0F}}}};
 
         const Combined run = through({{"input", std::string("differential")}}, std::span<const float>(soft), std::span<const gr::Tag>(rated));
         expect(eq(run.bits.size(), soft.size() / 2UZ)) << "two chips in, one bit out";

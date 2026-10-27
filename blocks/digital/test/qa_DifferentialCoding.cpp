@@ -162,7 +162,7 @@ template<typename T>
     return bits;
 }
 
-/// A marker per tag. Five keys come from `gr::tag::kDefaultTags` and `private_key` from nowhere. The default forwarder
+/// A marker per tag. Five keys are `gr:` keys and `private_key` is in the default domain. The default forwarder
 /// keeps every key on all three blocks, the reserved and the private key alike.
 struct Marker {
     const char*    key;
@@ -174,11 +174,11 @@ struct Marker {
 /// a namespace-scope `gr::pmt::Value` can lose its pmr storage before the suites run.
 [[nodiscard]] const std::array<Marker, 7UZ>& markers() {
     static const std::array<Marker, 7UZ> kMarkers{{
-        {"trigger_name", 0UZ, gr::pmt::Value(std::string("alpha"))},
-        {"trigger_time", 1UZ, gr::pmt::Value(std::uint64_t{111})},
-        {"trigger_offset", 1UZ, gr::pmt::Value(0.5f)},
-        {"num_channels", 37UZ, gr::pmt::Value(gr::Size_t{3})},
-        {"frequency", 512UZ, gr::pmt::Value(42.0f)},
+        {gr::tag::TRIGGER_NAME.key(), 0UZ, gr::pmt::Value(std::string("alpha"))},
+        {gr::tag::TRIGGER_TIME.key(), 1UZ, gr::pmt::Value(std::uint64_t{111})},
+        {gr::tag::TRIGGER_OFFSET.key(), 1UZ, gr::pmt::Value(0.5f)},
+        {gr::tag::NUM_CHANNELS.key(), 37UZ, gr::pmt::Value(gr::Size_t{3})},
+        {gr::tag::FREQUENCY.key(), 512UZ, gr::pmt::Value(42.0f)},
         {"rx_overflow", 3999UZ, gr::pmt::Value(true)},
         {"private_key", 300UZ, gr::pmt::Value(std::string("carried"))},
     }};
@@ -217,11 +217,11 @@ template<typename T, typename TBlock>
     return offsets;
 }
 
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DifferentialEncoder<std::uint8_t>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DifferentialEncoder<std::uint16_t>>);
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DifferentialDecoder<std::uint8_t>>);
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DifferentialDecoder<std::uint16_t>>);
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<DifferentialPhasor<float>>);
+static_assert(DifferentialEncoder<std::uint8_t>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
+static_assert(DifferentialEncoder<std::uint16_t>::keepsTagOffsets());
+static_assert(DifferentialDecoder<std::uint8_t>::keepsTagOffsets());
+static_assert(DifferentialDecoder<std::uint16_t>::keepsTagOffsets());
+static_assert(DifferentialPhasor<float>::keepsTagOffsets());
 
 } // namespace
 

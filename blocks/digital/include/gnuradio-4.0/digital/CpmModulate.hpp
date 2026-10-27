@@ -91,7 +91,6 @@ Turning bits into that grid is an affine map on two levels and a Gray map above 
     template<typename TInputSpans, typename TOutputSpans>
     void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
         const auto                                        sps = static_cast<std::size_t>(samples_per_symbol.value);
-        std::optional<property_map>                       cachedSettings;
         std::vector<std::pair<std::size_t, property_map>> arriving;
         gr::for_each_reader_span(
             [&](auto& span) {
@@ -102,7 +101,7 @@ Turning bits into that grid is an affine map on two levels and a Gray map above 
                     if (relIndex < 0) { // already forwarded when it first arrived
                         continue;
                     }
-                    auto forwarded = this->filterAndSubstituteTag(tagMap.get(), cachedSettings);
+                    auto forwarded = this->filterAndSubstituteTag(tagMap.get());
                     if (!forwarded.empty()) {
                         arriving.emplace_back(sps * static_cast<std::size_t>(relIndex), std::move(forwarded));
                     }

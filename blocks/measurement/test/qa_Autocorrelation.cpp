@@ -150,17 +150,28 @@ struct Run {
     std::uint64_t                   nSamples{};
 };
 
-/// @brief Runs `samples` through a source, `Autocorrelation<T>` and record sinks. The records and the counters are
-/// read while the scheduler holds the graph.
+/// @brief Runs `samples` through a source, `Autocorrelation<T>` and record sinks. A tag key in @p tags whose name is a
+/// writable setting couples that setting to the key. The records and the counters are read while the scheduler holds
+/// the graph.
 template<typename T>
 [[nodiscard]] Run<T> collect(gr::property_map settings, std::vector<T> samples, std::size_t burst = 65536UZ, bool withPhase = false, std::vector<std::pair<std::size_t, gr::property_map>> tags = {}) {
-    gr::Graph graph;
-    auto&     source = graph.emplaceBlock<BurstSource<T>>();
-    auto&     block  = graph.emplaceBlock<Autocorrelation<T>>(std::move(settings));
-    auto&     sink   = graph.emplaceBlock<RecordSink>();
-    source.samples   = std::move(samples);
-    source.burst     = burst;
-    source.tags      = std::move(tags);
+    gr::Graph        graph;
+    auto&            source = graph.emplaceBlock<BurstSource<T>>();
+    auto&            block  = graph.emplaceBlock<Autocorrelation<T>>(std::move(settings));
+    auto&            sink   = graph.emplaceBlock<RecordSink>();
+    gr::property_map couplings;
+    for (const auto& tag : tags) {
+        for (const auto& entry : tag.second) {
+            const std::string name(gr::tag::nameOf(std::string_view(entry.first)));
+            if (block.settings().writableMembers().contains(name)) {
+                couplings.insert_or_assign(gr::property_map::key_type(name), gr::pmt::Value(std::string(entry.first)));
+            }
+        }
+    }
+    block.settings().setTagCouplings(couplings);
+    source.samples = std::move(samples);
+    source.burst   = burst;
+    source.tags    = std::move(tags);
 
     boost::ut::expect(graph.connect<"out", "in">(source, block).has_value());
     boost::ut::expect(graph.connect<"out", "in">(block, sink).has_value());
@@ -656,14 +667,15 @@ const suite<"autocorrelation record and settings"> _acfRecord = [] {
         constexpr std::size_t     length  = 1024UZ;
         const std::vector<CF>     input   = complexNoise(6UZ * length, 0x2D2DULL);
         const std::span<const CF> samples = std::span<const CF>(input);
-        // without sample_rate among the settings, the rate tag below reaches it
+        // sample_rate is coupled to gr:sample_rate. The rate tag below sets it.
         const gr::property_map geometry{{"window_length", gr::Size_t(length)}, {"max_lag", gr::Size_t(64)}, {"kind", std::string("complex")}, {"n_averages", gr::Size_t(2)}, {"overlap", 0.0}};
-        const gr::Tag          rateTag{0UZ, gr::property_map{{gr::tag::SAMPLE_RATE.shortKey(), 96000.f}}};
+        const gr::Tag          rateTag{0UZ, gr::property_map{{gr::tag::SAMPLE_RATE.key(), 96000.f}}};
 
         // the reference runs the same stream and changes without the refused application
         auto refused   = startedBlock(geometry);
         auto reference = startedBlock(geometry);
         for (Autocorrelation<CF>* block : {refused.get(), reference.get()}) {
+            block->settings().setTagCouplings({{gr::tag::SAMPLE_RATE.name(), std::string(gr::tag::SAMPLE_RATE.key())}});
             expect(fatal(eq(callBlock(*block, samples.first(2UZ * length), 0UZ, 4UZ, 0UZ).records.size(), 1UZ)));
         }
         try {
@@ -803,10 +815,10 @@ const suite<"autocorrelation record and settings"> _acfRecord = [] {
         constexpr std::size_t tagAt  = 4600UZ;
         const std::vector<CF> input  = complexNoise(16384UZ, 0x2222ULL);
 
-        // Both rates arrive as tags, the first on the stream's first sample. The settings leave sample_rate unset. The
-        // framework applies a tagged value only to a setting the block was not given by name.
-        const gr::property_map first{{gr::tag::SAMPLE_RATE.shortKey(), 48000.f}};
-        const gr::property_map second{{gr::tag::SAMPLE_RATE.shortKey(), 96000.f}};
+        // Both rates arrive as tags, the first on the stream's first sample. The block's sample_rate follows
+        // gr:sample_rate.
+        const gr::property_map first{{gr::tag::SAMPLE_RATE.key(), 48000.f}};
+        const gr::property_map second{{gr::tag::SAMPLE_RATE.key(), 96000.f}};
         const gr::property_map geometry{{"window_length", gr::Size_t(length)}, {"max_lag", gr::Size_t(64)}, {"kind", std::string("complex")}, {"n_averages", gr::Size_t(8)}, {"overlap", 0.0}};
         for (const std::size_t burst : {512UZ, 4096UZ, 65536UZ}) {
             const Run<CF> run = collect<CF>(geometry, input, burst, false, {{0UZ, first}, {tagAt, second}});
@@ -838,13 +850,13 @@ const suite<"autocorrelation record and settings"> _acfRecord = [] {
         expect(validRun.completed);
         expect(fatal(eq(validRun.records.size(), 2UZ)));
         expect(approx(metaNumber(validRun.records[1UZ], "false_alarm_rate"), 1e-2, 1e-12)) << "a valid tag moves false_alarm_rate";
-        for (const gr::property_map& badTag : {gr::property_map{{gr::tag::SAMPLE_RATE.shortKey(), 0.f}}, gr::property_map{{"false_alarm_rate", 1.5}}}) {
+        for (const gr::property_map& badTag : {gr::property_map{{gr::tag::SAMPLE_RATE.key(), 0.f}}, gr::property_map{{"false_alarm_rate", 1.5}}}) {
             const std::string key        = badTag.begin()->first.c_str();
             const Run<CF>     refusedRun = collect<CF>(geometry, input, 512UZ, false, {{0UZ, first}, {tagAt, badTag}});
             expect(refusedRun.completed) << std::format("{}: the run completes", key);
             expect(eq(refusedRun.records.size(), 2UZ)) << std::format("{}: two records of eight windows", key);
             expect(eq(refusedRun.nWindowResets, std::uint64_t{0ULL})) << std::format("{}: a refused value discards no window", key);
-            expect(eq(refusedRun.nRateRefused, key == "sample_rate" ? std::uint64_t{1ULL} : std::uint64_t{0ULL})) << std::format("{}: the block counts a refused rate alone", key);
+            expect(eq(refusedRun.nRateRefused, key == gr::tag::SAMPLE_RATE.key() ? std::uint64_t{1ULL} : std::uint64_t{0ULL})) << std::format("{}: the block counts a refused rate alone", key);
             for (const gr::DataSet<float>& record : refusedRun.records) {
                 expect(approx(metaNumber(record, "sample_rate"), 48000., 1e-3) && approx(metaNumber(record, "false_alarm_rate"), 1e-3, 1e-12)) << std::format("{}: every record states the accepted values", key);
             }

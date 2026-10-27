@@ -37,30 +37,41 @@ enum class ReservedTagType : std::uint8_t { NotReserved, Float, Double, String, 
 
 /// @brief The type `key` is declared to hold in `gr::tag`, or `NotReserved` when the framework reserves no such key.
 [[nodiscard]] inline ReservedTagType reservedTagType(std::string_view key) noexcept {
-    const std::string_view name = gr::dataset::shortKey(key);
+    const std::string_view name = gr::dataset::recordName(key);
     using enum ReservedTagType;
-    if (name == tag::SAMPLE_RATE.shortKey() || name == tag::SIGNAL_MIN.shortKey() || name == tag::SIGNAL_MAX.shortKey() || name == tag::TRIGGER_OFFSET.shortKey()) {
+    if (name == tag::SAMPLE_RATE.name() || name == tag::SIGNAL_MIN.name() || name == tag::SIGNAL_MAX.name() || name == tag::TRIGGER_OFFSET.name()) {
         return Float;
     }
-    if (name == tag::FREQUENCY.shortKey()) {
+    if (name == tag::FREQUENCY.name()) {
         return Double;
     }
-    if (name == tag::SIGNAL_NAME.shortKey() || name == tag::SIGNAL_QUANTITY.shortKey() || name == tag::SIGNAL_UNIT.shortKey() || name == tag::TRIGGER_NAME.shortKey() || name == tag::CONTEXT.shortKey()) {
+    if (name == tag::SIGNAL_NAME.name() || name == tag::SIGNAL_QUANTITY.name() || name == tag::SIGNAL_UNIT.name() || name == tag::TRIGGER_NAME.name() || name == tag::CONTEXT.name()) {
         return String;
     }
-    if (name == tag::NUM_CHANNELS.shortKey() || name == tag::N_DROPPED_SAMPLES.shortKey()) {
+    if (name == tag::NUM_CHANNELS.name() || name == tag::N_DROPPED_SAMPLES.name()) {
         return Size;
     }
-    if (name == tag::TRIGGER_TIME.shortKey() || name == tag::CONTEXT_TIME.shortKey()) {
+    if (name == tag::TRIGGER_TIME.name() || name == tag::CONTEXT_TIME.name()) {
         return UInt64;
     }
-    if (name == tag::RX_OVERFLOW.shortKey() || name == tag::RESET_DEFAULTS.shortKey() || name == tag::STORE_DEFAULTS.shortKey() || name == tag::END_OF_STREAM.shortKey()) {
+    if (name == tag::RX_OVERFLOW.name() || name == tag::RESET_DEFAULTS.name() || name == tag::STORE_DEFAULTS.name() || name == tag::END_OF_STREAM.name()) {
         return Bool;
     }
-    if (name == tag::TRIGGER_META_INFO.shortKey()) {
+    if (name == tag::TRIGGER_META_INFO.name()) {
         return Map;
     }
     return NotReserved;
+}
+
+/// @brief The stream tag key of a record key: a reserved name leaves under its `gr:` key, any other key as it is.
+[[nodiscard]] inline std::pmr::string streamTagKey(std::string_view key) {
+    if (reservedTagType(key) == ReservedTagType::NotReserved) {
+        return std::pmr::string(key);
+    }
+    std::pmr::string tagKey(tag::kGrDomain);
+    tagKey += ':';
+    tagKey += gr::dataset::recordName(key);
+    return tagKey;
 }
 
 /// @brief Whether `value` holds the type `type` names. A non-reserved key imposes nothing and always passes.
@@ -109,9 +120,10 @@ struct DataSetToStream : Block<DataSetToStream<T>, NoTagPropagation> {
 The inverse of `StreamToDataSet`: a bounded record carrying its own rate, signal metadata, UTC time and interior
 annotations becomes an unbounded stream carrying tags. Every admitted record marks its first output sample with one
 tag naming the boundary, and the record's facts ride that tag under the framework's reserved keys wherever one
-exists — `sample_rate`, `signal_name`, `signal_quantity`, `signal_unit`, `signal_min`, `signal_max`, `trigger_name`,
-`trigger_time` — announced at the first record and thereafter only when they change. `meta_information` for the
-selected signal is copied key for key, and `timing_events` become one tag each at the translated offset.
+exists — `gr:sample_rate`, `gr:signal_name`, `gr:signal_quantity`, `gr:signal_unit`, `gr:signal_min`, `gr:signal_max`,
+`gr:trigger_name`, `gr:trigger_time` — announced at the first record and thereafter only when they change.
+`meta_information` for the selected signal is copied key for key. A key that names a reserved tag leaves under its
+`gr:` key. `timing_events` become one tag each at the translated offset.
 
 A record the block cannot index leaves by the `reject` port, unchanged, with `discard_reason` on a tag beside it. The
 five admission clauses are exactly the facts the block indexes on: at least one signal, `signal_index` in range, one
@@ -122,16 +134,16 @@ One instance emits one signal. A four-signal record is read by four instances at
 output port; they see the same records and emit the same counts, so their streams are sample-aligned by construction.
 
 Records concatenate. Two records cut from different parts of a stream produce one contiguous output with nothing
-inserted between them: the gap is reported through `discontinuity` and `n_dropped_samples`, never synthesized.
+inserted between them: the gap is reported through `discontinuity` and `gr:n_dropped_samples`, never synthesized.
 )"">;
 
     PortIn<DataSet<T>, Async>            in;
     PortOut<T, Async>                    out;
     PortOut<DataSet<T>, Async, Optional> reject;
 
-    Annotated<gr::Size_t, "signal_index", Visible, Doc<"which signal of a multi-signal record becomes the output stream; out of range rejects the record">>                      signal_index{0U};
-    Annotated<std::string, "boundary_label", Doc<"written under trigger_name at each record's first sample, unless the record names its own trigger; empty suppresses the key">> boundary_label{"dataset"};
-    Annotated<float, "axis_rate_tolerance", Doc<"relative tolerance of the time axis uniformity test; must be finite and greater than zero">>                                    axis_rate_tolerance{1e-6f};
+    Annotated<gr::Size_t, "signal_index", Visible, Doc<"which signal of a multi-signal record becomes the output stream; out of range rejects the record">>                         signal_index{0U};
+    Annotated<std::string, "boundary_label", Doc<"written under gr:trigger_name at each record's first sample, unless the record names its own trigger; empty suppresses the key">> boundary_label{"dataset"};
+    Annotated<float, "axis_rate_tolerance", Doc<"relative tolerance of the time axis uniformity test; must be finite and greater than zero">>                                       axis_rate_tolerance{1e-6f};
 
     GR_MAKE_REFLECTABLE(DataSetToStream, in, out, reject, signal_index, boundary_label, axis_rate_tolerance);
 
@@ -236,7 +248,7 @@ inserted between them: the gap is reported through `discontinuity` and `n_droppe
                     arrivingTag.insert_or_assign(key, value);
                 }
             }
-            if (const pmt::Value* rate = detail::find(arrivingTag, tag::SAMPLE_RATE.shortKey()); rate != nullptr) {
+            if (const pmt::Value* rate = detail::find(arrivingTag, tag::SAMPLE_RATE.key()); rate != nullptr) {
                 if (const float* value = rate->get_if<float>(); value != nullptr) {
                     _tagRate = *value; // route 2, from the port rather than from this record
                 }
@@ -331,22 +343,22 @@ private:
         std::optional<std::uint64_t> sampleStart{};
         std::optional<std::string>   recordTrigger{};
 
-        if (signalIndex < ds.meta_information.size()) { // (i) the record's own statement about itself, copied verbatim
+        if (signalIndex < ds.meta_information.size()) { // (i) the record's own statement about itself, a reserved name under its gr: key
             for (const auto& [key, value] : ds.meta_information[signalIndex]) {
-                const std::string_view        name = gr::dataset::shortKey(std::string_view(key));
+                const std::string_view        name = gr::dataset::recordName(std::string_view(key));
                 const detail::ReservedTagType type = detail::reservedTagType(name);
                 if (!detail::holdsReservedType(type, value)) { // (iii) a typed read would return nothing and report nothing
                     ++nMetaKeysDropped;
                     continue;
                 }
-                if (name == tag::SAMPLE_RATE.shortKey()) {
+                if (name == tag::SAMPLE_RATE.name()) {
                     metaRate = *value.template get_if<float>(); // route 1: the producer's own words, exact and typed
-                } else if (name == tag::TRIGGER_NAME.shortKey()) {
+                } else if (name == tag::TRIGGER_NAME.name()) {
                     recordTrigger = std::string(std::string_view(*value.template get_if<std::pmr::string>()));
                 } else if (name == "sample_start") {
                     sampleStart = detail::readUnsigned(value);
                 }
-                map.insert_or_assign(key, value);
+                map.insert_or_assign(detail::streamTagKey(key), value);
             }
         }
         for (const auto& [key, value] : arrivingTag) { // the input tag belongs at the record's first sample
@@ -377,10 +389,10 @@ private:
         detail::putDerived(map, "dataset_length", pmt::Value(static_cast<gr::Size_t>(nSamples)), nMetaKeysOverridden);
         const std::string triggerName = recordTrigger.has_value() && !recordTrigger->empty() ? *recordTrigger : boundary_label.value;
         if (!triggerName.empty()) {
-            detail::putDerived(map, tag::TRIGGER_NAME.shortKey(), pmt::Value(triggerName), nMetaKeysOverridden);
+            detail::putDerived(map, tag::TRIGGER_NAME.key(), pmt::Value(triggerName), nMetaKeysOverridden);
         }
         if (ds.timestamp > 0) { // a negative timestamp reinterprets as a date in the year 2262
-            detail::putDerived(map, tag::TRIGGER_TIME.shortKey(), pmt::Value(static_cast<std::uint64_t>(ds.timestamp)), nMetaKeysOverridden);
+            detail::putDerived(map, tag::TRIGGER_TIME.key(), pmt::Value(static_cast<std::uint64_t>(ds.timestamp)), nMetaKeysOverridden);
         }
         announceChanges(map, facts);
         markDiscontinuity(map, facts);
@@ -392,24 +404,24 @@ private:
     /// @brief Put each announced-on-change key on the tag when this record's value differs from the last one emitted.
     void announceChanges(property_map& map, const RecordFacts& facts) {
         if (facts.rate.has_value() && _announced.rate != facts.rate) {
-            detail::putDerived(map, tag::SAMPLE_RATE.shortKey(), pmt::Value(*facts.rate), nMetaKeysOverridden);
+            detail::putDerived(map, tag::SAMPLE_RATE.key(), pmt::Value(*facts.rate), nMetaKeysOverridden);
             _announced.rate = facts.rate;
         }
         if (_announced.name != facts.name) {
-            detail::putDerived(map, tag::SIGNAL_NAME.shortKey(), pmt::Value(facts.name), nMetaKeysOverridden);
+            detail::putDerived(map, tag::SIGNAL_NAME.key(), pmt::Value(facts.name), nMetaKeysOverridden);
             _announced.name = facts.name;
         }
         if (facts.quantity.has_value() && _announced.quantity != facts.quantity) {
-            detail::putDerived(map, tag::SIGNAL_QUANTITY.shortKey(), pmt::Value(*facts.quantity), nMetaKeysOverridden);
+            detail::putDerived(map, tag::SIGNAL_QUANTITY.key(), pmt::Value(*facts.quantity), nMetaKeysOverridden);
             _announced.quantity = facts.quantity;
         }
         if (facts.unit.has_value() && _announced.unit != facts.unit) {
-            detail::putDerived(map, tag::SIGNAL_UNIT.shortKey(), pmt::Value(*facts.unit), nMetaKeysOverridden);
+            detail::putDerived(map, tag::SIGNAL_UNIT.key(), pmt::Value(*facts.unit), nMetaKeysOverridden);
             _announced.unit = facts.unit;
         }
         if (facts.range.has_value() && (_announced.min != facts.range->first || _announced.max != facts.range->second)) {
-            detail::putDerived(map, tag::SIGNAL_MIN.shortKey(), pmt::Value(facts.range->first), nMetaKeysOverridden);
-            detail::putDerived(map, tag::SIGNAL_MAX.shortKey(), pmt::Value(facts.range->second), nMetaKeysOverridden);
+            detail::putDerived(map, tag::SIGNAL_MIN.key(), pmt::Value(facts.range->first), nMetaKeysOverridden);
+            detail::putDerived(map, tag::SIGNAL_MAX.key(), pmt::Value(facts.range->second), nMetaKeysOverridden);
             _announced.min = facts.range->first;
             _announced.max = facts.range->second;
         }
@@ -428,16 +440,16 @@ private:
             causes.append(cause);
         };
         if (facts.rate != _previous.rate) {
-            fire(tag::SAMPLE_RATE.shortKey());
+            fire(tag::SAMPLE_RATE.name());
         }
         if (facts.name != _previous.name) {
-            fire(tag::SIGNAL_NAME.shortKey());
+            fire(tag::SIGNAL_NAME.name());
         }
         if (facts.quantity != _previous.quantity) {
-            fire(tag::SIGNAL_QUANTITY.shortKey());
+            fire(tag::SIGNAL_QUANTITY.name());
         }
         if (facts.unit != _previous.unit) {
-            fire(tag::SIGNAL_UNIT.shortKey());
+            fire(tag::SIGNAL_UNIT.name());
         }
         if (facts.range != _previous.range) {
             fire("signal_range");
@@ -460,7 +472,7 @@ private:
         }
         detail::putDerived(map, "discontinuity", pmt::Value(causes), nMetaKeysOverridden);
         if (dropped.has_value()) {
-            detail::putDerived(map, tag::N_DROPPED_SAMPLES.shortKey(), pmt::Value(static_cast<gr::Size_t>(*dropped)), nMetaKeysOverridden);
+            detail::putDerived(map, tag::N_DROPPED_SAMPLES.key(), pmt::Value(static_cast<gr::Size_t>(*dropped)), nMetaKeysOverridden);
         }
     }
 

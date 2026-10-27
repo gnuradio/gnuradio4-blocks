@@ -261,12 +261,12 @@ struct Marker {
 /// order the test runner does not fix, and the runner walks the suites from its own destructor.
 [[nodiscard]] const std::array<Marker, 7>& markers() {
     static const std::array<Marker, 7> kMarkers{{
-        {"sample_rate", 0UZ, gr::pmt::Value(48000.0f)},
-        {"signal_name", 8UZ, gr::pmt::Value(std::string("bits"))},
-        {"signal_unit", 8UZ, gr::pmt::Value(std::string("none"))},
-        {"signal_min", 24UZ, gr::pmt::Value(0.0f)},
-        {"signal_max", 40UZ, gr::pmt::Value(1.0f)},
-        {"trigger_name", 56UZ, gr::pmt::Value(std::string("burst"))},
+        {gr::tag::SAMPLE_RATE.key(), 0UZ, gr::pmt::Value(48000.0f)},
+        {gr::tag::SIGNAL_NAME.key(), 8UZ, gr::pmt::Value(std::string("bits"))},
+        {gr::tag::SIGNAL_UNIT.key(), 8UZ, gr::pmt::Value(std::string("none"))},
+        {gr::tag::SIGNAL_MIN.key(), 24UZ, gr::pmt::Value(0.0f)},
+        {gr::tag::SIGNAL_MAX.key(), 40UZ, gr::pmt::Value(1.0f)},
+        {gr::tag::TRIGGER_NAME.key(), 56UZ, gr::pmt::Value(std::string("burst"))},
         {"private_key", 72UZ, gr::pmt::Value(std::string("carried"))},
     }};
     return kMarkers;
@@ -338,10 +338,10 @@ struct RateDeclaredCopy : gr::Block<RateDeclaredCopy, gr::Resampling<1UZ, 1UZ, f
     }
 };
 
-static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<RepackBits>, "a declared rate changer that writes its own tag map must not claim offset identity");
-static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<PackBits>);
-static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<UnpackBits>);
-static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<RateDeclaredCopy>);
+static_assert(!RepackBits::keepsTagOffsets(), "a declared rate changer that writes its own tag map must not claim offset identity");
+static_assert(!PackBits::keepsTagOffsets());
+static_assert(!UnpackBits::keepsTagOffsets());
+static_assert(!RateDeclaredCopy::keepsTagOffsets());
 
 } // namespace qa_bit_packing
 
@@ -504,7 +504,7 @@ const boost::ut::suite<"RepackBits"> repackBitsTests = [] {
         const auto mapped = [](RepackBits& block, std::span<const std::size_t> at) {
             std::vector<gr::Tag> tags;
             for (const std::size_t index : at) {
-                tags.emplace_back(index, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::to_string(index))}});
+                tags.emplace_back(index, gr::property_map{{gr::property_map::key_type{gr::tag::SIGNAL_NAME.key()}, gr::pmt::Value(std::to_string(index))}});
             }
             const std::size_t          items = (at.back() + 1UZ + block.input_chunk_size) / block.input_chunk_size * block.input_chunk_size;
             const std::vector<uint8_t> data(items, std::uint8_t{0});
@@ -531,8 +531,8 @@ const boost::ut::suite<"RepackBits"> repackBitsTests = [] {
     "two tags at one input offset both survive, in order"_test = [] {
         RepackBits           block = make<RepackBits>({{"bits_in", 3U}, {"bits_out", 8U}});
         std::vector<gr::Tag> tags{
-            gr::Tag{4UZ, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::string("first"))}}},
-            gr::Tag{4UZ, gr::property_map{{gr::property_map::key_type{"signal_unit"}, gr::pmt::Value(std::string("second"))}}},
+            gr::Tag{4UZ, gr::property_map{{gr::property_map::key_type{gr::tag::SIGNAL_NAME.key()}, gr::pmt::Value(std::string("first"))}}},
+            gr::Tag{4UZ, gr::property_map{{gr::property_map::key_type{gr::tag::SIGNAL_UNIT.key()}, gr::pmt::Value(std::string("second"))}}},
         };
         const std::vector<std::uint8_t> data(16UZ, std::uint8_t{0});
         const Run                       run = drive(block, std::span<const std::uint8_t>(data), 1UZ, std::span<const gr::Tag>(tags));
@@ -540,8 +540,8 @@ const boost::ut::suite<"RepackBits"> repackBitsTests = [] {
         expect(eq(run.tags.size(), 2UZ));
         expect(eq(run.tags[0].index, 1UZ));
         expect(eq(run.tags[1].index, 1UZ));
-        expect(run.tags[0].map.contains(gr::property_map::key_type{"signal_name"}));
-        expect(run.tags[1].map.contains(gr::property_map::key_type{"signal_unit"}));
+        expect(run.tags[0].map.contains(gr::property_map::key_type{gr::tag::SIGNAL_NAME.key()}));
+        expect(run.tags[1].map.contains(gr::property_map::key_type{gr::tag::SIGNAL_UNIT.key()}));
     };
 
     "a tag offset past the exact range of a double maps to the exact integer"_test = [] {
@@ -551,7 +551,7 @@ const boost::ut::suite<"RepackBits"> repackBitsTests = [] {
         constexpr std::size_t kBeyondDouble = static_cast<std::size_t>(9007199254740993ULL); // 2^53 + 1, three times 3002399751580331
 
         RepackBits                      packing = make<RepackBits>({{"bits_in", 1U}, {"bits_out", 3U}});
-        const std::vector<gr::Tag>      packTag{gr::Tag{kBeyondDouble, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::string("far"))}}}};
+        const std::vector<gr::Tag>      packTag{gr::Tag{kBeyondDouble, gr::property_map{{gr::property_map::key_type{gr::tag::SIGNAL_NAME.key()}, gr::pmt::Value(std::string("far"))}}}};
         const std::vector<std::uint8_t> data(12UZ, std::uint8_t{0});
         const Run                       packed = drive(packing, std::span<const std::uint8_t>(data), 2UZ, std::span<const gr::Tag>(packTag), false, kBeyondDouble);
 
@@ -559,7 +559,7 @@ const boost::ut::suite<"RepackBits"> repackBitsTests = [] {
         expect(eq(packed.tags[0].index, static_cast<std::size_t>(3002399751580331ULL))) << "a double path would answer one less";
 
         RepackBits                 unpacking = make<RepackBits>({{"bits_in", 3U}, {"bits_out", 1U}});
-        const std::vector<gr::Tag> unpackTag{gr::Tag{kBeyondDouble, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::string("far"))}}}};
+        const std::vector<gr::Tag> unpackTag{gr::Tag{kBeyondDouble, gr::property_map{{gr::property_map::key_type{gr::tag::SIGNAL_NAME.key()}, gr::pmt::Value(std::string("far"))}}}};
         const Run                  unpacked = drive(unpacking, std::span<const std::uint8_t>(data), 2UZ, std::span<const gr::Tag>(unpackTag), false, kBeyondDouble);
 
         expect(eq(unpacked.tags.size(), 1UZ));
@@ -571,7 +571,7 @@ const boost::ut::suite<"RepackBits"> repackBitsTests = [] {
 
         std::vector<gr::Tag> tags;
         for (const std::size_t at : {1UZ, 5UZ, 9UZ, 13UZ, 17UZ}) {
-            tags.emplace_back(at, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::to_string(at))}});
+            tags.emplace_back(at, gr::property_map{{gr::property_map::key_type{gr::tag::SIGNAL_NAME.key()}, gr::pmt::Value(std::to_string(at))}});
         }
         const std::vector<std::uint8_t> data(24UZ, std::uint8_t{0});
         const Run                       held = drive(block, std::span<const std::uint8_t>(data), 1UZ, std::span<const gr::Tag>(tags));
@@ -671,17 +671,16 @@ const boost::ut::suite<"RepackBits"> repackBitsTests = [] {
         expect(eq(graphSampleCount({{"bits_in", 8U}, {"bits_out", 3U}}, 6U), 16UZ)) << "six bytes are 48 bits, exactly 16 symbols and no remainder";
     };
 
-    "every key is forwarded, and the framework's forwarder on the same declaration keeps only the reserved keys"_test = [] {
+    "every key is forwarded by the block's forwarder and by the framework's on the same declaration"_test = [] {
         const std::vector<std::size_t> throughRepack = markerOffsets<RepackBits>({{"bits_in", 8U}, {"bits_out", 8U}}, 128U);
         for (std::size_t which = 0UZ; which < markers().size(); ++which) {
             expect(eq(throughRepack[which], markers()[which].at)) << std::format("key '{}' survives at its own offset, the map being the identity at 8/8", markers()[which].key);
         }
 
         const std::vector<std::size_t> throughControl = markerOffsets<RateDeclaredCopy>({}, 128U);
-        for (std::size_t which = 0UZ; which + 1UZ < markers().size(); ++which) {
-            expect(eq(throughControl[which], markers()[which].at)) << std::format("reserved key '{}' crosses the framework's forwarder at its own offset", markers()[which].key);
+        for (std::size_t which = 0UZ; which < markers().size(); ++which) {
+            expect(eq(throughControl[which], markers()[which].at)) << std::format("key '{}' crosses the framework's forwarder at its own offset", markers()[which].key);
         }
-        expect(eq(throughControl.back(), kAbsent)) << "the framework's forwarder drops 'private_key'";
     };
 
     "a tag map is placed at the offsets a rate change puts it at"_test = [] {
@@ -737,7 +736,7 @@ const boost::ut::suite<"PackBits"> packBitsTests = [] {
         PackBits             block = make<PackBits>();
         std::vector<gr::Tag> tags;
         for (const std::size_t index : at) {
-            tags.emplace_back(index, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::to_string(index))}});
+            tags.emplace_back(index, gr::property_map{{gr::property_map::key_type{gr::tag::SIGNAL_NAME.key()}, gr::pmt::Value(std::to_string(index))}});
         }
         const std::vector<std::uint8_t> bits(32UZ, std::uint8_t{1});
         const Run                       run = drive(block, std::span<const std::uint8_t>(bits), 1UZ, std::span<const gr::Tag>(tags));
@@ -794,7 +793,7 @@ const boost::ut::suite<"PackBits"> packBitsTests = [] {
         const std::vector<std::uint8_t> items(2UZ * k, std::uint8_t{1U});
         std::vector<std::uint8_t>       packed(2UZ);
         std::vector<gr::Tag>            published;
-        const std::vector<gr::Tag>      wrapTag{gr::Tag{kWrap + k, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::string("past the wrap"))}}}};
+        const std::vector<gr::Tag>      wrapTag{gr::Tag{kWrap + k, gr::property_map{{gr::property_map::key_type{gr::tag::SIGNAL_NAME.key()}, gr::pmt::Value(std::string("past the wrap"))}}}};
 
         NarrowInputSpan  before(std::span<const std::uint8_t>(items), kWrap - k);
         NarrowOutputSpan beforeOut(std::span<std::uint8_t>(packed), (kWrap - k) / k, &published);
@@ -884,7 +883,7 @@ const boost::ut::suite<"UnpackBits"> unpackBitsTests = [] {
         UnpackBits           block = make<UnpackBits>();
         std::vector<gr::Tag> tags;
         for (const std::size_t index : at) {
-            tags.emplace_back(index, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::to_string(index))}});
+            tags.emplace_back(index, gr::property_map{{gr::property_map::key_type{gr::tag::SIGNAL_NAME.key()}, gr::pmt::Value(std::to_string(index))}});
         }
         const std::vector<std::uint8_t> bytes(8UZ, std::uint8_t{0xA5U});
         const Run                       oneAtATime = drive(block, std::span<const std::uint8_t>(bytes), 1UZ, std::span<const gr::Tag>(tags));
@@ -920,7 +919,7 @@ const boost::ut::suite<"UnpackBits"> unpackBitsTests = [] {
         const std::vector<std::uint8_t> byte(1UZ, std::uint8_t{0xA5U});
         std::vector<std::uint8_t>       bits(k);
         std::vector<gr::Tag>            published;
-        const std::vector<gr::Tag>      wrapTag{gr::Tag{kInput, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::string("past the wrap"))}}}};
+        const std::vector<gr::Tag>      wrapTag{gr::Tag{kInput, gr::property_map{{gr::property_map::key_type{gr::tag::SIGNAL_NAME.key()}, gr::pmt::Value(std::string("past the wrap"))}}}};
 
         NarrowInputSpan  before(std::span<const std::uint8_t>(byte), kInput - 1UZ);
         NarrowOutputSpan beforeOut(std::span<std::uint8_t>(bits), k * (kInput - 1UZ), &published);
@@ -966,7 +965,7 @@ const boost::ut::suite<"UnpackBits"> unpackBitsTests = [] {
                 block.start();
             }
 
-            const std::vector<gr::Tag> freshTag{gr::Tag{kFresh, gr::property_map{{gr::property_map::key_type{"signal_name"}, gr::pmt::Value(std::string("restarted"))}}}};
+            const std::vector<gr::Tag> freshTag{gr::Tag{kFresh, gr::property_map{{gr::property_map::key_type{gr::tag::SIGNAL_NAME.key()}, gr::pmt::Value(std::string("restarted"))}}}};
             NarrowInputSpan            fresh(std::span<const std::uint8_t>(items), kFresh, std::span<const gr::Tag>(freshTag));
             NarrowOutputSpan           freshOut(std::span<std::uint8_t>(out), kFresh * outPerIn / inPerOut, &published);
             auto                       freshIns  = std::tie(fresh);

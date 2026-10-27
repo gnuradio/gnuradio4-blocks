@@ -42,7 +42,8 @@ rebuilds it; `min_rate` states that floor once and keeps the design search off t
 `Async`, an arbitrary `double` ratio not being expressible as the framework's constant `L:M`. `rate = 1` is not a
 pass-through.
 
-A forwarded `sample_rate` tag is multiplied by `rate`, so downstream reads the rate of the stream this block hands it.
+A forwarded `gr:sample_rate` tag is multiplied by `rate`, so downstream reads the rate of the stream this block hands
+it.
 
 Each tag moves with all its keys by the prototype's delay `d`. `d` is in samples of the interpolated rate `L*fs_in`. A
 tag on input `i` leaves on the output nearest `i*L + d`. A designed or other symmetric prototype of `N` taps delays by
@@ -228,7 +229,7 @@ private:
     /// @brief Rewrite a forwarded rate by `rate`. The framework's chunk-ratio scaling covers only a declared `L:M`,
     /// which an arbitrary real ratio is not, so the same rule is applied here from the setting itself.
     void scaleSampleRate(property_map& parameters) const noexcept {
-        const auto it = parameters.find(gr::tag::SAMPLE_RATE.shortKey());
+        const auto it = parameters.find(gr::tag::SAMPLE_RATE.key());
         if (it == parameters.end()) {
             return;
         }
@@ -272,7 +273,7 @@ private:
      * A tag's mapping is committed here, where its sample is consumed, and not where the tag first becomes visible.
      * An `Async` port is presented every sample it holds and the block consumes a prefix of them, so a tag past that
      * prefix is presented again next call, and `rate` may have changed in between: mapping it on sight would fix its
-     * offset, and scale its `sample_rate`, under a regime that no longer governs its sample. Taking only the tags of
+     * offset, and scale its `gr:sample_rate`, under a regime that no longer governs its sample. Taking only the tags of
      * `[first, last)` is also what maps each one exactly once, `consumeTags` having retired everything below `first`,
      * and an index carrying more than one tag still maps all of them.
      */

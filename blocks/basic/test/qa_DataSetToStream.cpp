@@ -255,7 +255,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
         putMeta(record.meta_information[0UZ], "ctx", pmt::Value(std::string("FAIR.SELECTOR")));
         putMeta(record.meta_information[0UZ], "n_pre", pmt::Value(gr::Size_t{3U}));
         putMeta(record.meta_information[0UZ], "source_id", pmt::Value(std::string("dev0")));
-        record.timing_events[0UZ].emplace_back(2, property_map{{"trigger_name", std::string("edge")}});
+        record.timing_events[0UZ].emplace_back(2, property_map{{"gr:trigger_name", std::string("edge")}});
         record.timing_events[0UZ].emplace_back(7, property_map{{"marker", std::string("last")}});
 
         auto                block = make<DataSetToStream<float>>();
@@ -268,20 +268,20 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
 
         const property_map start = mapAt(capture.tags, 0UZ);
         expect(eq(read<gr::Size_t>(start, "dataset_length").value_or(0U), gr::Size_t{8U}));
-        expect(eq(read<float>(start, "sample_rate").has_value(), true)) << "declared float";
-        expect(eq(readString(start, "signal_name").value_or(""), std::string("signal0"))) << "declared string";
-        expect(eq(readString(start, "signal_quantity").value_or(""), std::string("quantity0")));
-        expect(eq(readString(start, "signal_unit").value_or(""), std::string("unit0")));
-        expect(eq(read<float>(start, "signal_min").value_or(-1.f), 0.f)) << "declared float";
-        expect(eq(read<float>(start, "signal_max").value_or(-1.f), 1.f));
-        expect(eq(read<std::uint64_t>(start, "trigger_time").value_or(0ULL), 1'700'000'000'000'000'000ULL)) << "declared uint64";
-        expect(eq(readString(start, "trigger_name").value_or(""), std::string("dataset")));
+        expect(eq(read<float>(start, "gr:sample_rate").has_value(), true)) << "declared float";
+        expect(eq(readString(start, "gr:signal_name").value_or(""), std::string("signal0"))) << "declared string";
+        expect(eq(readString(start, "gr:signal_quantity").value_or(""), std::string("quantity0")));
+        expect(eq(readString(start, "gr:signal_unit").value_or(""), std::string("unit0")));
+        expect(eq(read<float>(start, "gr:signal_min").value_or(-1.f), 0.f)) << "declared float";
+        expect(eq(read<float>(start, "gr:signal_max").value_or(-1.f), 1.f));
+        expect(eq(read<std::uint64_t>(start, "gr:trigger_time").value_or(0ULL), 1'700'000'000'000'000'000ULL)) << "declared uint64";
+        expect(eq(readString(start, "gr:trigger_name").value_or(""), std::string("dataset")));
         expect(eq(readString(start, "ctx").value_or(""), std::string("FAIR.SELECTOR"))) << "meta_information copied verbatim";
         expect(eq(read<gr::Size_t>(start, "n_pre").value_or(99U), gr::Size_t{3U}));
         expect(eq(readString(start, "source_id").value_or(""), std::string("dev0")));
 
         expect(that % (offsetsOf(capture.tags, "marker") == std::vector<std::size_t>{7UZ})) << "every in-range timing event";
-        expect(that % (offsetsOf(capture.tags, "trigger_name") == std::vector<std::size_t>{0UZ, 2UZ}));
+        expect(that % (offsetsOf(capture.tags, "gr:trigger_name") == std::vector<std::size_t>{0UZ, 2UZ}));
 
         for (const Tag& tag : capture.tags) { // the absences, which a coverage test usually omits
             expect(!hasKey(tag.map, "default_value"));
@@ -291,10 +291,11 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
         expect(std::ranges::none_of(capture.samples, [](float value) { return value == 42.f; })) << "the padding value never reaches the stream";
     };
 
-    // A boolean end-of-stream marker passes under both spellings. A string under either spelling is dropped and counted.
+    // A boolean end-of-stream marker passes under both spellings and reaches the stream under its `gr:` key. A string
+    // under either spelling is dropped and counted.
     "the end-of-stream marker as the framework writes it is held to its declared type"_test = [] {
         const std::string framework(gr::tag::END_OF_STREAM.key());
-        const std::string bare(gr::tag::END_OF_STREAM.shortKey());
+        const std::string bare(gr::tag::END_OF_STREAM.name());
         expect(neq(framework, bare)) << "the two spellings differ";
 
         for (const std::string& key : {framework, bare}) {
@@ -304,7 +305,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             const Record<float> input[]{record};
             const auto          capture = run<float>(block, input);
             expect(eq(block.nMetaKeysDropped, 0ULL)) << std::format("a boolean '{}' is kept", key);
-            expect(eq(read<bool>(mapAt(capture.tags, 0UZ), key).value_or(false), true)) << std::format("a boolean '{}' reaches the stream's first tag", key);
+            expect(eq(read<bool>(mapAt(capture.tags, 0UZ), framework).value_or(false), true)) << std::format("a boolean '{}' reaches the stream's first tag as '{}'", key, framework);
 
             Record<float> wrong = makeExtractedRecord<float>(4UZ, 48000.f);
             putMeta(wrong.meta_information[0UZ], key, pmt::Value(std::string("yes")));
@@ -312,7 +313,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             const Record<float> wrongInput[]{wrong};
             const auto          wrongCapture = run<float>(wrongBlock, wrongInput);
             expect(eq(wrongBlock.nMetaKeysDropped, 1ULL)) << std::format("a string '{}' is dropped and counted", key);
-            expect(!hasKey(mapAt(wrongCapture.tags, 0UZ), key)) << std::format("a string '{}' does not reach the stream", key);
+            expect(!hasKey(mapAt(wrongCapture.tags, 0UZ), framework) && !hasKey(mapAt(wrongCapture.tags, 0UZ), bare)) << std::format("a string '{}' does not reach the stream", key);
         }
     };
 
@@ -324,7 +325,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             expect(eq(capture.samples.size(), 4UZ));
             expect(eq(capture.samples.front(), static_cast<float>(1000U * index)));
             expect(eq(block.nSignalsNotEmitted, 3ULL));
-            expect(eq(readString(mapAt(capture.tags, 0UZ), "signal_name").value_or(""), std::format("signal{}", index)));
+            expect(eq(readString(mapAt(capture.tags, 0UZ), "gr:signal_name").value_or(""), std::format("signal{}", index)));
         }
     };
 
@@ -456,7 +457,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             records.push_back(makeRecord<float>(5UZ));
         }
         for (const std::size_t at : {0UZ, 1UZ, 7UZ}) {
-            const std::vector<Tag> inTags{Tag{at, property_map{{"sample_rate", 96000.f}, {"probe", std::string("here")}}}};
+            const std::vector<Tag> inTags{Tag{at, property_map{{"gr:sample_rate", 96000.f}, {"probe", std::string("here")}}}};
             auto                   block   = make<DataSetToStream<float>>();
             const auto             capture = run<float>(block, std::span<const Record<float>>(records), 1UZ, std::span<const Tag>(inTags));
             expect(that % (offsetsOf(capture.tags, "probe") == std::vector<std::size_t>{at * 5UZ})) << std::format("record {}: multiplicity 1, at that record's first sample", at);
@@ -472,21 +473,21 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             auto                block = make<DataSetToStream<float>>();
             const Record<float> input[]{record};
             const auto          capture = run<float>(block, input);
-            expect(eq(read<float>(mapAt(capture.tags, 0UZ), "sample_rate").value_or(0.f), 48000.f));
+            expect(eq(read<float>(mapAt(capture.tags, 0UZ), "gr:sample_rate").value_or(0.f), 48000.f));
         }
         { // (b) route 2 beats route 3
             const Record<float>    input[]{makeExtractedRecord<float>(1024UZ, 1e6f)};
-            const std::vector<Tag> inTags{Tag{0UZ, property_map{{"sample_rate", 96000.f}}}};
+            const std::vector<Tag> inTags{Tag{0UZ, property_map{{"gr:sample_rate", 96000.f}}}};
             auto                   block   = make<DataSetToStream<float>>();
             const auto             capture = run<float>(block, input, 0UZ, std::span<const Tag>(inTags));
-            expect(eq(read<float>(mapAt(capture.tags, 0UZ), "sample_rate").value_or(0.f), 96000.f));
+            expect(eq(read<float>(mapAt(capture.tags, 0UZ), "gr:sample_rate").value_or(0.f), 96000.f));
         }
         { // (c) route 3, to within the endpoint form's measured error
             for (const std::size_t length : {1024UZ, 65536UZ}) {
                 const Record<float> input[]{makeExtractedRecord<float>(length, 48000.f)};
                 auto                block   = make<DataSetToStream<float>>();
                 const auto          capture = run<float>(block, input);
-                const auto          rate    = read<float>(mapAt(capture.tags, 0UZ), "sample_rate");
+                const auto          rate    = read<float>(mapAt(capture.tags, 0UZ), "gr:sample_rate");
                 expect(rate.has_value()) << std::format("length {}", length);
                 expect(lt(std::abs(static_cast<double>(*rate) - 48000.0) / 48000.0, 3.2e-08)) << std::format("length {}: the endpoint form is within a float ulp", length);
                 expect(eq(block.nRateLessRecords, 0ULL));
@@ -496,7 +497,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             const Record<std::uint8_t> input[]{makePacket<std::uint8_t>(64UZ)};
             auto                       block   = make<DataSetToStream<std::uint8_t>>();
             const auto                 capture = run<std::uint8_t>(block, input);
-            expect(!hasKey(mapAt(capture.tags, 0UZ), "sample_rate"));
+            expect(!hasKey(mapAt(capture.tags, 0UZ), "gr:sample_rate"));
             expect(eq(block.nRateLessRecords, 1ULL));
         }
     };
@@ -515,7 +516,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
                 auto                block = make<DataSetToStream<float>>();
                 const Record<float> input[]{record};
                 const auto          capture = run<float>(block, input);
-                expect(!hasKey(mapAt(capture.tags, 0UZ), "sample_rate")) << "a non-uniform axis is not a constant rate and is not announced as one";
+                expect(!hasKey(mapAt(capture.tags, 0UZ), "gr:sample_rate")) << "a non-uniform axis is not a constant rate and is not announced as one";
                 expect(eq(block.nRateLessRecords, 1ULL));
             }
         }
@@ -525,14 +526,14 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             auto                block = make<DataSetToStream<float>>();
             const Record<float> input[]{flat};
             const auto          capture = run<float>(block, input);
-            expect(!hasKey(mapAt(capture.tags, 0UZ), "sample_rate"));
+            expect(!hasKey(mapAt(capture.tags, 0UZ), "gr:sample_rate"));
         }
         { // a one-sample record's axis is never read
             Record<float>       single = makeExtractedRecord<float>(1UZ, 48000.f);
             auto                block  = make<DataSetToStream<float>>();
             const Record<float> input[]{single};
             const auto          capture = run<float>(block, input);
-            expect(!hasKey(mapAt(capture.tags, 0UZ), "sample_rate"));
+            expect(!hasKey(mapAt(capture.tags, 0UZ), "gr:sample_rate"));
             expect(eq(capture.samples.size(), 1UZ));
         }
         { // every axis element but the first, the second and the last is a NaN: a rate comes back only if none was read
@@ -549,7 +550,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             auto                block = make<DataSetToStream<float>>();
             const Record<float> input[]{std::move(poisoned)};
             const auto          capture = run<float>(block, input, 1UZ << 20U);
-            const auto          rate    = read<float>(mapAt(capture.tags, 0UZ), "sample_rate");
+            const auto          rate    = read<float>(mapAt(capture.tags, 0UZ), "gr:sample_rate");
             expect(rate.has_value()) << "the axis is read at three positions, not scanned";
             expect(lt(std::abs(static_cast<double>(rate.value_or(0.f)) - 48000.0) / 48000.0, 1e-06));
         }
@@ -593,7 +594,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             auto                block   = make<DataSetToStream<float>>();
             const auto          capture = run<float>(block, input);
             expect(eq(readString(mapAt(capture.tags, 4UZ), "discontinuity").value_or(""), std::string("sample_rate")));
-            expect(!hasKey(mapAt(capture.tags, 4UZ), "n_dropped_samples"));
+            expect(!hasKey(mapAt(capture.tags, 4UZ), "gr:n_dropped_samples"));
         }
         { // unit
             Record<float> first      = makeRecord<float>(4UZ);
@@ -603,7 +604,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             auto                block   = make<DataSetToStream<float>>();
             const auto          capture = run<float>(block, input);
             expect(eq(readString(mapAt(capture.tags, 4UZ), "discontinuity").value_or(""), std::string("signal_unit")));
-            expect(eq(readString(mapAt(capture.tags, 4UZ), "signal_unit").value_or(""), std::string("V")));
+            expect(eq(readString(mapAt(capture.tags, 4UZ), "gr:signal_unit").value_or(""), std::string("V")));
         }
         { // range
             Record<float> first           = makeRecord<float>(4UZ);
@@ -613,21 +614,21 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             auto                block   = make<DataSetToStream<float>>();
             const auto          capture = run<float>(block, input);
             expect(eq(readString(mapAt(capture.tags, 4UZ), "discontinuity").value_or(""), std::string("signal_range")));
-            expect(eq(read<float>(mapAt(capture.tags, 4UZ), "signal_max").value_or(0.f), 7.f));
+            expect(eq(read<float>(mapAt(capture.tags, 4UZ), "gr:signal_max").value_or(0.f), 7.f));
         }
         { // a positional gap of 1000 samples
             const Record<float> input[]{withStart(makeRecord<float>(4UZ), 0ULL), withStart(makeRecord<float>(4UZ), 1004ULL)};
             auto                block   = make<DataSetToStream<float>>();
             const auto          capture = run<float>(block, input);
             expect(eq(readString(mapAt(capture.tags, 4UZ), "discontinuity").value_or(""), std::string("gap")));
-            expect(eq(read<gr::Size_t>(mapAt(capture.tags, 4UZ), "n_dropped_samples").value_or(0U), gr::Size_t{1000U}));
+            expect(eq(read<gr::Size_t>(mapAt(capture.tags, 4UZ), "gr:n_dropped_samples").value_or(0U), gr::Size_t{1000U}));
         }
         { // overlapping windows: the same samples twice is not a dropped-sample count
             const Record<float> input[]{withStart(makeRecord<float>(4UZ), 100ULL), withStart(makeRecord<float>(4UZ), 102ULL)};
             auto                block   = make<DataSetToStream<float>>();
             const auto          capture = run<float>(block, input);
             expect(eq(readString(mapAt(capture.tags, 4UZ), "discontinuity").value_or(""), std::string("gap")));
-            expect(!hasKey(mapAt(capture.tags, 4UZ), "n_dropped_samples"));
+            expect(!hasKey(mapAt(capture.tags, 4UZ), "gr:n_dropped_samples"));
         }
         { // every cause at once, in the table's order
             Record<float> first  = makeRecord<float>(4UZ);
@@ -652,9 +653,9 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             const property_map  second  = mapAt(capture.tags, 4UZ);
             expect(eq(read<gr::Size_t>(second, "dataset_length").value_or(0U), gr::Size_t{4U})) << "the record-start tag is authored for every record";
             expect(!hasKey(second, "discontinuity"));
-            expect(!hasKey(second, "signal_name"));
-            expect(!hasKey(second, "signal_unit"));
-            expect(hasKey(second, "sample_rate")) << "the record's own metadata is copied verbatim at every record";
+            expect(!hasKey(second, "gr:signal_name"));
+            expect(!hasKey(second, "gr:signal_unit"));
+            expect(hasKey(second, "gr:sample_rate")) << "the record's own metadata is copied verbatim at every record";
             expect(eq(block.nMetaKeysOverridden, 0ULL)) << "an unannounced rate does not displace the copied one";
             expect(!hasKey(mapAt(capture.tags, 0UZ), "discontinuity")) << "a stream's own beginning is not a discontinuity";
         }
@@ -738,7 +739,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             const Record<float> input[]{record};
             auto                block   = make<DataSetToStream<float>>();
             const auto          capture = run<float>(block, input);
-            expect(eq(readString(mapAt(capture.tags, 0UZ), "signal_unit").value_or(""), std::string("unit0")));
+            expect(eq(readString(mapAt(capture.tags, 0UZ), "gr:signal_unit").value_or(""), std::string("unit0")));
             expect(eq(block.nMetaKeysOverridden, 1ULL));
         }
         { // (b) a sample_rate carried as a double is not a slightly wrong rate
@@ -747,7 +748,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             const Record<float> input[]{record};
             auto                block   = make<DataSetToStream<float>>();
             const auto          capture = run<float>(block, input);
-            expect(!hasKey(mapAt(capture.tags, 0UZ), "sample_rate"));
+            expect(!hasKey(mapAt(capture.tags, 0UZ), "gr:sample_rate"));
             expect(eq(block.nMetaKeysDropped, 1ULL));
             expect(eq(block.nRateLessRecords, 1ULL));
         }
@@ -757,7 +758,7 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             const Record<float> input[]{record};
             auto                block   = make<DataSetToStream<float>>();
             const auto          capture = run<float>(block, input);
-            expect(eq(read<float>(mapAt(capture.tags, 0UZ), "sample_rate").value_or(0.f), 48000.f));
+            expect(eq(read<float>(mapAt(capture.tags, 0UZ), "gr:sample_rate").value_or(0.f), 48000.f));
             expect(eq(block.nMetaKeysDropped, 0ULL));
         }
         { // (d) a non-reserved key of any type travels unexamined
@@ -777,14 +778,14 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             const Record<float> input[]{record};
             auto                block   = make<DataSetToStream<float>>({{"boundary_label", std::string("dataset")}});
             const auto          capture = run<float>(block, input);
-            expect(eq(readString(mapAt(capture.tags, 0UZ), "trigger_name").value_or(""), std::string("access_code")));
+            expect(eq(readString(mapAt(capture.tags, 0UZ), "gr:trigger_name").value_or(""), std::string("access_code")));
             expect(eq(block.nMetaKeysOverridden, 0ULL)) << "echoing the record's own value displaces nothing";
         }
         { // an empty boundary_label with no record trigger suppresses the key, never the tag
             auto                block = make<DataSetToStream<float>>({{"boundary_label", std::string("")}});
             const Record<float> input[]{makeRecord<float>(4UZ)};
             const auto          capture = run<float>(block, input);
-            expect(!hasKey(mapAt(capture.tags, 0UZ), "trigger_name"));
+            expect(!hasKey(mapAt(capture.tags, 0UZ), "gr:trigger_name"));
             expect(hasKey(mapAt(capture.tags, 0UZ), "dataset_length")) << "the boundary is still marked";
         }
     };
@@ -852,10 +853,10 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
     };
 
     // The compile-time half
-    "the block is not admissible for UnfilteredTagPropagation"_test = [] {
-        static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<DataSetToStream<float>>, "asynchronous ports and NoTagPropagation each refuse the flag on their own");
-        static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<DataSetToStream<std::complex<float>>>);
-        expect(!gr::block::kUnfilteredTagPropagationAdmissible<DataSetToStream<float>>);
+    "the block does not keep tag offsets"_test = [] {
+        static_assert(!DataSetToStream<float>::keepsTagOffsets(), "asynchronous ports and NoTagPropagation each rule it out on their own");
+        static_assert(!DataSetToStream<std::complex<float>>::keepsTagOffsets());
+        expect(!DataSetToStream<float>::keepsTagOffsets());
     };
 
     "every registered type converts"_test = [] {
@@ -877,8 +878,8 @@ const boost::ut::suite<"DataSetToStream"> dataSetToStreamTests = [] {
             auto                              block = make<DataSetToStream<std::complex<float>>>();
             const Record<std::complex<float>> input[]{makeRecord<std::complex<float>>(5UZ)};
             const auto                        capture = run<std::complex<float>>(block, input);
-            expect(!hasKey(mapAt(capture.tags, 0UZ), "signal_min"));
-            expect(!hasKey(mapAt(capture.tags, 0UZ), "signal_max"));
+            expect(!hasKey(mapAt(capture.tags, 0UZ), "gr:signal_min"));
+            expect(!hasKey(mapAt(capture.tags, 0UZ), "gr:signal_max"));
         }
     };
 };

@@ -222,14 +222,13 @@ struct SquelchGate {
 
     template<typename TInSpan, typename TOutSpan>
     [[nodiscard]] std::size_t run(TOwner& owner, TInSpan& inSpan, TOutSpan& outSpan, std::size_t nSamples, bool gating) {
-        const std::size_t           nTags  = inSpan.rawTags.size();
-        std::size_t                 cursor = 0UZ;
-        std::size_t                 made   = 0UZ;
-        std::optional<property_map> cachedSettings;
+        const std::size_t nTags  = inSpan.rawTags.size();
+        std::size_t       cursor = 0UZ;
+        std::size_t       made   = 0UZ;
 
         for (std::size_t i = 0UZ; i < nSamples; ++i) {
             if (cursor < nTags) {
-                collect(owner, inSpan, i, cursor, cachedSettings);
+                collect(owner, inSpan, i, cursor);
             }
             const GateMachine::Step step = _gate.step(owner.detectorUnmuted(inSpan[i]));
             if (!step.produce && gating) {
@@ -244,19 +243,12 @@ struct SquelchGate {
 
 private:
     template<typename TInSpan>
-    void collect(TOwner& owner, TInSpan& inSpan, std::size_t index, std::size_t& cursor, std::optional<property_map>& cachedSettings) {
+    void collect(TOwner& owner, TInSpan& inSpan, std::size_t index, std::size_t& cursor) {
         const auto&       raw   = inSpan.rawTags;
         const std::size_t until = inSpan.streamIndex + index;
         while (cursor < raw.size() && raw[cursor].index <= until) {
             if (raw[cursor].index >= inSpan.streamIndex) {
-                // Every key survives, which the framework's auto-forward filter would not allow, and every reserved
-                // key the owner declares as a setting leaves carrying the owner's value: the filtered map holds
-                // exactly the substituted reserved keys, so overlaying it on the whole map is both rules at once.
-                property_map forwarded(raw[cursor].map);
-                for (auto& [key, value] : owner.filterAndSubstituteTag(raw[cursor].map, cachedSettings)) {
-                    forwarded.insert_or_assign(key, std::move(value));
-                }
-                _carry.push_back(std::move(forwarded));
+                _carry.push_back(owner.filterAndSubstituteTag(raw[cursor].map));
             }
             ++cursor;
         }
@@ -302,8 +294,7 @@ included, so a consumer slicing on the tag pair gets exactly the audio the squel
 block is exactly 1:1 and emits zeros while muted; with `gate = true` it emits nothing while muted and the output rate
 becomes data-dependent. Input tags are re-published by hand: while gating, a tag on a suppressed sample moves forward
 to the next produced sample rather than to an offset the rate change has invalidated. Every key survives that
-re-publication, and a passing `sample_rate` tag leaves carrying this block's own rate rather than the upstream one it
-arrived with.
+re-publication with the value it arrived with.
 )"">;
 
     PortIn<T>  in;
@@ -312,7 +303,7 @@ arrived with.
     Annotated<double, "threshold_db", Unit<"dB">, Doc<"average power below this mutes the output">>       threshold_db      = -150.0;
     Annotated<double, "alpha", Doc<"single-pole power averager coefficient, in (0, 1]">>                  alpha             = 1e-4;
     Annotated<double, "averaging_time_s", Unit<"s">, Doc<"when > 0, sets alpha from this time constant">> averaging_time_s  = 0.0;
-    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"only used to derive alpha; also updated by a tag">>  sample_rate       = 48000.f;
+    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"rate for alpha; can follow gr:sample_rate">>         sample_rate       = 48000.f;
     Annotated<gr::Size_t, "ramp", Doc<"attack and decay length in samples; 0 is instantaneous">>          ramp              = 0U;
     Annotated<bool, "gate", Doc<"true drops muted samples instead of zeroing them">>                      gate              = false;
     Annotated<double, "threshold_min_db", Unit<"dB">, Doc<"advisory range for a user interface">>         threshold_min_db  = -150.0;
@@ -369,14 +360,14 @@ caller who needs that lengthens `length`, widens `epsilon` to match, and accepts
 
 `sample_rate` is a live setting, so a rate change retunes the evaluators instead of needing a new graph; that,
 `tone_freq`, `length` or `epsilon` discards the partial integration and restarts, and the standing decision holds until
-the first new block completes. Ramping, gating, the burst tags and the tag re-publication that puts this block's own
-`sample_rate` into a passing tag of that key are the shared squelch machine documented on PowerSquelch.
+the first new block completes. Ramping, gating, the burst tags and the tag re-publication are the shared squelch
+machine documented on PowerSquelch.
 )"">;
 
     PortIn<float>  in;
     PortOut<float> out;
 
-    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"audio rate; also updated by a sample_rate tag">> sample_rate = 8000.f;
+    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"audio rate; can follow gr:sample_rate">>         sample_rate = 8000.f;
     Annotated<double, "tone_freq", Unit<"Hz">, Doc<"center (tone) frequency">>                        tone_freq   = 100.0;
     Annotated<double, "level", Doc<"minimum normalized center-bin magnitude required to unmute">>     level       = 0.01;
     Annotated<gr::Size_t, "length", Doc<"integration length N in samples; 0 selects sample_rate/10">> length      = 0U;
@@ -485,8 +476,8 @@ wants exactly that and no ramp state to reason about. For the same `alpha` and `
 PowerSquelch at `ramp = 0`, `gate = false` on every sample; the two detectors are one piece of code.
 
 The average starts at zero, so the block starts muted, and `threshold_db` is a power level: the conversion uses `/10`
-and happens once per settings change. Always exactly 1:1 and synchronous, so every input tag key passes through at its
-own offset, `sample_rate` carrying this block's value.
+and happens once per settings change. Always exactly 1:1 and synchronous. Every input tag leaves at its own offset
+with the values it arrived with.
 )"">;
 
     PortIn<T>  in;
@@ -495,7 +486,7 @@ own offset, `sample_rate` carrying this block's value.
     Annotated<double, "threshold_db", Unit<"dB">, Doc<"average power below this mutes the output">>       threshold_db     = -150.0;
     Annotated<double, "alpha", Doc<"single-pole power averager coefficient, in (0, 1]">>                  alpha            = 1e-4;
     Annotated<double, "averaging_time_s", Unit<"s">, Doc<"when > 0, sets alpha from this time constant">> averaging_time_s = 0.0;
-    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"only used to derive alpha; also updated by a tag">>  sample_rate      = 48000.f;
+    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"alpha's rate; can follow gr:sample_rate">>           sample_rate      = 48000.f;
     Annotated<bool, "unmuted", Doc<"observable: the most recent sample's decision">>                      unmuted          = false;
 
     GR_MAKE_REFLECTABLE(SimpleSquelch, in, out, threshold_db, alpha, averaging_time_s, sample_rate, unmuted);

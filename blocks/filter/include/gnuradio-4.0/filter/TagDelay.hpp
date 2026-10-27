@@ -73,9 +73,9 @@ using HeldTags = std::vector<std::pair<std::uint64_t, property_map>>;
  * @brief Hold @p tag for output @p delayed, or for @p latest when that is later. @p latest is the output of the last
  * held tag, and this call advances it.
  *
- * A tag describes the sample it sits on, so all its keys move with it. A `sample_rate`, `frequency` or `context` key
- * moves the same way as a trigger, a burst edge or a time stamp. Tags leave in the order they arrived, and @p held
- * stays in output order.
+ * A tag describes the sample it sits on, so all its keys move with it. A `gr:sample_rate`, `gr:frequency` or
+ * `gr:context` key moves the same way as a trigger, a burst edge or a time stamp. Tags leave in the order they arrived,
+ * and @p held stays in output order.
  */
 inline void holdTag(HeldTags& held, std::uint64_t& latest, std::uint64_t delayed, property_map tag) {
     latest = std::max(latest, delayed);
@@ -89,11 +89,11 @@ inline void holdTag(HeldTags& held, std::uint64_t& latest, std::uint64_t delayed
  * makes no output past its last input. A tag on one of the last inputs therefore lies past every output. A block that
  * takes more than one input per output can also end on a partial chunk. The framework passes that chunk to the block's
  * epilogue alone, and it makes no output. When the stream ends, every tag still held leaves at the end-of-stream index,
- * one past the last output. The framework publishes its `end_of_stream` tag at that index. The tags left on the input
- * past the last sample the block consumed leave there too. No tag moves onto an earlier output, and the block holds
- * back no input to make an output for a tag. A stop request ends no stream. At a stop request the framework stops the
- * block without running its epilogue, except in the two cases `dropAtStop` names. The held tags are dropped with their
- * samples.
+ * one past the last output. The framework publishes its `gr:end_of_stream` tag at that index. The tags left on the
+ * input past the last sample the block consumed leave there too. No tag moves onto an earlier output, and the block
+ * holds back no input to make an output for a tag. A stop request ends no stream. At a stop request the framework stops
+ * the block without running its epilogue, except in the two cases `dropAtStop` names. The held tags are dropped with
+ * their samples.
  */
 struct TagDelayLine {
     static constexpr std::uint64_t kStreamEnd = std::numeric_limits<std::uint64_t>::max(); ///< the output of a tag held for the end-of-stream index
@@ -135,7 +135,7 @@ struct TagDelayLine {
     /**
      * @brief Hold for the end-of-stream index every tag in the tag ring of @p in at or past input offset @p from, each
      * rewritten by @p rewrite. The ring holds such a tag when no call consumed its sample. It also holds the tags past
-     * the last input sample. The `end_of_stream` key is removed, since the framework publishes its own.
+     * the last input sample. The `gr:end_of_stream` key is removed, since the framework publishes its own.
      */
     template<typename TPort, typename TRewrite>
     void takeRemainder(TPort& in, std::uint64_t from, TRewrite&& rewrite) {
@@ -217,7 +217,7 @@ template<typename TBlock, typename TOutput>
  * output. `twiceTagDelay()` returns the delay in half input samples, or no value when the framework places the tags.
  * `filterSamples(input, output)` filters whole input chunks into their outputs. A tag on input `i` leaves on output
  * `round((i + d) / M)`, and a half rounds up. The tag keeps that output through any later delay or decimation change. A
- * `sample_rate` key is divided by `M` when the tag is taken in.
+ * `gr:sample_rate` key is divided by `M` when the tag is taken in.
  */
 template<typename TDerived, typename TIn, typename TOut>
 struct DelayedTagFilter {
@@ -326,8 +326,7 @@ struct DelayedTagFilter {
             }
             _tags.takeRemainder(self().in, past, [this](property_map& tag) { self().scaleSampleRateByChunkRatio(tag); });
         } else {
-            std::optional<property_map> cachedSettings;
-            const auto                  forwarded = [&](property_map& tag) { tag = self().filterAndSubstituteTag(tag, cachedSettings); };
+            const auto forwarded = [&](property_map& tag) { tag = self().filterAndSubstituteTag(tag); };
             if (input.size() < self().tagDecimation()) {
                 _tags.take(input, input.size(), [&](std::uint64_t, property_map& tag) {
                     forwarded(tag);

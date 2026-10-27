@@ -57,7 +57,7 @@ std::vector<float> demodulate(const std::vector<std::complex<float>>& input, flo
     return output;
 }
 
-/// @brief The offsets at which a key outside `gr::tag::kDefaultTags` reaches the sink through @p TBlock.
+/// @brief Where a tag key outside the `gr:` domain lands after @p TBlock, as the sink sees it.
 template<typename TIn, typename TOut, typename TBlock>
 [[nodiscard]] std::vector<std::size_t> privateTagOffsets(gr::property_map settings) {
     using gr::blocks::testing::ProcessFunction;
@@ -91,7 +91,7 @@ template<typename TIn, typename TOut, typename TBlock>
     return offsets;
 }
 
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<QuadratureDemod<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
+static_assert(QuadratureDemod<float>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
 
 } // namespace
 
@@ -199,7 +199,7 @@ const boost::ut::suite<"QuadratureDemod"> quadratureDemodTests = [] {
 
     "a non-reserved tag key rides through at its own offset"_test = [] {
         const std::vector<std::size_t> offsets = privateTagOffsets<std::complex<float>, float, QuadratureDemod<float>>({{"gain", 1.0f}});
-        expect(that % (offsets == std::vector<std::size_t>{7UZ, 300UZ, 1000UZ})) << "the default forwarder keeps a key the auto-forward set does not name";
+        expect(that % (offsets == std::vector<std::size_t>{7UZ, 300UZ, 1000UZ})) << "the default forwarder keeps a key outside the gr: domain";
     };
 };
 

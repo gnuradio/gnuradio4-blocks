@@ -318,7 +318,7 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         gr::Graph             graph;
 
         auto& source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 4000U}, {"mark_tag", false}});
-        source._tags.emplace_back(200UZ, gr::property_map{{gr::property_map::key_type{gr::tag::SAMPLE_RATE.shortKey()}, gr::pmt::Value(kRateIn)}});
+        source._tags.emplace_back(200UZ, gr::property_map{{gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}, gr::pmt::Value(kRateIn)}});
 
         auto& filter = graph.emplaceBlock<FirFilter<float, float>>({{"taps", std::vector<float>{1.0f}}, {"decimation", static_cast<gr::Size_t>(kM)}});
         auto& sink   = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
@@ -335,7 +335,7 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
             if (seenTag.index == 0UZ) {
                 continue; // the source announces its own rate at offset 0
             }
-            if (const auto found = seenTag.map.find(gr::property_map::key_type{gr::tag::SAMPLE_RATE.shortKey()}); found != seenTag.map.end()) {
+            if (const auto found = seenTag.map.find(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}); found != seenTag.map.end()) {
                 rates.push_back(found->second.value_or(0.f));
             }
         }
@@ -441,20 +441,20 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         for (const std::size_t m : {1UZ, 4UZ}) {
             FirFilter<float, float> block = makeFir<float, float>({{"taps", h}, {"decimation", static_cast<gr::Size_t>(m)}});
             gr::property_map        opening; // a source's opening tag, with the stream's rate and the trigger of its first sample
-            opening.insert_or_assign(gr::property_map::key_type{"sample_rate"}, 48000.0f);
-            opening.insert_or_assign(gr::property_map::key_type{"trigger_time"}, std::uint64_t{1000});
+            opening.insert_or_assign(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}, 48000.0f);
+            opening.insert_or_assign(gr::property_map::key_type{gr::tag::TRIGGER_TIME.key()}, std::uint64_t{1000});
             gr::property_map retune; // a mid-stream retune
-            retune.insert_or_assign(gr::property_map::key_type{"frequency"}, 1.0e8);
+            retune.insert_or_assign(gr::property_map::key_type{gr::tag::FREQUENCY.key()}, 1.0e8);
             const std::vector<gr::Tag> tags{gr::Tag{0UZ, opening}, gr::Tag{100UZ, retune}};
             const std::vector<float>   x(256UZ, 0.0f);
             const auto                 got = test::runDecimating<float>(block, std::span<const float>(x), 64UZ, m, std::span<const gr::Tag>(tags));
 
             const std::size_t first  = (2UZ * kDelay + m) / (2UZ * m);
-            const bool        oneTag = std::ranges::any_of(got.tags, [](const gr::Tag& t) { return t.map.contains(gr::property_map::key_type{"sample_rate"}) && t.map.contains(gr::property_map::key_type{"trigger_time"}); });
-            expect(that % (got.offsetsOf("sample_rate") == std::vector<std::size_t>{first})) << std::format("M = {}: the rate moves by the delay", m);
-            expect(that % (got.offsetsOf("trigger_time") == std::vector<std::size_t>{first})) << std::format("M = {}: the trigger moves by the delay", m);
+            const bool        oneTag = std::ranges::any_of(got.tags, [](const gr::Tag& t) { return t.map.contains(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}) && t.map.contains(gr::property_map::key_type{gr::tag::TRIGGER_TIME.key()}); });
+            expect(that % (got.offsetsOf(gr::tag::SAMPLE_RATE.key()) == std::vector<std::size_t>{first})) << std::format("M = {}: the rate moves by the delay", m);
+            expect(that % (got.offsetsOf(gr::tag::TRIGGER_TIME.key()) == std::vector<std::size_t>{first})) << std::format("M = {}: the trigger moves by the delay", m);
             expect(oneTag) << std::format("M = {}: the rate and the trigger leave as one tag", m);
-            expect(that % (got.offsetsOf("frequency") == std::vector<std::size_t>{(2UZ * (100UZ + kDelay) + m) / (2UZ * m)})) << std::format("M = {}: the retune arrives on the delayed sample", m);
+            expect(that % (got.offsetsOf(gr::tag::FREQUENCY.key()) == std::vector<std::size_t>{(2UZ * (100UZ + kDelay) + m) / (2UZ * m)})) << std::format("M = {}: the retune arrives on the delayed sample", m);
         }
     };
 
@@ -532,8 +532,8 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
             gr::Graph graph;
             auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
             source._tags.emplace_back(900UZ, tagKey(0));
-            source._tags.emplace_back(990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
-            source._tags.emplace_back(999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+            source._tags.emplace_back(990UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("burst")}});
+            source._tags.emplace_back(999UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TX_EOB.key()}, true}});
             auto& filter = graph.emplaceBlock<FirFilter<float, float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", m}});
             auto  sinks  = filter_test::connectEndSinks<float>(graph, filter);
 
@@ -545,7 +545,7 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
             expect(scheduler.runAndWait().has_value());
 
             const std::size_t outputs = kSamples / m;
-            filter_test::expectAtStreamEnd(*sinks, outputs, {"trigger_name", "tx_eob"}, std::format("M = {}", m));
+            filter_test::expectAtStreamEnd(*sinks, outputs, {gr::tag::TRIGGER_NAME.key(), gr::tag::TX_EOB.key()}, std::format("M = {}", m));
             expect(that % (sinks->end.offsetsOf("tag0") == std::vector<std::size_t>{(2UZ * 915UZ + m) / (2UZ * m)})) << std::format("M = {}: a delayed tag inside the stream", m);
             expect(that % (sinkOffsetsOf(sinks->samples, "tag0") == sinks->end.offsetsOf("tag0"))) << std::format("M = {}: a sample-by-sample consumer sees it on its sample", m);
         }
@@ -558,8 +558,8 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         constexpr std::size_t kOutputs = 250UZ;
         gr::Graph             graph;
         auto&                 source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
-        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}});
-        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}});
+        source._tags.emplace_back(kSamples - 2UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("burst")}});
+        source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TX_EOB.key()}, true}});
         auto& filter = graph.emplaceBlock<FirFilter<float, float>>({{"taps", gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0)}, {"decimation", 4U}});
         auto  sinks  = filter_test::connectEndSinks<float>(graph, filter);
 
@@ -569,18 +569,18 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
-        filter_test::expectAtStreamEnd(*sinks, kOutputs, {"trigger_name", "tx_eob"}, "M = 4, 1003 inputs");
+        filter_test::expectAtStreamEnd(*sinks, kOutputs, {gr::tag::TRIGGER_NAME.key(), gr::tag::TX_EOB.key()}, "M = 4, 1003 inputs");
     };
 
     "tags an upstream block leaves at its end-of-stream index pass to this block's end-of-stream index"_test = [] {
         // The first filter holds the trigger and the burst end on the last inputs past its 250 outputs. It publishes
         // them at index 250, where no sample is. The second filter at M = 2 passes them to its own end-of-stream
         // index, 125.
-        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{"tx_eob"}, true}}}};
+        const std::vector<gr::Tag> tags{{400UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_META_INFO.key()}, std::string("mid")}}}, {990UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("burst")}}}, {999UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TX_EOB.key()}, true}}}};
         const std::vector<float>   taps = gr::filter::fir::design::kaiserLowpass(31, 0.1, 60.0);
         const auto                 run  = filter_test::runChained<FirFilter<float, float>, FirFilter<float, float>>({{"taps", taps}, {"decimation", 4U}}, {{"taps", taps}, {"decimation", 2U}}, 1000U, tags);
-        filter_test::expectAtStreamEnd(run, 125UZ, {"trigger_name", "tx_eob"}, "M = 4, then M = 2");
-        expect(eq(run.sampleOffsetsOf("trigger_meta_info").size(), 1UZ)) << "a tag inside the stream reaches a sample";
+        filter_test::expectAtStreamEnd(run, 125UZ, {gr::tag::TRIGGER_NAME.key(), gr::tag::TX_EOB.key()}, "M = 4, then M = 2");
+        expect(eq(run.sampleOffsetsOf(gr::tag::TRIGGER_META_INFO.key()).size(), 1UZ)) << "a tag inside the stream reaches a sample";
     };
 
     "under a stop request the epilogue publishes nothing, and a call publishes its outputs' tags"_test = [] {
@@ -719,7 +719,7 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         expect(fatal(block.changeStateTo(gr::lifecycle::State::RUNNING).has_value()));
 
         for (std::size_t burst = 0UZ; burst < 2UZ; ++burst) {
-            upstream.publishTag(gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("last")}}, kInputs - 1UZ);
+            upstream.publishTag(gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("last")}}, kInputs - 1UZ);
             {
                 auto input = upstream.reserve<gr::SpanReleasePolicy::ProcessAll>(kInputs);
                 std::ranges::fill(input, 1.0f);

@@ -72,13 +72,13 @@ The loop runs in the logarithmic domain, so its settling time is independent of 
 rate. The gain in force for a sample is the one this sample's update produced. `update_decimation` runs the loop once
 per K samples against a stream-absolute phase, so the output does not depend on how the scheduler chunked the stream.
 
-The block is 1:1, so every input tag key passes through at its own offset, `sample_rate` carrying this block's value.
+The block is 1:1. Every input tag leaves at its own offset with the values it arrived with.
 )"">;
 
     PortIn<T>  in;
     PortOut<T> out;
 
-    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"stream rate; also updated by a sample_rate tag">>          sample_rate       = 48000.f;
+    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"stream rate; can follow gr:sample_rate">>                  sample_rate       = 48000.f;
     Annotated<bool, "enabled", Doc<"false freezes the gain and applies it as a manual gain">>                   enabled           = true;
     Annotated<double, "reference_db", Unit<"dB">, Doc<"target level of the output magnitude">>                  reference_db      = -6.0;
     Annotated<double, "attack_s", Unit<"s">, Doc<"time constant used when the gain must decrease">>             attack_s          = 0.005;

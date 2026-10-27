@@ -79,6 +79,9 @@ const suite<"SchmittTrigger Block"> triggerTests = [] {
             expect(funcGen.settings().set(createConstPropertyMap("CMD_BP_START", 1.1f), SettingsCtx{.context = "FAIR.SELECTOR.C=1:S=1:P=2"}).empty());
             expect(funcGen.settings().set(createParabolicRampPropertyMap("CMD_BP_START", 1.1f, 0.1f, .3f, 0.02f), SettingsCtx{.context = "FAIR.SELECTOR.C=1:S=1:P=3"}).empty());
             expect(funcGen.settings().set(createConstPropertyMap("CMD_BP_START", 0.1f), SettingsCtx{.context = "FAIR.SELECTOR.C=1:S=1:P=4"}).empty());
+            // a segment starts only on a trigger named `signal_trigger`, the name the clock's tags carry
+            funcGen.settings().setTagCouplings({{gr::tag::TRIGGER_NAME.name(), std::string(gr::tag::TRIGGER_NAME.key())}, {gr::tag::TRIGGER_TIME.name(), std::string(gr::tag::TRIGGER_TIME.key())}, //
+                {gr::tag::TRIGGER_OFFSET.name(), std::string(gr::tag::TRIGGER_OFFSET.key())}, {gr::tag::TRIGGER_META_INFO.name(), std::string(gr::tag::TRIGGER_META_INFO.key())}});
 
             auto& schmittTrigger = graph.emplaceBlock<gr::blocks::basic::SchmittTrigger<float, Method::value>>({
                 {"name", "SchmittTrigger"},                      //
@@ -87,7 +90,10 @@ const suite<"SchmittTrigger Block"> triggerTests = [] {
                 {"trigger_name_rising_edge", "MY_RISING_EDGE"},  //
                 {"trigger_name_falling_edge", "MY_FALLING_EDGE"} //
             });
-            auto& tagSink        = graph.emplaceBlock<TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}, {"log_tags", true}, {"log_samples", false}, {"verbose_console", false}});
+            // the trigger takes its sample period from the stream's rate and its clock from the last trigger it receives
+            schmittTrigger.settings().setTagCouplings({{gr::tag::SAMPLE_RATE.name(), std::string(gr::tag::SAMPLE_RATE.key())}, {gr::tag::TRIGGER_NAME.name(), std::string(gr::tag::TRIGGER_NAME.key())}, //
+                {gr::tag::TRIGGER_TIME.name(), std::string(gr::tag::TRIGGER_TIME.key())}, {gr::tag::TRIGGER_OFFSET.name(), std::string(gr::tag::TRIGGER_OFFSET.key())}});
+            auto& tagSink = graph.emplaceBlock<TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}, {"log_tags", true}, {"log_samples", false}, {"verbose_console", false}});
 
             // connect non-UI blocks
             expect(graph.connect<"out", "clk_in">(clockSrc, funcGen).has_value()) << "connect clockSrc->funcGen";
@@ -132,18 +138,18 @@ const suite<"SchmittTrigger Block"> triggerTests = [] {
             std::vector<std::size_t> falling_edge_indices;
 
             for (const auto& tag : tagSink._tags) {
-                if (!tag.map.contains(std::string(gr::tag::TRIGGER_NAME.shortKey()))) {
+                if (!tag.map.contains(std::string(gr::tag::TRIGGER_NAME.key()))) {
                     continue;
                 }
-                std::string trigger_name = tag.map.at(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey())).value_or(std::string());
+                std::string trigger_name = tag.map.at(std::pmr::string(gr::tag::TRIGGER_NAME.key())).value_or(std::string());
                 if (trigger_name == "MY_RISING_EDGE") {
                     rising_edge_indices.push_back(tag.index);
                 } else if (trigger_name == "MY_FALLING_EDGE") {
                     falling_edge_indices.push_back(tag.index);
                 }
             }
-            expect(eq(rising_edge_indices.size(), 1UZ)) << std::format("test {} : expected one rising edge", magic_enum::enum_name(Method::value));
-            expect(eq(falling_edge_indices.size(), 1UZ)) << std::format("test {} : expected one falling edge", magic_enum::enum_name(Method::value));
+            expect(fatal(eq(rising_edge_indices.size(), 1UZ))) << std::format("test {} : expected one rising edge", magic_enum::enum_name(Method::value));
+            expect(fatal(eq(falling_edge_indices.size(), 1UZ))) << std::format("test {} : expected one falling edge", magic_enum::enum_name(Method::value));
 
             if (Method::value == NO_INTERPOLATION) { // edge position once crossing the threshold
                 expect(approx(rising_edge_indices[0], 278UZ, 2UZ)) << std::format("test {} : detected rising edge index", magic_enum::enum_name(Method::value));

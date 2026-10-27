@@ -91,10 +91,10 @@ template<typename T, typename FBody>
     return std::chrono::duration<double>(Clock::now() - start).count();
 }
 
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Throttle<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Throttle<std::complex<float>>>);
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Throttle<std::int16_t>>);
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Throttle<std::uint8_t>>);
+static_assert(Throttle<float>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
+static_assert(Throttle<std::complex<float>>::keepsTagOffsets());
+static_assert(Throttle<std::int16_t>::keepsTagOffsets());
+static_assert(Throttle<std::uint8_t>::keepsTagOffsets());
 
 } // namespace
 
@@ -131,9 +131,9 @@ const boost::ut::suite<"Throttle"> throttleTests = [] {
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<gr::blocks::testing::TagSource<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 2048U}, {"mark_tag", false}});
         for (const std::size_t at : {7UZ, 64UZ, 1000UZ}) {
-            source._tags.emplace_back(at, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::format("probe{}", at)}});
+            source._tags.emplace_back(at, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::format("probe{}", at)}});
         }
-        // a key outside the auto-forward set, which the default forwarder keeps on this block
+        // a key outside the gr: domain, which the default forwarder keeps on this block
         source._tags.emplace_back(300UZ, gr::property_map{{gr::property_map::key_type{"private_key"}, gr::pmt::Value(std::string("carried"))}});
         std::ranges::sort(source._tags, std::ranges::less{}, &gr::Tag::index);
 
@@ -147,7 +147,7 @@ const boost::ut::suite<"Throttle"> throttleTests = [] {
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
-        const gr::property_map::key_type probe{gr::tag::TRIGGER_NAME.shortKey()};
+        const gr::property_map::key_type probe{gr::tag::TRIGGER_NAME.key()};
         const gr::property_map::key_type priv{"private_key"};
         std::vector<std::size_t>         seen;
         std::vector<std::size_t>         seenPrivate;

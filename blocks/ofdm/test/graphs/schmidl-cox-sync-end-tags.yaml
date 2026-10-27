@@ -25,9 +25,9 @@ blocks:
         - (0.0, 0.0)
       tags:
         "1":
-          trigger_name: mark
+          "gr:trigger_name": mark
         "14":
-          trigger_name: mark
+          "gr:trigger_name": mark
   - id: gr::blocks::ofdm::SchmidlCoxSync
     parameters:
       name: sync
@@ -54,7 +54,7 @@ blocks:
         - (0.0, 0.0)
         - (0.0, 0.0)
         - (0.0, 0.0)
-      tag_key: trigger_name
+      tag_key: "gr:trigger_name"
       tag_indices: !!uint32 [14, 16]
 connections:
   - [source, out, sync, in]

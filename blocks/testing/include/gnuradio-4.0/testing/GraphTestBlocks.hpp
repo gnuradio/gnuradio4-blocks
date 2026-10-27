@@ -43,15 +43,15 @@ carries the key. A tag at the end-of-stream index, one past the last sample, has
 `expected_tags` maps sample indices to the tags expected there. Each key of the map is a sample index written as
 a string, and each value is a map of tag keys and values. The block reads `expected_tags` when it starts.
 Every listed key must arrive on a tag at its index.
-A tag key with the `gr:` prefix matches the listed key without it. A numeric expected value is compared in its
+A tag key matches a listed key only as spelled. A numeric expected value is compared in its
 own type: the received value must convert to that type and back without loss and be equal. Any other
 value must have the same type and be equal. A wrong value ends the run with an error that names the index, the key,
 the received value and the expected value. A listed key still missing at the end of the stream ends the run
 with an error that names the index, the key and the expected value.
 With `tags_exact`, a tag key not listed at its index ends the run with an error that names the index, the key
 and the value. This check skips the end-of-stream key. A listed end-of-stream key is matched like any other.
-`tags_exact` also refuses a setting an upstream block forwards as a tag, such as `sample_rate`, unless `expected_tags`
-lists it.
+`tags_exact` also refuses a setting an upstream block forwards as a tag, such as `gr:sample_rate`, unless
+`expected_tags` lists it.
 Two spellings of one index that list the same tag key end the run with an error that names both spellings.
 )"">;
 
@@ -207,7 +207,7 @@ Two spellings of one index that list the same tag key end the run with an error 
 
     /// Records the index of a tag carrying `tag_key` and checks each key of the tag against `expected_tags`.
     [[nodiscard]] std::optional<std::string> readTag(std::size_t index, const property_map& map) {
-        if (!tag_key->empty() && (map.contains(tag_key.value) || map.contains("gr:" + tag_key.value)) && !std::ranges::contains(_tagged, index)) {
+        if (!tag_key->empty() && map.contains(tag_key.value) && !std::ranges::contains(_tagged, index)) {
             _tagged.push_back(index);
         }
         if (!checksTags()) {
@@ -215,9 +215,9 @@ Two spellings of one index that list the same tag key end the run with an error 
         }
         for (const auto& [mapKey, value] : map) {
             const std::string_view key(mapKey);
-            const auto             listed = std::ranges::find_if(_expectedTags, [index, key](const ExpectedTag& tag) { return tag.index == index && (key == tag.key || (key.starts_with("gr:") && key.substr(3) == tag.key)); });
+            const auto             listed = std::ranges::find_if(_expectedTags, [index, key](const ExpectedTag& tag) { return tag.index == index && key == tag.key; });
             if (listed == _expectedTags.end()) {
-                if (tags_exact.value && key != tag::END_OF_STREAM.shortKey() && key != tag::END_OF_STREAM.key()) {
+                if (tags_exact.value && key != tag::END_OF_STREAM.key()) {
                     return std::format("tag '{}' at sample {} is {}, expected no such tag", key, index, describe(value));
                 }
                 continue;

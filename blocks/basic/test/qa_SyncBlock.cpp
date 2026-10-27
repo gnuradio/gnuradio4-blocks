@@ -7,6 +7,8 @@
 
 #include <format>
 
+constexpr float kSourceRate = 1000.f; // each source states this rate on its first sample
+
 struct TestParams {
     std::string   testName       = "";
     gr::Size_t    nSamples       = 0U;                                        // 0 -> take inValues[i].size()
@@ -50,7 +52,7 @@ void runTest(const TestParams& par) {
     std::vector<TagSink<int, ProcessFunction::USE_PROCESS_BULK>*>   sinks;
 
     for (std::size_t i = 0; i < nPorts; i++) {
-        property_map srcParams = {{"values", par.inValues[i]}, {"verbose_console", false}, {"disconnect_on_done", false}};
+        property_map srcParams = {{"values", par.inValues[i]}, {"sample_rate", kSourceRate}, {"verbose_console", false}, {"disconnect_on_done", false}};
         if (par.nSamples != 0) {
             srcParams.insert_or_assign("n_samples_max", par.nSamples);
         } else {
@@ -91,15 +93,19 @@ void runTest(const TestParams& par) {
 }
 
 gr::Tag genSyncTag(std::size_t index, std::uint64_t triggerTime, std::string triggerName = "TriggerName") { //
-    return {index, {{gr::tag::TRIGGER_NAME.shortKey(), triggerName}, {gr::tag::TRIGGER_TIME.shortKey(), triggerTime}}};
+    return {index, {{gr::tag::TRIGGER_NAME.key(), triggerName}, {gr::tag::TRIGGER_TIME.key(), triggerTime}}};
+};
+
+gr::Tag genRateTag(std::size_t index) { //
+    return {index, {{gr::tag::SAMPLE_RATE.key(), kSourceRate}}};
 };
 
 gr::Tag genDropTag(std::size_t index, std::size_t nSamplesDropped) { //
-    return {index, {{gr::tag::N_DROPPED_SAMPLES.shortKey(), static_cast<gr::Size_t>(nSamplesDropped)}}};
+    return {index, {{gr::tag::N_DROPPED_SAMPLES.key(), static_cast<gr::Size_t>(nSamplesDropped)}}};
 };
 
 gr::Tag genDropSyncTag(std::size_t index, std::size_t nSamplesDropped, std::uint64_t triggerTime, std::string triggerName = "TriggerName") { //
-    return {index, {{gr::tag::N_DROPPED_SAMPLES.shortKey(), static_cast<gr::Size_t>(nSamplesDropped)}, {gr::tag::TRIGGER_NAME.shortKey(), triggerName}, {gr::tag::TRIGGER_TIME.shortKey(), triggerTime}}};
+    return {index, {{gr::tag::N_DROPPED_SAMPLES.key(), static_cast<gr::Size_t>(nSamplesDropped)}, {gr::tag::TRIGGER_NAME.key(), triggerName}, {gr::tag::TRIGGER_TIME.key(), triggerTime}}};
 };
 
 const boost::ut::suite SyncBlockTests = [] {
@@ -146,7 +152,7 @@ const boost::ut::suite SyncBlockTests = [] {
                 gr::Tensor<int>(data_from, {3, 0, 1, 2, 3, 0, 1, 2, 0, 1})},                                                        //
             .expectedTags =                                                                                                         //
             {                                                                                                                       //
-                {genSyncTag(1, 99), genSyncTag(5, 201), genDropTag(8, 2), genSyncTag(8, 301)},                                      //
+                {genRateTag(0), genSyncTag(1, 99), genSyncTag(5, 201), genDropTag(8, 2), genSyncTag(8, 301)},                       //
                 {genDropTag(0, 1), genSyncTag(1, 100), genDropTag(5, 1), genSyncTag(5, 199), genDropTag(8, 1), genSyncTag(8, 299)}, //
                 {genDropTag(0, 2), genSyncTag(1, 101), genDropTag(5, 2), genSyncTag(5, 200), genSyncTag(8, 300)}}});
     };
@@ -190,26 +196,26 @@ const boost::ut::suite SyncBlockTests = [] {
             .expectedTags   =                                                                                                                                //
             {                                                                                                                                                //
                 {genDropTag(0, 9), genSyncTag(1, 100), genDropTag(65537, 91), genSyncTag(100'000, 200), genDropTag(200'000, 900), genSyncTag(200'000, 300)}, // 65537 -> depends on buffer size
-                {genSyncTag(1, 100), genSyncTag(100'000, 200), genSyncTag(200'000, 300)}},                                                                   //
+                {genRateTag(0), genSyncTag(1, 100), genSyncTag(100'000, 200), genSyncTag(200'000, 300)}},                                                    //
             .expectedNSamples = 299'000,
             .indexTolerance   = 2}); // drop tag index varies with buffer size across platforms/build configs
     };
 
     "SyncBlock back pressure test"_test = [] {
-        runTest({                                                                          //
-            .nSamples       = 300'000,                                                     //
-            .maxHistorySize = 32'000,                                                      //
-            .tolerance      = 2ULL,                                                        //
-            .inValues       = {{}, {}},                                                    //
-            .inTags         =                                                              //
-            {                                                                              //
-                {genSyncTag(1, 100), genSyncTag(1000, 200), genSyncTag(200'000, 300)},     //
-                {genSyncTag(1, 100), genSyncTag(100'000, 200), genSyncTag(200'000, 300)}}, //
-            .expectedValues = {},                                                          //
-            .expectedTags   =                                                              //
-            {                                                                              //
-                {genSyncTag(1, 100), genDropTag(1000, 167000), genSyncTag(33'000, 300)},   //
-                {genSyncTag(1, 100), genDropTag(1000, 167000), genSyncTag(33'000, 300)}},  //
+        runTest({                                                                                        //
+            .nSamples       = 300'000,                                                                   //
+            .maxHistorySize = 32'000,                                                                    //
+            .tolerance      = 2ULL,                                                                      //
+            .inValues       = {{}, {}},                                                                  //
+            .inTags         =                                                                            //
+            {                                                                                            //
+                {genSyncTag(1, 100), genSyncTag(1000, 200), genSyncTag(200'000, 300)},                   //
+                {genSyncTag(1, 100), genSyncTag(100'000, 200), genSyncTag(200'000, 300)}},               //
+            .expectedValues = {},                                                                        //
+            .expectedTags   =                                                                            //
+            {                                                                                            //
+                {genRateTag(0), genSyncTag(1, 100), genDropTag(1000, 167000), genSyncTag(33'000, 300)},  //
+                {genRateTag(0), genSyncTag(1, 100), genDropTag(1000, 167000), genSyncTag(33'000, 300)}}, //
             .expectedNSamples = 133'000});
     };
 

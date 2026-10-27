@@ -19,7 +19,7 @@ namespace gr::blocks::network::detail {
 [[nodiscard]] inline std::uint64_t countMistypedKeys(const property_map& map) noexcept {
     std::uint64_t mistyped = 0ULL;
     for (const auto& [key, value] : map) {
-        if (!gr::dataset::holdsVocabularyType(gr::dataset::vocabularyType(gr::dataset::shortKey(std::string_view(key))), value)) {
+        if (!gr::dataset::holdsVocabularyType(gr::dataset::vocabularyType(gr::dataset::recordName(std::string_view(key))), value)) {
             ++mistyped;
         }
     }

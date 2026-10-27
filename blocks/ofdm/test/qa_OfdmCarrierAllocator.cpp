@@ -760,9 +760,11 @@ const boost::ut::suite<"OFDM carrier allocator"> _allocator = [] {
             if (fftLength.has_value()) {
                 source._tags = {gr::Tag{tagged, gr::property_map{{"fft_len", *fftLength}}}};
             }
-            // fft_len stays out of the constructor's settings, at its default of 64, and the tag sets it.
+            // fft_len stays out of the constructor's settings, at its default of 64. It follows the tag key `fft_len`,
+            // and the tag sets it.
             auto& allocate = graph.emplaceBlock<CarrierAllocator>({{"data_carriers", data}});
-            auto& sink     = graph.emplaceBlock<gr::blocks::testing::TagSink<gr::DataSet<CF>, ProcessFunction::USE_PROCESS_BULK>>({{"log_samples", true}, {"log_tags", false}});
+            allocate.settings().setTagCouplings({{"fft_len", std::string("fft_len")}});
+            auto& sink = graph.emplaceBlock<gr::blocks::testing::TagSink<gr::DataSet<CF>, ProcessFunction::USE_PROCESS_BULK>>({{"log_samples", true}, {"log_tags", false}});
             expect(graph.connect<"out", "in">(source, allocate).has_value());
             expect(graph.connect<"out", "in">(allocate, sink).has_value());
 

@@ -236,7 +236,7 @@ const boost::ut::suite<"DesignedFilter"> designedFilterTests = [] {
 
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 65536U}, {"mark_tag", false}});
-        source._tags.emplace_back(1024UZ, gr::property_map{{gr::property_map::key_type{"sample_rate"}, gr::pmt::Value(48000.f)}});
+        source._tags.emplace_back(1024UZ, gr::property_map{{gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}, gr::pmt::Value(48000.f)}});
 
         auto& filter = graph.emplaceBlock<DesignedFilter<float, float>>({{"profile", std::string("lowpass")}, {"sample_rate", 96000.f}, {"cutoff", 10000.0}, {"transition_width", 2000.0}});
         auto& sink   = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>({{"name", std::string("TagSink")}});
@@ -250,15 +250,14 @@ const boost::ut::suite<"DesignedFilter"> designedFilterTests = [] {
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
-        // The framework's explicit-set rule: configuring sample_rate removed it from the
-        // auto-update set, so the stream's 48 kHz declaration does not redesign the filter.
+        // The graph couples no setting to a tag. The stream's 48 kHz tag leaves the design alone.
         // A redesign to a new rate arrives by restaging the setting, which the settings-path
         // leg above proves.
         expect(eq(static_cast<std::size_t>(filter.designed_taps.value), at96k)) << "the stated rate keeps the design";
 
         bool sawUpstream = false;
         for (const gr::Tag& seenTag : sink._tags) {
-            if (const auto found = seenTag.map.find(gr::property_map::key_type{"sample_rate"}); found != seenTag.map.end()) {
+            if (const auto found = seenTag.map.find(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}); found != seenTag.map.end()) {
                 const float forwarded = found->second.value_or(0.f);
                 if (seenTag.index >= 1024UZ && forwarded == 48000.f) {
                     sawUpstream = true; // decimation 1 forwards the upstream declaration unchanged

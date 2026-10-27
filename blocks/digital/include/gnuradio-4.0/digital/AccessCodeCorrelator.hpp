@@ -137,12 +137,10 @@ The detector half of a framing chain. The stream passes through unchanged, the t
 There is no default access code: a block with none set throws rather than detecting something arbitrary. `max_errors`
 is an inclusive bound on the Hamming distance rather than a count of matching bits, so 0 is an exact match. The tag
 sits at the first item after the code, which is the first payload item, and the Hamming distance travels in
-`trigger_meta_info` as `sync_errors` rather than as the tag's key.
+`gr:trigger_meta_info` as `sync_errors` rather than as the tag's key.
 
 The block is 1:1, so every input tag key passes through at its own offset beside the tags it emits. The label the
-emitted tags carry is the `trigger_label` setting, deliberately not named for the `trigger_name` key it is written
-under: a setting sharing a reserved key's name is substituted into every passing tag of that key, which would relabel
-an upstream detector's tags with this block's own value.
+emitted tags carry under `gr:trigger_name` is the `trigger_label` setting.
 
 An item may carry more than one bit: at `bits_per_item` above 1 each byte item's low bits enter the register together
 and the item is one SYMBOL — the distance `max_errors` bounds is then the count of mismatched symbols, a symbol wrong
@@ -177,7 +175,7 @@ carry the lag.
 
     Annotated<std::string, "access_code", Doc<"the sync word as '0'/'1' characters, 1 to 128 of them; there is no default">, Visible>                                        access_code{};
     Annotated<gr::Size_t, "max_errors", Doc<"maximum distance accepted, inclusive, in symbols of bits_per_item bits; 0 is an exact match">>                                  max_errors    = 0U;
-    Annotated<std::string, "trigger_label", Doc<"the label written under the trigger_name key of the emitted tags, which an extractor filters on">>                          trigger_label = std::string("access_code");
+    Annotated<std::string, "trigger_label", Doc<"the label written under the gr:trigger_name key of the emitted tags, which an extractor filters on">>                       trigger_label = std::string("access_code");
     Annotated<gr::Size_t, "bits_per_item", Doc<"bits each item contributes to the register, 1 to 8; above 1 an item is one symbol and byte items carry their low bits">>     bits_per_item = 1U;
     Annotated<gr::Size_t, "stride", Unit<"items">, Doc<"items between consecutive code items, 1 to 4096; 1 is a contiguous sync word and is the default">, Visible>          stride        = 1U;
     Annotated<std::string, "tag_at", Doc<"'payload_start' (the item after the code, no lag) or 'code_start' (the code's first item, the output lagging by (n-1)*stride+1)">> tag_at        = std::string("payload_start");
@@ -342,9 +340,9 @@ carry the lag.
                 if (wrong <= bound) {
                     // the code's first item is at input `i - lag`, which the lag puts at output `i`; without a lag the
                     // tag names the item after the code's last, which is also `i`. The index does not move either way.
-                    outSpan.publishTag(property_map{{gr::tag::TRIGGER_NAME.shortKey(), trigger_label.value}, //
-                                           {gr::tag::TRIGGER_OFFSET.shortKey(), 0.0f},                       //
-                                           {gr::tag::TRIGGER_META_INFO.shortKey(), property_map{{"sync_errors", static_cast<gr::Size_t>(wrong)}, {"code_length", static_cast<gr::Size_t>(length)}}}},
+                    outSpan.publishTag(property_map{{gr::tag::TRIGGER_NAME.key(), trigger_label.value}, //
+                                           {gr::tag::TRIGGER_OFFSET.key(), 0.0f},                       //
+                                           {gr::tag::TRIGGER_META_INFO.key(), property_map{{"sync_errors", static_cast<gr::Size_t>(wrong)}, {"code_length", static_cast<gr::Size_t>(length)}}}},
                         i);
                     ++nDetections;
                 }

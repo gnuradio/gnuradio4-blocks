@@ -176,17 +176,17 @@ struct Marker {
     gr::pmt::Value value;
 };
 
-/// Six keys at five offsets; the first five are `gr::tag::kDefaultTags` and `t0` is not. The table is a function-local
+/// Six keys at five offsets; the first five are `gr:` keys and `t0` is not. The table is a function-local
 /// static rather than a namespace-scope one: a `pmt::Value` holding a string owns memory from the polymorphic resource,
 /// the suites run from the unit-test runner's destructor, and a table destroyed earlier in that sequence leaves those
 /// values dangling.
 [[nodiscard]] const std::array<Marker, 6UZ>& markers() {
     static const std::array<Marker, 6UZ> table{{
-        {"trigger_name", 0UZ, gr::pmt::Value(std::string("alpha"))},
-        {"trigger_time", 1UZ, gr::pmt::Value(std::uint64_t{111})},
-        {"trigger_offset", 1UZ, gr::pmt::Value(0.5f)},
-        {"num_channels", 37UZ, gr::pmt::Value(gr::Size_t{3})},
-        {"rx_overflow", 512UZ, gr::pmt::Value(true)},
+        {gr::tag::TRIGGER_NAME.key(), 0UZ, gr::pmt::Value(std::string("alpha"))},
+        {gr::tag::TRIGGER_TIME.key(), 1UZ, gr::pmt::Value(std::uint64_t{111})},
+        {gr::tag::TRIGGER_OFFSET.key(), 1UZ, gr::pmt::Value(0.5f)},
+        {gr::tag::NUM_CHANNELS.key(), 37UZ, gr::pmt::Value(gr::Size_t{3})},
+        {gr::tag::RX_OVERFLOW.key(), 512UZ, gr::pmt::Value(true)},
         {"t0", 900UZ, gr::pmt::Value(std::string("private"))},
     }};
     return table;
@@ -209,7 +209,7 @@ constexpr std::size_t kAbsent = std::numeric_limits<std::size_t>::max();
 
 /// @brief A copy that forwards every key of every tag at the offset the tag arrived at.
 template<typename T>
-struct EveryKeyCopy : gr::Block<EveryKeyCopy<T>, gr::UnfilteredTagPropagation> {
+struct EveryKeyCopy : gr::Block<EveryKeyCopy<T>> {
     gr::PortIn<T>  in;
     gr::PortOut<T> out;
 
@@ -370,8 +370,8 @@ const boost::ut::suite<"SampleDelay"> sampleDelayTests = [] {
     };
 
     "a delay change carries the held tags with their samples"_test = [] {
-        const gr::property_map     marker{{gr::property_map::key_type{"trigger_name"}, gr::pmt::Value(std::string("x"))}};
-        const gr::property_map     other{{gr::property_map::key_type{"trigger_time"}, gr::pmt::Value(std::uint64_t{7})}};
+        const gr::property_map     marker{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, gr::pmt::Value(std::string("x"))}};
+        const gr::property_map     other{{gr::property_map::key_type{gr::tag::TRIGGER_TIME.key()}, gr::pmt::Value(std::uint64_t{7})}};
         const std::vector<gr::Tag> tags{gr::Tag{10UZ, marker}, gr::Tag{30UZ, other}};
         const std::vector<float>   x = ramp<float>(120UZ);
 

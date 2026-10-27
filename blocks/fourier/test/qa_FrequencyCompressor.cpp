@@ -113,12 +113,12 @@ struct Call {
     }
 }
 
-/// The rates the tags in @p tags state, under either spelling of the key.
+/// The rates the `gr:sample_rate` tags in @p tags state.
 [[nodiscard]] std::vector<float> ratesIn(std::span<const gr::Tag> tags) {
     std::vector<float> rates;
     for (const gr::Tag& tag : tags) {
         for (const auto& [key, value] : tag.map) {
-            if (std::string_view(key) == gr::tag::SAMPLE_RATE.shortKey() || std::string_view(key) == gr::tag::SAMPLE_RATE.key()) {
+            if (std::string_view(key) == gr::tag::SAMPLE_RATE.key()) {
                 rates.push_back(value.value_or(std::numeric_limits<float>::quiet_NaN()));
             }
         }
@@ -264,8 +264,8 @@ const boost::ut::suite<"FrequencyCompressor"> frequencyCompressorTests = [] {
 
         gr::Graph flow;
         auto&     src = flow.emplaceBlock<gr::blocks::testing::TagSource<CF>>({{"n_samples_max", gr::Size_t{65536U}}, {"mark_tag", false}, {"values", gr::Tensor<CF>(gr::data_from, tone(64UZ, 0.25))}});
-        src._tags.emplace_back(0UZ, gr::property_map{{gr::property_map::key_type{"sample_rate"}, gr::pmt::Value(kRate)}});
-        src._tags.emplace_back(30000UZ, gr::property_map{{gr::property_map::key_type{"sample_rate"}, gr::pmt::Value(2.f * kRate)}});
+        src._tags.emplace_back(0UZ, gr::property_map{{gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}, gr::pmt::Value(kRate)}});
+        src._tags.emplace_back(30000UZ, gr::property_map{{gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}, gr::pmt::Value(2.f * kRate)}});
         auto& comp = flow.emplaceBlock<FrequencyCompressor>({{"divisor", kDivisor}, {"frame", gr::Size_t(1024)}, {"sample_rate", kRate}});
         auto& sink = flow.emplaceBlock<gr::blocks::testing::TagSink<CF, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({});
         expect(flow.connect<"out", "in">(src, comp).has_value());

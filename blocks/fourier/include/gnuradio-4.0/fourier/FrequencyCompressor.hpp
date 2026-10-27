@@ -55,7 +55,7 @@ first sample made after that rate changes. A change of `divisor` or `frame` drop
 new one. The output made before the change still goes out, ahead of the first sample of the new plan. At end of stream
 the samples short of a frame are dropped.
 
-Input tags are dropped. An upstream `sample_rate` tag does not set `sample_rate`. A sample with a part that is not
+Input tags are dropped. An upstream `gr:sample_rate` tag does not set `sample_rate`. A sample with a part that is not
 finite enters the vocoder as zero. Both ports are asynchronous, and each call publishes the hops the vocoder completes.
 )"">;
 

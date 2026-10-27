@@ -108,11 +108,11 @@ template<typename TBlock, typename TMoved>
     return std::move(*measured);
 }
 
-/// @brief Divides each `sample_rate` value of @p tag by @p stride, float or double. Returns the divided entries.
+/// @brief Divides each `gr:sample_rate` value of @p tag by @p stride, float or double. Returns the divided entries.
 [[nodiscard]] inline property_map divideRate(property_map& tag, std::size_t stride) {
     property_map rates;
     for (auto& [key, value] : tag) {
-        if (std::string_view(key) != gr::tag::SAMPLE_RATE.shortKey() && std::string_view(key) != gr::tag::SAMPLE_RATE.key()) {
+        if (std::string_view(key) != gr::tag::SAMPLE_RATE.key()) {
             continue;
         }
         if (const float* rate = value.get_if<float>(); rate != nullptr) {
@@ -193,9 +193,9 @@ Channel `k` carries the input's band around `k * fs / M`, shifted to baseband an
 the negative frequencies in the usual transform order. Each output runs at `fs/M`, or twice that when the bank is
 oversampled. Each step consumes `M / oversample` input samples and writes one sample to every channel.
 
-An input tag lands on channel zero, on the output of the step that consumes its sample. A `sample_rate` key is divided
-by the commutator stride and reaches every channel. The keys the bank holds as settings are dropped. At end of stream
-the samples short of a whole step are dropped, and their tags land on channel zero at the end of the stream.)"",
+An input tag lands on channel zero, on the output of the step that consumes its sample. A `gr:sample_rate` key is
+divided by the commutator stride and reaches every channel. The keys the bank holds as settings are dropped. At end of
+stream the samples short of a whole step are dropped, and their tags land on channel zero at the end of the stream.)"",
         detail::kChannelizerSettingsText>()>;
 
     PortIn<std::complex<F>>               in;
@@ -314,7 +314,7 @@ the samples short of a whole step are dropped, and their tags land on channel ze
     }
 
     /// @brief Publishes @p tag at @p offset on channel zero, less the bank's setting keys, and its divided
-    /// `sample_rate` on every other channel.
+    /// `gr:sample_rate` on every other channel.
     template<typename TOutputs>
     void forwardTag(property_map tag, TOutputs& outputs, std::size_t offset) {
         if (outputs.empty()) {
@@ -349,7 +349,7 @@ samples and scaled by the cascade's gain. N is the length of `designed_taps`, an
 reconstructs at either `oversample`, and `root_nyquist` with `oversample` 2. A `lowpass` prototype leaves a residual,
 and so does a critically sampled `root_nyquist` pair.
 
-Tags on the channel inputs are dropped, and the output carries no `sample_rate`.)"",
+Tags on the channel inputs are dropped, and the output carries no `gr:sample_rate`.)"",
         detail::kChannelizerSettingsText>()>;
 
     std::vector<PortIn<std::complex<F>>> in;

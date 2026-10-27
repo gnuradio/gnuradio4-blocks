@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
     source._tags.reserve(nRecords);
     for (std::uint32_t record = 0U; record < nRecords; ++record) {
         gr::property_map map;
-        map.insert_or_assign(gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), gr::pmt::Value(std::string(kRecordTrigger)));
+        map.insert_or_assign(gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), gr::pmt::Value(std::string(kRecordTrigger)));
         source._tags.emplace_back(static_cast<std::size_t>(record) * static_cast<std::size_t>(recordBytes), std::move(map));
     }
 

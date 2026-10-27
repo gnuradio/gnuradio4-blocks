@@ -86,7 +86,7 @@ both ports, so a gap in `out`'s own sequence is exactly a record that went to `r
     Annotated<gr::Size_t, "min_payload_items", Unit<"items">, Doc<"a closed region shorter than this is refused as undersize, in the decoded items max_payload_items counts; 1 accepts every non-empty region, and an HDLC link at bits_per_item 1 sets 24 for a three-octet minimum">> min_payload_items = 1U;
     Annotated<gr::Size_t, "payload_pack_bits", Doc<"0 emits decoded items unchanged; 1 to 8 repacks the decoded bits into items of that width, and needs bits_per_item 1 and byte items">>                                                                                              payload_pack_bits = 0U;
     Annotated<gr::math::BitOrder, "payload_bit_order", Doc<"the order the pack stage assembles bits in, separate from bit_order because the wire's item order and the payload's byte order differ">>                                                                                    payload_bit_order = gr::math::BitOrder::MsbFirst;
-    Annotated<std::string, "trigger", Doc<"the trigger_name that resynchronizes the machine; empty accepts any trigger tag">>                                                                                                                                                           trigger{};
+    Annotated<std::string, "trigger", Doc<"the gr:trigger_name that resynchronizes the machine; empty accepts any trigger tag">>                                                                                                                                                        trigger{};
     Annotated<bool, "trigger_resets", Doc<"whether a matching trigger tag resets the machine at all">>                                                                                                                                                                                  trigger_resets = true;
     Annotated<std::string, "frame_label", Doc<"written under the record's trigger_name key when no detector supplied one; deliberately not named for that reserved key">>                                                                                                               frame_label    = std::string("delimiter");
 
@@ -386,12 +386,12 @@ both ports, so a gap in `out`'s own sequence is exactly a record that went to `r
         const std::uint64_t start    = _scanner.frameStart();
         const std::uint64_t sequence = _sequence;
         property_map&       meta     = record.meta_information[0UZ];
-        meta.insert_or_assign(property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), triggerName());
+        meta.insert_or_assign(property_map::key_type(gr::tag::TRIGGER_NAME.name()), triggerName());
         meta.insert_or_assign(property_map::key_type("sample_start"), pmt::Value(start));
         meta.insert_or_assign(property_map::key_type("sequence"), pmt::Value(sequence));
         meta.insert_or_assign(property_map::key_type("stuffing_removed"), pmt::Value(static_cast<gr::Size_t>(_scanner.frameRemoved())));
         if (_rate.has_value()) {
-            meta.insert_or_assign(property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), pmt::Value(*_rate));
+            meta.insert_or_assign(property_map::key_type(gr::tag::SAMPLE_RATE.name()), pmt::Value(*_rate));
         }
         if (const std::optional<pmt::Value> errors = syncErrors(); errors.has_value()) {
             meta.insert_or_assign(property_map::key_type("sync_errors"), *errors);
@@ -428,7 +428,7 @@ both ports, so a gap in `out`'s own sequence is exactly a record that went to `r
 
     /// @brief Whether @p tagMap is a trigger tag this block accepts; an empty `trigger` setting accepts any.
     [[nodiscard]] bool matches(const property_map& tagMap) const {
-        const auto entry = tagMap.find(property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()));
+        const auto entry = tagMap.find(property_map::key_type(gr::tag::TRIGGER_NAME.key()));
         if (entry == tagMap.end()) {
             return false;
         }
@@ -440,7 +440,7 @@ both ports, so a gap in `out`'s own sequence is exactly a record that went to `r
 
     /// @brief Holds the most recent input `sample_rate` as provenance about the stream the frames were taken from.
     void readRate(const property_map& tagMap) {
-        const auto entry = tagMap.find(property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()));
+        const auto entry = tagMap.find(property_map::key_type(gr::tag::SAMPLE_RATE.key()));
         if (entry == tagMap.end()) {
             return;
         }
@@ -451,13 +451,13 @@ both ports, so a gap in `out`'s own sequence is exactly a record that went to `r
 
     /// @brief The trigger's own label, or `frame_label` when no detector supplied one.
     [[nodiscard]] pmt::Value triggerName() const {
-        const auto entry = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()));
+        const auto entry = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_NAME.key()));
         return entry == _triggerMeta.end() ? pmt::Value(std::string_view(frame_label.value)) : entry->second;
     }
 
-    /// @brief The detector's Hamming distance, which travels inside `trigger_meta_info` rather than as a tag key.
+    /// @brief The detector's Hamming distance, which travels inside `gr:trigger_meta_info` rather than as a tag key.
     [[nodiscard]] std::optional<pmt::Value> syncErrors() const {
-        const auto outer = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_META_INFO.shortKey()));
+        const auto outer = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_META_INFO.key()));
         if (outer == _triggerMeta.end()) {
             return std::nullopt;
         }
@@ -469,9 +469,9 @@ both ports, so a gap in `out`'s own sequence is exactly a record that went to `r
         return inner == nested->end() ? std::nullopt : std::optional<pmt::Value>(inner->second);
     }
 
-    /// @brief The trigger's `trigger_time`, or zero when none was supplied; an absent time is a stated absence.
+    /// @brief The trigger's `gr:trigger_time`, or zero when none was supplied; an absent time is a stated absence.
     [[nodiscard]] std::int64_t triggerTime() const {
-        const auto entry = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_TIME.shortKey()));
+        const auto entry = _triggerMeta.find(property_map::key_type(gr::tag::TRIGGER_TIME.key()));
         if (entry != _triggerMeta.end()) {
             if (const auto* stamp = entry->second.template get_if<std::uint64_t>(); stamp != nullptr) {
                 return static_cast<std::int64_t>(*stamp);

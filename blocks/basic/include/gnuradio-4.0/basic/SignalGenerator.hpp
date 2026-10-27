@@ -29,6 +29,8 @@ Operating modes:
   clk_in connected: generates one sample per clock input sample
   clk_in disconnected: free-running mode synchronised to wall-clock time
 
+The first sample after a start or a change of `sample_rate` carries a `gr:sample_rate` tag.
+
 Signal types (A = amplitude, f = tone_frequency, P = phase, O = offset):
   Sin/Cos:          A * sin/cos(2π·f·t + P) + O  (std::sin/cos, high precision)
   FastSin/FastCos:  A * sin/cos(2π·f·t + P) + O  (recursive phasor, ~10x faster)
@@ -54,6 +56,7 @@ Signal types (A = amplitude, f = tone_frequency, P = phase, O = offset):
     GR_MAKE_REFLECTABLE(SignalGenerator, clk_in, out, sample_rate, chunk_size, signal_type, tone_frequency, amplitude, offset, phase, seed);
 
     gr::signal::SignalGeneratorCore<T> _core;
+    bool                               _rateOwed{true}; // true until a published sample states the current rate
 
     // ~Block() invokes stop() for a block that is still active, and by then the timer state the mixin's stop()
     // waits on has been released: the active states have to be left here, while the derived object still stands.
@@ -67,12 +70,18 @@ Signal types (A = amplitude, f = tone_frequency, P = phase, O = offset):
     void start() {
         _core.configure(signal_type.value, tone_frequency, sample_rate, phase, amplitude, offset, seed);
         _core.reset();
+        _rateOwed = true;
         this->blockingSyncStart();
     }
 
     void stop() { this->blockingSyncStop(); }
 
-    void settingsChanged(const property_map& /*old_settings*/, const property_map& /*new_settings*/) { _core.configure(signal_type.value, tone_frequency, sample_rate, phase, amplitude, offset, seed); }
+    void settingsChanged(const property_map& /*old_settings*/, const property_map& newSettings) {
+        _core.configure(signal_type.value, tone_frequency, sample_rate, phase, amplitude, offset, seed);
+        if (newSettings.contains("sample_rate")) {
+            _rateOwed = true;
+        }
+    }
 
     work::Status processBulk(InputSpanLike auto& input, OutputSpanLike auto& output) {
         const auto nSamples = this->syncSamples(input, output);
@@ -84,6 +93,10 @@ Signal types (A = amplitude, f = tone_frequency, P = phase, O = offset):
 
         for (std::size_t i = 0; i < nSamples; ++i) {
             output[i] = _core.generateSample();
+        }
+        if (_rateOwed) {
+            output.publishTag(property_map{{std::pmr::string(tag::SAMPLE_RATE.key()), sample_rate.value}}, 0UZ);
+            _rateOwed = false;
         }
 
         std::ignore = input.consume(this->isFreeRunning() ? 0 : nSamples);

@@ -148,12 +148,32 @@ struct TagSource : Block<TagSource<T, UseProcessVariant>> {
     std::size_t      _valueIndex{0};          // current index in values array
     std::uint64_t    _nSamplesProduced{0ULL}; // for infinite samples the counter wraps around back to 0, _tagIndex = 0, _valueIndex = 0
 
-    std::function<void(const Tag&)> _tagCallback{}; // optional tag callback
+    std::function<void(const Tag&)> _tagCallback{};  // optional tag callback
+    bool                            _rateOwed{true}; // the next sample carries a `gr:sample_rate` tag
+
+    /// @brief Writes each changed signal description setting on the output under its `gr:` key. The rate is written
+    /// on the first sample after a start or a change.
+    void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings, property_map& forward) {
+        const auto state = [&newSettings, &forward](std::string_view name, std::string_view key) {
+            if (const auto it = newSettings.find(name); it != newSettings.end()) {
+                forward.insert_or_assign(std::pmr::string(key), it->second);
+            }
+        };
+        if (newSettings.contains(tag::SAMPLE_RATE.name())) {
+            _rateOwed = true;
+        }
+        state(tag::SIGNAL_NAME.name(), tag::SIGNAL_NAME.key());
+        state(tag::SIGNAL_UNIT.name(), tag::SIGNAL_UNIT.key());
+        state(tag::SIGNAL_QUANTITY.name(), tag::SIGNAL_QUANTITY.key());
+        state(tag::SIGNAL_MIN.name(), tag::SIGNAL_MIN.key());
+        state(tag::SIGNAL_MAX.name(), tag::SIGNAL_MAX.key());
+    }
 
     void start() {
         _nSamplesProduced = 0U;
         _valueIndex       = 0U;
         _tagIndex         = 0U;
+        _rateOwed         = true;
         if (_tags.size() > 1) {
             bool isAscending = std::ranges::is_sorted(_tags, [](const Tag& lhs, const Tag& rhs) { return lhs.index < rhs.index; });
             if (!isAscending) {
@@ -166,6 +186,10 @@ struct TagSource : Block<TagSource<T, UseProcessVariant>> {
     T processOne() noexcept
     requires(UseProcessVariant == ProcessFunction::USE_PROCESS_ONE)
     {
+        if (_rateOwed) {
+            this->publishTag(property_map{{std::pmr::string(tag::SAMPLE_RATE.key()), sample_rate}}, 0UZ);
+            _rateOwed = false;
+        }
         const auto [nGeneratedTags, tagRepeatStarted] = generateTag(                              //
             [this](const auto& map, std::size_t tagOffset) { this->publishTag(map, tagOffset); }, //
             "processOne(...)");
@@ -193,6 +217,10 @@ struct TagSource : Block<TagSource<T, UseProcessVariant>> {
     work::Status processBulk(OutputSpanLike auto& outSpan) noexcept
     requires(UseProcessVariant == ProcessFunction::USE_PROCESS_BULK)
     {
+        if (_rateOwed && outSpan.size() > 0UZ) {
+            outSpan.publishTag(property_map{{std::pmr::string(tag::SAMPLE_RATE.key()), sample_rate}}, 0UZ);
+            _rateOwed = false;
+        }
         const auto [nGeneratedTags, tagRepeatStarted] = generateTag(                              //
             [&outSpan](const auto& map, std::size_t offset) { outSpan.publishTag(map, offset); }, //
             "processBulk(...)");
@@ -302,8 +330,7 @@ struct TagMonitor : public Block<TagMonitor<T, UseProcessVariant>> {
     PortIn<T>  in;
     PortOut<T> out;
 
-    // settings — a monitor claims none of the stream keys it reports on: an owned key is substituted into every
-    // forwarded tag, so a `sample_rate` or `signal_name` member here would rewrite the stream it is watching
+    // settings
     gr::Size_t n_samples_expected{0};
     bool       log_tags        = true;
     bool       log_samples     = true;

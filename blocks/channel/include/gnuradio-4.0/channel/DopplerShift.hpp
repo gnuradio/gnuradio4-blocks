@@ -89,7 +89,7 @@ inline constexpr gr::meta::fixed_string kSampleRateDoc         = "stream sample 
 inline constexpr gr::meta::fixed_string kAnchorIndexDoc        = "the stream sample that anchor_ns belongs to, under anchor_source 'setting'";
 inline constexpr gr::meta::fixed_string kAnchorNsDoc           = "schedule time of anchor_index under anchor_source 'setting'";
 inline constexpr gr::meta::fixed_string kAnchorSourceDoc       = "'setting', 'first_trigger' or 'every_trigger'";
-inline constexpr gr::meta::fixed_string kHonorTriggerOffsetDoc = "move a trigger anchor by the tag's own trigger_offset seconds";
+inline constexpr gr::meta::fixed_string kHonorTriggerOffsetDoc = "move a trigger anchor by the tag's own gr:trigger_offset seconds";
 
 /// The table settings a block last accepted. A change loads the table again when it names one of them.
 struct TableSettings {
@@ -108,15 +108,15 @@ struct TableSettings {
 struct TriggerRead {
     std::uint64_t timeNs{0ULL};
     float         offsetSeconds{0.f};
-    bool          present{false};  ///< the tag carries a `trigger_time` key
-    bool          readable{false}; ///< the key, and `trigger_offset` when honored, carry the reserved types
+    bool          present{false};  ///< the tag carries a `gr:trigger_time` key
+    bool          readable{false}; ///< the key, and `gr:trigger_offset` when honored, carry the reserved types
 };
 
-/// @brief Reads a tag's `trigger_time` and, when @p honorOffset is set, its `trigger_offset`. A key of a type other
-/// than the reserved one leaves `readable` false.
+/// @brief Reads a tag's `gr:trigger_time` and, when @p honorOffset is set, its `gr:trigger_offset`. A key of a type
+/// other than the reserved one leaves `readable` false.
 [[nodiscard]] inline TriggerRead readTrigger(const property_map& map, bool honorOffset) {
     TriggerRead read;
-    const auto  time = map.find(property_map::key_type(gr::tag::TRIGGER_TIME.shortKey()));
+    const auto  time = map.find(property_map::key_type(gr::tag::TRIGGER_TIME.key()));
     if (time == map.end()) {
         return read;
     }
@@ -128,7 +128,7 @@ struct TriggerRead {
     read.timeNs   = *timeNs;
     read.readable = true;
     if (honorOffset) {
-        if (const auto offset = map.find(property_map::key_type(gr::tag::TRIGGER_OFFSET.shortKey())); offset != map.end()) {
+        if (const auto offset = map.find(property_map::key_type(gr::tag::TRIGGER_OFFSET.key())); offset != map.end()) {
             const float* seconds = offset->second.get_if<float>();
             if (seconds == nullptr) {
                 read.readable = false;
@@ -163,14 +163,14 @@ adds the offsets, and 'correct' subtracts them. A new table, direction or rate t
 the phase. A new rate re-times the whole stream from the anchor.
 
 `anchor_source` selects what ties the schedule's time axis to the stream. Under 'setting', sample `anchor_index` is at
-time `anchor_ns`. Under 'first_trigger', the first `trigger_time` tag sets the anchor at its own sample, and later tags
-are ignored. Under 'every_trigger', each tag moves the anchor. Every tag that arms or moves the anchor restarts the
-phase at zero. `honor_trigger_offset` adds the tag's `trigger_offset` seconds to its time. Until a trigger anchor is
+time `anchor_ns`. Under 'first_trigger', the first `gr:trigger_time` tag sets the anchor at its own sample, and later
+tags are ignored. Under 'every_trigger', each tag moves the anchor. Every tag that arms or moves the anchor restarts the
+phase at zero. `honor_trigger_offset` adds the tag's `gr:trigger_offset` seconds to its time. Until a trigger anchor is
 armed, the stream passes through unshifted. A change to one of these four settings rebuilds the anchor and clears its
 counters, and a trigger anchor then waits for its next tag. Every other change keeps the anchor.
 `gr::timing::ScheduleAnchor` holds these rules.
 
-A `frequency` tag passes unchanged. `currentOffsetHz()` reads the offset at the next sample, `schedulePosition()`
+A `gr:frequency` tag passes unchanged. `currentOffsetHz()` reads the offset at the next sample, `schedulePosition()`
 where that sample stands against the knots, and `position()` its index from the stream's start. `nIgnoredAnchors()`
 counts the trigger tags the mode ignores, `nReanchors()` the moves under 'every_trigger', and `nRefusedAnchors()` the
 tags whose time is unreadable or past the anchor's bound. Each reads from any thread.

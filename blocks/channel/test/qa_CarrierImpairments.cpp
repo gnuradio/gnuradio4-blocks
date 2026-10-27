@@ -285,7 +285,7 @@ const boost::ut::suite<"carrier impairments"> carrierTests = [] {
         static_assert(std::ranges::equal(FrequencyOffset<C>::DroppedTagKeysControl::kKeys, std::array{kFreqEstKey, kPhaseEstKey}), "the dropped keys are the loop family's own");
         static_assert(std::ranges::equal(PhaseNoise<C>::DroppedTagKeysControl::kKeys, std::array{kPhaseEstKey}));
         static_assert(std::ranges::equal(IqImbalance<C>::DroppedTagKeysControl::kKeys, std::array{kPhaseEstKey}));
-        static_assert(gr::block::kUnfilteredTagPropagationAdmissible<FrequencyOffset<C>> && gr::block::kUnfilteredTagPropagationAdmissible<PhaseNoise<C>> && gr::block::kUnfilteredTagPropagationAdmissible<IqImbalance<C>>);
+        static_assert(FrequencyOffset<C>::keepsTagOffsets() && PhaseNoise<C>::keepsTagOffsets() && IqImbalance<C>::keepsTagOffsets());
 
         expect(keysCrossing<gr::blocks::testing::Copy<C>>() == keysOtherThan({})) << "every test key crosses a block that drops none";
         expect(keysCrossing<FrequencyOffset<C>>({{"frequency_offset", 0.01}}) == keysOtherThan({kFreqEstKey, kPhaseEstKey})) << "FrequencyOffset";

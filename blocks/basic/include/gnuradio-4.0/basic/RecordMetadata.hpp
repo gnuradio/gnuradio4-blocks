@@ -32,7 +32,7 @@ namespace detail {
         return &it->second;
     }
     for (const auto& [candidate, value] : map) {
-        if (gr::dataset::shortKey(std::string_view(candidate)) == key) {
+        if (gr::dataset::recordName(std::string_view(candidate)) == key) {
             return &value;
         }
     }

@@ -494,7 +494,7 @@ const boost::ut::suite<"delimiter extractor"> delimiterExtractorTests = [] {
         const std::vector<std::vector<std::uint8_t>> payloads{itemsOf("10110010"), itemsOf("01001101")};
         const std::vector<std::uint8_t>              stream = hdlcWire(std::span<const std::vector<std::uint8_t>>(payloads));
         // the first payload starts at item 8, so a tag four items into it lands mid-frame
-        const std::vector<gr::Tag> tags{gr::Tag{12UZ, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("access_code")}}}};
+        const std::vector<gr::Tag> tags{gr::Tag{12UZ, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("access_code")}}}};
 
         DelimiterExtractor<std::uint8_t> resetting = make<DelimiterExtractor<std::uint8_t>>(hdlcFraming(1024U));
         const Extracted<std::uint8_t>    reset     = feed<std::uint8_t>(resetting, std::span<const std::uint8_t>(stream), 0UZ, std::span<const gr::Tag>(tags));

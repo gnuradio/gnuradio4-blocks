@@ -29,10 +29,10 @@ For a flowgraph with no clock of its own. It is not a sample-clock authority: it
 wait is taken in slices with the lifecycle state re-read between them, so a stop request is not held up by a long
 sleep; a stop that cuts a wait short releases only the samples that are due by then and leaves the rest unconsumed,
 so the pacing holds through a stop. The output port is optional; unconnected, the block still paces consumption, so
-it can hang off a stream without paying for the copy. An incoming `sample_rate` tag retunes the block, though a rate
-the caller has set explicitly is out of the auto-update set and no longer follows one.
+it can hang off a stream without paying for the copy. A `gr:sample_rate` tag retunes the block where a graph couples
+`sample_rate` to it.
 
-The block is 1:1, so every input tag key passes through at its own offset, `sample_rate` carrying this block's value.
+The block is 1:1. Every input tag leaves at its own offset with the values it arrived with.
 )"">;
 
     PortIn<T>            in;

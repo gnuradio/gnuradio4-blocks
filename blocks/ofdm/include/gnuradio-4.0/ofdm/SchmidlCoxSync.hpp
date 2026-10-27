@@ -62,13 +62,13 @@ template<std::unsigned_integral T>
  * preamble symbol whose time-domain halves repeat, behind a cyclic prefix of `cp_len` samples.
  * `gr::ofdm::schmidlCoxPreamble` builds one. The block passes the stream through, one sample out per sample in, delayed
  * by `delaySamples()`, which is `3*fft_len/2 + cp_len - 1`. It tags the first sample of each frame it finds, the
- * preamble's first prefix sample, with `trigger_name` set to `trigger_label` and `trigger_offset` 0. The tag's
- * `trigger_meta_info` holds `cfo_fractional`, the carrier offset in subcarrier spacings, and `plateau_samples`, the
+ * preamble's first prefix sample, with `gr:trigger_name` set to `trigger_label` and `gr:trigger_offset` 0. The tag's
+ * `gr:trigger_meta_info` holds `cfo_fractional`, the carrier offset in subcarrier spacings, and `plateau_samples`, the
  * width of the detection.
  *
  * Input tags leave on their own samples, delayed with them. The block removes the trigger keys from an input tag whose
- * `trigger_name` equals `trigger_label` and forwards the tag's other keys. The last `delaySamples()` inputs of a stream
- * never reach the output, and their tags leave at the end-of-stream index.
+ * `gr:trigger_name` equals `trigger_label` and forwards the tag's other keys. The last `delaySamples()` inputs of a
+ * stream never reach the output, and their tags leave at the end-of-stream index.
  *
  * With `L = fft_len/2`, the block slides two sums over the stream at a constant cost per sample:
  *
@@ -100,7 +100,7 @@ template<std::unsigned_integral T>
  * no trigger for either. `lastCfoFractional()` returns the most recent estimate. `start()` sets the counters to 0.
  */
 struct SchmidlCoxSync : Block<SchmidlCoxSync> {
-    using Description = Doc<"Detects OFDM frames by their repeated-half preamble and estimates the fractional carrier frequency offset. The block passes the complex stream through, delayed by delaySamples(), which is 3*fft_len/2 + cp_len - 1 samples. It tags the first sample of each frame with trigger_name and with cfo_fractional in subcarrier spacings, and it can derotate the stream by that estimate">;
+    using Description = Doc<"Detects OFDM frames by their repeated-half preamble and estimates the fractional carrier frequency offset. The block passes the complex stream through, delayed by delaySamples(), which is 3*fft_len/2 + cp_len - 1 samples. It tags the first sample of each frame with gr:trigger_name and with cfo_fractional in subcarrier spacings, and it can derotate the stream by that estimate">;
 
     PortIn<Complex>  in;
     PortOut<Complex> out;
@@ -111,7 +111,7 @@ struct SchmidlCoxSync : Block<SchmidlCoxSync> {
     Annotated<gr::Size_t, "min_gap", Visible, Unit<"symbols">, Doc<"dead time after a trigger, in cp_len + fft_len sample symbols">>                        min_gap       = 1U;
     Annotated<bool, "correct_cfo", Visible, Doc<"derotate the output by the estimate from the trigger onward">>                                             correct_cfo   = true;
     Annotated<float, "r_floor", Doc<"least received energy a trigger needs">, Limits<0.f, std::numeric_limits<float>::infinity(), detail::kRFloorPositive>> r_floor       = 1e-9f;
-    Annotated<std::string, "trigger_label", Doc<"trigger_name of the emitted tags">>                                                                        trigger_label = std::string("ofdm_frame");
+    Annotated<std::string, "trigger_label", Doc<"gr:trigger_name of the emitted tags">>                                                                     trigger_label = std::string("ofdm_frame");
 
     GR_MAKE_REFLECTABLE(SchmidlCoxSync, in, out, fft_len, cp_len, threshold, min_gap, correct_cfo, r_floor, trigger_label);
 
@@ -260,7 +260,7 @@ struct SchmidlCoxSync : Block<SchmidlCoxSync> {
     /**
      * @brief Publishes every held input tag, and every tag left on the input, at the end-of-stream index.
      *
-     * The tags leave in the order of their input samples, without their `end_of_stream` key. The block drops a held
+     * The tags leave in the order of their input samples, without their `gr:end_of_stream` key. The block drops a held
      * detection, whose frame start is never output.
      */
     template<typename TInputSpans, typename TOutputSpans>
@@ -323,14 +323,14 @@ struct SchmidlCoxSync : Block<SchmidlCoxSync> {
     }
 
 private:
-    /// @brief Removes the trigger keys of an input tag whose `trigger_name` equals `trigger_label`.
+    /// @brief Removes the trigger keys of an input tag whose `gr:trigger_name` equals `trigger_label`.
     void dropOwnTrigger(property_map& map) const {
-        const auto  entry = map.find(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey()));
+        const auto  entry = map.find(std::pmr::string(gr::tag::TRIGGER_NAME.key()));
         const auto* label = entry == map.end() ? nullptr : entry->second.get_if<std::pmr::string>();
         if (label == nullptr || std::string_view(label->data(), label->size()) != std::string_view(_accepted.label)) {
             return;
         }
-        for (const char* key : {gr::tag::TRIGGER_NAME.shortKey(), gr::tag::TRIGGER_TIME.shortKey(), gr::tag::TRIGGER_OFFSET.shortKey(), gr::tag::TRIGGER_META_INFO.shortKey()}) {
+        for (const char* key : {gr::tag::TRIGGER_NAME.key(), gr::tag::TRIGGER_TIME.key(), gr::tag::TRIGGER_OFFSET.key(), gr::tag::TRIGGER_META_INFO.key()}) {
             map.erase(std::pmr::string(key));
         }
     }
@@ -527,9 +527,9 @@ private:
         _resumeAt = frameAt + _deadTime;
 
         _pending.emplace_back(frameAt + _delay,
-            property_map{{gr::tag::TRIGGER_NAME.shortKey(), _accepted.label}, //
-                {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f},                    //
-                {gr::tag::TRIGGER_META_INFO.shortKey(), property_map{{"cfo_fractional", static_cast<float>(eps)}, {"plateau_samples", static_cast<gr::Size_t>(width)}}}},
+            property_map{{gr::tag::TRIGGER_NAME.key(), _accepted.label}, //
+                {gr::tag::TRIGGER_OFFSET.key(), 0.f},                    //
+                {gr::tag::TRIGGER_META_INFO.key(), property_map{{"cfo_fractional", static_cast<float>(eps)}, {"plateau_samples", static_cast<gr::Size_t>(width)}}}},
             std::optional<double>(-std::numbers::pi * eps / static_cast<double>(_half)), true);
     }
 

@@ -214,17 +214,17 @@ const boost::ut::suite<"PowerSquelch"> powerSquelchTests = [] {
 
     "an input tag is republished whole, non-reserved keys included"_test = [] {
         const auto                 input = stepBurst();
-        const std::vector<gr::Tag> tags{gr::Tag{kLead + 8UZ, gr::property_map{{"sample_rate", 48000.f}, {"test_probe", static_cast<gr::Size_t>(7)}}}};
+        const std::vector<gr::Tag> tags{gr::Tag{kLead + 8UZ, gr::property_map{{gr::tag::SAMPLE_RATE.key(), 48000.f}, {"test_probe", static_cast<gr::Size_t>(7)}}}};
 
         PowerSquelch<CF> block = makeSquelch<CF>(gateSettings(static_cast<gr::Size_t>(kRamp), true));
         const auto       got   = spans::run<PowerSquelch<CF>, CF>(block, std::span<const CF>(input), 0UZ, std::span<const gr::Tag>(tags));
 
         // Under NoTagPropagation the framework forwards nothing. This block republishes every key it was handed.
         expect(eq(got.offsetsOf("test_probe").size(), 1UZ)) << "a key no block declares still reaches the output";
-        expect(that % (got.offsetsOf("sample_rate") == got.offsetsOf("test_probe"))) << "and rides the same output tag it arrived on";
+        expect(that % (got.offsetsOf(gr::tag::SAMPLE_RATE.key()) == got.offsetsOf("test_probe"))) << "and rides the same output tag it arrived on";
     };
 
-    "a passing sample_rate leaves carrying this block's own rate"_test = [] {
+    "a passing gr:sample_rate leaves with the value it arrived with, private keys included"_test = [] {
         constexpr float kUpstream = 192000.f;
         constexpr float kOwn      = 48000.f;
 
@@ -232,19 +232,19 @@ const boost::ut::suite<"PowerSquelch"> powerSquelchTests = [] {
         gr::property_map settings = gateSettings(static_cast<gr::Size_t>(kRamp), true);
         settings.insert_or_assign(gr::property_map::key_type{"sample_rate"}, gr::pmt::Value(kOwn));
 
-        const std::vector<gr::Tag> tags{gr::Tag{kLead + 8UZ, gr::property_map{{"sample_rate", kUpstream}, {"test_probe", static_cast<gr::Size_t>(7)}}}};
+        const std::vector<gr::Tag> tags{gr::Tag{kLead + 8UZ, gr::property_map{{gr::tag::SAMPLE_RATE.key(), kUpstream}, {"test_probe", static_cast<gr::Size_t>(7)}}}};
 
         PowerSquelch<CF> block = makeSquelch<CF>(std::move(settings));
         const auto       got   = spans::run<PowerSquelch<CF>, CF>(block, std::span<const CF>(input), 0UZ, std::span<const gr::Tag>(tags));
 
         std::vector<float> rates;
         for (const gr::Tag& forwarded : got.tags) {
-            if (const auto found = forwarded.map.find(gr::property_map::key_type{"sample_rate"}); found != forwarded.map.end()) {
+            if (const auto found = forwarded.map.find(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}); found != forwarded.map.end()) {
                 rates.push_back(found->second.value_or(0.f));
             }
         }
-        expect(that % (rates == std::vector<float>{kOwn})) << "the block declares the reserved key, so what it forwards is its own value and not the upstream one";
-        expect(eq(got.offsetsOf("test_probe").size(), 1UZ)) << "and the substitution does not cost the private key its passage";
+        expect(that % (rates == std::vector<float>{kUpstream})) << "the block writes no rate of its own into a passing tag";
+        expect(eq(got.offsetsOf("test_probe").size(), 1UZ)) << "and the private key passes beside it";
     };
 
     "threshold_db reads back exactly as set"_test = [] {

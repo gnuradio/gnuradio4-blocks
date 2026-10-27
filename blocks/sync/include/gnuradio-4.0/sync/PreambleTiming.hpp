@@ -44,13 +44,13 @@ spacing between two bursts' preambles swallows the second burst. The statistic i
 absolute level and one threshold serves every link.
 
 The fractional phase a symbol synchronizer acts on rides on `clock_est` in input samples beside the nominal period, or
-on `time_est` alone when `preset_period` is false. Naming a `trigger_label` adds the reserved `trigger_name` beside it,
-and `trigger_offset` carrying the same phase in the seconds that key declares, which turns the tag into a burst gate as
-well; it is off by default because a framer downstream resynchronizes on any trigger tag, and a phase measurement taken
-at the end of a training sequence is not where a frame starts. The period in the tag is `sample_rate / symbol_rate`, a
-constant of the configuration and not a measurement: a preamble short enough for a burst measures the rate far too
-coarsely to be worth presetting, and what the constant buys is that the loop's integrator restarts with each burst
-instead of carrying whatever it drifted to across the preceding gap.
+on `time_est` alone when `preset_period` is false. Naming a `trigger_label` adds the reserved `gr:trigger_name` beside
+it, and `gr:trigger_offset` carrying the same phase in the seconds that key declares, which turns the tag into a burst
+gate as well; it is off by default because a framer downstream resynchronizes on any trigger tag, and a phase
+measurement taken at the end of a training sequence is not where a frame starts. The period in the tag is
+`sample_rate / symbol_rate`, a constant of the configuration and not a measurement: a preamble short enough for a burst
+measures the rate far too coarsely to be worth presetting, and what the constant buys is that the loop's integrator
+restarts with each burst instead of carrying whatever it drifted to across the preceding gap.
 
 `preamble_symbols = 0` disables the block: the stream passes through unchanged and no tag is emitted, which is what lets
 one recipe serve a continuous link and a burst one. Enabled, the block holds back one analysis window plus one symbol of
@@ -64,12 +64,12 @@ on the real discriminator stream, and an alternating preamble on a complex strea
     PortOut<T>               out;
     PortOut<float, Optional> statistic;
 
-    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"the stream's rate; read to write trigger_offset in the seconds its declaration requires">>                                             sample_rate      = 48000.f;
+    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"the stream's rate; read to write gr:trigger_offset in the seconds its declaration requires">>                                          sample_rate      = 48000.f;
     Annotated<float, "symbol_rate", Unit<"Hz">, Doc<"symbol rate; samples per symbol is sample_rate/symbol_rate and the training tone sits at half of it">>                                 symbol_rate      = 9600.f;
     Annotated<gr::Size_t, "preamble_symbols", Unit<"symbols">, Doc<"alternating symbols the analysis window spans; 0 disables the block, which then passes the stream through">>            preamble_symbols = 0U;
     Annotated<double, "threshold", Doc<"the share of a window's energy in the tone's bin that declares a preamble; in (0, 1)">>                                                             threshold        = 0.35;
     Annotated<gr::Size_t, "hold_off_symbols", Unit<"symbols">, Doc<"symbols after a tag during which no second tag is emitted; must stay under the spacing between two bursts' preambles">> hold_off_symbols = 0U;
-    Annotated<std::string, "trigger_label", Doc<"a burst gate under the reserved trigger_name key beside the timing payload; empty writes no trigger keys at all">>                         trigger_label{};
+    Annotated<std::string, "trigger_label", Doc<"a burst gate under the reserved gr:trigger_name key beside the timing payload; empty writes no trigger keys at all">>                      trigger_label{};
     Annotated<bool, "preset_period", Doc<"whether the tag carries the nominal period beside the phase, that is clock_est rather than time_est">>                                            preset_period = true;
 
     GR_MAKE_REFLECTABLE(PreambleTiming, in, out, statistic, sample_rate, symbol_rate, preamble_symbols, threshold, hold_off_symbols, trigger_label, preset_period);
@@ -316,8 +316,8 @@ private:
         // asks for a burst gate by naming one.
         property_map tag{};
         if (!trigger_label.value.empty()) {
-            tag[property_map::key_type(gr::tag::TRIGGER_NAME.shortKey())]   = trigger_label.value;
-            tag[property_map::key_type(gr::tag::TRIGGER_OFFSET.shortKey())] = fraction / sample_rate.value;
+            tag[property_map::key_type(gr::tag::TRIGGER_NAME.key())]   = trigger_label.value;
+            tag[property_map::key_type(gr::tag::TRIGGER_OFFSET.key())] = fraction / sample_rate.value;
         }
         if (preset_period) {
             tag[property_map::key_type("clock_est")] = std::vector<float>{fraction, static_cast<float>(_samplesPerSymbol)};

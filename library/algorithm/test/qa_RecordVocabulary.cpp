@@ -47,7 +47,7 @@ const boost::ut::suite<"record vocabulary"> vocabularyTests = [] {
         for (const auto& [key, type] : declared) {
             expect(vocabularyType(key) == type) << std::format("{} is declared once", key);
             const std::string prefixed = std::format("gr:{}", key);
-            expect(vocabularyType(shortKey(prefixed)) == type) << std::format("gr:{} is the same key once the framework's prefix is stripped", key);
+            expect(vocabularyType(recordName(prefixed)) == type) << std::format("gr:{} is the same key once the framework's prefix is stripped", key);
         }
 
         // a producer's own private keys are unbounded and impose nothing
@@ -73,13 +73,13 @@ const boost::ut::suite<"record vocabulary"> vocabularyTests = [] {
         expect(!holdsVocabularyType(VocabularyType::String, gr::pmt::Value(true)));
     };
 
-    "the short key strips one leading gr: prefix and nothing else"_test = [] {
-        static_assert(shortKey("gr:sample_rate") == "sample_rate");
-        static_assert(shortKey("sample_rate") == "sample_rate");
-        expect(eq(shortKey("gr:gr:sample_rate"), std::string_view("gr:sample_rate"))) << "one prefix per call";
-        expect(eq(shortKey("x:gr:sample_rate"), std::string_view("x:gr:sample_rate"))) << "the prefix only at the start";
-        expect(eq(shortKey("gr:"), std::string_view())) << "the bare prefix leaves an empty key";
-        expect(eq(shortKey("GR:sample_rate"), std::string_view("GR:sample_rate"))) << "the prefix is case-sensitive";
+    "the record name strips one leading gr: prefix and nothing else"_test = [] {
+        static_assert(recordName("gr:sample_rate") == "sample_rate");
+        static_assert(recordName("sample_rate") == "sample_rate");
+        expect(eq(recordName("gr:gr:sample_rate"), std::string_view("gr:sample_rate"))) << "one prefix per call";
+        expect(eq(recordName("x:gr:sample_rate"), std::string_view("x:gr:sample_rate"))) << "the prefix only at the start";
+        expect(eq(recordName("gr:"), std::string_view())) << "the bare prefix leaves an empty key";
+        expect(eq(recordName("GR:sample_rate"), std::string_view("GR:sample_rate"))) << "the prefix is case-sensitive";
     };
 };
 

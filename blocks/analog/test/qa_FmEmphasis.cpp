@@ -100,7 +100,7 @@ std::vector<double> filterChunked(TBlock& block, const std::vector<double>& inpu
     return output;
 }
 
-/// @brief The offsets at which a key outside `gr::tag::kDefaultTags` reaches the sink through @p TBlock.
+/// @brief Runs three `private_key` tags through @p TBlock and returns the offsets the sink reads them at.
 template<typename TIn, typename TOut, typename TBlock>
 [[nodiscard]] std::vector<std::size_t> privateTagOffsets(gr::property_map settings) {
     using gr::blocks::testing::ProcessFunction;
@@ -134,8 +134,8 @@ template<typename TIn, typename TOut, typename TBlock>
     return offsets;
 }
 
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<FmDeemphasis<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<FmPreemphasis<float>>);
+static_assert(FmDeemphasis<float>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
+static_assert(FmPreemphasis<float>::keepsTagOffsets());
 
 } // namespace
 
@@ -315,8 +315,8 @@ const boost::ut::suite<"FmEmphasis"> fmEmphasisTests = [] {
 
     "a non-reserved tag key rides through both halves at its own offset"_test = [] {
         const std::vector<std::size_t> expected{7UZ, 300UZ, 1000UZ};
-        expect(that % (privateTagOffsets<float, float, FmDeemphasis<float>>({{"sample_rate", 48000.f}}) == expected)) << "de-emphasis keeps a key the auto-forward set does not name";
-        expect(that % (privateTagOffsets<float, float, FmPreemphasis<float>>({{"sample_rate", 48000.f}}) == expected)) << "pre-emphasis keeps a key the auto-forward set does not name";
+        expect(that % (privateTagOffsets<float, float, FmDeemphasis<float>>({{"sample_rate", 48000.f}}) == expected)) << "de-emphasis keeps a key outside the gr: domain";
+        expect(that % (privateTagOffsets<float, float, FmPreemphasis<float>>({{"sample_rate", 48000.f}}) == expected)) << "pre-emphasis keeps a key outside the gr: domain";
     };
 
     "tau = 0 is a bypass on both halves, bit for bit and at the same index"_test = [] {

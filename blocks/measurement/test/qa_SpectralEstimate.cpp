@@ -1058,9 +1058,8 @@ const boost::ut::suite<"SpectralEstimate"> spectralTests = [] {
     };
 
     "a live fft_size change reaches a block inside a running graph, through a tag"_test = [] {
-        // A tag whose key names a setting changes that setting in a running graph. The framework applies such a tag
-        // only to a setting the constructor left at its default, and fft_size stays at its default of 1024 here. The
-        // source places the tag at a known sample.
+        // fft_size is coupled to the tag key `fft_size`. A tag with that key changes the setting in a running graph.
+        // fft_size starts at its default of 1024. The source places the tag at a known sample.
         constexpr std::size_t kFirst  = 1024UZ; // the block's default
         constexpr std::size_t kSecond = 256UZ;
         constexpr std::size_t kAt     = 4096UZ; // a segment boundary of the first grid
@@ -1072,8 +1071,9 @@ const boost::ut::suite<"SpectralEstimate"> spectralTests = [] {
         auto&     source = graph.emplaceBlock<BurstSource<CF>>();
         auto&     block  = graph.emplaceBlock<WelchPsd<CF>>(std::move(settings));
         auto&     sink   = graph.emplaceBlock<RecordSink>();
-        source.samples   = tone(8192UZ, 32., kFirst);
-        source.burst     = 512UZ;
+        block.settings().setTagCouplings({{"fft_size", std::string("fft_size")}});
+        source.samples = tone(8192UZ, 32., kFirst);
+        source.burst   = 512UZ;
         source.tags.push_back(gr::Tag{kAt, std::move(moveTo)});
 
         expect(graph.connect<"out", "in">(source, block).has_value() && graph.connect<"out", "in">(block, sink).has_value()) << fatal;

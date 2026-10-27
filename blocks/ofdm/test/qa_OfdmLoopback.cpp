@@ -240,7 +240,7 @@ struct Result {
     const gr::digital::Constellation<float> points = gr::digital::Constellation<float>::qpsk();
     Result                                  result;
     result.frames   = sync.nTriggers();
-    result.triggers = static_cast<std::size_t>(std::ranges::count_if(synced.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey())); }));
+    result.triggers = static_cast<std::size_t>(std::ranges::count_if(synced.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.key())); }));
     result.symbols  = decided.size();
     double error    = 0.;
     double signal   = 0.;

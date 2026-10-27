@@ -154,9 +154,26 @@ bool spinUntil(std::chrono::milliseconds timeout, auto fnc) {
 }
 
 trigger::MatchResult isTrigger(std::string_view /* filterSpec */, const Tag& tag, const property_map& /* filter state */) {
-    const auto v = tag.get(gr::tag::TRIGGER_NAME.shortKey());
+    const auto v = tag.get(gr::tag::TRIGGER_NAME.key());
     return (v && gr::test::get_value_or_fail<std::string>(v->get()) == "TRIGGER") ? trigger::MatchResult::Matching : trigger::MatchResult::Ignore;
 };
+
+/// @brief Couples the sink's stream description to the `gr:` keys of the tags it receives.
+template<typename TSink>
+void coupleStreamDescription(TSink& sink) {
+    using namespace gr::tag;
+    sink.settings().setTagCouplings({{SAMPLE_RATE.name(), std::string(SAMPLE_RATE.key())}, {SIGNAL_NAME.name(), std::string(SIGNAL_NAME.key())}, //
+        {SIGNAL_QUANTITY.name(), std::string(SIGNAL_QUANTITY.key())}, {SIGNAL_UNIT.name(), std::string(SIGNAL_UNIT.key())},                      //
+        {SIGNAL_MIN.name(), std::string(SIGNAL_MIN.key())}, {SIGNAL_MAX.name(), std::string(SIGNAL_MAX.key())}});
+}
+
+/// @brief Couples the rate, name, quantity and unit a StreamToDataSet writes into each DataSet to the stream's tags.
+template<typename TFilter>
+void coupleFilterDescription(TFilter& filter) {
+    using namespace gr::tag;
+    filter.settings().setTagCouplings({{SAMPLE_RATE.name(), std::string(SAMPLE_RATE.key())}, {SIGNAL_NAME.name(), std::string(SIGNAL_NAME.key())}, //
+        {SIGNAL_QUANTITY.name(), std::string(SIGNAL_QUANTITY.key())}, {SIGNAL_UNIT.name(), std::string(SIGNAL_UNIT.key())}});
+}
 
 struct DataSetTestParams {
     std::size_t nSignalValues  = 0;
@@ -191,15 +208,15 @@ void checkDataSet(const DataSet<float>& dataset, std::vector<float>& receivedDat
     expect(eq(dataset.timingEvents(0UZ)[0UZ].first, static_cast<std::ptrdiff_t>(expectedParams.timingEventIndex))) << locationStr;
     const auto eventMap = dataset.timingEvents(0UZ)[0UZ].second;
     expect(eq(eventMap.size(), 2UZ)) << locationStr;
-    const bool containsTriggerName = eventMap.contains(TRIGGER_NAME.shortKey());
+    const bool containsTriggerName = eventMap.contains(TRIGGER_NAME.key());
     expect(containsTriggerName) << locationStr;
     if (containsTriggerName) {
-        expect(eq(gr::test::get_value_or_fail<std::string>(eventMap.at(TRIGGER_NAME.shortKey())), expectedParams.triggerName)) << locationStr;
+        expect(eq(gr::test::get_value_or_fail<std::string>(eventMap.at(TRIGGER_NAME.key())), expectedParams.triggerName)) << locationStr;
     }
-    const bool containsTriggerTime = eventMap.contains(TRIGGER_TIME.shortKey());
+    const bool containsTriggerTime = eventMap.contains(TRIGGER_TIME.key());
     expect(containsTriggerTime) << locationStr;
     if (containsTriggerTime) {
-        expect(lt(gr::test::get_value_or_fail<std::uint64_t>(eventMap.at(TRIGGER_TIME.shortKey())), static_cast<std::uint64_t>(expectedParams.triggerTimeMax))) << locationStr;
+        expect(lt(gr::test::get_value_or_fail<std::uint64_t>(eventMap.at(TRIGGER_TIME.key())), static_cast<std::uint64_t>(expectedParams.triggerTimeMax))) << locationStr;
     }
 
     receivedData.insert(receivedData.end(), dataset.signal_values.begin(), dataset.signal_values.end());
@@ -264,10 +281,11 @@ const boost::ut::suite DataSinkTests = [] {
 
         gr::Graph testGraph;
         auto&     src   = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}, //
-                  {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_MIN.shortKey(), -42.f}, {SIGNAL_MAX.shortKey(), 42.f}});
+                  {SIGNAL_NAME.name(), "TestName"}, {SIGNAL_UNIT.name(), "TestUnit"}, {SIGNAL_QUANTITY.name(), "TestQuantity"}, {SIGNAL_MIN.name(), -42.f}, {SIGNAL_MAX.name(), 42.f}});
         auto&     delay = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
-        auto&     sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.shortKey(), "TestName"}});
-        src._tags       = srcTags;
+        auto&     sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.name(), "TestName"}});
+        coupleStreamDescription(sink);
+        src._tags = srcTags;
 
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, sink).has_value());
@@ -347,11 +365,13 @@ const boost::ut::suite DataSinkTests = [] {
 
         std::vector<Tag> srcAndMetaTags;
         // Add metadata tag published by DataSink
-        srcAndMetaTags.emplace_back(0UZ, property_map{{SAMPLE_RATE.shortKey(), 1.f}, {SIGNAL_MAX.shortKey(), 42.f}, {SIGNAL_MIN.shortKey(), -42.f}, //
-                                             {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}});
+        srcAndMetaTags.emplace_back(0UZ, property_map{{SAMPLE_RATE.key(), src.sample_rate}, {SIGNAL_MAX.key(), 42.f}, {SIGNAL_MIN.key(), -42.f}, //
+                                             {SIGNAL_NAME.key(), "TestName"}, {SIGNAL_QUANTITY.key(), "TestQuantity"}, {SIGNAL_UNIT.key(), "TestUnit"}});
         // Add tag published by TagSource init with parameters
-        srcAndMetaTags.emplace_back(0UZ, property_map{{SIGNAL_MAX.shortKey(), 42.f}, {SIGNAL_MIN.shortKey(), -42.f}, {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, //
-                                             {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}});
+        srcAndMetaTags.emplace_back(0UZ, property_map{{SIGNAL_MAX.key(), 42.f}, {SIGNAL_MIN.key(), -42.f}, {SIGNAL_NAME.key(), "TestName"}, {SIGNAL_UNIT.key(), "TestUnit"}, //
+                                             {SIGNAL_QUANTITY.key(), "TestQuantity"}});
+        // Add the rate tag TagSource writes on its first sample
+        srcAndMetaTags.emplace_back(0UZ, property_map{{SAMPLE_RATE.key(), src.sample_rate}});
 
         // Add sources tags
         srcAndMetaTags.insert(srcAndMetaTags.end(), srcTags.begin(), srcTags.end());
@@ -366,10 +386,11 @@ const boost::ut::suite DataSinkTests = [] {
         gr::Graph  testGraph;
         const auto srcTags = makeTestTags(0, 1234, 2);
         auto&      src     = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}, //
-                     {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_MIN.shortKey(), -42.f}, {SIGNAL_MAX.shortKey(), 42.f}});
+                     {SIGNAL_NAME.name(), "TestName"}, {SIGNAL_UNIT.name(), "TestUnit"}, {SIGNAL_QUANTITY.name(), "TestQuantity"}, {SIGNAL_MIN.name(), -42.f}, {SIGNAL_MAX.name(), 42.f}});
         src._tags          = srcTags;
         auto& delay        = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
-        auto& sink         = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.shortKey(), "TestName"}});
+        auto& sink         = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.name(), "TestName"}});
+        coupleStreamDescription(sink);
 
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, sink).has_value());
@@ -419,6 +440,7 @@ const boost::ut::suite DataSinkTests = [] {
             return std::make_tuple(poller, received, receivedTags);
         });
 
+        const float srcSampleRate = src.sample_rate; // src is destroyed with the scheduler below
         {
             Scheduler sched;
             if (auto ret = sched.exchange(std::move(testGraph)); !ret) {
@@ -442,11 +464,12 @@ const boost::ut::suite DataSinkTests = [] {
         if (isBlocking) {
             std::vector<Tag> srcAndMetaTags;
             // Add metadata tag published by DataSink
-            srcAndMetaTags.emplace_back(0UZ, property_map{{SAMPLE_RATE.shortKey(), 1.f}, {SIGNAL_MAX.shortKey(), 42.f}, {SIGNAL_MIN.shortKey(), -42.f}, //
-                                                 {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}});
+            srcAndMetaTags.emplace_back(0UZ, property_map{{SAMPLE_RATE.key(), srcSampleRate}, {SIGNAL_MAX.key(), 42.f}, {SIGNAL_MIN.key(), -42.f}, //
+                                                 {SIGNAL_NAME.key(), "TestName"}, {SIGNAL_QUANTITY.key(), "TestQuantity"}, {SIGNAL_UNIT.key(), "TestUnit"}});
             // Add tag published by TagSource init with parameters
-            srcAndMetaTags.emplace_back(0UZ, property_map{{SIGNAL_MAX.shortKey(), 42.f}, {SIGNAL_MIN.shortKey(), -42.f}, {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, //
-                                                 {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}});
+            srcAndMetaTags.emplace_back(0UZ, property_map{{SIGNAL_MAX.key(), 42.f}, {SIGNAL_MIN.key(), -42.f}, {SIGNAL_NAME.key(), "TestName"}, {SIGNAL_UNIT.key(), "TestUnit"}, //
+                                                 {SIGNAL_QUANTITY.key(), "TestQuantity"}});
+            srcAndMetaTags.emplace_back(0UZ, property_map{{SAMPLE_RATE.key(), srcSampleRate}});
             // Add sources tags
             srcAndMetaTags.insert(srcAndMetaTags.end(), srcTags.begin(), srcTags.end());
             expect(gr::blocks::testing::equal_tag_lists(receivedTags, srcAndMetaTags));
@@ -476,7 +499,7 @@ const boost::ut::suite DataSinkTests = [] {
         auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
         // only needs to hold the stream until the poller is registered, which spinUntil does at once
         auto& delay = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", 100u}});
-        auto& sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "stalled_sink"}, {SIGNAL_NAME.shortKey(), "StalledName"}});
+        auto& sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "stalled_sink"}, {SIGNAL_NAME.name(), "StalledName"}});
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, sink).has_value());
 
@@ -508,7 +531,7 @@ const boost::ut::suite DataSinkTests = [] {
         auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false}});
         // only needs to hold the stream until the poller is registered, which spinUntil does at once
         auto& delay = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", 100u}});
-        auto& sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "patient_sink"}, {SIGNAL_NAME.shortKey(), "PatientName"}});
+        auto& sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "patient_sink"}, {SIGNAL_NAME.name(), "PatientName"}});
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, sink).has_value());
 
@@ -547,7 +570,7 @@ const boost::ut::suite DataSinkTests = [] {
         constexpr auto kBound = 2000ms;
         gr::Graph      testGraph;
         auto&          src  = testGraph.emplaceBlock<gr::blocks::basic::NullSource<float>>();
-        auto&          sink = testGraph.emplaceBlock<DataSink<float>>({{"name", "full_sink"}, {SIGNAL_NAME.shortKey(), "FullName"}});
+        auto&          sink = testGraph.emplaceBlock<DataSink<float>>({{"name", "full_sink"}, {SIGNAL_NAME.name(), "FullName"}});
         expect(testGraph.connect<"out", "in">(src, sink).has_value());
 
         // the poller is full before the graph runs, and nothing drains it. Every call of the sink waits for space.
@@ -663,19 +686,20 @@ const boost::ut::suite DataSinkTests = [] {
         std::uint64_t                  timeCounter = 0;
         for (std::size_t i : triggerIndices) {
             // tags should not be identical, duplicates are ignored by Block::inputTags()
-            srcTags.push_back(Tag{i, {{TRIGGER_NAME.shortKey(), "TRIGGER"}, {TRIGGER_TIME.shortKey(), timeCounter++}}});
+            srcTags.push_back(Tag{i, {{TRIGGER_NAME.key(), "TRIGGER"}, {TRIGGER_TIME.key(), timeCounter++}}});
         }
-        srcTags.push_back(Tag{21000, {{TRIGGER_NAME.shortKey(), "NO_TRIGGER1"}, {TRIGGER_TIME.shortKey(), timeCounter + 1}}});
-        srcTags.push_back(Tag{21000, {{TRIGGER_NAME.shortKey(), "NO_TRIGGER2"}, {TRIGGER_TIME.shortKey(), timeCounter + 2}}});
-        srcTags.push_back(Tag{22000, {{TRIGGER_NAME.shortKey(), "NO_TRIGGER3"}, {TRIGGER_TIME.shortKey(), timeCounter + 3}}});
+        srcTags.push_back(Tag{21000, {{TRIGGER_NAME.key(), "NO_TRIGGER1"}, {TRIGGER_TIME.key(), timeCounter + 1}}});
+        srcTags.push_back(Tag{21000, {{TRIGGER_NAME.key(), "NO_TRIGGER2"}, {TRIGGER_TIME.key(), timeCounter + 2}}});
+        srcTags.push_back(Tag{22000, {{TRIGGER_NAME.key(), "NO_TRIGGER3"}, {TRIGGER_TIME.key(), timeCounter + 3}}});
 
         gr::Graph testGraph;
         auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", nSamples}, {"mark_tag", false}, {"verbose_console", true}, //
-                {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, {SIGNAL_MIN.shortKey(), -2.f}, {SIGNAL_MAX.shortKey(), 2.f}});
+                {SIGNAL_NAME.name(), "TestName"}, {SIGNAL_UNIT.name(), "TestUnit"}, {SIGNAL_QUANTITY.name(), "TestQuantity"}, {SIGNAL_MIN.name(), -2.f}, {SIGNAL_MAX.name(), 2.f}});
 
         src._tags   = srcTags;
         auto& delay = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
         auto& sink  = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {"signal_name", "TestName"}});
+        coupleStreamDescription(sink);
 
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, sink).has_value());
@@ -756,19 +780,20 @@ const boost::ut::suite DataSinkTests = [] {
         std::vector<Tag>               srcTags;
         std::uint64_t                  timeCounter = 0;
         for (std::size_t i : triggerIndices) {
-            srcTags.push_back(Tag{i, {{TRIGGER_NAME.shortKey(), "TRIGGER"}, {TRIGGER_TIME.shortKey(), timeCounter++}}});
+            srcTags.push_back(Tag{i, {{TRIGGER_NAME.key(), "TRIGGER"}, {TRIGGER_TIME.key(), timeCounter++}}});
         }
-        srcTags.push_back(Tag{21000, {{TRIGGER_NAME.shortKey(), "NO_TRIGGER1"}, {TRIGGER_TIME.shortKey(), timeCounter + 1}}});
-        srcTags.push_back(Tag{21000, {{TRIGGER_NAME.shortKey(), "NO_TRIGGER2"}, {TRIGGER_TIME.shortKey(), timeCounter + 2}}});
-        srcTags.push_back(Tag{22000, {{TRIGGER_NAME.shortKey(), "NO_TRIGGER3"}, {TRIGGER_TIME.shortKey(), timeCounter + 3}}});
+        srcTags.push_back(Tag{21000, {{TRIGGER_NAME.key(), "NO_TRIGGER1"}, {TRIGGER_TIME.key(), timeCounter + 1}}});
+        srcTags.push_back(Tag{21000, {{TRIGGER_NAME.key(), "NO_TRIGGER2"}, {TRIGGER_TIME.key(), timeCounter + 2}}});
+        srcTags.push_back(Tag{22000, {{TRIGGER_NAME.key(), "NO_TRIGGER3"}, {TRIGGER_TIME.key(), timeCounter + 3}}});
 
         gr::Graph testGraph;
-        auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false},                                         //
-                {SAMPLE_RATE.shortKey(), kSampleRate}, {SIGNAL_NAME.shortKey(), "TestName"}, {SIGNAL_UNIT.shortKey(), "TestUnit"}, {SIGNAL_QUANTITY.shortKey(), "TestQuantity"}, //
-                {SIGNAL_MIN.shortKey(), 0.f}, {SIGNAL_MAX.shortKey(), static_cast<float>(kSamples - 1)}});
+        auto&     src = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float>>({{"n_samples_max", kSamples}, {"mark_tag", false},                         //
+                {SAMPLE_RATE.name(), kSampleRate}, {SIGNAL_NAME.name(), "TestName"}, {SIGNAL_UNIT.name(), "TestUnit"}, {SIGNAL_QUANTITY.name(), "TestQuantity"}, //
+                {SIGNAL_MIN.name(), 0.f}, {SIGNAL_MAX.name(), static_cast<float>(kSamples - 1)}});
         src._tags     = srcTags;
         auto& delay   = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
-        auto& sink    = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.shortKey(), "TestName"}});
+        auto& sink    = testGraph.emplaceBlock<DataSink<float>>({{"name", "test_sink"}, {SIGNAL_NAME.name(), "TestName"}});
+        coupleStreamDescription(sink);
 
         expect(testGraph.connect<"out", "in">(src, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, sink).has_value());
@@ -936,15 +961,16 @@ const boost::ut::suite DataSinkTests = [] {
         auto&     source          = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "test signal"}, {"signal_unit", "test unit"}, {"mark_tag", false}});
         auto&     delay           = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
         auto&     streamToDataSet = testGraph.emplaceBlock<StreamToDataSet<float>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
-        auto&     sink            = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "test_sink"}, {"signal_name", "test signal"}});
+        coupleFilterDescription(streamToDataSet);
+        auto& sink = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "test_sink"}, {"signal_name", "test signal"}});
         expect(testGraph.connect<"out", "in">(source, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, streamToDataSet).has_value());
         expect(testGraph.connect<"out", "in">(streamToDataSet, sink).has_value());
 
         auto genTrigger = [](std::size_t index, std::string triggerName, std::string triggerCtx = {}) {
-            return Tag{index, {{gr::tag::TRIGGER_NAME.shortKey(), triggerName}, {gr::tag::TRIGGER_TIME.shortKey(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f}, //
-                                  {gr::tag::CONTEXT.shortKey(), triggerCtx},                                                                                                     //
-                                  {gr::tag::TRIGGER_META_INFO.shortKey(), gr::property_map{}}}};
+            return Tag{index, {{gr::tag::TRIGGER_NAME.key(), triggerName}, {gr::tag::TRIGGER_TIME.key(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.key(), 0.f}, //
+                                  {gr::tag::CONTEXT.key(), triggerCtx},                                                                                           //
+                                  {gr::tag::TRIGGER_META_INFO.key(), gr::property_map{}}}};
         };
 
         source._tags.push_back(genTrigger(400, "CMD_DIAG_TRIGGER1", ""));
@@ -998,13 +1024,14 @@ const boost::ut::suite DataSinkTests = [] {
         auto&     source          = testGraph.emplaceBlock<gr::blocks::testing::TagSource<std::uint8_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "byte signal"}, {"signal_unit", "byte"}, {"mark_tag", false}});
         auto&     delay           = testGraph.emplaceBlock<gr::blocks::testing::Delay<std::uint8_t>>({{"delay_ms", kProcessingDelayMs}});
         auto&     streamToDataSet = testGraph.emplaceBlock<StreamToDataSet<std::uint8_t>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
-        auto&     sink            = testGraph.emplaceBlock<DataSetSink<std::uint8_t>>({{"name", "byte_sink"}, {"signal_name", "byte signal"}});
+        coupleFilterDescription(streamToDataSet);
+        auto& sink = testGraph.emplaceBlock<DataSetSink<std::uint8_t>>({{"name", "byte_sink"}, {"signal_name", "byte signal"}});
         expect(testGraph.connect<"out", "in">(source, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, streamToDataSet).has_value());
         expect(testGraph.connect<"out", "in">(streamToDataSet, sink).has_value());
 
-        source._tags.push_back(Tag{400UZ, {{gr::tag::TRIGGER_NAME.shortKey(), "CMD_DIAG_TRIGGER1"}, {gr::tag::TRIGGER_TIME.shortKey(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f}, {gr::tag::CONTEXT.shortKey(), std::string()}, {gr::tag::TRIGGER_META_INFO.shortKey(), gr::property_map{}}}});
-        source._tags.push_back(Tag{800UZ, {{gr::tag::TRIGGER_NAME.shortKey(), "CMD_DIAG_TRIGGER1"}, {gr::tag::TRIGGER_TIME.shortKey(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f}, {gr::tag::CONTEXT.shortKey(), std::string()}, {gr::tag::TRIGGER_META_INFO.shortKey(), gr::property_map{}}}});
+        source._tags.push_back(Tag{400UZ, {{gr::tag::TRIGGER_NAME.key(), "CMD_DIAG_TRIGGER1"}, {gr::tag::TRIGGER_TIME.key(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.key(), 0.f}, {gr::tag::CONTEXT.key(), std::string()}, {gr::tag::TRIGGER_META_INFO.key(), gr::property_map{}}}});
+        source._tags.push_back(Tag{800UZ, {{gr::tag::TRIGGER_NAME.key(), "CMD_DIAG_TRIGGER1"}, {gr::tag::TRIGGER_TIME.key(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.key(), 0.f}, {gr::tag::CONTEXT.key(), std::string()}, {gr::tag::TRIGGER_META_INFO.key(), gr::property_map{}}}});
 
         auto polling = std::async([] {
             std::shared_ptr<DataSetPoller<std::uint8_t>> poller;
@@ -1051,15 +1078,16 @@ const boost::ut::suite DataSinkTests = [] {
         auto&     source          = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "test signal"}, {"signal_unit", "test unit"}, {"mark_tag", false}});
         auto&     delay           = testGraph.emplaceBlock<gr::blocks::testing::Delay<float>>({{"delay_ms", kProcessingDelayMs}});
         auto&     streamToDataSet = testGraph.emplaceBlock<StreamToDataSet<float>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
-        auto&     sink            = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "test_sink"}, {"signal_name", "test signal"}});
+        coupleFilterDescription(streamToDataSet);
+        auto& sink = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "test_sink"}, {"signal_name", "test signal"}});
         expect(testGraph.connect<"out", "in">(source, delay).has_value());
         expect(testGraph.connect<"out", "in">(delay, streamToDataSet).has_value());
         expect(testGraph.connect<"out", "in">(streamToDataSet, sink).has_value());
 
         auto genTrigger = [](std::size_t index, std::string triggerName, std::string triggerCtx = {}) {
-            return Tag{index, {{gr::tag::TRIGGER_NAME.shortKey(), triggerName}, {gr::tag::TRIGGER_TIME.shortKey(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f}, //
-                                  {gr::tag::CONTEXT.shortKey(), triggerCtx},                                                                                                     //
-                                  {gr::tag::TRIGGER_META_INFO.shortKey(), gr::property_map{}}}};
+            return Tag{index, {{gr::tag::TRIGGER_NAME.key(), triggerName}, {gr::tag::TRIGGER_TIME.key(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.key(), 0.f}, //
+                                  {gr::tag::CONTEXT.key(), triggerCtx},                                                                                           //
+                                  {gr::tag::TRIGGER_META_INFO.key(), gr::property_map{}}}};
         };
 
         source._tags.push_back(genTrigger(400, "CMD_DIAG_TRIGGER1", ""));
@@ -1101,17 +1129,19 @@ const boost::ut::suite DataSinkTests = [] {
         gr::Graph testGraph;
         auto&     floatSource = testGraph.emplaceBlock<gr::blocks::testing::TagSource<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "float signal"}, {"mark_tag", false}});
         auto&     floatFilter = testGraph.emplaceBlock<StreamToDataSet<float>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
-        auto&     floatSink   = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "float_data_set_sink"}, {"signal_name", "float signal"}});
-        auto&     byteSource  = testGraph.emplaceBlock<gr::blocks::testing::TagSource<std::uint8_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "byte signal"}, {"mark_tag", false}});
-        auto&     byteFilter  = testGraph.emplaceBlock<StreamToDataSet<std::uint8_t>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
-        auto&     byteSink    = testGraph.emplaceBlock<DataSetSink<std::uint8_t>>({{"name", "byte_data_set_sink"}, {"signal_name", "byte signal"}});
+        coupleFilterDescription(floatFilter);
+        auto& floatSink  = testGraph.emplaceBlock<DataSetSink<float>>({{"name", "float_data_set_sink"}, {"signal_name", "float signal"}});
+        auto& byteSource = testGraph.emplaceBlock<gr::blocks::testing::TagSource<std::uint8_t, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(1024)}, {"signal_name", "byte signal"}, {"mark_tag", false}});
+        auto& byteFilter = testGraph.emplaceBlock<StreamToDataSet<std::uint8_t>>({{"filter", "CMD_DIAG_TRIGGER1"}, {"n_pre", static_cast<gr::Size_t>(100)}, {"n_post", static_cast<gr::Size_t>(200)}});
+        coupleFilterDescription(byteFilter);
+        auto& byteSink = testGraph.emplaceBlock<DataSetSink<std::uint8_t>>({{"name", "byte_data_set_sink"}, {"signal_name", "byte signal"}});
         expect(testGraph.connect<"out", "in">(floatSource, floatFilter).has_value());
         expect(testGraph.connect<"out", "in">(floatFilter, floatSink).has_value());
         expect(testGraph.connect<"out", "in">(byteSource, byteFilter).has_value());
         expect(testGraph.connect<"out", "in">(byteFilter, byteSink).has_value());
 
-        const Tag trigger{400UZ, {{gr::tag::TRIGGER_NAME.shortKey(), "CMD_DIAG_TRIGGER1"s}, {gr::tag::TRIGGER_TIME.shortKey(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f}, //
-                                     {gr::tag::CONTEXT.shortKey(), ""s}, {gr::tag::TRIGGER_META_INFO.shortKey(), gr::property_map{}}}};
+        const Tag trigger{400UZ, {{gr::tag::TRIGGER_NAME.key(), "CMD_DIAG_TRIGGER1"s}, {gr::tag::TRIGGER_TIME.key(), std::uint64_t(0)}, {gr::tag::TRIGGER_OFFSET.key(), 0.f}, //
+                                     {gr::tag::CONTEXT.key(), ""s}, {gr::tag::TRIGGER_META_INFO.key(), gr::property_map{}}}};
         floatSource._tags.push_back(trigger);
         byteSource._tags.push_back(trigger);
 

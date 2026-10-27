@@ -33,7 +33,7 @@ using CF       = std::complex<float>;
 namespace shim = gr::blocks::testing::span;
 
 /// @brief Emits a fixed sample sequence in bursts of a stated size, then ends the stream. It can publish one
-/// `sample_rate` tag and one `n_dropped_samples` tag at stated stream indices.
+/// `gr:sample_rate` tag and one `gr:n_dropped_samples` tag at stated stream indices.
 template<typename T>
 struct SampleSource : gr::Block<SampleSource<T>> {
     gr::PortOut<T> out;
@@ -41,9 +41,9 @@ struct SampleSource : gr::Block<SampleSource<T>> {
     std::vector<T> samples{};
     std::size_t    burst   = 4096UZ;
     std::size_t    at      = 0UZ;
-    float          rateTag = 0.f; ///< nonzero publishes one sample_rate tag at rateAt
+    float          rateTag = 0.f; ///< nonzero publishes one gr:sample_rate tag at rateAt
     std::size_t    rateAt  = 0UZ;
-    gr::Size_t     dropTag = 0U; ///< positive publishes one n_dropped_samples tag at dropAt
+    gr::Size_t     dropTag = 0U; ///< positive publishes one gr:n_dropped_samples tag at dropAt
     std::size_t    dropAt  = 0UZ;
 
     GR_MAKE_REFLECTABLE(SampleSource, out);
@@ -57,10 +57,10 @@ struct SampleSource : gr::Block<SampleSource<T>> {
         const std::size_t take = std::min({burst, samples.size() - at, outSpan.size()});
         std::copy_n(samples.begin() + static_cast<std::ptrdiff_t>(at), take, outSpan.begin());
         if (rateTag != 0.f && rateAt >= at && rateAt < at + take) {
-            outSpan.publishTag(gr::property_map{{std::pmr::string(gr::tag::SAMPLE_RATE.shortKey()), gr::pmt::Value(rateTag)}}, rateAt - at);
+            outSpan.publishTag(gr::property_map{{std::pmr::string(gr::tag::SAMPLE_RATE.key()), gr::pmt::Value(rateTag)}}, rateAt - at);
         }
         if (dropTag > 0U && dropAt >= at && dropAt < at + take) {
-            outSpan.publishTag(gr::property_map{{std::pmr::string(gr::tag::N_DROPPED_SAMPLES.shortKey()), gr::pmt::Value(dropTag)}}, dropAt - at);
+            outSpan.publishTag(gr::property_map{{std::pmr::string(gr::tag::N_DROPPED_SAMPLES.key()), gr::pmt::Value(dropTag)}}, dropAt - at);
         }
         at += take;
         outSpan.publish(take);
@@ -131,18 +131,20 @@ struct Tagging {
 };
 
 /// @brief Runs `samples` through a source, `Kurtosis<T>` and a record sink. Returns the records and the counters.
+/// The block's `sample_rate` follows `gr:sample_rate`.
 template<typename T>
 [[nodiscard]] Run runWith(gr::property_map settings, const std::vector<T>& samples, std::size_t burst, Tagging tagging = {}) {
     gr::Graph graph;
     auto&     source = graph.emplaceBlock<SampleSource<T>>();
     auto&     block  = graph.emplaceBlock<Kurtosis<T>>(std::move(settings));
     auto&     sink   = graph.emplaceBlock<RecordSink>();
-    source.samples   = samples;
-    source.burst     = burst;
-    source.rateTag   = tagging.rate;
-    source.rateAt    = tagging.rateAt;
-    source.dropTag   = tagging.drop;
-    source.dropAt    = tagging.dropAt;
+    block.settings().setTagCouplings({{gr::tag::SAMPLE_RATE.name(), std::string(gr::tag::SAMPLE_RATE.key())}});
+    source.samples = samples;
+    source.burst   = burst;
+    source.rateTag = tagging.rate;
+    source.rateAt  = tagging.rateAt;
+    source.dropTag = tagging.drop;
+    source.dropAt  = tagging.dropAt;
 
     if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"measurements", "in">(block, sink).has_value()) {
         return {};
@@ -241,7 +243,7 @@ template<typename T>
     return {std::move(out), inSpan.consumed};
 }
 
-[[nodiscard]] gr::Tag droppedTag(std::size_t index, gr::Size_t missing) { return gr::Tag{index, gr::property_map{{std::pmr::string(gr::tag::N_DROPPED_SAMPLES.shortKey()), gr::pmt::Value(missing)}}}; }
+[[nodiscard]] gr::Tag droppedTag(std::size_t index, gr::Size_t missing) { return gr::Tag{index, gr::property_map{{std::pmr::string(gr::tag::N_DROPPED_SAMPLES.key()), gr::pmt::Value(missing)}}}; }
 
 [[nodiscard]] double mean(const std::vector<double>& values) {
     double total = 0.;
@@ -540,7 +542,7 @@ const boost::ut::suite<"Kurtosis"> kurtosisTests = [] {
     };
 
     // The settings and the record keys: emit_records off, the label, and the rate the record states, set by the
-    // setting and by the reserved sample_rate tag.
+    // setting and by the reserved gr:sample_rate tag.
     "settings and record metadata: emit_records, signal_name, sample_rate by setting and by tag"_test = [] {
         GaussianNoise   noise(0x6a09e667f3bcc908ULL);
         std::vector<CF> samples(2UZ * 4096UZ);
@@ -570,7 +572,7 @@ const boost::ut::suite<"Kurtosis"> kurtosisTests = [] {
             }
         }
         {
-            // The framework turns the reserved tag at the first sample into a settings change.
+            // The coupled sample_rate takes the gr:sample_rate tag at the first sample.
             const Run tagged = runWith<CF>({{"window", gr::Size_t{4096U}}}, samples, 1024UZ, Tagging{.rate = 32000.f, .rateAt = 0UZ, .drop = 0U, .dropAt = 0UZ});
             expect(eq(tagged.records.size(), 2UZ));
             for (const auto& record : tagged.records) {
@@ -615,7 +617,7 @@ const boost::ut::suite<"Kurtosis"> kurtosisTests = [] {
     };
 
     "a sample_rate outside its limits on a tag is refused, and the run goes on at the accepted rate"_test = [] {
-        // The valid arm shows that a sample_rate tag reaches the block.
+        // The valid arm shows that a gr:sample_rate tag reaches the block.
         GaussianNoise   noise(0xa4093822299f31d0ULL);
         std::vector<CF> samples(4UZ * 4096UZ);
         std::ranges::generate(samples, [&] { return noise.complexSample(); });

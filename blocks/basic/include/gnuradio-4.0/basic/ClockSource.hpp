@@ -30,6 +30,7 @@ Operating modes (controlled by `use_internal_thread`):
   false: block produces samples based on elapsed time when scheduler calls processBulk
 
 The 'tag_times[ns]:tag_value(string)' vectors control the emission of tags at specified times after block start.
+The first sample after a start or a change of `sample_rate` carries a `gr:sample_rate` tag.
 Terminates when n_samples_max is reached (0 = unlimited).)"">;
 
     using TimePoint = std::chrono::time_point<ClockSourceType>;
@@ -55,6 +56,7 @@ Terminates when n_samples_max is reached (0 = unlimited).)"">;
     bool        _beginSequenceTimePointInitialized{false};
     std::size_t _nextTimeTag{0};
     std::size_t _nextTagIndex{0};
+    bool        _rateOwed{true}; // the next published sample carries a `gr:sample_rate` tag
 
     // ~Block() invokes stop() for a block that is still active, and by then the timer state the mixin's stop()
     // waits on has been released: the active states have to be left here, while the derived object still stands.
@@ -73,6 +75,7 @@ Terminates when n_samples_max is reached (0 = unlimited).)"">;
         _nextTimeTag                       = 0;
         _nextTagIndex                      = 0;
         _beginSequenceTimePointInitialized = false;
+        _rateOwed                          = true;
 
         this->blockingSyncStart();
 
@@ -89,6 +92,9 @@ Terminates when n_samples_max is reached (0 = unlimited).)"">;
     }
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
+        if (newSettings.contains("sample_rate")) {
+            _rateOwed = true;
+        }
         if (newSettings.contains("tag_times")) {
             if (std::ranges::adjacent_find(tag_times.value, std::greater_equal()) != tag_times.value.end()) {
                 throw gr::exception("tag_times must be strictly ascending");
@@ -112,6 +118,11 @@ Terminates when n_samples_max is reached (0 = unlimited).)"">;
         if (samplesToProduce == 0) {
             outSpan.publish(0UZ);
             return work::Status::INSUFFICIENT_INPUT_ITEMS;
+        }
+
+        if (_rateOwed) {
+            outSpan.publishTag(property_map{{std::pmr::string(tag::SAMPLE_RATE.key()), sample_rate.value}}, 0UZ);
+            _rateOwed = false;
         }
 
         const auto now = ClockSourceType::now();
@@ -167,11 +178,11 @@ Terminates when n_samples_max is reached (0 = unlimited).)"">;
                 uint64_t     triggerTime = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count());
                 triggerTime += static_cast<std::uint64_t>(static_cast<float>(samplesToNextTimeTag) * 1e9f / sample_rate);
 
-                triggerTag[tag::TRIGGER_NAME.shortKey()]      = triggerName;
-                triggerTag[tag::TRIGGER_TIME.shortKey()]      = triggerTime;
-                triggerTag[tag::TRIGGER_OFFSET.shortKey()]    = 0.f;
-                triggerTag[tag::CONTEXT.shortKey()]           = triggerContext;
-                triggerTag[tag::TRIGGER_META_INFO.shortKey()] = property_map{};
+                triggerTag[tag::TRIGGER_NAME.key()]      = triggerName;
+                triggerTag[tag::TRIGGER_TIME.key()]      = triggerTime;
+                triggerTag[tag::TRIGGER_OFFSET.key()]    = 0.f;
+                triggerTag[tag::CONTEXT.key()]           = triggerContext;
+                triggerTag[tag::TRIGGER_META_INFO.key()] = property_map{};
 
                 if (verbose_console) {
                     std::println("{}::processBulk(...)\t publish tag-time at {:6}, time:{}ns", this->name, samplesToNextTimeTag, tag_times.value[_nextTimeTag]);

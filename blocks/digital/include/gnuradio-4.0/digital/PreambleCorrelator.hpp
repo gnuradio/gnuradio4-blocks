@@ -33,7 +33,7 @@ struct PreambleCorrelator : Block<PreambleCorrelator<F>> {
 
 The symbol-domain detector, for a burst whose sync word is a known complex sequence rather than a known bit pattern.
 It is the natural upstream of a Costas loop and a symbol synchronizer: the tag carries `phase_est`, `amp_est` and a
-`trigger_offset` holding the sub-sample timing.
+`gr:trigger_offset` holding the sub-sample timing.
 
 `out` lags `in` by `N` samples, `N` being the sequence length, and every tag sits at the sync word's first symbol on
 the output; a consumer wanting the payload start adds `N`, which is what `PacketFramer`'s `trigger_to_header` is for.
@@ -44,9 +44,7 @@ input tags, merged and in offset order.
 a stated precondition; `relative` tests against a multiple of the running mean and is scale-free. A detection is
 followed by `round(samples_per_symbol)` samples of dead time.
 
-The label the emitted tags carry is the `trigger_label` setting, deliberately not named for the `trigger_name` key it
-is written under: a setting sharing a reserved key's name is driven by every passing tag of that key, so an upstream
-detector's tags would silently retune this block's own label.
+The label the emitted tags carry under `gr:trigger_name` is the `trigger_label` setting.
 )"">;
 
     PortIn<std::complex<F>>  in;
@@ -57,7 +55,7 @@ detector's tags would silently retune this block's own label.
     Annotated<F, "threshold", Doc<"'absolute': a fraction of the noiseless peak. 'relative': a multiple of the running mean, > 1">> threshold          = static_cast<F>(0.9);
     Annotated<std::string, "threshold_mode", Doc<"'absolute' (needs an AGC) or 'relative' (scale-free)">>                           threshold_mode     = std::string("absolute");
     Annotated<F, "samples_per_symbol", Unit<"samples">, Doc<"dead time after a detection, in samples">>                             samples_per_symbol = F{1};
-    Annotated<std::string, "trigger_label", Doc<"the label written under the trigger_name key of the emitted tags">>                trigger_label      = std::string("preamble");
+    Annotated<std::string, "trigger_label", Doc<"the label written under the gr:trigger_name key of the emitted tags">>             trigger_label      = std::string("preamble");
 
     GR_MAKE_REFLECTABLE(PreambleCorrelator, in, out, corr, sequence, threshold, threshold_mode, samples_per_symbol, trigger_label);
 
@@ -241,12 +239,12 @@ detector's tags would silently retune this block's own label.
         }
 
         // the sync word starts at input `at + 1 - N`, which the `N`-sample lag puts at output `at + 1`
-        _pendingTags.emplace_back(at + 1ULL, property_map{{gr::tag::TRIGGER_NAME.shortKey(), trigger_label.value},                                                                              //
-                                                 {gr::tag::TRIGGER_OFFSET.shortKey(), static_cast<float>(offset)},                                                                              //
-                                                 {gr::tag::TRIGGER_META_INFO.shortKey(), property_map{{"phase_est", static_cast<float>(std::atan2(peak.imag(), peak.real()))},                  //
-                                                                                             {"corr_mag", static_cast<float>(b)},                                                               //
-                                                                                             {"amp_est", static_cast<float>(std::sqrt(static_cast<double>(b)) / static_cast<double>(_energy))}, //
-                                                                                             {"sps", static_cast<float>(samples_per_symbol.value)}}}});
+        _pendingTags.emplace_back(at + 1ULL, property_map{{gr::tag::TRIGGER_NAME.key(), trigger_label.value},                                                                              //
+                                                 {gr::tag::TRIGGER_OFFSET.key(), static_cast<float>(offset)},                                                                              //
+                                                 {gr::tag::TRIGGER_META_INFO.key(), property_map{{"phase_est", static_cast<float>(std::atan2(peak.imag(), peak.real()))},                  //
+                                                                                        {"corr_mag", static_cast<float>(b)},                                                               //
+                                                                                        {"amp_est", static_cast<float>(std::sqrt(static_cast<double>(b)) / static_cast<double>(_energy))}, //
+                                                                                        {"sps", static_cast<float>(samples_per_symbol.value)}}}});
         _resumeAt = at + 1ULL + static_cast<std::uint64_t>(_deadTime);
     }
 

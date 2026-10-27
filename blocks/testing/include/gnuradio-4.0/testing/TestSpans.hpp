@@ -163,14 +163,22 @@ struct OutputSpan : std::span<T> {
 
     std::vector<gr::Tag>* sink = nullptr;
     TagWriterSpan         tags{};
-    std::size_t           streamIndex = 0UZ;
-    std::size_t           count       = 0UZ;
-    bool                  isConnected = true;
-    bool                  isSync      = true;
+    std::size_t           tagsPublished = 0UZ; ///< always 0: publishTag() passes each tag to `sink` at once
+    std::size_t           streamIndex   = 0UZ;
+    std::size_t           count         = 0UZ;
+    bool                  requested     = false;
+    bool                  isConnected   = true;
+    bool                  isSync        = true;
 
     OutputSpan(std::span<T> items, std::size_t at = 0UZ, std::vector<gr::Tag>* published = nullptr, bool connected = true, bool sync = true) : std::span<T>(items), sink(published), streamIndex(at), isConnected(connected), isSync(sync) {}
 
-    constexpr void publish(std::size_t nItems) noexcept { count = nItems; }
+    constexpr void publish(std::size_t nItems) noexcept {
+        count     = nItems;
+        requested = true;
+    }
+
+    [[nodiscard]] constexpr bool        isPublishRequested() const noexcept { return requested; }
+    [[nodiscard]] constexpr std::size_t nRequestedSamplesToPublish() const noexcept { return count; }
 
     void publishTag(const gr::property_map& tagData, std::size_t tagOffset = 0UZ) {
         if (!isConnected || sink == nullptr) {
