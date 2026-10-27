@@ -556,13 +556,30 @@ bool bidiagonalQRStep(std::vector<BaseValueType>& diag, std::vector<BaseValueTyp
         return true;
     }
 
+    // The shift and the first bulge are formed from the active block's entries times `down`, the power of two that
+    // brings the block's largest magnitude into [1, 2), or as near as the exponent range allows when that magnitude is
+    // subnormal. Their squares stay finite at any input scale. The first rotation depends only on the ratio of x and z.
+    BaseValueType largest{0};
+    for (std::size_t i = start; i < end; ++i) {
+        largest = std::max(largest, std::abs(diag[i]));
+        if (i + 1 < end) {
+            largest = std::max(largest, std::abs(superdiag[i]));
+        }
+    }
+    if (largest == BaseValueType{0}) {
+        return true;
+    }
+    const int           exponent = std::clamp(std::ilogb(largest), std::numeric_limits<BaseValueType>::min_exponent - 1, std::numeric_limits<BaseValueType>::max_exponent - 1);
+    const BaseValueType down     = std::ldexp(BaseValueType{1}, -exponent);
+
     // Wilkinson shift: eigenvalue of trailing 2x2 of B^T * B closest to last diagonal
-    BaseValueType d_nm1 = diag[end - 1];
-    BaseValueType d_nm2 = (end >= 2) ? diag[end - 2] : BaseValueType{0};
-    BaseValueType e_nm2 = (end >= 2 && start < end - 1) ? superdiag[end - 2] : BaseValueType{0};
+    BaseValueType d_nm1 = diag[end - 1] * down;
+    BaseValueType d_nm2 = ((end >= 2) ? diag[end - 2] : BaseValueType{0}) * down;
+    BaseValueType e_nm2 = ((end >= 2 && start < end - 1) ? superdiag[end - 2] : BaseValueType{0}) * down;
+    BaseValueType e_nm3 = ((end >= 3 && start < end - 2) ? superdiag[end - 3] : BaseValueType{0}) * down;
 
     // elements of B^T * B trailing 2x2
-    BaseValueType a11 = d_nm2 * d_nm2 + ((end >= 3 && start < end - 2) ? superdiag[end - 3] * superdiag[end - 3] : BaseValueType{0});
+    BaseValueType a11 = d_nm2 * d_nm2 + e_nm3 * e_nm3;
     BaseValueType a12 = d_nm2 * e_nm2;
     BaseValueType a22 = d_nm1 * d_nm1 + e_nm2 * e_nm2;
 
@@ -577,8 +594,8 @@ bool bidiagonalQRStep(std::vector<BaseValueType>& diag, std::vector<BaseValueTyp
     }
 
     // initial Givens to introduce bulge
-    BaseValueType x = diag[start] * diag[start] - shift;
-    BaseValueType z = diag[start] * superdiag[start];
+    BaseValueType x = (diag[start] * down) * (diag[start] * down) - shift;
+    BaseValueType z = (diag[start] * down) * (superdiag[start] * down);
 
     // chase bulge down the bidiagonal
     for (std::size_t k = start; k < end - 1; ++k) {
@@ -770,6 +787,15 @@ svd::Status svdGolubReinsch(Tensor<T>& A, Tensor<T>* V, Tensor<BaseValueType>& s
         accumulateV(A, tauV, Vmat);
     }
 
+    // Both zero tests below are floored at 6 minDim^2 times the smallest normal value. A block of rounding residue
+    // then deflates even where its own entries are subnormal. A block of normal entries far below the largest one
+    // keeps its relative tests.
+    const auto          floorSize = static_cast<BaseValueType>(minDim);
+    const BaseValueType zeroFloor = BaseValueType{6} * floorSize * floorSize * std::numeric_limits<BaseValueType>::min();
+    // The relative zero test never exceeds max(m, n) eps. A larger `tol` loosens only the deflation of the
+    // superdiagonal.
+    const BaseValueType zeroTol = std::min(tol, std::numeric_limits<BaseValueType>::epsilon() * static_cast<BaseValueType>(std::max(m, n)));
+
     // step 3: implicit QR iteration on bidiagonal
     std::size_t iter = 0;
     std::size_t end  = minDim;
@@ -781,7 +807,7 @@ svd::Status svdGolubReinsch(Tensor<T>& A, Tensor<T>* V, Tensor<BaseValueType>& s
         // check for negligible superdiagonal elements (deflation)
         for (std::size_t i = end - 1; i > 0; --i) {
             BaseValueType off    = std::abs(superdiag[i - 1]);
-            BaseValueType thresh = tol * (std::abs(diag[i - 1]) + std::abs(diag[i]));
+            BaseValueType thresh = std::max(tol * (std::abs(diag[i - 1]) + std::abs(diag[i])), zeroFloor);
             if (off <= thresh) {
                 superdiag[i - 1] = BaseValueType{0};
                 if (i == end - 1) {
@@ -797,32 +823,57 @@ svd::Status svdGolubReinsch(Tensor<T>& A, Tensor<T>* V, Tensor<BaseValueType>& s
             break;
         }
 
-        // check for zero diagonal (special handling)
-        bool hasZeroDiag = false;
+        // A diagonal entry of the active block [start, end) counts as zero when it is at most zeroTol times the
+        // block's largest entry. It is set to zero and its row or column is cleared by Givens rotations.
+        BaseValueType blockLargest{0};
         for (std::size_t i = start; i < end; ++i) {
-            if (std::abs(diag[i]) < tol * std::numeric_limits<BaseValueType>::epsilon()) {
-                hasZeroDiag = true;
-                // zero out row by Givens rotations
-                if (i < end - 1 && std::abs(superdiag[i]) > tol * std::numeric_limits<BaseValueType>::epsilon()) {
-                    for (std::size_t j = i + 1; j < end; ++j) {
-                        BaseValueType c, s, r;
-                        gr::math::givens(diag[j], superdiag[i], c, s, r);
-                        diag[j] = r;
-                        if (j < end - 1) {
-                            BaseValueType temp = superdiag[j];
-                            superdiag[j]       = c * temp;
-                            superdiag[i]       = -s * temp;
-                        } else {
-                            superdiag[i] = BaseValueType{0};
-                        }
-                        gr::math::applyGivensRight<BaseValueType>(Umat, j, i, c, -s, 0, m);
-                    }
-                }
+            blockLargest = std::max(blockLargest, std::abs(diag[i]));
+            if (i + 1 < end) {
+                blockLargest = std::max(blockLargest, std::abs(superdiag[i]));
+            }
+        }
+        std::size_t zeroAt = end;
+        for (std::size_t i = start; i < end; ++i) {
+            if (std::abs(diag[i]) <= std::max(zeroTol * blockLargest, zeroFloor)) {
+                zeroAt = i;
                 break;
             }
         }
 
-        if (hasZeroDiag) {
+        if (zeroAt < end) {
+            diag[zeroAt] = BaseValueType{0};
+            if (zeroAt + 1 < end) {
+                // chase superdiag[zeroAt] right along row zeroAt: rotations of rows (j, zeroAt), applied to U
+                for (std::size_t j = zeroAt + 1; j < end; ++j) {
+                    BaseValueType c, s, r;
+                    gr::math::givens(diag[j], superdiag[zeroAt], c, s, r);
+                    diag[j] = r;
+                    if (j + 1 < end) {
+                        const BaseValueType next = superdiag[j];
+                        superdiag[j]             = c * next;
+                        superdiag[zeroAt]        = -s * next;
+                    } else {
+                        superdiag[zeroAt] = BaseValueType{0};
+                    }
+                    gr::math::applyGivensRight<BaseValueType>(Umat, j, zeroAt, c, s, 0, m);
+                }
+            } else {
+                // chase superdiag[end - 2] up column end - 1: rotations of columns (k, end - 1), applied to V
+                BaseValueType bulge = superdiag[end - 2];
+                superdiag[end - 2]  = BaseValueType{0};
+                for (std::size_t k = end - 1; k-- > start;) {
+                    BaseValueType c, s, r;
+                    gr::math::givens(diag[k], bulge, c, s, r);
+                    diag[k] = r;
+                    if (k > start) {
+                        bulge            = -s * superdiag[k - 1];
+                        superdiag[k - 1] = c * superdiag[k - 1];
+                    }
+                    if (computeV) {
+                        gr::math::applyGivensRight<BaseValueType>(Vmat, k, end - 1, c, s, 0, Vmat.extent(0));
+                    }
+                }
+            }
             ++iter;
             continue;
         }
