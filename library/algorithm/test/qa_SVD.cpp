@@ -4,12 +4,15 @@
 #include <gnuradio-4.0/algorithm/math/SVD.hpp>
 #include <gnuradio-4.0/algorithm/math/TensorMath.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <random>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -189,6 +192,192 @@ template<typename T, typename RealT = gr::meta::fundamental_base_value_type_t<T>
         }
     }
     return true;
+}
+
+// The measured errors of one decomposition, each divided by max(m, n) * eps of the element type.
+struct SvdRatios {
+    svd::Status status = svd::Status::InvalidInput;
+    std::size_t uRows  = 0;
+    std::size_t uCols  = 0;
+    std::size_t vRows  = 0;
+    std::size_t vCols  = 0;
+    std::size_t sSize  = 0;
+    long double reconstruction{0}; // ||A - U diag(S) V^H||_F / ||A||_F over the first S.size() columns
+    long double orthogonalityU{0}; // max |U^H U - I| over every column of U
+    long double orthogonalityV{0}; // max |V^H V - I| over every column of V
+    long double singularValues{0}; // max |S_l - expected_l| / expected_0
+};
+
+// The bound of each ratio in SvdRatios.
+constexpr long double kRatioBound = 50.0L;
+
+template<typename T>
+[[nodiscard]] std::complex<long double> toLongDouble(T value) {
+    if constexpr (gr::meta::complex_like<T>) {
+        return {static_cast<long double>(value.real()), static_cast<long double>(value.imag())};
+    } else {
+        return {static_cast<long double>(value), 0.0L};
+    }
+}
+
+template<typename T>
+[[nodiscard]] long double orthogonalityError(const gr::Tensor<T>& Q) {
+    long double worst{0};
+    for (std::size_t a = 0; a < Q.extent(1); ++a) {
+        for (std::size_t b = 0; b < Q.extent(1); ++b) {
+            std::complex<long double> sum{0};
+            for (std::size_t r = 0; r < Q.extent(0); ++r) {
+                sum += std::conj(toLongDouble(Q[r, a])) * toLongDouble(Q[r, b]);
+            }
+            if (a == b) {
+                sum -= 1.0L;
+            }
+            worst = std::max(worst, std::abs(sum));
+        }
+    }
+    return worst;
+}
+
+// The m x n matrix `scale * entries`, the entries row by row.
+template<typename T>
+[[nodiscard]] gr::Tensor<T> scaledMatrix(std::size_t m, std::size_t n, gr::meta::fundamental_base_value_type_t<T> scale, std::initializer_list<long double> entries) {
+    using RealT = gr::meta::fundamental_base_value_type_t<T>;
+    gr::Tensor<T> A({m, n});
+    std::size_t   index = 0;
+    for (long double entry : entries) {
+        A.data()[index++] = T{scale * static_cast<RealT>(entry)};
+    }
+    return A;
+}
+
+template<typename T, typename RealT = gr::meta::fundamental_base_value_type_t<T>>
+[[nodiscard]] SvdRatios ratiosOf(const gr::Tensor<T>& A, svd::Status status, const gr::Tensor<T>& U, const gr::Tensor<RealT>& S, const gr::Tensor<T>& V, const std::vector<long double>& expected) {
+    const std::size_t m    = A.extent(0);
+    const std::size_t n    = A.extent(1);
+    const long double unit = static_cast<long double>(std::max(m, n)) * static_cast<long double>(std::numeric_limits<RealT>::epsilon());
+
+    SvdRatios ratios;
+    ratios.status = status;
+    ratios.uRows  = U.extent(0);
+    ratios.uCols  = U.extent(1);
+    ratios.vRows  = V.extent(0);
+    ratios.vCols  = V.extent(1);
+    ratios.sSize  = S.size();
+    if (U.extent(0) != m || V.extent(0) != n || U.extent(1) < S.size() || V.extent(1) < S.size()) {
+        ratios.reconstruction = std::numeric_limits<long double>::infinity();
+        return ratios;
+    }
+
+    // A and S enter the sums times 2^-shift, which brings the largest part of A into [1, 2). The squares then stay
+    // in range where long double has the range of double.
+    long double largestPart{0};
+    for (const T& value : A) {
+        const std::complex<long double> entry = toLongDouble(value);
+        largestPart                           = std::max({largestPart, std::abs(entry.real()), std::abs(entry.imag())});
+    }
+    const int  shift   = largestPart > 0.0L && std::isfinite(largestPart) ? std::ilogb(largestPart) : 0;
+    const auto shifted = [shift](std::complex<long double> z) { return std::complex<long double>{std::ldexp(z.real(), -shift), std::ldexp(z.imag(), -shift)}; };
+
+    long double normA{0};
+    long double normDiff{0};
+    for (std::size_t i = 0; i < m; ++i) {
+        for (std::size_t j = 0; j < n; ++j) {
+            std::complex<long double> sum{0};
+            for (std::size_t l = 0; l < S.size(); ++l) {
+                sum += toLongDouble(U[i, l]) * std::ldexp(static_cast<long double>(S[l]), -shift) * std::conj(toLongDouble(V[j, l]));
+            }
+            const std::complex<long double> entry = shifted(toLongDouble(A[i, j]));
+            normA += std::norm(entry);
+            normDiff += std::norm(entry - sum);
+        }
+    }
+    ratios.reconstruction = (normA > 0.0L ? std::sqrt(normDiff / normA) : std::sqrt(normDiff)) / unit;
+    ratios.orthogonalityU = orthogonalityError(U) / unit;
+    ratios.orthogonalityV = orthogonalityError(V) / unit;
+    if (expected.size() == S.size() && !expected.empty()) {
+        std::vector<long double> sorted(S.size());
+        for (std::size_t l = 0; l < S.size(); ++l) {
+            sorted[l] = static_cast<long double>(S[l]);
+        }
+        std::ranges::sort(sorted, std::greater<>{});
+        long double worst{0};
+        for (std::size_t l = 0; l < S.size(); ++l) {
+            worst = std::max(worst, std::abs(sorted[l] - expected[l]));
+        }
+        ratios.singularValues = worst / (expected[0] * unit);
+    } else if (!expected.empty()) {
+        ratios.singularValues = std::numeric_limits<long double>::infinity();
+    }
+    return ratios;
+}
+
+// The ratios of gesvd(U, S, V, A) with the given algorithm.
+template<typename T>
+[[nodiscard]] SvdRatios svdRatios(const gr::Tensor<T>& A, svd::Algorithm algorithm, const std::vector<long double>& expected, bool fullMatrices = false) {
+    using RealT = gr::meta::fundamental_base_value_type_t<T>;
+    svd::Config<RealT> config;
+    config.algorithm    = algorithm;
+    config.fullMatrices = fullMatrices;
+    gr::Tensor<T>     U, V;
+    gr::Tensor<RealT> S;
+    const svd::Status status = gesvd(U, S, V, A, config);
+    return ratiosOf(A, status, U, S, V, expected);
+}
+
+// The largest singular value error of gesvd(S, A), divided by max(m, n) eps expected[0].
+template<typename T>
+[[nodiscard]] long double valuesOnlyRatio(const gr::Tensor<T>& A, svd::Algorithm algorithm, const std::vector<long double>& expected) {
+    using RealT = gr::meta::fundamental_base_value_type_t<T>;
+    svd::Config<RealT> config;
+    config.algorithm = algorithm;
+    gr::Tensor<RealT> S;
+    if (gesvd(S, A, config) != svd::Status::Success || S.size() != expected.size() || expected.empty()) {
+        return std::numeric_limits<long double>::infinity();
+    }
+    const long double unit = static_cast<long double>(std::max(A.extent(0), A.extent(1))) * static_cast<long double>(std::numeric_limits<RealT>::epsilon());
+    long double       worst{0};
+    for (std::size_t l = 0; l < S.size(); ++l) {
+        worst = std::max(worst, std::abs(static_cast<long double>(S[l]) - expected[l]));
+    }
+    return worst / (expected[0] * unit);
+}
+
+// The ratios of detail::svdJacobi or detail::svdGolubReinsch on a tall A, with gesvd's default tolerance and
+// iteration limit and without gesvd's scaling of A.
+template<typename T>
+[[nodiscard]] SvdRatios unscaledRatios(const gr::Tensor<T>& A, svd::Algorithm algorithm, const std::vector<long double>& expected) {
+    using RealT               = gr::meta::fundamental_base_value_type_t<T>;
+    const std::size_t largest = std::max(A.extent(0), A.extent(1));
+    const RealT       tol     = std::numeric_limits<RealT>::epsilon() * static_cast<RealT>(largest);
+    const std::size_t maxIter = 30UZ * largest;
+    gr::Tensor<T>     U(A);
+    gr::Tensor<T>     V;
+    gr::Tensor<RealT> S;
+    const svd::Status status = algorithm == svd::Algorithm::Jacobi ? gr::math::detail::svdJacobi(U, &V, S, maxIter, tol, true) : gr::math::detail::svdGolubReinsch(U, &V, S, maxIter, tol, true);
+    return ratiosOf(A, status, U, S, V, expected);
+}
+
+template<typename T>
+[[nodiscard]] std::string typeLabel() {
+    if constexpr (gr::meta::complex_like<T>) {
+        return std::is_same_v<T, std::complex<float>> ? "complex<float>" : "complex<double>";
+    } else {
+        return std::is_same_v<T, float> ? "float" : "double";
+    }
+}
+
+// Expects Success and every ratio at most kRatioBound, through gesvd or, with `unscaled`, through unscaledRatios.
+template<typename T>
+void expectSvdHolds(const gr::Tensor<T>& A, svd::Algorithm algorithm, const std::vector<long double>& expected, const std::string& label, bool unscaled = false) {
+    using boost::ut::expect;
+    using boost::ut::le;
+    const SvdRatios ratios = unscaled ? unscaledRatios(A, algorithm, expected) : svdRatios(A, algorithm, expected);
+    const auto      name   = typeLabel<T>() + " " + label;
+    expect(ratios.status == svd::Status::Success) << name << "status" << static_cast<int>(ratios.status);
+    expect(le(ratios.reconstruction, kRatioBound)) << name << "reconstruction";
+    expect(le(ratios.orthogonalityU, kRatioBound)) << name << "orthogonality of U";
+    expect(le(ratios.orthogonalityV, kRatioBound)) << name << "orthogonality of V";
+    expect(le(ratios.singularValues, kRatioBound)) << name << "singular values";
 }
 
 const boost::ut::suite<"SVD Basic Properties"> _svd_basic = [] {
@@ -1155,6 +1344,102 @@ const boost::ut::suite<"SVD Complex Support"> _svd_complex = [] {
         expect(status == svd::Status::Success);
         expect(verifyReconstruction(A, U, S, V, 1e-9));
     };
+};
+
+// A = s [[2, 1], [0, 1]] has the singular values s (sqrt(5) + 1) / sqrt(2) and s (sqrt(5) - 1) / sqrt(2).
+std::vector<long double> upperTriangularSingularValues(long double s) {
+    const long double root5 = std::sqrt(5.0L);
+    return {s * (root5 + 1.0L) / std::sqrt(2.0L), s * (root5 - 1.0L) / std::sqrt(2.0L)};
+}
+
+const boost::ut::suite<"SVD Jacobi on hard inputs"> _svd_jacobi_hard = [] {
+    using namespace boost::ut;
+    using namespace boost::ut::literals;
+    using AllTypes = std::tuple<float, double, std::complex<float>, std::complex<double>>;
+
+    // The first three cases run detail::svdJacobi on the unscaled input; gesvd scales every input near 1 first.
+    "Jacobi orthogonalizes columns whose squared norms lie near eps squared"_test = []<typename T> {
+        using RealT       = gr::meta::fundamental_base_value_type_t<T>;
+        const RealT scale = RealT{4} * std::numeric_limits<RealT>::epsilon();
+        // s = 4 eps puts both squared column norms near eps^2
+        expectSvdHolds(scaledMatrix<T>(2UZ, 2UZ, scale, {2, 1, 0, 1}), svd::Algorithm::Jacobi, upperTriangularSingularValues(static_cast<long double>(scale)), "s = 4 eps", true);
+    } | AllTypes{};
+
+    "Jacobi orthogonalizes columns whose squared norms overflow in their product"_test = []<typename T> {
+        using RealT       = gr::meta::fundamental_base_value_type_t<T>;
+        const RealT scale = std::sqrt(std::sqrt(std::numeric_limits<RealT>::max()));
+        // the squared column norms 4 s^2 and 2 s^2 have a product beyond the largest finite value
+        expectSvdHolds(scaledMatrix<T>(2UZ, 2UZ, scale, {2, 1, 0, 1}), svd::Algorithm::Jacobi, upperTriangularSingularValues(static_cast<long double>(scale)), "s = max^(1/4)", true);
+    } | AllTypes{};
+
+    "Jacobi keeps a singular value below eps"_test = []<typename T> {
+        using RealT      = gr::meta::fundamental_base_value_type_t<T>;
+        const RealT tiny = std::numeric_limits<RealT>::epsilon() / RealT{16};
+        expectSvdHolds(scaledMatrix<T>(1UZ, 1UZ, tiny, {1}), svd::Algorithm::Jacobi, {static_cast<long double>(tiny)}, "[[eps / 16]]", true);
+    } | AllTypes{};
+
+    "gesvd holds where the squares of the entries overflow or underflow"_test = []<typename T> {
+        using RealT = gr::meta::fundamental_base_value_type_t<T>;
+        // the squares of the entries pass the largest finite value at the first scale and round to zero at the second
+        const RealT hugeScale = RealT{4} * std::sqrt(std::numeric_limits<RealT>::max());
+        const RealT tinyScale = std::sqrt(std::numeric_limits<RealT>::denorm_min()) / RealT{4};
+        expectSvdHolds(scaledMatrix<T>(2UZ, 2UZ, hugeScale, {2, 1, 0, 1}), svd::Algorithm::Jacobi, upperTriangularSingularValues(static_cast<long double>(hugeScale)), "s = 4 sqrt(max)");
+        expectSvdHolds(scaledMatrix<T>(2UZ, 2UZ, tinyScale, {2, 1, 0, 1}), svd::Algorithm::Jacobi, upperTriangularSingularValues(static_cast<long double>(tinyScale)), "s = sqrt(denorm_min) / 4");
+        expect(le(valuesOnlyRatio(scaledMatrix<T>(2UZ, 2UZ, hugeScale, {2, 1, 0, 1}), svd::Algorithm::Jacobi, upperTriangularSingularValues(static_cast<long double>(hugeScale))), kRatioBound)) << "values only, s = 4 sqrt(max)";
+        expect(le(valuesOnlyRatio(scaledMatrix<T>(2UZ, 2UZ, tinyScale, {2, 1, 0, 1}), svd::Algorithm::Jacobi, upperTriangularSingularValues(static_cast<long double>(tinyScale))), kRatioBound)) << "values only, s = sqrt(denorm_min) / 4";
+    } | AllTypes{};
+
+    "gesvd scales complex input whose magnitudes overflow while their parts are finite"_test = []<typename T> {
+        using RealT       = gr::meta::fundamental_base_value_type_t<T>;
+        const RealT scale = RealT{3} * (std::numeric_limits<RealT>::max() / RealT{8});
+        // A = (1 + i) s [[2, 1], [0, 1]]: every part is finite and |(2 + 2i) s| exceeds the largest finite value
+        gr::Tensor<T> A({2UZ, 2UZ});
+        A[0UZ, 0UZ] = T{RealT{2} * scale, RealT{2} * scale};
+        A[0UZ, 1UZ] = T{scale, scale};
+        A[1UZ, 0UZ] = T{};
+        A[1UZ, 1UZ] = T{scale, scale};
+
+        std::vector<long double> expected = upperTriangularSingularValues(static_cast<long double>(scale));
+        for (long double& value : expected) {
+            value *= std::sqrt(2.0L);
+        }
+        // sigma_1 exceeds the largest finite value and rounds to infinity; sigma_2 is finite
+        const long double largestFinite = static_cast<long double>(std::numeric_limits<RealT>::max());
+        const long double unit          = 2.0L * static_cast<long double>(std::numeric_limits<RealT>::epsilon());
+        const auto        expectValues  = [&](const gr::Tensor<RealT>& S, const std::string& label) {
+            expect(eq(S.size(), expected.size())) << label;
+            for (std::size_t l = 0UZ; l < std::min(S.size(), expected.size()); ++l) {
+                const long double value = static_cast<long double>(S[l]);
+                if (expected[l] > largestFinite) {
+                    expect(std::isinf(value)) << label << "singular value" << l;
+                } else {
+                    expect(le(std::abs(value - expected[l]) / (expected[l] * unit), kRatioBound)) << label << "singular value" << l;
+                }
+            }
+        };
+
+        svd::Config<RealT> config;
+        config.algorithm = svd::Algorithm::Jacobi;
+        gr::Tensor<T>     U, V;
+        gr::Tensor<RealT> S;
+        const svd::Status status = gesvd(U, S, V, A, config);
+        const SvdRatios   ratios = ratiosOf(A, status, U, S, V, {});
+        expect(status == svd::Status::Success);
+        expect(le(ratios.orthogonalityU, kRatioBound)) << "orthogonality of U";
+        expect(le(ratios.orthogonalityV, kRatioBound)) << "orthogonality of V";
+        expectValues(S, "U, S and V");
+
+        gr::Tensor<RealT> valuesOnly;
+        expect(gesvd(valuesOnly, A, config) == svd::Status::Success);
+        expectValues(valuesOnly, "values only");
+    } | std::tuple<std::complex<float>, std::complex<double>>{};
+
+    "Jacobi returns orthonormal U and V for rank-deficient input"_test = []<typename T> {
+        // a zero singular value, a rounding-level one, and a zero one that reaches V through the transposed path
+        expectSvdHolds(scaledMatrix<T>(2UZ, 2UZ, 1, {1, 0, 0, 0}), svd::Algorithm::Jacobi, {1.0L, 0.0L}, "[[1, 0], [0, 0]]");
+        expectSvdHolds(scaledMatrix<T>(2UZ, 2UZ, 1, {1, 1, 0, 0}), svd::Algorithm::Jacobi, {std::sqrt(2.0L), 0.0L}, "[[1, 1], [0, 0]]");
+        expectSvdHolds(scaledMatrix<T>(2UZ, 3UZ, 1, {1, 0, 0, 0, 0, 0}), svd::Algorithm::Jacobi, {1.0L, 0.0L}, "[[1, 0, 0], [0, 0, 0]]");
+    } | AllTypes{};
 };
 
 const boost::ut::suite<"GolubReinsch Internals -- Regression Tests"> _gr_internals = [] {

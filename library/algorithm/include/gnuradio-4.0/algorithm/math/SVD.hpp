@@ -10,6 +10,7 @@
 #include <limits>
 #include <numeric>
 #include <ranges>
+#include <vector>
 
 namespace gr::math {
 
@@ -134,6 +135,83 @@ void rotateColumns(Tensor<T>& M, std::size_t i, std::size_t j, BaseValueType c, 
     }
 }
 
+/**
+ * @brief Replaces the columns of Q not marked in `keep` by an orthonormal completion of the marked columns.
+ *
+ * The marked columns must be orthonormal. Every other column becomes a unit vector orthogonal to the marked columns
+ * and to the replaced columns before it. A replaced column starts from its own direction when that direction keeps at
+ * least half its length after the projection. Otherwise it starts from the unit vector e_r whose row r has the least
+ * weight in the columns accepted so far. Each start vector is orthogonalized in two Gram-Schmidt passes. Q needs at
+ * least as many rows as columns.
+ */
+template<typename T, typename BaseValueType = gr::meta::fundamental_base_value_type_t<T>>
+void completeOrthonormal(Tensor<T>& Q, const std::vector<bool>& keep) {
+    const std::size_t rows = Q.extent(0);
+    const std::size_t cols = Q.extent(1);
+
+    std::vector<std::size_t>   accepted;
+    std::vector<BaseValueType> rowWeight(rows, BaseValueType{0});
+    auto                       accept = [&](std::size_t j) {
+        accepted.push_back(j);
+        for (std::size_t r = 0; r < rows; ++r) {
+            rowWeight[r] += squaredMagnitude(Q[r, j]);
+        }
+    };
+    for (std::size_t j = 0; j < cols; ++j) {
+        if (keep[j]) {
+            accept(j);
+        }
+    }
+
+    std::vector<T> candidate(rows);
+    auto           orthogonalize = [&] {
+        for (int pass = 0; pass < 2; ++pass) {
+            for (std::size_t b : accepted) {
+                T dot{0};
+                for (std::size_t r = 0; r < rows; ++r) {
+                    dot += innerProduct(Q[r, b], candidate[r]);
+                }
+                for (std::size_t r = 0; r < rows; ++r) {
+                    candidate[r] -= dot * Q[r, b];
+                }
+            }
+        }
+        BaseValueType normSq{0};
+        for (const T& value : candidate) {
+            normSq += squaredMagnitude(value);
+        }
+        return std::sqrt(normSq);
+    };
+
+    for (std::size_t j = 0; j < cols; ++j) {
+        if (keep[j]) {
+            continue;
+        }
+        BaseValueType ownNormSq{0};
+        for (std::size_t r = 0; r < rows; ++r) {
+            ownNormSq += squaredMagnitude(Q[r, j]);
+        }
+        const BaseValueType ownNorm = std::sqrt(ownNormSq);
+        BaseValueType       norm{0};
+        if (ownNorm > BaseValueType{0}) {
+            for (std::size_t r = 0; r < rows; ++r) {
+                candidate[r] = Q[r, j] / ownNorm;
+            }
+            norm = orthogonalize();
+        }
+        if (!(norm >= BaseValueType{1} / BaseValueType{2})) {
+            const auto lightest = static_cast<std::size_t>(std::ranges::min_element(rowWeight) - rowWeight.begin());
+            std::ranges::fill(candidate, T{0});
+            candidate[lightest] = T{1};
+            norm                = orthogonalize();
+        }
+        for (std::size_t r = 0; r < rows; ++r) {
+            Q[r, j] = norm > BaseValueType{0} ? candidate[r] / norm : T{0};
+        }
+        accept(j);
+    }
+}
+
 // one-sided Jacobi SVD: works best when m >= n (tall matrices)
 // A is modified in-place to become U, V and singularValues are outputs
 template<typename T, typename BaseValueType = gr::meta::fundamental_base_value_type_t<T>>
@@ -158,6 +236,14 @@ svd::Status svdJacobi(Tensor<T>& A, Tensor<T>* V, Tensor<BaseValueType>& singula
         }
     }
 
+    // A column whose squared norm is at most (eps ||A||_F)^2 is negligible and takes part in no rotation.
+    constexpr BaseValueType eps = std::numeric_limits<BaseValueType>::epsilon();
+    BaseValueType           frobeniusSq{0};
+    for (const T& value : A) {
+        frobeniusSq += squaredMagnitude(value);
+    }
+    const BaseValueType negligible = eps * eps * frobeniusSq;
+
     std::size_t iter      = 0;
     bool        converged = false;
 
@@ -178,9 +264,11 @@ svd::Status svdJacobi(Tensor<T>& A, Tensor<T>* V, Tensor<BaseValueType>& singula
                     dot_jj += squaredMagnitude(A[k, j]);
                 }
 
-                // check if columns are orthogonal enough
-                constexpr BaseValueType epsilon   = std::numeric_limits<BaseValueType>::epsilon() * BaseValueType{1000};
-                BaseValueType           threshold = tol * std::sqrt(std::max(dot_ii, epsilon) * std::max(dot_jj, epsilon));
+                if (dot_ii <= negligible || dot_jj <= negligible) {
+                    continue;
+                }
+                // the pair is orthogonal enough when |a_i^H a_j| <= tol ||a_i|| ||a_j||
+                const BaseValueType threshold = tol * std::sqrt(dot_ii) * std::sqrt(dot_jj);
 
                 if (std::abs(dot_ij) > threshold) {
                     converged = false;
@@ -198,26 +286,31 @@ svd::Status svdJacobi(Tensor<T>& A, Tensor<T>* V, Tensor<BaseValueType>& singula
         ++iter;
     }
 
-    // extract singular values and normalise columns of A to get U
+    // the column norms are the singular values; each column of nonzero norm is scaled to unit length
     singularValues.resize({n});
+    BaseValueType largest{0};
     for (std::size_t j = 0; j < n; ++j) {
         BaseValueType norm{0};
         for (std::size_t i = 0; i < m; ++i) {
             norm += squaredMagnitude(A[i, j]);
         }
         singularValues[j] = std::sqrt(norm);
-    }
-
-    // normalise columns
-    BaseValueType epsilon = std::numeric_limits<BaseValueType>::epsilon();
-    for (std::size_t j = 0; j < n; ++j) {
-        if (singularValues[j] > epsilon) {
+        largest           = std::max(largest, singularValues[j]);
+        if (singularValues[j] > BaseValueType{0}) {
             for (std::size_t i = 0; i < m; ++i) {
                 A[i, j] /= singularValues[j];
             }
-        } else {
-            singularValues[j] = BaseValueType{0};
         }
+    }
+
+    // the columns whose singular value is at most max(m, n) eps sigma_max are made orthonormal to the others
+    if (computeV) {
+        const BaseValueType noiseLevel = static_cast<BaseValueType>(std::max(m, n)) * eps * largest;
+        std::vector<bool>   keep(n);
+        for (std::size_t j = 0; j < n; ++j) {
+            keep[j] = singularValues[j] > noiseLevel;
+        }
+        completeOrthonormal(A, keep);
     }
 
     return converged ? svd::Status::Success : svd::Status::MaxIterations;
@@ -809,6 +902,34 @@ void sortSingularValues(Tensor<BaseValueType>& S, Tensor<T>* U, Tensor<T>* V) {
     }
 }
 
+/**
+ * @brief Multiplies A by 2^-e and returns e.
+ *
+ * 2^-e brings the largest real or imaginary part of A into [1, 2), or as near as the exponent range allows. The scaling
+ * is exact for every entry that stays in the normal range. A zero or non-finite largest part leaves A unchanged and
+ * returns 0.
+ */
+template<typename T, typename BaseValueType = gr::meta::fundamental_base_value_type_t<T>>
+[[nodiscard]] int scaleToUnitMagnitude(Tensor<T>& A) {
+    BaseValueType largest{0};
+    for (const T& value : A) {
+        if constexpr (gr::meta::complex_like<T>) {
+            largest = std::max({largest, static_cast<BaseValueType>(std::abs(value.real())), static_cast<BaseValueType>(std::abs(value.imag()))});
+        } else {
+            largest = std::max(largest, static_cast<BaseValueType>(std::abs(value)));
+        }
+    }
+    if (!(largest > BaseValueType{0}) || !std::isfinite(largest)) {
+        return 0;
+    }
+    const int           exponent = std::clamp(std::ilogb(largest), std::numeric_limits<BaseValueType>::min_exponent - 1, std::numeric_limits<BaseValueType>::max_exponent - 1);
+    const BaseValueType down     = std::ldexp(BaseValueType{1}, -exponent);
+    for (T& value : A) {
+        value *= down;
+    }
+    return exponent;
+}
+
 } // namespace detail
 
 /**
@@ -884,6 +1005,9 @@ svd::Status gesvd(Policy&& /*policy*/, TensorU& U, TensorS& S, TensorV& V, const
         Awork = Tensor<T>(A);
     }
 
+    // both algorithms run on A times a power of two near 1 / max |a_ij|; S returns to the input scale
+    const int exponent = detail::scaleToUnitMagnitude(Awork);
+
     // perform SVD
     svd::Status           status;
     Tensor<T>             Vtmp;
@@ -905,6 +1029,9 @@ svd::Status gesvd(Policy&& /*policy*/, TensorU& U, TensorS& S, TensorV& V, const
             status = detail::svdGolubReinsch(Awork, &V, S, maxIter, tol, true);
         }
         U = std::move(Awork);
+    }
+    for (auto& value : S) {
+        value = std::ldexp(value, exponent);
     }
 
     // ensure correct dimensions for thin SVD
@@ -1053,6 +1180,7 @@ svd::Status gesvd(Policy&& /*policy*/, TensorS& S, const TensorA& A, const svd::
 
     bool      transposed = (m < n);
     Tensor<T> Awork      = transposed ? conjTranspose(A) : Tensor<T>(A);
+    const int exponent   = detail::scaleToUnitMagnitude(Awork);
 
     svd::Status status;
     Tensor<T>*  noV = nullptr; // explicit type for template deduction
@@ -1060,6 +1188,9 @@ svd::Status gesvd(Policy&& /*policy*/, TensorS& S, const TensorA& A, const svd::
         status = detail::svdJacobi(Awork, noV, S, maxIter, tol, false);
     } else {
         status = detail::svdGolubReinsch(Awork, noV, S, maxIter, tol, false);
+    }
+    for (auto& value : S) {
+        value = std::ldexp(value, exponent);
     }
 
     // ensure correct size
