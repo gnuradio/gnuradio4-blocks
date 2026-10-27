@@ -35,7 +35,7 @@ struct Config {
     T           tolerance     = T{-1};           /// <0 = auto (eps * max(m,n))
     std::size_t k             = 0;               /// 0 = all singular values, >0 = first k only
     Algorithm   algorithm     = Algorithm::Auto; /// defaults to numerically safe and then efficient choice
-    bool        fullMatrices  = false;           /// false = thin SVD, true = full U and V
+    bool        fullMatrices  = false;           /// false = thin SVD, true = U m×m and V n×n (k then limits S alone)
 };
 } // namespace svd
 
@@ -981,6 +981,27 @@ template<typename T, typename BaseValueType = gr::meta::fundamental_base_value_t
     return exponent;
 }
 
+/// Extends the orthonormal columns of Q by an orthonormal completion to `columns` columns.
+template<typename T>
+void extendOrthonormal(Tensor<T>& Q, std::size_t columns) {
+    const std::size_t rows = Q.extent(0);
+    const std::size_t have = Q.extent(1);
+    if (have >= columns) {
+        return;
+    }
+    Tensor<T> full({rows, columns});
+    full.fill(T{0});
+    std::vector<bool> keep(columns, false);
+    for (std::size_t j = 0; j < have; ++j) {
+        keep[j] = true;
+        for (std::size_t i = 0; i < rows; ++i) {
+            full[i, j] = Q[i, j];
+        }
+    }
+    completeOrthonormal(full, keep);
+    Q = std::move(full);
+}
+
 } // namespace detail
 
 /**
@@ -990,9 +1011,9 @@ template<typename T, typename BaseValueType = gr::meta::fundamental_base_value_t
  * set config.fullMatrices = true for full SVD
  *
  * @param policy execution policy (cpu_policy, cpu_parallel_policy)
- * @param U output left singular vectors [m × k] where k = min(m,n) or m if fullMatrices
- * @param S output singular values [k], always real and non-negative, descending order
- * @param V output right singular vectors [n × k] where k = min(m,n) or n if fullMatrices
+ * @param U output left singular vectors [m × min(m,n)], [m × k] when config.k truncates, [m × m] if fullMatrices whatever k
+ * @param S output singular values [min(m,n)], or [k] when config.k truncates, always real and non-negative, descending order
+ * @param V output right singular vectors [n × min(m,n)], [n × k] when config.k truncates, [n × n] if fullMatrices whatever k
  * @param A input matrix [m × n]
  * @param config SVD configuration
  * @return status indicating success or type of failure
@@ -1015,6 +1036,10 @@ svd::Status gesvd(Policy&& /*policy*/, TensorU& U, TensorS& S, TensorV& V, const
         U.resize({m, 0});
         S.resize({0});
         V.resize({n, 0});
+        if (config.fullMatrices) {
+            detail::extendOrthonormal(U, m);
+            detail::extendOrthonormal(V, n);
+        }
         return svd::Status::Success;
     }
 
@@ -1120,14 +1145,22 @@ svd::Status gesvd(Policy&& /*policy*/, TensorU& U, TensorS& S, TensorV& V, const
     // sort singular values in descending order
     detail::sortSingularValues(S, &U, &V);
 
+    // full U and V: the columns past min(m, n) complete the singular vectors to orthonormal bases
+    if (config.fullMatrices) {
+        detail::extendOrthonormal(U, m);
+        detail::extendOrthonormal(V, n);
+    }
+
     // truncate if user requested fewer singular values
     if (actualK < minDim) {
-        Tensor<T>             U_final({m, actualK});
+        const std::size_t     uCols = config.fullMatrices ? m : actualK;
+        const std::size_t     vCols = config.fullMatrices ? n : actualK;
+        Tensor<T>             U_final({m, uCols});
         Tensor<BaseValueType> S_final({actualK});
-        Tensor<T>             V_final({n, actualK});
+        Tensor<T>             V_final({n, vCols});
 
         for (std::size_t i = 0; i < m; ++i) {
-            for (std::size_t j = 0; j < actualK; ++j) {
+            for (std::size_t j = 0; j < uCols; ++j) {
                 U_final[i, j] = U[i, j];
             }
         }
@@ -1137,7 +1170,7 @@ svd::Status gesvd(Policy&& /*policy*/, TensorU& U, TensorS& S, TensorV& V, const
         }
 
         for (std::size_t i = 0; i < n; ++i) {
-            for (std::size_t j = 0; j < actualK; ++j) {
+            for (std::size_t j = 0; j < vCols; ++j) {
                 V_final[i, j] = V[i, j];
             }
         }
@@ -1160,9 +1193,9 @@ svd::Status gesvd(Policy&& /*policy*/, TensorU& U, TensorS& S, TensorV& V, const
  * computes the thin SVD by default (U is m×min(m,n), V is n×min(m,n))
  * set config.fullMatrices = true for full SVD
  *
- * @param U output left singular vectors [m × k] where k = min(m,n) or m if fullMatrices
- * @param S output singular values [k], always real and non-negative, descending order
- * @param V output right singular vectors [n × k] where k = min(m,n) or n if fullMatrices
+ * @param U output left singular vectors, shaped as for the overload with a policy
+ * @param S output singular values, real and non-negative, descending order
+ * @param V output right singular vectors, shaped as for the overload with a policy
  * @param A input matrix [m × n]
  * @param config SVD configuration
  * @return status indicating success or type of failure

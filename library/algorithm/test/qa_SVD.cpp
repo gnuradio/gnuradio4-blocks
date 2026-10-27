@@ -1535,6 +1535,55 @@ const boost::ut::suite<"SVD Golub-Reinsch on hard inputs"> _svd_golub_reinsch_ha
     } | RealTypes{};
 };
 
+const boost::ut::suite<"SVD Full Matrices"> _svd_full_matrices = [] {
+    using namespace boost::ut;
+    using namespace boost::ut::literals;
+    using gr::Tensor;
+
+    "full matrices return square orthonormal U and V"_test = []<typename Config> {
+        using T = Config::value_type;
+        // a tall 4 x 3 input of rank 2 and its 3 x 4 transpose
+        const Tensor<T> tall = scaledMatrix<T>(4UZ, 3UZ, 1, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
+        const Tensor<T> wide = scaledMatrix<T>(3UZ, 4UZ, 1, {1, 4, 7, 10, 2, 5, 8, 11, 3, 6, 9, 12});
+        for (const Tensor<T>* A : {&tall, &wide}) {
+            const std::size_t m      = A->extent(0);
+            const std::size_t n      = A->extent(1);
+            const SvdRatios   ratios = svdRatios(*A, Config::algorithm, {}, true);
+            const auto        name   = Config::name() + " " + std::to_string(m) + "x" + std::to_string(n);
+            expect(ratios.status == svd::Status::Success) << name;
+            expect(ratios.uRows == m && ratios.uCols == m && ratios.vRows == n && ratios.vCols == n && ratios.sSize == std::min(m, n)) << name << "shapes";
+            expect(le(ratios.reconstruction, kRatioBound)) << name << "reconstruction";
+            expect(le(ratios.orthogonalityU, kRatioBound)) << name << "orthogonality of U";
+            expect(le(ratios.orthogonalityV, kRatioBound)) << name << "orthogonality of V";
+        }
+    } | AllSvdConfigs{};
+
+    "full matrices keep every column when k limits S"_test = [] {
+        const Tensor<double> A = scaledMatrix<double>(4UZ, 3UZ, 1.0, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
+        svd::Config<double>  config;
+        config.k            = 1;
+        config.fullMatrices = true;
+        Tensor<double> U, S, V;
+        expect(gesvd(U, S, V, A, config) == svd::Status::EarlyReturn);
+        expect(eq(S.size(), 1UZ));
+        expect(eq(U.extent(1), 4UZ));
+        expect(eq(V.extent(1), 3UZ));
+        expect(le(orthogonalityError(U), kRatioBound * 4.0L * static_cast<long double>(std::numeric_limits<double>::epsilon())));
+        expect(le(orthogonalityError(V), kRatioBound * 4.0L * static_cast<long double>(std::numeric_limits<double>::epsilon())));
+    };
+
+    "full matrices of an empty input are identities"_test = [] {
+        const Tensor<double> A({0UZ, 3UZ});
+        svd::Config<double>  config;
+        config.fullMatrices = true;
+        Tensor<double> U, S, V;
+        expect(gesvd(U, S, V, A, config) == svd::Status::Success);
+        expect(eq(U.extent(0), 0UZ) && eq(U.extent(1), 0UZ));
+        expect(eq(V.extent(0), 3UZ) && eq(V.extent(1), 3UZ));
+        expect(eq(orthogonalityError(V), 0.0L));
+    };
+};
+
 const boost::ut::suite<"GolubReinsch Internals -- Regression Tests"> _gr_internals = [] {
     using namespace boost::ut;
     using namespace boost::ut::literals;
