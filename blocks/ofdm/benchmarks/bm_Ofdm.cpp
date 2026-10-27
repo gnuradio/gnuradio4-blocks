@@ -183,7 +183,7 @@ int main() {
 
     std::vector<gr::DataSet<CF>> recordSink(kSymbols);
     std::vector<CF>              streamSink(kCarried + kSymbol);
-    std::vector<gr::Tag>         trigger{gr::Tag{0UZ, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("ofdm_frame")}}}};
+    std::vector<gr::Tag>         trigger{gr::Tag{0UZ, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("ofdm_frame")}}}};
     std::size_t                  removeAt = 0UZ;
 
     shim::OutputSpan<gr::DataSet<float>> unwiredChannel(std::span<gr::DataSet<float>>{}, 0UZ, nullptr, false);

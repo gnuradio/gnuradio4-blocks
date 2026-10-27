@@ -93,17 +93,11 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
         constexpr gr::Size_t N          = 16;
         constexpr float      streamRate = 4242.f;
 
-        // the monitor owns none of the reserved keys, so it neither substitutes its own value into a forwarded tag
-        // nor tracks a passing one
-        const auto& writable = gr::CtxSettings<Monitor>::allWritableMembers();
-        expect(!writable.contains(std::string(gr::tag::SAMPLE_RATE.shortKey()))) << "a monitor must not own the stream keys it observes";
-        expect(!writable.contains(std::string(gr::tag::SIGNAL_NAME.shortKey()))) << "a monitor must not own the stream keys it observes";
-
         Graph g;
-        auto& src     = g.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>(property_map{{"n_samples_max", N}, {gr::tag::SAMPLE_RATE.shortKey(), 1000.f}});
+        auto& src     = g.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>(property_map{{"n_samples_max", N}, {gr::tag::SAMPLE_RATE.name(), 1000.f}});
         auto& monitor = g.emplaceBlock<Monitor>(property_map{{"n_samples_expected", N}});
         auto& sink    = g.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_ONE>>(property_map{{"n_samples_expected", N}});
-        src._tags     = {{6UZ, {{gr::tag::SAMPLE_RATE.shortKey(), streamRate}}}};
+        src._tags     = {{6UZ, {{gr::tag::SAMPLE_RATE.key(), streamRate}}}};
 
         expect(g.connect<"out", "in">(src, monitor).has_value());
         expect(g.connect<"out", "in">(monitor, sink).has_value());
@@ -116,7 +110,7 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
 
         std::size_t nSeen = 0UZ;
         for (const auto& tag : sink._tags) {
-            const auto it = tag.map.find(gr::tag::SAMPLE_RATE.shortKey());
+            const auto it = tag.map.find(gr::tag::SAMPLE_RATE.key());
             if (it == tag.map.end() || it->second.value_or(0.f) == 1000.f) {
                 continue; // the settings-forward tag carries the source's own rate
             }
@@ -167,7 +161,7 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
             auto& src     = g.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>(property_map{{"n_samples_max", N}, {"mark_tag", false}});
             auto& monitor = g.emplaceBlock<Monitor>();
             auto& sink    = g.emplaceBlock<Sink>();
-            src._tags     = {{kTagOffset, {{gr::tag::TRIGGER_NAME.shortKey(), "past"}}}};
+            src._tags     = {{kTagOffset, {{gr::tag::TRIGGER_NAME.key(), "past"}}}};
 
             monitor._nSamplesProduced = kStart;
             sink._nSamplesProduced    = kStart;
@@ -181,7 +175,7 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
             }
             expect(sch.runAndWait().has_value());
 
-            const auto hasKey = [](const Tag& tag) { return tag.map.contains(gr::tag::TRIGGER_NAME.shortKey()); };
+            const auto hasKey = [](const Tag& tag) { return tag.map.contains(gr::tag::TRIGGER_NAME.key()); };
             for (const auto* tags : {&monitor._tags, &sink._tags}) {
                 const auto it = std::ranges::find_if(*tags, hasKey);
                 expect(fatal(it != tags->end())) << "the tag did not arrive";
@@ -207,7 +201,7 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
         expect(sched.runAndWait().has_value());
 
         const auto nCarrying = std::ranges::count_if(sink._tags, [](const Tag& tag) { return tag.map.contains("record_id"); });
-        expect(eq(nCarrying, 1)) << "the monitor declares no tag policy and forwards a key outside the auto-forward set";
+        expect(eq(nCarrying, 1)) << "the monitor declares no tag policy and forwards a key outside the gr: domain";
     };
 };
 

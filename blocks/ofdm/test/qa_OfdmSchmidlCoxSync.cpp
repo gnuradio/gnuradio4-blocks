@@ -191,12 +191,12 @@ struct Detection {
     const auto result = shim::run<CF>(block, stream, chunk);
     Detection  found;
     for (const gr::Tag& tag : result.tags) {
-        const auto entry = tag.map.find(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey()));
+        const auto entry = tag.map.find(std::pmr::string(gr::tag::TRIGGER_NAME.key()));
         if (entry == tag.map.end()) {
             continue;
         }
         found.biases.push_back(static_cast<std::int64_t>(tag.index) - static_cast<std::int64_t>(block.delaySamples()) - static_cast<std::int64_t>(kLead));
-        const auto meta = tag.map.find(std::pmr::string(gr::tag::TRIGGER_META_INFO.shortKey()));
+        const auto meta = tag.map.find(std::pmr::string(gr::tag::TRIGGER_META_INFO.key()));
         if (meta != tag.map.end()) {
             if (const auto* map = meta->second.get_if<gr::property_map>(); map != nullptr) {
                 const auto value = map->find(std::pmr::string("cfo_fractional"));
@@ -266,12 +266,12 @@ struct Drive {
     }
 };
 
-/// @brief The `mark` and `trigger_name` tags of a run, as `key=value@index` in the order the block published them.
+/// @brief The `mark` and `gr:trigger_name` tags of a run, as `key=value@index` in the order the block published them.
 [[nodiscard]] std::vector<std::string> tagList(std::span<const gr::Tag> tags) {
     std::vector<std::string> list;
     for (const gr::Tag& tag : tags) {
         for (const auto& [key, value] : tag.map) {
-            if (key == "mark" || key == std::pmr::string(gr::tag::TRIGGER_NAME.shortKey())) {
+            if (key == "mark" || key == std::pmr::string(gr::tag::TRIGGER_NAME.key())) {
                 list.push_back(std::format("{}={}@{}", std::string(key), value.value_or(std::string{}), tag.index));
             }
         }
@@ -497,7 +497,7 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
 
         const std::size_t         delay   = block.delaySamples();
         const std::span<const CF> out     = drive.out.samples;
-        const auto                trigger = std::ranges::find_if(drive.out.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey())); });
+        const auto                trigger = std::ranges::find_if(drive.out.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.key())); });
         expect(eq(out.size(), burst.size())) << "one output per input";
         expect(std::ranges::all_of(out.first(delay), [](const CF& sample) { return sample == CF{}; })) << "the delay line starts empty";
         expect(std::ranges::equal(out.subspan(delay), burst.first(burst.size() - delay))) << "each input comes out delaySamples() later";
@@ -506,7 +506,7 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
             return;
         }
         expect(le(4 * std::abs(static_cast<std::int64_t>(trigger->index - delay) - static_cast<std::int64_t>(kLead)), static_cast<std::int64_t>(kCp)));
-        const std::vector<std::string> expected{std::format("trigger_name=ofdm_frame@{}", trigger->index), std::format("mark=last@{}", burst.size())};
+        const std::vector<std::string> expected{std::format("{}=ofdm_frame@{}", gr::tag::TRIGGER_NAME.key(), trigger->index), std::format("mark=last@{}", burst.size())};
         expect(tagList(drive.out.tags) == expected) << std::format("the tag on the last input leaves at the end-of-stream index: {}", tagList(drive.out.tags));
     };
 
@@ -527,12 +527,12 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
             drive.to(end, chunk);
             drive.finish();
 
-            const auto trigger = std::ranges::find_if(drive.out.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey())); });
+            const auto trigger = std::ranges::find_if(drive.out.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.key())); });
             expect(trigger != drive.out.tags.end()) << std::format("chunk {}: the frame's trigger is output", chunk);
             if (trigger == drive.out.tags.end()) {
                 continue;
             }
-            const std::vector<std::string> expected{std::format("trigger_name=ofdm_frame@{}", trigger->index), std::format("mark=frame@{}", kLead + 10UZ + block.delaySamples()), //
+            const std::vector<std::string> expected{std::format("{}=ofdm_frame@{}", gr::tag::TRIGGER_NAME.key(), trigger->index), std::format("mark=frame@{}", kLead + 10UZ + block.delaySamples()), //
                 std::format("mark=tail@{}", end), std::format("mark=end@{}", end)};
             expect(tagList(drive.out.tags) == expected) << std::format("chunk {}: {} against {}", chunk, tagList(drive.out.tags), expected);
             expect(std::ranges::none_of(drive.out.tags, [](const gr::Tag& tag) { return tag.map.contains(static_cast<std::pmr::string>(gr::tag::END_OF_STREAM)); })) << std::format("chunk {}: the input's end_of_stream key is dropped", chunk);
@@ -546,9 +546,9 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
      */
     "an input trigger with the block's own trigger_label loses its trigger keys, at any chunking"_test = [&clean, floor] {
         const std::size_t          end  = clean.size();
-        const std::pmr::string     name = gr::tag::TRIGGER_NAME.shortKey();
-        const std::vector<gr::Tag> inTags{gr::Tag{kLead, gr::property_map{{name, std::string("ofdm_frame")}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f}}}, //
-            gr::Tag{kLead + 20UZ, gr::property_map{{name, std::string("ofdm_frame")}, {"mark", std::string("kept")}}},                                    //
+        const std::pmr::string     name = gr::tag::TRIGGER_NAME.key();
+        const std::vector<gr::Tag> inTags{gr::Tag{kLead, gr::property_map{{name, std::string("ofdm_frame")}, {gr::tag::TRIGGER_OFFSET.key(), 0.f}}}, //
+            gr::Tag{kLead + 20UZ, gr::property_map{{name, std::string("ofdm_frame")}, {"mark", std::string("kept")}}},                               //
             gr::Tag{kLead + 30UZ, gr::property_map{{name, std::string("burst")}}}, gr::Tag{end, gr::property_map{{name, std::string("ofdm_frame")}}}};
         const auto                 named = [&name](std::span<const gr::Tag> tags, const std::string& label) {
             return std::ranges::count_if(tags, [&name, &label](const gr::Tag& tag) {
@@ -611,7 +611,7 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
 
         const Run  reference = run({});
         const auto expected  = tagList(reference.out.tags);
-        const auto trigger   = std::ranges::find_if(reference.out.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey())); });
+        const auto trigger   = std::ranges::find_if(reference.out.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.key())); });
         expect(eq(reference.triggersAtSplit, std::uint64_t{1})) << "the detection is confirmed before the change";
         expect(trigger != reference.out.tags.end() && trigger->index >= kSplit) << "and its sample is output after it";
         expect(eq(expected.size(), 2UZ)) << "one trigger and one input tag";
@@ -661,7 +661,7 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
         const Run enabled  = run(false, true);
         const Run disabled = run(true, false);
 
-        const auto trigger = std::ranges::find_if(enabled.out.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey())); });
+        const auto trigger = std::ranges::find_if(enabled.out.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.key())); });
         expect(eq(enabled.triggersAtSplit, std::uint64_t{1})) << "the detection is confirmed before the change";
         expect(trigger != enabled.out.tags.end() && trigger->index >= kSplit) << "and its sample is output after it";
         for (const Run* arm : {&off, &enabled, &disabled}) {
@@ -860,7 +860,7 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
         std::ignore = block.settings().applyStagedParameters();
         drive.to(twice.size(), 64UZ);
         expect(eq(block.nTriggers(), std::uint64_t{2})) << "the second frame adds to the first";
-        expect(eq(std::ranges::count_if(drive.out.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey())); }), std::ptrdiff_t{2})) << "both triggers are output";
+        expect(eq(std::ranges::count_if(drive.out.tags, [](const gr::Tag& tag) { return tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.key())); }), std::ptrdiff_t{2})) << "both triggers are output";
     };
 
     "start() throws nothing after a refused setting"_test = [floor] {
@@ -898,9 +898,11 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
             if (level.has_value()) {
                 source._tags = {gr::Tag{10UZ, gr::property_map{{"threshold", *level}}}};
             }
-            // threshold stays out of the constructor's settings, at its default of 0.6, and the tag sets it.
+            // threshold stays out of the constructor's settings, at its default of 0.6. It follows the tag key
+            // `threshold`, and the tag sets it.
             auto& detect = graph.emplaceBlock<SchmidlCoxSync>({{"r_floor", floor}});
-            auto& sink   = graph.emplaceBlock<gr::blocks::testing::TagSink<CF, ProcessFunction::USE_PROCESS_BULK>>({{"log_samples", true}, {"log_tags", true}});
+            detect.settings().setTagCouplings({{"threshold", std::string("threshold")}});
+            auto& sink = graph.emplaceBlock<gr::blocks::testing::TagSink<CF, ProcessFunction::USE_PROCESS_BULK>>({{"log_samples", true}, {"log_tags", true}});
             expect(graph.connect<"out", "in">(source, detect).has_value());
             expect(graph.connect<"out", "in">(detect, sink).has_value());
 
@@ -910,7 +912,7 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
             result.completed = scheduler.runAndWait().has_value();
             result.samples.assign(sink._samples.begin(), sink._samples.end());
             for (const gr::Tag& tag : sink._tags) {
-                if (tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey()))) {
+                if (tag.map.contains(std::pmr::string(gr::tag::TRIGGER_NAME.key()))) {
                     result.triggers.push_back(tag.index);
                 }
             }
@@ -1036,7 +1038,7 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
      */
     "a frame at the 32-bit wrap of the stream index keeps its trigger on every target"_test = [&clean, floor] {
         const gr::property_map settings{{"fft_len", kFft}, {"cp_len", kCp}, {"r_floor", floor}, {"correct_cfo", false}};
-        const std::string_view trigger = gr::tag::TRIGGER_NAME.shortKey();
+        const std::string_view trigger = gr::tag::TRIGGER_NAME.key();
         std::vector<CF>        twice   = clean;
         twice.insert(twice.end(), clean.begin(), clean.end());
 
@@ -1068,7 +1070,7 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
      * places its triggers where the run from index 0 places them.
      */
     "a dead time across the 32-bit wrap of the stream index ends where it does from index 0"_test = [&clean, floor] {
-        const std::string_view trigger = gr::tag::TRIGGER_NAME.shortKey();
+        const std::string_view trigger = gr::tag::TRIGGER_NAME.key();
         std::vector<CF>        twice   = clean;
         twice.insert(twice.end(), clean.begin(), clean.end());
         const auto longer = static_cast<gr::Size_t>(clean.size() / static_cast<std::size_t>(kFft + kCp) + 1UZ);

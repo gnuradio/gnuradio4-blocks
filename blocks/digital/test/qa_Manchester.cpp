@@ -171,9 +171,9 @@ template<typename TBlock>
     return where;
 }
 
-/// @brief The `sample_rate` a tag carries, or a value no rate takes.
+/// @brief The `gr:sample_rate` a tag carries, or a value no rate takes.
 [[nodiscard]] float sampleRateOf(const gr::Tag& tag) {
-    const auto entry = tag.map.find(gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()));
+    const auto entry = tag.map.find(gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()));
     if (entry == tag.map.end()) {
         return -1.0F;
     }
@@ -368,19 +368,19 @@ const boost::ut::suite<"Manchester encoder"> manchesterEncoderTests = [] {
 
         // The encoder half: a tag at input item t arrives at output item 2t
         for (const std::size_t t : {0UZ, 1UZ, 7UZ, 8UZ, 1000UZ}) {
-            const std::array<gr::Tag, 1UZ> planted{gr::Tag{t, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("mark")}}}};
+            const std::array<gr::Tag, 1UZ> planted{gr::Tag{t, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("mark")}}}};
             const auto                     seen = throughGraph<ManchesterEncoder>(encoderSettings("ieee802_3"), std::span<const std::uint8_t>(data), std::span<const gr::Tag>(planted));
-            expect(that % (offsetsOf(seen.tags, gr::tag::TRIGGER_NAME.shortKey()) == std::vector<std::size_t>{2UZ * t})) << std::format("a tag at input item {} belongs at output item {}", t, 2UZ * t);
+            expect(that % (offsetsOf(seen.tags, gr::tag::TRIGGER_NAME.key()) == std::vector<std::size_t>{2UZ * t})) << std::format("a tag at input item {} belongs at output item {}", t, 2UZ * t);
             expect(eq(seen.samples.size(), 2UZ * data.size()));
         }
 
         // two tags at one input item stay two tags, in order, rather than merging
-        const std::array<gr::Tag, 2UZ> pair{gr::Tag{4UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("first")}}}, gr::Tag{5UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("second")}}}};
+        const std::array<gr::Tag, 2UZ> pair{gr::Tag{4UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("first")}}}, gr::Tag{5UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("second")}}}};
         const auto                     both = throughGraph<ManchesterEncoder>(encoderSettings("ieee802_3"), std::span<const std::uint8_t>(data), std::span<const gr::Tag>(pair));
-        expect(that % (offsetsOf(both.tags, gr::tag::TRIGGER_NAME.shortKey()) == std::vector<std::size_t>{8UZ, 10UZ}));
+        expect(that % (offsetsOf(both.tags, gr::tag::TRIGGER_NAME.key()) == std::vector<std::size_t>{8UZ, 10UZ}));
 
         // the core doubles a forwarded sample_rate, and the block owns no such setting
-        const std::array<gr::Tag, 1UZ> rated{gr::Tag{0UZ, {{gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), 1.0e6F}}}};
+        const std::array<gr::Tag, 1UZ> rated{gr::Tag{0UZ, {{gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()), 1.0e6F}}}};
         const auto                     scaled  = throughGraph<ManchesterEncoder>(encoderSettings("ieee802_3"), std::span<const std::uint8_t>(data), std::span<const gr::Tag>(rated));
         bool                           sawRate = false;
         for (const gr::Tag& seenTag : scaled.tags) {
@@ -429,16 +429,16 @@ const boost::ut::suite<"Manchester encoder"> manchesterEncoderTests = [] {
 
     "tag policy"_test = [] {
         // the compile-time half, asserted as a predicate: a rate changer does not get blind pass-through
-        static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<ManchesterEncoder>, "a 1:2 block must not claim UnfilteredTagPropagation");
-        expect(!gr::block::kUnfilteredTagPropagationAdmissible<ManchesterEncoder>);
+        static_assert(!ManchesterEncoder::keepsTagOffsets(), "a 1:2 block does not keep tag offsets");
+        expect(!ManchesterEncoder::keepsTagOffsets());
 
-        // the runtime half: a reserved key survives, a custom key does not
+        // the runtime half: a reserved key and a custom key both survive at the mapped offset
         Rng                            rng;
         const auto                     data = rng.items(64UZ, 8U);
-        const std::array<gr::Tag, 1UZ> mixed{gr::Tag{8UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("kept")}, {gr::property_map::key_type(kCustomKey), std::string("dropped")}}}};
+        const std::array<gr::Tag, 1UZ> mixed{gr::Tag{8UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("kept")}, {gr::property_map::key_type(kCustomKey), std::string("kept")}}}};
         const auto                     seen = throughGraph<ManchesterEncoder>(encoderSettings("ieee802_3"), std::span<const std::uint8_t>(data), std::span<const gr::Tag>(mixed));
-        expect(that % (offsetsOf(seen.tags, gr::tag::TRIGGER_NAME.shortKey()) == std::vector<std::size_t>{16UZ}));
-        expect(that % (offsetsOf(seen.tags, kCustomKey) == std::vector<std::size_t>{})) << "a custom-key protocol does not survive a rate changer";
+        expect(that % (offsetsOf(seen.tags, gr::tag::TRIGGER_NAME.key()) == std::vector<std::size_t>{16UZ}));
+        expect(that % (offsetsOf(seen.tags, kCustomKey) == std::vector<std::size_t>{16UZ})) << "a custom key crosses a rate changer beside the reserved one";
     };
 
     "a stream value cannot stop the graph"_test = [] {
@@ -649,19 +649,19 @@ const boost::ut::suite<"Manchester decoder"> manchesterDecoderTests = [] {
         // The decoder half: a tag at input item t arrives at output item floor(t/2), both parities.
         // At bits_per_item = 8 the request a tag can make is parity 0, which is the grid already in force.
         for (const std::size_t t : {0UZ, 1UZ, 6UZ, 7UZ, 1000UZ}) {
-            const std::array<gr::Tag, 1UZ> planted{gr::Tag{t, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("mark")}}}};
+            const std::array<gr::Tag, 1UZ> planted{gr::Tag{t, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("mark")}}}};
             const auto                     graphed = decoderGraph(decoderSettings("ieee802_3"), std::span<const std::uint8_t>(chips), std::span<const gr::Tag>(planted));
-            expect(that % (offsetsOf(graphed.tags, gr::tag::TRIGGER_NAME.shortKey()) == std::vector<std::size_t>{t / 2UZ})) << std::format("a tag at input item {} belongs at output item {}", t, t / 2UZ);
+            expect(that % (offsetsOf(graphed.tags, gr::tag::TRIGGER_NAME.key()) == std::vector<std::size_t>{t / 2UZ})) << std::format("a tag at input item {} belongs at output item {}", t, t / 2UZ);
         }
 
         // the two input items of one chunk map to one output item, and neither of their tags is dropped on the way
-        const std::array<gr::Tag, 2UZ> pair{gr::Tag{4UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("first")}}}, gr::Tag{5UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_OFFSET.shortKey()), 3.0F}}}};
+        const std::array<gr::Tag, 2UZ> pair{gr::Tag{4UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("first")}}}, gr::Tag{5UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_OFFSET.key()), 3.0F}}}};
         const auto                     both = decoderGraph(decoderSettings("ieee802_3"), std::span<const std::uint8_t>(chips), std::span<const gr::Tag>(pair));
-        expect(that % (offsetsOf(both.tags, gr::tag::TRIGGER_NAME.shortKey()) == std::vector<std::size_t>{2UZ}));
-        expect(that % (offsetsOf(both.tags, gr::tag::TRIGGER_OFFSET.shortKey()) == std::vector<std::size_t>{2UZ})) << "the second tag lands on the same output item rather than being dropped";
+        expect(that % (offsetsOf(both.tags, gr::tag::TRIGGER_NAME.key()) == std::vector<std::size_t>{2UZ}));
+        expect(that % (offsetsOf(both.tags, gr::tag::TRIGGER_OFFSET.key()) == std::vector<std::size_t>{2UZ})) << "the second tag lands on the same output item rather than being dropped";
 
         // the core halves a forwarded sample_rate, and the block owns no such setting
-        const std::array<gr::Tag, 1UZ> rated{gr::Tag{0UZ, {{gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), 2.0e6F}}}};
+        const std::array<gr::Tag, 1UZ> rated{gr::Tag{0UZ, {{gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()), 2.0e6F}}}};
         const auto                     scaled  = decoderGraph(decoderSettings("ieee802_3"), std::span<const std::uint8_t>(chips), std::span<const gr::Tag>(rated));
         bool                           sawRate = false;
         for (const gr::Tag& seenTag : scaled.tags) {
@@ -692,7 +692,7 @@ const boost::ut::suite<"Manchester decoder"> manchesterDecoderTests = [] {
 
         { // (b) a tag re-grids to the parity of its own chip index, effective at the next chunk boundary
             for (const std::size_t t : {8UZ, 9UZ}) {
-                const std::array<gr::Tag, 1UZ> planted{gr::Tag{t, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("sync")}}}};
+                const std::array<gr::Tag, 1UZ> planted{gr::Tag{t, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("sync")}}}};
                 auto                           tagged = make<ManchesterDecoder>(decoderSettings("ieee802_3", 1U));
                 const auto                     seen   = decodedBy(tagged, std::span<const std::uint8_t>(chips), 2UZ, std::span<const gr::Tag>(planted));
                 const std::size_t              at     = ((t + 1UZ) / 2UZ) * 2UZ; // the chunk boundary the change lands on
@@ -703,16 +703,16 @@ const boost::ut::suite<"Manchester decoder"> manchesterDecoderTests = [] {
             }
 
             // at an even bits_per_item the product t * bits_per_item is always even, so a tag can only ask for parity 0
-            const std::array<gr::Tag, 1UZ> odd{gr::Tag{7UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("sync")}}}};
+            const std::array<gr::Tag, 1UZ> odd{gr::Tag{7UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("sync")}}}};
             auto                           wide = make<ManchesterDecoder>(decoderSettings("ieee802_3", 8U, "MsbFirst", 1U));
             std::ignore                         = decodedBy(wide, std::span<const std::uint8_t>(chips), 2UZ, std::span<const gr::Tag>(odd));
             expect(eq(wide._coder.gridParity, std::uint8_t{0U})) << "the request was parity 0 and it was taken";
         }
 
         { // (c) value filtering, a non-string value, and disabling
-            const std::array<gr::Tag, 1UZ> other{gr::Tag{9UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("other")}}}};
-            const std::array<gr::Tag, 1UZ> number{gr::Tag{9UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), gr::Size_t{7}}}}};
-            const std::array<gr::Tag, 1UZ> right{gr::Tag{9UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("sync")}}}};
+            const std::array<gr::Tag, 1UZ> other{gr::Tag{9UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("other")}}}};
+            const std::array<gr::Tag, 1UZ> number{gr::Tag{9UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), gr::Size_t{7}}}}};
+            const std::array<gr::Tag, 1UZ> right{gr::Tag{9UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("sync")}}}};
 
             gr::property_map filtered   = decoderSettings("ieee802_3", 1U);
             filtered["align_tag_value"] = std::string("sync");
@@ -728,14 +728,14 @@ const boost::ut::suite<"Manchester decoder"> manchesterDecoderTests = [] {
         }
 
         { // (d) the tag is read and forwarded, never consumed
-            const std::array<gr::Tag, 1UZ> planted{gr::Tag{8UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("sync")}}}};
+            const std::array<gr::Tag, 1UZ> planted{gr::Tag{8UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("sync")}}}};
             const auto                     graphed = decoderGraph(decoderSettings("ieee802_3", 1U), std::span<const std::uint8_t>(chips), std::span<const gr::Tag>(planted));
-            expect(that % (offsetsOf(graphed.tags, gr::tag::TRIGGER_NAME.shortKey()) == std::vector<std::size_t>{4UZ})) << "a downstream extractor still needs it";
+            expect(that % (offsetsOf(graphed.tags, gr::tag::TRIGGER_NAME.key()) == std::vector<std::size_t>{4UZ})) << "a downstream extractor still needs it";
         }
 
         { // (e) the grid-change budget of anchor G, in both directions and in neither
-            const std::array<gr::Tag, 1UZ> toOne{gr::Tag{9UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("sync")}}}};
-            const std::array<gr::Tag, 1UZ> toZero{gr::Tag{8UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("sync")}}}};
+            const std::array<gr::Tag, 1UZ> toOne{gr::Tag{9UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("sync")}}}};
+            const std::array<gr::Tag, 1UZ> toZero{gr::Tag{8UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("sync")}}}};
 
             auto       rising = make<ManchesterDecoder>(decoderSettings("ieee802_3", 1U));
             const auto up     = decodedBy(rising, std::span<const std::uint8_t>(chips), 2UZ, std::span<const gr::Tag>(toOne));
@@ -769,15 +769,15 @@ const boost::ut::suite<"Manchester decoder"> manchesterDecoderTests = [] {
     };
 
     "tag policy"_test = [] {
-        static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<ManchesterDecoder>, "a 2:1 block must not claim UnfilteredTagPropagation");
-        expect(!gr::block::kUnfilteredTagPropagationAdmissible<ManchesterDecoder>);
+        static_assert(!ManchesterDecoder::keepsTagOffsets(), "a 2:1 block does not keep tag offsets");
+        expect(!ManchesterDecoder::keepsTagOffsets());
 
         Rng                            rng;
         const auto                     chips = encoded(encoderSettings("ieee802_3"), std::span<const std::uint8_t>(rng.items(64UZ, 8U)));
-        const std::array<gr::Tag, 1UZ> mixed{gr::Tag{8UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("kept")}, {gr::property_map::key_type(kCustomKey), std::string("dropped")}}}};
+        const std::array<gr::Tag, 1UZ> mixed{gr::Tag{8UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("kept")}, {gr::property_map::key_type(kCustomKey), std::string("kept")}}}};
         const auto                     seen = decoderGraph(decoderSettings("ieee802_3"), std::span<const std::uint8_t>(chips), std::span<const gr::Tag>(mixed));
-        expect(that % (offsetsOf(seen.tags, gr::tag::TRIGGER_NAME.shortKey()) == std::vector<std::size_t>{4UZ}));
-        expect(that % (offsetsOf(seen.tags, kCustomKey) == std::vector<std::size_t>{})) << "a custom-key protocol does not survive a rate changer";
+        expect(that % (offsetsOf(seen.tags, gr::tag::TRIGGER_NAME.key()) == std::vector<std::size_t>{4UZ}));
+        expect(that % (offsetsOf(seen.tags, kCustomKey) == std::vector<std::size_t>{4UZ})) << "a custom key crosses a rate changer beside the reserved one";
     };
 
     "a stream value cannot stop the graph"_test = [] {
@@ -798,7 +798,7 @@ const boost::ut::suite<"Manchester decoder"> manchesterDecoderTests = [] {
         for (const gr::Size_t width : {gr::Size_t{1}, gr::Size_t{8}}) {
             const auto                     data  = rng.items(4096UZ, static_cast<unsigned>(width));
             const auto                     chips = encoded(encoderSettings("ieee802_3", width), std::span<const std::uint8_t>(data));
-            const std::array<gr::Tag, 1UZ> planted{gr::Tag{101UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::string("sync")}}}};
+            const std::array<gr::Tag, 1UZ> planted{gr::Tag{101UZ, {{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::string("sync")}}}};
             const auto                     whole = decoded(decoderSettings("ieee802_3", width), std::span<const std::uint8_t>(chips), 0UZ, std::span<const gr::Tag>(planted));
             for (const std::size_t chunk : {2UZ, 4UZ, 18UZ, 4096UZ}) {
                 const auto chunked = decoded(decoderSettings("ieee802_3", width), std::span<const std::uint8_t>(chips), chunk, std::span<const gr::Tag>(planted));

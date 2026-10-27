@@ -82,15 +82,13 @@ inline void steerLoop(const property_map& source, TLoop& loop, std::uint64_t& ig
 
 /**
  * @brief The family's stream-tag contract: `phase_est` and `freq_est` steer the loop and are consumed, the same two
- * keys inside a trigger's `trigger_meta_info` steer it and ride on, and everything else rides through at its own offset.
+ * keys inside a trigger's `gr:trigger_meta_info` steer it and ride on, and everything else rides through at its own
+ * offset.
  *
  * A detector states a burst's estimates inside the trigger's own map, where the framework keeps a trigger's additional
- * information. The framework forwards only the keys of `gr::tag::kDefaultTags` and the block's own settings across a
- * block that fails `gr::block::kUnfilteredTagPropagationAdmissible`, unless the block declares `NoTagPropagation` or
- * writes `forwardTags()`. A `NoTagPropagation` block forwards nothing through the framework, and a `forwardTags()`
- * override forwards what it writes. A block that lists `phase_est` or `freq_est` in `DroppedTagKeys` drops that key at
- * the top level and inside `trigger_meta_info`. The trigger's map carries the estimates across a block that forwards
- * only the keys of `gr::tag::kDefaultTags`. Those estimates are read but not taken out: the map describes the trigger,
+ * information. A `NoTagPropagation` block forwards nothing through the framework, and a `forwardTags()` override
+ * forwards what it writes. A block that lists `phase_est` or `freq_est` in `DroppedTagKeys` drops that key at the top
+ * level and inside `gr:trigger_meta_info`. Those estimates are read but not taken out: the map describes the trigger,
  * and the framer and the symbol synchronizer downstream read it too.
  * A top-level key is a directive addressed to this block, is applied after the trigger's and is consumed.
  *
@@ -102,7 +100,7 @@ inline void routeTag(const property_map& map, TLoop& loop, std::uint64_t& ignore
     const property_map::key_type phaseKey{kPhaseEstKey};
     const property_map::key_type freqKey{kFreqEstKey};
 
-    if (const auto meta = map.find(property_map::key_type{gr::tag::TRIGGER_META_INFO.shortKey()}); meta != map.end()) {
+    if (const auto meta = map.find(property_map::key_type{gr::tag::TRIGGER_META_INFO.key()}); meta != map.end()) {
         if (const auto* estimates = meta->second.get_if<property_map>(); estimates != nullptr) {
             steerLoop(*estimates, loop, ignored);
         }

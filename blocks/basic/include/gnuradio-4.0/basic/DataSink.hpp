@@ -475,13 +475,13 @@ struct Metadata {
     float       signalMax;
 
     property_map toTagMap() const {
-        return property_map{                                                     //
-            {std::pmr::string(tag::SIGNAL_RATE.shortKey()), sampleRate},         //
-            {std::pmr::string(tag::SIGNAL_NAME.shortKey()), signalName},         //
-            {std::pmr::string(tag::SIGNAL_QUANTITY.shortKey()), signalQuantity}, //
-            {std::pmr::string(tag::SIGNAL_UNIT.shortKey()), signalUnit},         //
-            {std::pmr::string(tag::SIGNAL_MIN.shortKey()), signalMin},           //
-            {std::pmr::string(tag::SIGNAL_MAX.shortKey()), signalMax}};
+        return property_map{                                                //
+            {std::pmr::string(tag::SIGNAL_RATE.key()), sampleRate},         //
+            {std::pmr::string(tag::SIGNAL_NAME.key()), signalName},         //
+            {std::pmr::string(tag::SIGNAL_QUANTITY.key()), signalQuantity}, //
+            {std::pmr::string(tag::SIGNAL_UNIT.key()), signalUnit},         //
+            {std::pmr::string(tag::SIGNAL_MIN.key()), signalMin},           //
+            {std::pmr::string(tag::SIGNAL_MAX.key()), signalMax}};
     }
 };
 
@@ -614,7 +614,7 @@ public:
     PortIn<T, RequiredSamples<std::dynamic_extent, detail::data_sink_buffer_size>> in;
 
     Annotated<float, "sample rate", Doc<"signal sample rate">, Unit<"Hz">>                                           sample_rate = 1.f;
-    Annotated<std::string, "signal name", Visible>                                                                   signal_name = ""; // DataSink cannot be registered with an empty string; it must be set either by the user or via a tag.
+    Annotated<std::string, "signal name", Visible>                                                                   signal_name = ""; // DataSink cannot be registered with an empty string; the user sets it, or a graph couples it to gr:signal_name.
     Annotated<std::string, "signal quantity", Doc<"physical quantity (e.g., 'voltage'). Follows ISO 80000-1:2022.">> signal_quantity{};
     Annotated<std::string, "signal unit", Doc<"unit of measurement (e.g., '[V]', '[m]'). Follows ISO 80000-1:2022">> signal_unit{"a.u."};
     Annotated<float, "signal min", Doc<"signal physical min. (e.g. DAQ) limit">>                                     signal_min = -1.0f;
@@ -1187,7 +1187,7 @@ class DataSetSink : public Block<DataSetSink<T>> {
 
 public:
     PortIn<DataSet<T>>                              in;
-    Annotated<std::string, "DataSet name", Visible> signal_name = ""; // DataSetSink cannot be registered with an empty string; it must be set either by the user or via a tag.
+    Annotated<std::string, "DataSet name", Visible> signal_name = ""; // DataSetSink cannot be registered with an empty string; the user sets it, or a graph couples it to gr:signal_name.
 
     GR_MAKE_REFLECTABLE(DataSetSink, in, signal_name);
 

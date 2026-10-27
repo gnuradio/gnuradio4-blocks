@@ -169,8 +169,8 @@ void expectSingleFormatTag(const std::vector<gr::Tag>& tags, float sampleRate, g
     if (tags.empty()) {
         return;
     }
-    expect(eq(gr::test::get_value_or_fail<float>(tags[0].map.at(gr::tag::SAMPLE_RATE.shortKey())), sampleRate)) << caseName;
-    expect(eq(gr::test::get_value_or_fail<gr::Size_t>(tags[0].map.at(gr::tag::NUM_CHANNELS.shortKey())), numChannels)) << caseName;
+    expect(eq(gr::test::get_value_or_fail<float>(tags[0].map.at(gr::tag::SAMPLE_RATE.key())), sampleRate)) << caseName;
+    expect(eq(gr::test::get_value_or_fail<gr::Size_t>(tags[0].map.at(gr::tag::NUM_CHANNELS.key())), numChannels)) << caseName;
 }
 
 template<typename TSource, typename T, typename TSampleCheck>
@@ -211,7 +211,7 @@ public:
     }
 };
 
-// Records the trigger_time of every timing tag with the sample it marks, and the time each sample
+// Records the gr:trigger_time of every timing tag with the sample it marks, and the time each sample
 // arrived. A sample cannot arrive before it was captured.
 template<typename T>
 class ArrivalSink : public gr::Block<ArrivalSink<T>> {
@@ -224,7 +224,7 @@ public:
         std::size_t   index;
         std::uint64_t timeNs;
     };
-    std::vector<Stamp> _triggerTimes; // the sample a timing tag marks, and its trigger_time
+    std::vector<Stamp> _triggerTimes; // the sample a timing tag marks, and its gr:trigger_time
     std::vector<Stamp> _arrivals;     // every sample before `index` had arrived by `timeNs`
     std::size_t        _nSamples{0UZ};
 
@@ -232,7 +232,7 @@ public:
         const std::uint64_t tArrivalNs = gr::blocks::audio::detail::wallClockNs();
         for (const auto& [relIndex, tagMapRef] : inSpan.tags()) {
             const auto& tagMap = tagMapRef.get();
-            if (const auto it = tagMap.find(gr::tag::TRIGGER_TIME.shortKey()); it != tagMap.end()) {
+            if (const auto it = tagMap.find(gr::tag::TRIGGER_TIME.key()); it != tagMap.end()) {
                 if (const auto* triggerTime = it->second.template get_if<std::uint64_t>(); triggerTime != nullptr) {
                     _triggerTimes.push_back({_nSamples + (relIndex < 0 ? 0UZ : static_cast<std::size_t>(relIndex)), *triggerTime});
                 }
@@ -274,6 +274,11 @@ std::optional<std::expected<void, gr::Error>> runBounded(gr::scheduler::Simple<>
     return endedInTime ? result : std::nullopt;
 }
 
+#ifndef __EMSCRIPTEN__
+/// @brief Couples the sink's PCM format to the rate and channel count of the stream it plays.
+void coupleStreamFormat(gr::blocks::audio::AudioSink<float>& sink) { sink.settings().setTagCouplings({{gr::tag::SAMPLE_RATE.name(), std::string(gr::tag::SAMPLE_RATE.key())}, {gr::tag::NUM_CHANNELS.name(), std::string(gr::tag::NUM_CHANNELS.key())}}); }
+#endif
+
 const boost::ut::suite<"audio device tests"> _audioTests = [] {
     using namespace boost::ut;
 
@@ -285,8 +290,9 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         TempFile                        file{writeTempAudioFile(wavBytes)};
 
         gr::Graph graph;
-        auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
-        auto&     sink                = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
+        auto&     sink   = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        coupleStreamFormat(sink);
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -574,8 +580,9 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         TempFile                        file{writeTempAudioFile(wavBytes)};
 
         gr::Graph graph;
-        auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
-        auto&     sink                = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
+        auto&     sink   = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        coupleStreamFormat(sink);
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -597,7 +604,7 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
             float       sampleRate;
             gr::Size_t  numChannels;
         };
-        // sample_rate and num_channels are auto-updated from the stream, so each tag reopens the
+        // the test couples sample_rate and num_channels to the stream's tags. Each tag reopens the
         // device and replaces the staging ring while the producer is pushing into it
         constexpr std::array<Reconfiguration, 4U> reconfigurations{{{500UZ, 22050.f, 2U}, {1500UZ, 44100.f, 1U}, {2500UZ, 16000.f, 2U}, {3500UZ, 32000.f, 1U}}};
 
@@ -610,7 +617,8 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
             source._tags.push_back({reconfiguration.index, std::move(tagMap)});
         }
 
-        auto& sink                    = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        auto& sink = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        coupleStreamFormat(sink);
         sink._useDummyBackendForTests = true;
         // the sample-exact accounting below holds only with the resampling compensator out of the way
         sink.drift_correction = gr::algorithm::DriftCorrection::None;
@@ -638,8 +646,9 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         constexpr std::string_view caseName = "AudioSource to AudioSink soundio dummy backend";
 
         gr::Graph graph;
-        auto&     source                = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(2)}, {"io_buffer_size", 0.1f}});
-        auto&     sink                  = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        auto&     source = graph.emplaceBlock<gr::blocks::audio::AudioSource<float>>({{"sample_rate", 22050.f}, {"num_channels", gr::Size_t(2)}, {"io_buffer_size", 0.1f}});
+        auto&     sink   = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        coupleStreamFormat(sink);
         source._useDummyBackendForTests = true;
         sink._useDummyBackendForTests   = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
@@ -684,8 +693,9 @@ const boost::ut::suite<"audio device tests"> _audioTests = [] {
         TempFile                        file{writeTempAudioFile(wavBytes)};
 
         gr::Graph graph;
-        auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
-        auto&     sink                = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
+        auto&     sink   = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        coupleStreamFormat(sink);
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -855,12 +865,12 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
 
         bool foundTimingTag = false;
         for (const auto& sinkTag : sink._tags) {
-            if (sinkTag.map.contains(gr::tag::TRIGGER_TIME.shortKey())) {
+            if (sinkTag.map.contains(gr::tag::TRIGGER_TIME.key())) {
                 foundTimingTag = true;
-                expect(sinkTag.map.contains(gr::tag::TRIGGER_NAME.shortKey())) << caseName;
-                expect(sinkTag.map.contains(gr::tag::TRIGGER_OFFSET.shortKey())) << caseName;
+                expect(sinkTag.map.contains(gr::tag::TRIGGER_NAME.key())) << caseName;
+                expect(sinkTag.map.contains(gr::tag::TRIGGER_OFFSET.key())) << caseName;
 
-                expect(sinkTag.map.contains(gr::tag::TRIGGER_META_INFO.shortKey())) << caseName;
+                expect(sinkTag.map.contains(gr::tag::TRIGGER_META_INFO.key())) << caseName;
                 break;
             }
         }
@@ -1004,7 +1014,7 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         // should have the format tag but no TRIGGER_TIME tags
         bool foundTimingTag = false;
         for (const auto& sinkTag : sink._tags) {
-            if (sinkTag.map.contains(gr::tag::TRIGGER_TIME.shortKey())) {
+            if (sinkTag.map.contains(gr::tag::TRIGGER_TIME.key())) {
                 foundTimingTag = true;
             }
         }
@@ -1027,9 +1037,9 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         bool foundTimingTag = false;
         bool foundMetaInfo  = false;
         for (const auto& sinkTag : sink._tags) {
-            if (sinkTag.map.contains(gr::tag::TRIGGER_TIME.shortKey())) {
+            if (sinkTag.map.contains(gr::tag::TRIGGER_TIME.key())) {
                 foundTimingTag = true;
-                if (sinkTag.map.contains(gr::tag::TRIGGER_META_INFO.shortKey())) {
+                if (sinkTag.map.contains(gr::tag::TRIGGER_META_INFO.key())) {
                     foundMetaInfo = true;
                 }
             }
@@ -1054,7 +1064,7 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
 
         std::size_t timingTagCount = 0U;
         for (const auto& sinkTag : sink._tags) {
-            if (sinkTag.map.contains(gr::tag::TRIGGER_TIME.shortKey())) {
+            if (sinkTag.map.contains(gr::tag::TRIGGER_TIME.key())) {
                 ++timingTagCount;
             }
         }
@@ -1089,8 +1099,9 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         TempFile                        file{writeTempAudioFile(wavBytes)};
 
         gr::Graph graph;
-        auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
-        auto&     sink                = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}, {"ppm_estimator_cutoff", 0.5f}});
+        auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
+        auto&     sink   = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}, {"ppm_estimator_cutoff", 0.5f}});
+        coupleStreamFormat(sink);
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 
@@ -1134,7 +1145,7 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         // check that a timing tag uses the forwarded trigger name
         bool foundGpsTrigger = false;
         for (const auto& sinkTag : sink._tags) {
-            if (auto it = sinkTag.map.find(gr::tag::TRIGGER_NAME.shortKey()); it != sinkTag.map.end()) {
+            if (auto it = sinkTag.map.find(gr::tag::TRIGGER_NAME.key()); it != sinkTag.map.end()) {
                 if (auto* name = it->second.get_if<std::pmr::string>()) {
                     if (*name == "GPS:TEST") {
                         foundGpsTrigger = true;
@@ -1172,8 +1183,9 @@ const boost::ut::suite<"audio timing drift"> _timingAndDriftTests = [] {
         TempFile                        file{writeTempAudioFile(wavBytes)};
 
         gr::Graph graph;
-        auto&     source              = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
-        auto&     sink                = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", file.path.string()}});
+        auto&     sink   = graph.emplaceBlock<gr::blocks::audio::AudioSink<float>>({{"io_buffer_size", 0.1f}});
+        coupleStreamFormat(sink);
         sink._useDummyBackendForTests = true;
         expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
 

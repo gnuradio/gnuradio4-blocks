@@ -328,7 +328,7 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
         padded.samples.assign(25UZ, CF{});
         padded.samples.insert(padded.samples.end(), stream.samples.begin(), stream.samples.end());
         padded.samples.insert(padded.samples.end(), 40UZ, CF{});
-        padded.tags.push_back(gr::Tag{25UZ, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("ofdm_frame")}}});
+        padded.tags.push_back(gr::Tag{25UZ, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("ofdm_frame")}}});
 
         CpRemove   block = make<CpRemove>({{"fft_len", gr::Size_t{kFft}}, {"cp_len", std::vector<gr::Size_t>{16U}}, {"frame_len", gr::Size_t{2U}}});
         const auto out   = remove(block, padded, 23UZ);
@@ -365,7 +365,7 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
         const std::vector<std::size_t> others{kSymbol + 30UZ, 8UZ * kSymbol + 50UZ};
         Stream                         tagged = clean;
         for (const std::size_t at : others) {
-            tagged.tags.push_back(gr::Tag{at, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("wallclock")}, {gr::tag::TRIGGER_TIME.shortKey(), std::uint64_t{1}}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f}}});
+            tagged.tags.push_back(gr::Tag{at, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("wallclock")}, {gr::tag::TRIGGER_TIME.key(), std::uint64_t{1}}, {gr::tag::TRIGGER_OFFSET.key(), 0.f}}});
         }
         std::ranges::stable_sort(tagged.tags, std::ranges::less{}, &gr::Tag::index);
 
@@ -633,7 +633,7 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
         const auto                         tagList = [](const Stream& stream) {
             std::vector<std::string> list;
             for (const gr::Tag& tag : stream.tags) {
-                const auto entry = tag.map.find(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey()));
+                const auto entry = tag.map.find(std::pmr::string(gr::tag::TRIGGER_NAME.key()));
                 list.push_back(std::format("{}@{}", entry == tag.map.end() ? std::string{} : entry->second.value_or(std::string{}), tag.index));
             }
             return list;
@@ -682,7 +682,7 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
         const auto                         tagList = [](const std::vector<gr::Tag>& tags) {
             std::vector<std::string> list;
             for (const gr::Tag& tag : tags) {
-                const auto entry = tag.map.find(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey()));
+                const auto entry = tag.map.find(std::pmr::string(gr::tag::TRIGGER_NAME.key()));
                 list.push_back(std::format("{}@{}", entry == tag.map.end() ? std::string{} : entry->second.value_or(std::string{}), tag.index));
             }
             return list;
@@ -764,8 +764,8 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
         // The cut of 64 holds 50 samples when fft_len becomes 32.
         Stream input;
         input.samples.assign(214UZ, CF{1.f, 0.f});
-        input.tags.push_back(gr::Tag{0UZ, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("ofdm_frame")}}});
-        input.tags.push_back(gr::Tag{166UZ, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("ofdm_frame")}}});
+        input.tags.push_back(gr::Tag{0UZ, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("ofdm_frame")}}});
+        input.tags.push_back(gr::Tag{166UZ, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("ofdm_frame")}}});
 
         CpRemove block = make<CpRemove>({{"fft_len", gr::Size_t{64U}}, {"cp_len", std::vector<gr::Size_t>{16U}}});
         expect(eq(remove(block, input, 0UZ, 66UZ, 4096UZ).size(), 0UZ));
@@ -880,7 +880,7 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
         input.samples.insert(input.samples.end(), 40UZ, CF{});
         input.samples.insert(input.samples.end(), frame.samples.begin(), frame.samples.end());
         for (const std::size_t at : {0UZ, frame.samples.size() + 40UZ}) {
-            input.tags.push_back(gr::Tag{at, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("ofdm_frame")}}});
+            input.tags.push_back(gr::Tag{at, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("ofdm_frame")}}});
         }
 
         CpRemove   block = make<CpRemove>({{"fft_len", gr::Size_t{kFft}}, {"cp_len", std::vector<gr::Size_t>{16U}}});
@@ -903,7 +903,7 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
 
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<gr::blocks::testing::TagSource<CF, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(kLength)}, {"mark_tag", false}});
-        source._tags     = {gr::Tag{kTrigger, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("ofdm_frame")}}}};
+        source._tags     = {gr::Tag{kTrigger, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("ofdm_frame")}}}};
         auto& cut        = graph.emplaceBlock<CpRemove>({{"fft_len", gr::Size_t{kFft}}, {"cp_len", std::vector<gr::Size_t>{16U}}});
         auto& sink       = graph.emplaceBlock<gr::blocks::testing::CountingSink<gr::DataSet<CF>>>({});
         expect(graph.connect<"out", "in">(source, cut).has_value());
@@ -938,14 +938,15 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
         const auto run = [](std::optional<std::int32_t> offset) {
             gr::Graph graph;
             auto&     source = graph.emplaceBlock<gr::blocks::testing::TagSource<CF, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(kLength)}, {"mark_tag", false}});
-            source._tags     = {gr::Tag{kTrigger, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("ofdm_frame")}}}};
+            source._tags     = {gr::Tag{kTrigger, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("ofdm_frame")}}}};
             if (offset.has_value()) {
                 source._tags.push_back(gr::Tag{kTagged, gr::property_map{{"timing_offset", *offset}}});
             }
-            // The constructor names no settings. fft_len stays 64 and cp_len 16, and timing_offset stays 0 until the
-            // tag sets it.
+            // The constructor names no settings. fft_len stays 64 and cp_len 16. timing_offset follows the tag key
+            // `timing_offset` and stays 0 until the tag sets it.
             auto& cut  = graph.emplaceBlock<CpRemove>(gr::property_map{});
             auto& sink = graph.emplaceBlock<gr::blocks::testing::CountingSink<gr::DataSet<CF>>>({});
+            cut.settings().setTagCouplings({{"timing_offset", std::string("timing_offset")}});
             expect(graph.connect<"out", "in">(source, cut).has_value());
             expect(graph.connect<"out", "in">(cut, sink).has_value());
 

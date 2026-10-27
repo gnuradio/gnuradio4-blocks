@@ -57,7 +57,7 @@ template<typename T>
     return signal;
 }
 
-/// @brief The offsets at which a key outside `gr::tag::kDefaultTags` reaches the sink through @p TBlock.
+/// @brief The sink offsets of three tags whose key lies outside the `gr:` domain, sent through @p TBlock.
 template<typename TIn, typename TOut, typename TBlock>
 [[nodiscard]] std::vector<std::size_t> privateTagOffsets(gr::property_map settings) {
     using gr::blocks::testing::ProcessFunction;
@@ -91,8 +91,8 @@ template<typename TIn, typename TOut, typename TBlock>
     return offsets;
 }
 
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<SimpleSquelch<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<SimpleSquelch<CF>>);
+static_assert(SimpleSquelch<float>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
+static_assert(SimpleSquelch<CF>::keepsTagOffsets());
 
 } // namespace
 
@@ -244,7 +244,7 @@ const boost::ut::suite<"SimpleSquelch"> simpleSquelchTests = [] {
 
     "a non-reserved tag key rides through at its own offset"_test = [] {
         const std::vector<std::size_t> offsets = privateTagOffsets<float, float, SimpleSquelch<float>>({{"threshold_db", -150.0}});
-        expect(that % (offsets == std::vector<std::size_t>{7UZ, 300UZ, 1000UZ})) << "the default forwarder keeps a key the auto-forward set does not name";
+        expect(that % (offsets == std::vector<std::size_t>{7UZ, 300UZ, 1000UZ})) << "the default forwarder keeps a key outside the gr: domain";
     };
 };
 

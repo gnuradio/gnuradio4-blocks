@@ -454,7 +454,7 @@ const boost::ut::suite<"SymbolSync"> symbolSyncTests = [] {
         const auto steering = [](std::string_view label) {
             gr::property_map map{{"clock_est", std::vector<double>{0.5, 4.25}}};
             if (!label.empty()) {
-                map[gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey())] = std::string(label);
+                map[gr::property_map::key_type(gr::tag::TRIGGER_NAME.key())] = std::string(label);
             }
             return std::vector<gr::Tag>{gr::Tag{200UZ, map}};
         };

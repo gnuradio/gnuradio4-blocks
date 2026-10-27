@@ -101,7 +101,7 @@ double rmsDecibel(std::span<const float> samples) {
     return 10.0 * std::log10(std::max(sum / static_cast<double>(samples.size()), 1e-30));
 }
 
-/// @brief The offsets at which a key outside `gr::tag::kDefaultTags` reaches the sink through @p TBlock.
+/// @brief The offsets at which a key outside the `gr:` domain reaches the sink through @p TBlock.
 template<typename TIn, typename TOut, typename TBlock>
 [[nodiscard]] std::vector<std::size_t> privateTagOffsets(gr::property_map settings) {
     using gr::blocks::testing::ProcessFunction;
@@ -135,8 +135,8 @@ template<typename TIn, typename TOut, typename TBlock>
     return offsets;
 }
 
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Agc<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<Agc<std::complex<float>>>);
+static_assert(Agc<float>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
+static_assert(Agc<std::complex<float>>::keepsTagOffsets());
 
 } // namespace
 
@@ -328,7 +328,7 @@ const boost::ut::suite<"Agc"> agcTests = [] {
 
     "a non-reserved tag key rides through at its own offset"_test = [] {
         const std::vector<std::size_t> offsets = privateTagOffsets<float, float, Agc<float>>({{"sample_rate", 48000.f}});
-        expect(that % (offsets == std::vector<std::size_t>{7UZ, 300UZ, 1000UZ})) << "the default forwarder keeps a key the auto-forward set does not name";
+        expect(that % (offsets == std::vector<std::size_t>{7UZ, 300UZ, 1000UZ})) << "the default forwarder keeps a key outside the gr: domain";
     };
 };
 

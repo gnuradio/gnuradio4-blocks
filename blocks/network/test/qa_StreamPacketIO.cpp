@@ -288,7 +288,7 @@ template<typename F>
 
 [[nodiscard]] gr::property_map namedTag(std::string name, std::uint64_t ordinal) {
     gr::property_map map;
-    map.insert_or_assign(gr::property_map::key_type("trigger_name"), gr::pmt::Value(std::move(name)));
+    map.insert_or_assign(gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), gr::pmt::Value(std::move(name)));
     map.insert_or_assign(gr::property_map::key_type("sequence"), gr::pmt::Value(ordinal));
     return map;
 }
@@ -349,7 +349,7 @@ const boost::ut::suite<"StreamPacketSink"> streamPacketSinkTests = [] {
         auto&     producer = graph.emplaceBlock<TaggedRunSource>();
         auto&     sink     = graph.emplaceBlock<StreamPacketSink<Sample>>({{"endpoint", endpoint.uri}, {"pattern", std::string("push")}, {"max_items", static_cast<gr::Size_t>(kItems)}});
         producer._samples  = countingRun(0UZ, 4UZ * kItems);
-        producer._tags     = {{0UZ, gr::property_map{{gr::property_map::key_type("sample_rate"), gr::pmt::Value(48000.0f)}}}, {kItems + 3UZ, namedTag("interior", 7ULL)}};
+        producer._tags     = {{0UZ, gr::property_map{{gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()), gr::pmt::Value(48000.0f)}}}, {kItems + 3UZ, namedTag("interior", 7ULL)}};
         expect(graph.connect<"out", "in">(producer, sink).has_value());
 
         GraphRunner runner(std::move(graph));
@@ -424,11 +424,53 @@ const boost::ut::suite<"StreamPacketSink"> streamPacketSinkTests = [] {
         }
         expect(eq(carried[0UZ].first, std::uint64_t{0ULL})) << "the tag at the stream's first sample moved";
         expect(eq(carried[1UZ].first, kItems + 3UZ)) << "the interior tag did not land on the sample it stood on";
-        const gr::pmt::Value* name = find(carried[1UZ].second, "trigger_name");
+        const gr::pmt::Value* name = find(carried[1UZ].second, gr::tag::TRIGGER_NAME.key());
         expect(name != nullptr && name->get_if<std::pmr::string>() != nullptr) << "the tag's map did not cross";
         if (name != nullptr && name->get_if<std::pmr::string>() != nullptr) {
             expect(std::string_view(*name->get_if<std::pmr::string>()) == std::string_view("interior"));
         }
+    };
+
+    "a stream tag keyed sample_rate without the gr: prefix states no rate"_test = [] {
+        constexpr std::size_t kItems = 16UZ;
+        constexpr float       kRate  = 1000.0f;
+
+        const Endpoint endpoint;
+        RawPeer        peer(zmq::socket_type::pull, endpoint.uri, false);
+
+        gr::Graph graph;
+        auto&     producer = graph.emplaceBlock<TaggedRunSource>();
+        auto&     sink     = graph.emplaceBlock<StreamPacketSink<Sample>>({{"endpoint", endpoint.uri}, {"pattern", std::string("push")}, {"max_items", static_cast<gr::Size_t>(kItems)}});
+        producer._samples  = countingRun(0UZ, 2UZ * kItems);
+        producer._tags     = {{0UZ, gr::property_map{{gr::property_map::key_type(gr::tag::SAMPLE_RATE.name()), gr::pmt::Value(kRate)}}}};
+        expect(graph.connect<"out", "in">(producer, sink).has_value());
+
+        GraphRunner runner(std::move(graph));
+
+        std::uint64_t received = 0ULL;
+        std::size_t   carried  = 0UZ;
+        while (received < 2ULL * kItems) {
+            const auto frames = peer.receive();
+            expect(frames.has_value()) << std::format("the stream stopped after {} samples", received);
+            if (!frames.has_value() || (*frames).size() != 4UZ) {
+                break;
+            }
+            const auto header = gr::network::decodeHeader((*frames)[1UZ]);
+            const auto parsed = gr::pmt::yaml::deserialize(std::string_view(reinterpret_cast<const char*>((*frames)[2UZ].data()), (*frames)[2UZ].size()));
+            expect(header.has_value() && parsed.has_value()) << "the packet did not decode";
+            if (!header.has_value() || !parsed.has_value()) {
+                break;
+            }
+            expect(find(*parsed, "sample_rate") == nullptr) << std::format("the packet at sample {} states a rate the stream never stated", received);
+            if (const gr::pmt::Value* tags = find(*parsed, "packet_tags"); tags != nullptr) {
+                if (const auto* list = tags->get_if<gr::Tensor<gr::pmt::Value>>(); list != nullptr) {
+                    carried += list->size();
+                }
+            }
+            received += header->item_count;
+        }
+        runner.stop();
+        expect(eq(carried, producer._tags.size())) << "the tag keyed sample_rate crosses as an ordinary tag";
     };
 
     // `queue_bytes` is a bound the send queue keeps rather than a size it aims at: a chunk whose envelope is larger
@@ -503,11 +545,11 @@ const boost::ut::suite<"StreamPacketSource"> streamPacketSourceTests = [] {
         expect(eq(arrived.size(), producer._tags.size())) << "not every tag crossed";
         for (std::size_t i = 0UZ; i < std::min(arrived.size(), producer._tags.size()); ++i) {
             expect(eq(arrived[i].first, producer._tags[i].first)) << std::format("tag {} landed at sample {} rather than {}", i, arrived[i].first, producer._tags[i].first);
-            const gr::pmt::Value* name = find(arrived[i].second, "trigger_name");
+            const gr::pmt::Value* name = find(arrived[i].second, gr::tag::TRIGGER_NAME.key());
             expect(name != nullptr) << "the tag's map did not cross";
             if (name != nullptr) {
                 const auto* text = name->get_if<std::pmr::string>();
-                expect(text != nullptr && std::string_view(*text) == std::string_view(*producer._tags[i].second.find(gr::property_map::key_type("trigger_name"))->second.get_if<std::pmr::string>()));
+                expect(text != nullptr && std::string_view(*text) == std::string_view(*producer._tags[i].second.find(gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()))->second.get_if<std::pmr::string>()));
             }
         }
         expect(eq(receiver.source->counters().messagesRefused, std::uint64_t{0ULL}));
@@ -605,7 +647,7 @@ const boost::ut::suite<"StreamPacketSource"> streamPacketSourceTests = [] {
         // one tag at the stream's first sample for the rate, and exactly one gap tag at the first sample after the hole
         std::vector<std::pair<std::size_t, gr::property_map>> gaps;
         for (const auto& seenTag : arrived) {
-            if (find(seenTag.second, "n_dropped_samples") != nullptr) {
+            if (find(seenTag.second, gr::tag::N_DROPPED_SAMPLES.key()) != nullptr) {
                 gaps.push_back(seenTag);
             }
         }
@@ -614,7 +656,7 @@ const boost::ut::suite<"StreamPacketSource"> streamPacketSourceTests = [] {
             return;
         }
         expect(eq(gaps[0UZ].first, kItems)) << "the gap tag does not stand at the first sample after the hole";
-        const gr::pmt::Value* dropped  = find(gaps[0UZ].second, "n_dropped_samples");
+        const gr::pmt::Value* dropped  = find(gaps[0UZ].second, gr::tag::N_DROPPED_SAMPLES.key());
         const gr::pmt::Value* lost     = find(gaps[0UZ].second, "packets_lost");
         const gr::pmt::Value* position = find(gaps[0UZ].second, "stream_position");
         expect(dropped != nullptr && dropped->get_if<gr::Size_t>() != nullptr);

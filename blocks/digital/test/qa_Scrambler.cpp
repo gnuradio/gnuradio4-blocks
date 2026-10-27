@@ -188,7 +188,7 @@ template<typename TBuild>
 /// @brief A mask supplied outright, in the hexadecimal spelling a whitening sequence is published in.
 [[nodiscard]] gr::property_map kSequence(std::string_view hex, bool repeat) { return gr::property_map{{"sequence", std::string(hex)}, {"sequence_repeat", repeat}}; }
 
-[[nodiscard]] gr::Tag resetTag(std::size_t at, std::string label = std::string("frame")) { return gr::Tag{at, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), std::move(label)}}}; }
+[[nodiscard]] gr::Tag resetTag(std::size_t at, std::string label = std::string("frame")) { return gr::Tag{at, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), std::move(label)}}}; }
 
 } // namespace
 
@@ -282,7 +282,7 @@ const boost::ut::suite<"additive scrambler"> additiveTests = [] {
 
         const std::vector<gr::Tag> matching{resetTag(kAt, std::string("frame"))};
         const std::vector<gr::Tag> other{resetTag(kAt, std::string("preamble"))};
-        const std::vector<gr::Tag> typed{gr::Tag{kAt, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), gr::Size_t{7}}}}};
+        const std::vector<gr::Tag> typed{gr::Tag{kAt, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), gr::Size_t{7}}}}};
 
         expect(that % (drive<AdditiveScrambler>(narrowed, std::span<const std::uint8_t>(data), 0UZ, std::span<const gr::Tag>(matching)) != plain)) << "the value it names does reset";
         expect(that % (drive<AdditiveScrambler>(narrowed, std::span<const std::uint8_t>(data), 0UZ, std::span<const gr::Tag>(other)) == plain)) << "another detector's label does not";
@@ -376,7 +376,7 @@ const boost::ut::suite<"additive scrambler"> additiveTests = [] {
     };
 
     "every tag key passes through at its own offset"_test = [] {
-        static_assert(gr::block::kUnfilteredTagPropagationAdmissible<AdditiveScrambler>, "the block is 1:1 on synchronous ports, declares no resampling or stride and supplies no forwardTags()");
+        static_assert(AdditiveScrambler::keepsTagOffsets(), "the block is 1:1 on synchronous ports, declares no resampling or stride and supplies no forwardTags()");
 
         const gr::pmt::Value            carried{std::string("carried")};
         const gr::pmt::Value            label{std::string("frame")};
@@ -384,7 +384,7 @@ const boost::ut::suite<"additive scrambler"> additiveTests = [] {
 
         std::vector<gr::Tag> incoming;
         incoming.emplace_back(11UZ, gr::property_map{{gr::property_map::key_type("private_key"), carried}});
-        incoming.emplace_back(400UZ, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), label}});
+        incoming.emplace_back(400UZ, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), label}});
 
         const std::vector<gr::Tag> seen = throughGraph(std::span<const std::uint8_t>(stream), std::span<const gr::Tag>(incoming), [](gr::Graph& graph, auto& source, auto& sink) {
             auto& first  = graph.emplaceBlock<AdditiveScrambler>(ccsdsSettings());
@@ -394,14 +394,14 @@ const boost::ut::suite<"additive scrambler"> additiveTests = [] {
             boost::ut::expect(graph.connect<"out", "in">(second, sink).has_value());
         });
 
-        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), "private_key", carried) == std::vector<std::size_t>{11UZ})) << "a key the auto-forward set does not name survives two blocks";
-        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), gr::tag::TRIGGER_NAME.shortKey(), label) == std::vector<std::size_t>{400UZ})) << "and the reset tag is read and forwarded, never consumed";
+        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), "private_key", carried) == std::vector<std::size_t>{11UZ})) << "a key outside the gr: domain survives two blocks";
+        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), gr::tag::TRIGGER_NAME.key(), label) == std::vector<std::size_t>{400UZ})) << "and the reset tag is read and forwarded, never consumed";
     };
 
     "sample_rate leaves with the value it arrived with"_test = [] {
         constexpr float                 kRate  = 12345.0F;
         const std::vector<std::uint8_t> stream = randomItems(300UZ, 256U);
-        const std::vector<gr::Tag>      incoming{gr::Tag{50UZ, gr::property_map{{gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), kRate}}}};
+        const std::vector<gr::Tag>      incoming{gr::Tag{50UZ, gr::property_map{{gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()), kRate}}}};
 
         const std::vector<gr::Tag> seen = throughGraph(std::span<const std::uint8_t>(stream), std::span<const gr::Tag>(incoming), [](gr::Graph& graph, auto& source, auto& sink) {
             auto& block = graph.emplaceBlock<AdditiveScrambler>(ccsdsSettings());
@@ -409,7 +409,7 @@ const boost::ut::suite<"additive scrambler"> additiveTests = [] {
             boost::ut::expect(graph.connect<"out", "in">(block, sink).has_value());
         });
 
-        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), gr::tag::SAMPLE_RATE.shortKey(), gr::pmt::Value(kRate)) == std::vector<std::size_t>{50UZ})) << "the block is 1:1 and declares no sample_rate of its own, so there is nothing to rewrite and nothing to substitute";
+        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), gr::tag::SAMPLE_RATE.key(), gr::pmt::Value(kRate)) == std::vector<std::size_t>{50UZ})) << "the block is 1:1 and declares no sample_rate of its own, so there is nothing to rewrite and nothing to substitute";
     };
 };
 
@@ -486,7 +486,7 @@ const boost::ut::suite<"multiplicative scrambler"> multiplicativeScramblerTests 
     };
 
     "every tag key passes through at its own offset"_test = [] {
-        static_assert(gr::block::kUnfilteredTagPropagationAdmissible<MultiplicativeScrambler>, "the block is 1:1 on synchronous ports, declares no resampling or stride and supplies no forwardTags()");
+        static_assert(MultiplicativeScrambler::keepsTagOffsets(), "the block is 1:1 on synchronous ports, declares no resampling or stride and supplies no forwardTags()");
 
         const gr::pmt::Value            carried{std::string("carried")};
         const gr::pmt::Value            label{std::string("frame")};
@@ -494,7 +494,7 @@ const boost::ut::suite<"multiplicative scrambler"> multiplicativeScramblerTests 
 
         std::vector<gr::Tag> incoming;
         incoming.emplace_back(11UZ, gr::property_map{{gr::property_map::key_type("private_key"), carried}});
-        incoming.emplace_back(400UZ, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), label}});
+        incoming.emplace_back(400UZ, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), label}});
 
         const std::vector<gr::Tag> seen = throughGraph(std::span<const std::uint8_t>(stream), std::span<const gr::Tag>(incoming), [](gr::Graph& graph, auto& source, auto& sink) {
             auto& block = graph.emplaceBlock<MultiplicativeScrambler>(ituFormASettings());
@@ -503,7 +503,7 @@ const boost::ut::suite<"multiplicative scrambler"> multiplicativeScramblerTests 
         });
 
         expect(that % (offsetsOf(std::span<const gr::Tag>(seen), "private_key", carried) == std::vector<std::size_t>{11UZ}));
-        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), gr::tag::TRIGGER_NAME.shortKey(), label) == std::vector<std::size_t>{400UZ})) << "the reset tag is read and forwarded, never consumed";
+        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), gr::tag::TRIGGER_NAME.key(), label) == std::vector<std::size_t>{400UZ})) << "the reset tag is read and forwarded, never consumed";
     };
 };
 
@@ -627,9 +627,9 @@ const boost::ut::suite<"the family's cross-cuts"> familyTests = [] {
     using namespace boost::ut;
 
     "all three are admissible for forwarding every key"_test = [] {
-        static_assert(gr::block::kUnfilteredTagPropagationAdmissible<AdditiveScrambler>);
-        static_assert(gr::block::kUnfilteredTagPropagationAdmissible<MultiplicativeScrambler>);
-        static_assert(gr::block::kUnfilteredTagPropagationAdmissible<MultiplicativeDescrambler>, "each is 1:1 on synchronous ports, declares no resampling or stride and supplies no forwardTags()");
+        static_assert(AdditiveScrambler::keepsTagOffsets());
+        static_assert(MultiplicativeScrambler::keepsTagOffsets());
+        static_assert(MultiplicativeDescrambler::keepsTagOffsets(), "each is 1:1 on synchronous ports, declares no resampling or stride and supplies no forwardTags()");
         expect(true) << "the compile-time half of the every-key default, which costs nothing to keep asserted";
     };
 
@@ -640,7 +640,7 @@ const boost::ut::suite<"the family's cross-cuts"> familyTests = [] {
 
         std::vector<gr::Tag> incoming;
         incoming.emplace_back(11UZ, gr::property_map{{gr::property_map::key_type("private_key"), carried}});
-        incoming.emplace_back(400UZ, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()), label}});
+        incoming.emplace_back(400UZ, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()), label}});
 
         const std::vector<gr::Tag> seen = throughGraph(std::span<const std::uint8_t>(stream), std::span<const gr::Tag>(incoming), [](gr::Graph& graph, auto& source, auto& sink) {
             auto& scrambler   = graph.emplaceBlock<MultiplicativeScrambler>(ituFormASettings());
@@ -650,14 +650,14 @@ const boost::ut::suite<"the family's cross-cuts"> familyTests = [] {
             boost::ut::expect(graph.connect<"out", "in">(descrambler, sink).has_value());
         });
 
-        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), "private_key", carried) == std::vector<std::size_t>{11UZ})) << "a key the auto-forward set does not name survives the pair";
-        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), gr::tag::TRIGGER_NAME.shortKey(), label) == std::vector<std::size_t>{400UZ})) << "and so does the reserved key the blocks read their epoch boundary from";
+        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), "private_key", carried) == std::vector<std::size_t>{11UZ})) << "a key outside the gr: domain survives the pair";
+        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), gr::tag::TRIGGER_NAME.key(), label) == std::vector<std::size_t>{400UZ})) << "and so does the reserved key the blocks read their epoch boundary from";
     };
 
     "sample_rate crosses all three unchanged"_test = [] {
         constexpr float                 kRate  = 12345.0F;
         const std::vector<std::uint8_t> stream = randomItems(300UZ, 256U);
-        const std::vector<gr::Tag>      incoming{gr::Tag{50UZ, gr::property_map{{gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), kRate}}}};
+        const std::vector<gr::Tag>      incoming{gr::Tag{50UZ, gr::property_map{{gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()), kRate}}}};
 
         const std::vector<gr::Tag> seen = throughGraph(std::span<const std::uint8_t>(stream), std::span<const gr::Tag>(incoming), [](gr::Graph& graph, auto& source, auto& sink) {
             auto& additive    = graph.emplaceBlock<AdditiveScrambler>(ccsdsSettings());
@@ -669,7 +669,7 @@ const boost::ut::suite<"the family's cross-cuts"> familyTests = [] {
             boost::ut::expect(graph.connect<"out", "in">(descrambler, sink).has_value());
         });
 
-        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), gr::tag::SAMPLE_RATE.shortKey(), gr::pmt::Value(kRate)) == std::vector<std::size_t>{50UZ})) //
+        expect(that % (offsetsOf(std::span<const gr::Tag>(seen), gr::tag::SAMPLE_RATE.key(), gr::pmt::Value(kRate)) == std::vector<std::size_t>{50UZ})) //
             << "none of the three changes a rate and none declares a sample_rate of its own, so there is nothing to rescale and nothing to substitute";
     };
 };

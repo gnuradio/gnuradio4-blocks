@@ -503,10 +503,10 @@ const boost::ut::suite<"PacketToDataSet"> packetToDataSetTests = [] {
     };
 
     // The compile-time half
-    "the block is not admissible for UnfilteredTagPropagation"_test = [] {
-        static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<PacketToDataSet<std::uint8_t>>, "asynchronous outputs and NoTagPropagation each refuse the flag on their own");
-        static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<PacketToDataSet<float>>);
-        expect(!gr::block::kUnfilteredTagPropagationAdmissible<PacketToDataSet<std::uint8_t>>);
+    "the block does not keep tag offsets"_test = [] {
+        static_assert(!PacketToDataSet<std::uint8_t>::keepsTagOffsets(), "asynchronous outputs and NoTagPropagation each rule it out on their own");
+        static_assert(!PacketToDataSet<float>::keepsTagOffsets());
+        expect(!PacketToDataSet<std::uint8_t>::keepsTagOffsets());
     };
 
     // A surprising metadata value is not a malformed packet, and nothing stops the graph

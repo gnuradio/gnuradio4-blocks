@@ -176,23 +176,23 @@ const boost::ut::suite<"CtcssSquelch"> ctcssSquelchTests = [] {
         }
     };
 
-    "a passing sample_rate leaves carrying this block's own rate, private keys included"_test = [] {
+    "a passing gr:sample_rate leaves with the value it arrived with, private keys included"_test = [] {
         constexpr float kUpstream = 192000.f;
 
         const std::vector<float>   signal = tone(2000UZ, kTone);
-        const std::vector<gr::Tag> tags{gr::Tag{500UZ, gr::property_map{{"sample_rate", kUpstream}, {"test_probe", static_cast<gr::Size_t>(7)}}}};
+        const std::vector<gr::Tag> tags{gr::Tag{500UZ, gr::property_map{{gr::tag::SAMPLE_RATE.key(), kUpstream}, {"test_probe", static_cast<gr::Size_t>(7)}}}};
 
         CtcssSquelch block = makeSquelch({{"sample_rate", kRate}, {"tone_freq", kTone}, {"length", 400U}, {"level", 0.1}});
         const auto   got   = spans::run<CtcssSquelch, float>(block, std::span<const float>(signal), 0UZ, std::span<const gr::Tag>(tags));
 
         std::vector<float> rates;
         for (const gr::Tag& forwarded : got.tags) {
-            if (const auto found = forwarded.map.find(gr::property_map::key_type{"sample_rate"}); found != forwarded.map.end()) {
+            if (const auto found = forwarded.map.find(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}); found != forwarded.map.end()) {
                 rates.push_back(found->second.value_or(0.f));
             }
         }
-        expect(that % (rates == std::vector<float>{kRate})) << "the block declares the reserved key, so what it forwards is its own value and not the upstream one";
-        expect(eq(got.offsetsOf("test_probe").size(), 1UZ)) << "and the substitution does not cost the private key its passage";
+        expect(that % (rates == std::vector<float>{kUpstream})) << "the block writes no rate of its own into a passing tag";
+        expect(eq(got.offsetsOf("test_probe").size(), 1UZ)) << "and the private key passes beside it";
     };
 
     "unusable parameters are rejected at settings time"_test = [] {

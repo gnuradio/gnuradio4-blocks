@@ -145,7 +145,7 @@ in `period_resets`. The upper clamp is `samples_per_symbol` plus `max_deviation`
     Annotated<gr::Size_t, "polyphase_arms", Doc<"branches in the polyphase bank; rounded up to a power of two">>                                                                      polyphase_arms     = 128U;
     Annotated<std::vector<float>, "matched_filter_taps", Doc<"polyphase prototype at arms*sps; empty designs a root-raised cosine">>                                                  matched_filter_taps{};
     Annotated<double, "rolloff", Doc<"excess bandwidth of the designed prototype, and of the M&M closed-form gain">>                                                                  rolloff = 0.35;
-    Annotated<std::string, "trigger", Doc<"the trigger_name a timing tag must carry for its payload to be honored; empty honors any timing tag">>                                     trigger{};
+    Annotated<std::string, "trigger", Doc<"the gr:trigger_name a timing tag must carry for its payload to be honored; empty honors any timing tag">>                                  trigger{};
     Annotated<bool, "trigger_presets", Doc<"whether a matching timing tag presets at all; false ignores every time_est and clock_est and counts it">>                                 trigger_presets = true;
 
     Annotated<gr::Size_t, "non_finite_errors", Doc<"Read-only: symbols whose timing error was NaN or infinite">>   non_finite_errors = 0U;
@@ -692,7 +692,7 @@ private:
     }
 
     /**
-     * @brief Whether a timing tag's `trigger_name` is the one this block was told to act on.
+     * @brief Whether a timing tag's `gr:trigger_name` is the one this block was told to act on.
      *
      * An empty `trigger` honors a timing tag whatever name it carries or does not, which is the behavior a stream with
      * one timing producer on it wants. A non-empty one is a filter, so a graph carrying two producers — a preamble
@@ -702,7 +702,7 @@ private:
         if (trigger.value.empty()) {
             return true;
         }
-        const auto named = map.find(property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()));
+        const auto named = map.find(property_map::key_type(gr::tag::TRIGGER_NAME.key()));
         if (named == map.end()) {
             return false;
         }

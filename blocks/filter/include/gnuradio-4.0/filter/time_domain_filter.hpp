@@ -184,7 +184,7 @@ with selectable filter type (low-pass, high-pass, band-pass, band-stop), and sup
 In FIR mode each tag moves with all its keys by the designed filter's delay `d`, which is `(N-1)/2` for its `N`
 coefficients. A tag on input `i` leaves on output `round((i + d) / M)`. `M` is the decimation of `BasicDecimatingFilter`
 and 1 for `BasicFilter`. A tag whose output lies past the stream's last output leaves at the end-of-stream index, one
-past that output. In IIR mode the framework places the tags and forwards only its auto-forward keys. An IIR response has
+past that output. In IIR mode the framework places the tags and forwards every key. An IIR response has
 no single delay.
 )"">;
     using ValueType   = meta::fundamental_base_value_type_t<T>;
@@ -300,7 +300,7 @@ This block implements a decimator for downsampling (dropping) input data by a
 configurable factor. Filtering is not included in this implementation so expect
 aliasing and sub-sampling related effects.
 
-The framework places the tags and forwards only its auto-forward keys. A stream whose length is not a multiple of the
+The framework places the tags and forwards every key. A stream whose length is not a multiple of the
 factor ends in a partial chunk, which makes no output. The tags on that chunk leave at the end-of-stream index, one past
 the last output. So do the tags past the last input sample.
 )"">;

@@ -659,8 +659,9 @@ def process_bulk(ins, outs, factor):
         Graph graph;
         auto& src   = graph.emplaceBlock<TagSource<float>>({{"n_samples_max", 100U}, {"mark_tag", false}});
         auto& block = graph.emplaceBlock<PythonBlock<float>>({{"n_inputs", 1U}, {"n_outputs", 1U}, {"pythonScript", pythonScript}});
-        auto& sink  = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_expected", 100U}});
-        src._tags   = {gr::Tag{50UZ, {{"script_parameters", gr::property_map{{"factor", 5}}}}}};
+        block.settings().setTagCouplings({{"script_parameters", std::string("script_parameters")}});
+        auto& sink = graph.emplaceBlock<TagSink<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_expected", 100U}});
+        src._tags  = {gr::Tag{50UZ, {{"script_parameters", gr::property_map{{"factor", 5}}}}}};
         expect(graph.connect(src, "out", block, "inputs#0").has_value());
         expect(graph.connect(block, "outputs#0", sink, "in").has_value());
 

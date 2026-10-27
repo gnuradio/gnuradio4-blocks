@@ -32,6 +32,9 @@ namespace gr::blocks::digital {
 
 namespace detail {
 
+/// The setting that names the tag key whose item starts a new epoch.
+using ResetTagKey = Annotated<std::string, "reset_tag_key", Doc<"tag key whose item starts a new epoch; empty disables the reset">>;
+
 /// @brief The settings the generator is built from, which are exactly the ones a change to reconfigures and resets.
 /// `reset_tag_key` and `reset_tag_value` are deliberately absent: they select an epoch boundary rather than move one.
 struct ScramblerSettings {
@@ -308,7 +311,7 @@ belongs downstream at a CRC. Three mechanisms reach the epoch boundary the two e
 setting that reconfigures the generator; a tag carrying `reset_tag_key`, which resets before the tagged item so that
 item is the first of the new epoch; and `reset_period` items since the last reset of any cause. At most one reset
 happens at any item, and a tag re-anchors the period. The receive side finds its boundary in a detector's
-`trigger_name` tag, which is the default key; the transmit side counts it, which is what `reset_period` is for.
+`gr:trigger_name` tag, which is the default key; the transmit side counts it, which is what `reset_period` is for.
 
 XOR is an involution, so this block descrambles as well as it scrambles and there is no second name for the same code.
 
@@ -350,7 +353,7 @@ being an involution with no status to report.
     Annotated<bool, "sequence_repeat", Doc<"whether an explicit sequence tiles the epoch; false covers its first S bits and counts every item past them in nUnscrambledItems">>                         sequence_repeat = true;
     Annotated<gr::Size_t, "bits_per_item", Unit<"bit">, Doc<"significant bits per item, [1,8]; an item's remaining bits are ignored on input and zero on output">>                                      bits_per_item   = 8U;
     Annotated<gr::math::BitOrder, "bit_order", Doc<"how each item's field is traversed, which is not a byte order">>                                                                                    bit_order       = gr::math::BitOrder::MsbFirst;
-    Annotated<std::string, "reset_tag_key", Doc<"tag key marking an epoch boundary, the reset applying before the tagged item; empty disables the tag-driven reset">>                                   reset_tag_key   = std::string(gr::tag::TRIGGER_NAME.shortKey());
+    detail::ResetTagKey                                                                                                                                                                                 reset_tag_key   = std::string(gr::tag::TRIGGER_NAME.key());
     Annotated<std::string, "reset_tag_value", Doc<"if non-empty, the tag's value at that key must be a string equal to this, which narrows the boundary to one detector; empty matches any">>           reset_tag_value{};
     Annotated<gr::Size_t, "reset_period", Unit<"items">, Doc<"items per epoch, counted from the last reset of any cause; 0 disables the periodic reset">>                                               reset_period = 0U;
 
@@ -471,7 +474,7 @@ consumed, and `sample_rate` leaves with the value it arrived with.
     Annotated<bool, "invert_output", Doc<"complement every bit of the scrambled stream; the 'v' the V-series family carries, and the descrambler must carry the same value">>                                                invert_output          = false;
     Annotated<gr::Size_t, "force_transition_after", Unit<"items">, Doc<"N: inject a complement at the Nth consecutive item over which the monitored comparison stayed zero, [2,4096]; 0 disables the rule and its cost">>    force_transition_after = 0U;
     Annotated<std::string, "monitor_delays", Doc<"the two transmitted-stream delays 'p,q' the monitor compares, distinct and each in [1,64]; required when force_transition_after is non-zero and refused when it is zero">> monitor_delays{};
-    Annotated<std::string, "reset_tag_key", Doc<"tag key marking an epoch boundary, the reset applying before the tagged item; empty disables the tag-driven reset">>                                                        reset_tag_key = std::string(gr::tag::TRIGGER_NAME.shortKey());
+    detail::ResetTagKey                                                                                                                                                                                                      reset_tag_key = std::string(gr::tag::TRIGGER_NAME.key());
     Annotated<std::string, "reset_tag_value", Doc<"if non-empty, the tag's value at that key must be a string equal to this, which narrows the boundary to one detector; empty matches any">>                                reset_tag_value{};
     Annotated<gr::Size_t, "reset_period", Unit<"items">, Doc<"items per epoch, counted from the last reset of any cause; 0 disables the periodic reset">>                                                                    reset_period = 0U;
 
@@ -552,7 +555,7 @@ consumed, and `sample_rate` leaves with the value it arrived with.
     Annotated<bool, "invert_output", Doc<"the scrambler's 'v', undone here; the two ends must carry the same value">>                                                                                                invert_output          = false;
     Annotated<gr::Size_t, "force_transition_after", Unit<"items">, Doc<"N, the scrambler's; the monitor runs on the received stream, which is the scrambler's transmitted one, so the two counters agree">>          force_transition_after = 0U;
     Annotated<std::string, "monitor_delays", Doc<"the two delays 'p,q' the monitor compares, the scrambler's; required when force_transition_after is non-zero and refused when it is zero">>                        monitor_delays{};
-    Annotated<std::string, "reset_tag_key", Doc<"tag key marking an epoch boundary, the reset applying before the tagged item; empty disables the tag-driven reset">>                                                reset_tag_key = std::string(gr::tag::TRIGGER_NAME.shortKey());
+    detail::ResetTagKey                                                                                                                                                                                              reset_tag_key = std::string(gr::tag::TRIGGER_NAME.key());
     Annotated<std::string, "reset_tag_value", Doc<"if non-empty, the tag's value at that key must be a string equal to this, which narrows the boundary to one detector; empty matches any">>                        reset_tag_value{};
     Annotated<gr::Size_t, "reset_period", Unit<"items">, Doc<"items per epoch, counted from the last reset of any cause; 0 disables the periodic reset">>                                                            reset_period = 0U;
 

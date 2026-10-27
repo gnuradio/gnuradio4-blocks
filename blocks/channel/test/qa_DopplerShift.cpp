@@ -408,7 +408,7 @@ const boost::ut::suite<"doppler shift"> dopplerShiftTests = [] {
         for (const std::string& seat : {std::string("apply"), std::string("correct")}) {
             gr::Graph graph;
             auto&     source = graph.emplaceBlock<TagSource<C, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", gr::Size_t(4096)}, {"mark_tag", false}});
-            source._tags.emplace_back(0UZ, gr::property_map{{gr::property_map::key_type{gr::tag::FREQUENCY.shortKey()}, gr::pmt::Value(kTuned)}});
+            source._tags.emplace_back(0UZ, gr::property_map{{gr::property_map::key_type{gr::tag::FREQUENCY.key()}, gr::pmt::Value(kTuned)}});
             auto& block = graph.emplaceBlock<DopplerShift<C>>({{"sample_rate", 48'000.f}, {"schedule_times_ns", pass.times}, {"schedule_offsets_hz", pass.offsets}, {"direction", seat}});
             auto& sink  = graph.emplaceBlock<TagSink<C, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
 
@@ -421,7 +421,7 @@ const boost::ut::suite<"doppler shift"> dopplerShiftTests = [] {
 
             std::size_t seen = 0UZ;
             for (const gr::Tag& receivedTag : sink._tags) {
-                const auto found = receivedTag.map.find(gr::tag::FREQUENCY.shortKey());
+                const auto found = receivedTag.map.find(gr::tag::FREQUENCY.key());
                 if (found == receivedTag.map.end()) {
                     continue;
                 }

@@ -74,7 +74,7 @@ template<typename T>
 }
 
 [[nodiscard]] gr::Size_t syncErrorsOf(const gr::Tag& tag) {
-    const auto outer = tag.map.find(gr::property_map::key_type(gr::tag::TRIGGER_META_INFO.shortKey()));
+    const auto outer = tag.map.find(gr::property_map::key_type(gr::tag::TRIGGER_META_INFO.key()));
     if (outer == tag.map.end()) {
         return std::numeric_limits<gr::Size_t>::max();
     }
@@ -177,8 +177,8 @@ struct Rng {
     return sink._tags;
 }
 
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<AccessCodeCorrelator<std::uint8_t>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<AccessCodeCorrelator<float>>);
+static_assert(AccessCodeCorrelator<std::uint8_t>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
+static_assert(AccessCodeCorrelator<float>::keepsTagOffsets());
 
 } // namespace
 
@@ -354,7 +354,7 @@ const boost::ut::suite<"access code correlator"> accessCodeTests = [] {
         const auto                         tagged   = gr::blocks::testing::span::run<std::uint8_t>(detector, std::span<const std::uint8_t>(stream), 256UZ);
         expect(eq(tagged.tags.size(), planted.size()));
 
-        // the existing extractor, unchanged, with the filter naming this block's trigger_name
+        // the existing extractor, unchanged, with the filter naming this block's gr:trigger_name
         auto extractor = make<gr::blocks::basic::StreamFilterImpl<std::uint8_t, false>>({{"filter", std::string("[access_code]")}, {"n_pre", 0U}, {"n_post", static_cast<gr::Size_t>(kPayload)}});
 
         std::vector<gr::DataSet<std::uint8_t>> packets;
@@ -407,11 +407,11 @@ const boost::ut::suite<"access code correlator"> accessCodeTests = [] {
                 where.push_back(seenTag.index);
             }
         }
-        expect(that % (where == std::vector<std::size_t>{11UZ, 400UZ})) << "the default forwarder keeps a key the auto-forward set does not name, beside this block's own detections";
+        expect(that % (where == std::vector<std::size_t>{11UZ, 400UZ})) << "the default forwarder keeps a key outside the gr: domain, beside this block's own detections";
     };
 
     "an upstream trigger_name passes unrewritten and the block's own detections carry the configured label"_test = [] {
-        const gr::property_map::key_type triggerName{gr::tag::TRIGGER_NAME.shortKey()};
+        const gr::property_map::key_type triggerName{gr::tag::TRIGGER_NAME.key()};
         const gr::pmt::Value             upstream{std::string("preamble")};
 
         // one planted code, so exactly one detection, and an upstream trigger tag well clear of it

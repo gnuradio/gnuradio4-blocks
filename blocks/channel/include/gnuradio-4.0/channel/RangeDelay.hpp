@@ -117,11 +117,11 @@ The settings `anchor_source`, `anchor_index`, `anchor_ns` and `honor_trigger_off
 the stream passes through and the line takes nothing. An arm, or a move of an armed anchor to another index or time,
 by a tag or by a settings change, clears the line's history. Until it fills, up to `historySamples()` outputs are the filter's response to silence.
 
-A tag with a key of `gr::tag::kDefaultTags` leaves on the sample it arrived on. Every other tag leaves on the first
+A tag with a key in the `gr:` domain leaves on the sample it arrived on. Every other tag leaves on the first
 output sample whose whole read position has reached the tag's input index. A tag still waiting when the stream ends
 leaves at the end-of-stream index. `nTagsCoalesced()` counts the output samples that carry two or more such tags.
-`nDiscontinuities()` counts `n_dropped_samples` tags, a gap the schedule does not bridge. `nRateDisagreements()`
-counts `sample_rate` tags that differ from the accepted `sample_rate`. The schedule stays at that rate.
+`nDiscontinuities()` counts `gr:n_dropped_samples` tags, a gap the schedule does not bridge. `nRateDisagreements()`
+counts `gr:sample_rate` tags that differ from the accepted `sample_rate`. The schedule stays at that rate.
 )"">;
 
     PortIn<T>  in;
@@ -683,10 +683,10 @@ private:
         _tagsHeld.erase(_tagsHeld.begin(), _tagsHeld.begin() + static_cast<std::ptrdiff_t>(held));
     }
 
-    /// @brief True for a tag with any key of `gr::tag::kDefaultTags`.
+    /// @brief True for a tag with any key in the `gr:` domain.
     [[nodiscard]] static bool namesReservedKey(const property_map& map) noexcept {
         for (const auto& entry : map) {
-            if (std::ranges::find(gr::tag::kDefaultTags, std::string_view(entry.first)) != gr::tag::kDefaultTags.end()) {
+            if (gr::tag::domainOf(std::string_view(entry.first)) == gr::tag::kGrDomain) {
                 return true;
             }
         }
@@ -695,10 +695,10 @@ private:
 
     /// @brief Counts the gaps and the rates other than the accepted one that the reserved keys report.
     void countStreamKeys(const property_map& map) noexcept {
-        if (map.find(property_map::key_type(gr::tag::N_DROPPED_SAMPLES.shortKey())) != map.end()) {
+        if (map.find(property_map::key_type(gr::tag::N_DROPPED_SAMPLES.key())) != map.end()) {
             _nDiscontinuities.fetch_add(1ULL, std::memory_order_relaxed);
         }
-        const auto rate = map.find(property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()));
+        const auto rate = map.find(property_map::key_type(gr::tag::SAMPLE_RATE.key()));
         if (rate == map.end()) {
             return;
         }

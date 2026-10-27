@@ -22,7 +22,7 @@
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 /**
- * @brief The writes SoapySink sends the device at the transmit burst tags `tx_sob`, `tx_eob` and `tx_time`.
+ * @brief The writes SoapySink sends the device at the transmit burst tags `gr:tx_sob`, `gr:tx_eob` and `gr:tx_time`.
  *
  * The sink writes to the loopback device, which records every write with the count asked for, the count taken and
  * the flags and time the write carried. The test opens the device with the block's own arguments and gets the same
@@ -80,9 +80,9 @@ std::vector<Write> writeLog(const soapy::Device& device) {
     return writes;
 }
 
-gr::Tag burstStart(std::size_t index) { return {index, {{gr::tag::TX_SOB.shortKey(), true}}}; }
-gr::Tag timedBurstStart(std::size_t index, std::uint64_t timeNs) { return {index, {{gr::tag::TX_SOB.shortKey(), true}, {gr::tag::TX_TIME.shortKey(), timeNs}}}; }
-gr::Tag burstEnd(std::size_t index) { return {index, {{gr::tag::TX_EOB.shortKey(), true}}}; }
+gr::Tag burstStart(std::size_t index) { return {index, {{gr::tag::TX_SOB.key(), true}}}; }
+gr::Tag timedBurstStart(std::size_t index, std::uint64_t timeNs) { return {index, {{gr::tag::TX_SOB.key(), true}, {gr::tag::TX_TIME.key(), timeNs}}}; }
+gr::Tag burstEnd(std::size_t index) { return {index, {{gr::tag::TX_EOB.key(), true}}}; }
 
 // the text of every error message on the port that contains filter
 std::vector<std::string> errorReports(gr::MsgPortIn& port, std::string_view filter) {
@@ -185,8 +185,8 @@ struct GatedSource : gr::Block<GatedSource> {
     }
 };
 
-/// Passes its input through. When its input ends and publishes is set, it publishes tx_eob = true at the end-of-stream
-/// index, one past the last sample.
+/// Passes its input through. When its input ends and publishes is set, it publishes gr:tx_eob = true at the
+/// end-of-stream index, one past the last sample.
 struct EndBurstAtStreamEnd : gr::Block<EndBurstAtStreamEnd> {
     gr::PortIn<CF32>  in;
     gr::PortOut<CF32> out;
@@ -202,7 +202,7 @@ struct EndBurstAtStreamEnd : gr::Block<EndBurstAtStreamEnd> {
 
     [[nodiscard]] gr::work::Status processEpilogue(gr::InputSpanLike auto& /*input*/, gr::OutputSpanLike auto& output) {
         if (publishes && !gr::lifecycle::isShuttingDown(this->state())) {
-            output.publishTag(gr::property_map{{gr::tag::TX_EOB.shortKey(), true}}, 0UZ);
+            output.publishTag(gr::property_map{{gr::tag::TX_EOB.key(), true}}, 0UZ);
         }
         output.publish(0UZ);
         return gr::work::Status::OK;
@@ -210,9 +210,9 @@ struct EndBurstAtStreamEnd : gr::Block<EndBurstAtStreamEnd> {
 };
 
 // Streams nSamples on each of nPorts inputs through EndBurstAtStreamEnd to a sink on a transmit-only loopback device,
-// and returns the writes the device received. Only the last input carries the tx_eob. Each source ends its stream once
-// mayEnd holds for the device. With held, the device takes no sample until the sink has stopped running. With reports,
-// it also collects the error messages that mention END_BURST.
+// and returns the writes the device received. Only the last input carries the gr:tx_eob. Each source ends its stream
+// once mayEnd holds for the device. With held, the device takes no sample until the sink has stopped running. With
+// reports, it also collects the error messages that mention END_BURST.
 template<std::size_t nPorts = 1UZ>
 requires(nPorts == 1UZ || nPorts == 2UZ)
 std::vector<Write> transmitToStreamEnd(std::size_t nSamples, bool held, std::function<bool(soapy::Device&)> mayEnd = {}, std::vector<std::string>* reports = nullptr) {
@@ -401,14 +401,14 @@ const boost::ut::suite<"SoapySink transmit bursts"> burstTests = [] {
         constexpr std::size_t   kSamples = 1200UZ;
         constexpr std::int64_t  kSigned  = 1'720'000'000'000'000'000LL;
         constexpr std::uint32_t kNarrow  = 4'000'000'000U;
-        const auto              writes   = transmit("", kSamples, {{300UZ, {{gr::tag::TX_TIME.shortKey(), kSigned}}}, burstEnd(599UZ), {600UZ, {{gr::tag::TX_TIME.shortKey(), kNarrow}}}, burstEnd(1199UZ)});
+        const auto              writes   = transmit("", kSamples, {{300UZ, {{gr::tag::TX_TIME.key(), kSigned}}}, burstEnd(599UZ), {600UZ, {{gr::tag::TX_TIME.key(), kNarrow}}}, burstEnd(1199UZ)});
         expectBurstWrites("integer times", writes, kSamples, {599UZ, 1199UZ}, {{300UZ, static_cast<std::uint64_t>(kSigned)}, {600UZ, std::uint64_t{kNarrow}}});
     };
 
     "a burst tag of another type is ignored and reported once"_test = [] {
         constexpr std::size_t    kSamples = 1000UZ;
         std::vector<std::string> reports;
-        const auto               writes = transmit("", kSamples, {{100UZ, {{gr::tag::TX_EOB.shortKey(), std::int32_t{1}}}}, {300UZ, {{gr::tag::TX_TIME.shortKey(), 1.5}}}, {500UZ, {{gr::tag::TX_TIME.shortKey(), std::int64_t{-1}}}}}, {}, &reports);
+        const auto               writes = transmit("", kSamples, {{100UZ, {{gr::tag::TX_EOB.key(), std::int32_t{1}}}}, {300UZ, {{gr::tag::TX_TIME.key(), 1.5}}}, {500UZ, {{gr::tag::TX_TIME.key(), std::int64_t{-1}}}}}, {}, &reports);
         expectBurstWrites("mistyped tags", writes, kSamples, {}, {});
         expect(fatal(eq(reports.size(), 1UZ))) << "one report for the run";
         expect(reports.front().contains("tx_eob") && reports.front().contains("100")) << reports.front();
@@ -419,7 +419,7 @@ const boost::ut::suite<"SoapySink transmit bursts"> burstTests = [] {
         constexpr auto           kLargest  = static_cast<std::uint64_t>(std::numeric_limits<long long>::max());
         constexpr std::uint64_t  kTooLarge = kLargest + 1U;
         std::vector<std::string> reports;
-        const auto               writes = transmit("", kSamples, {{200UZ, {{gr::tag::TX_TIME.shortKey(), kTooLarge}}}, {600UZ, {{gr::tag::TX_TIME.shortKey(), kLargest}}}}, {}, &reports);
+        const auto               writes = transmit("", kSamples, {{200UZ, {{gr::tag::TX_TIME.key(), kTooLarge}}}, {600UZ, {{gr::tag::TX_TIME.key(), kLargest}}}}, {}, &reports);
         expectBurstWrites("times at and above the largest", writes, kSamples, {}, {{600UZ, kLargest}});
         expect(fatal(eq(reports.size(), 1UZ))) << "one report for the run";
         expect(reports.front().contains("tx_time") && reports.front().contains("200")) << reports.front();

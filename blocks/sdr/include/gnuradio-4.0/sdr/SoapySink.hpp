@@ -47,18 +47,18 @@ them made by a settings message or setStaged() while the block runs is not writt
 settings().set() call counts the key as given from then on. tx_gain_elements names the driver's gain elements
 directly and is applied in the order the driver lists them, after the AGC state.
 
-Two tags mark transmit bursts. A write ends at a sample tagged tx_eob = true and carries SOAPY_SDR_END_BURST. A
-tx_eob = true can also arrive with the end of the stream, one past its last sample. It ends the burst at the last sample
-the block staged. When the device has already taken that sample without END_BURST, a write of one zero sample carries
-END_BURST. When that write fails, the block reports it on its message port. Under a stop request the block ends no
-burst. A write starts at a sample tagged tx_time (UTC ns, any integer type) and carries SOAPY_SDR_HAS_TIME with that
-time. When the device takes part of a write that ends a burst, the next write sends the rest and repeats END_BURST. The
-time goes with the first sample alone. The block ignores tx_sob, because SoapySDR begins a burst with the first write
-after an end of burst. A tag on any input applies to every channel at that sample. The block ignores a tx_eob that is
-not a bool and a tx_time that is not an integer from 0 to 2^63 - 1. It reports the first such tag of a run on its
-message port. The burst taper ramps up the stream's first samples and ramps down after its last. It does not shape the
-bursts in between. No ramp-down follows a stream whose last sample ended a burst. The taper takes its settings when the
-block starts. The start fails when the taper refuses them.)">;
+Two tags mark transmit bursts. A write ends at a sample tagged gr:tx_eob = true and carries SOAPY_SDR_END_BURST. A
+gr:tx_eob = true can also arrive with the end of the stream, one past its last sample. It ends the burst at the last
+sample the block staged. When the device has already taken that sample without END_BURST, a write of one zero sample
+carries END_BURST. When that write fails, the block reports it on its message port. Under a stop request the block ends
+no burst. A write starts at a sample tagged gr:tx_time (UTC ns, any integer type) and carries SOAPY_SDR_HAS_TIME with
+that time. When the device takes part of a write that ends a burst, the next write sends the rest and repeats END_BURST.
+The time goes with the first sample alone. The block ignores gr:tx_sob, because SoapySDR begins a burst with the first
+write after an end of burst. A tag on any input applies to every channel at that sample. The block ignores a gr:tx_eob
+that is not a bool and a gr:tx_time that is not an integer from 0 to 2^63 - 1. It reports the first such tag of a run on
+its message port. The burst taper ramps up the stream's first samples and ramps down after its last. It does not shape
+the bursts in between. No ramp-down follows a stream whose last sample ended a burst. The taper takes its settings when
+the block starts. The start fails when the taper refuses them.)">;
 
     using TSizeChecker  = Limits<std::uint32_t{1}, std::numeric_limits<std::uint32_t>::max(), [](std::uint32_t x) { return std::has_single_bit(x); }>;
     using TBasePort     = PortIn<T>;
@@ -334,8 +334,8 @@ block starts. The start fails when the taper refuses them.)">;
     }
 
     // A tag at or past the first sample the block did not consume arrives with the end of the stream. Only the input's
-    // tag ring holds it. A tx_eob = true there ends the burst at the last staged sample. Under a stop request the block
-    // ends no burst.
+    // tag ring holds it. A gr:tx_eob = true there ends the burst at the last staged sample. Under a stop request the
+    // block ends no burst.
     [[nodiscard]] gr::work::Status processEpilogue(InputSpanLike auto& input) noexcept
     requires(nPorts == 1U)
     {
@@ -359,8 +359,8 @@ block starts. The start fails when the taper refuses them.)">;
         return gr::work::Status::OK;
     }
 
-    // True when the tag ring of port holds a tx_eob = true at or past the stream index from, the io thread runs, the port
-    // is connected and no stop is requested.
+    // True when the tag ring of port holds a gr:tx_eob = true at or past the stream index from, the io thread runs, the
+    // port is connected and no stop is requested.
     [[nodiscard]] bool streamEndEndsBurst(TBasePort& port, std::size_t from) {
         if (lifecycle::isShuttingDown(this->state()) || !_ioThreadStarted.load(std::memory_order_acquire) || !port.isConnected()) {
             return false;
@@ -389,9 +389,9 @@ block starts. The start fails when the taper refuses them.)">;
         }
     }
 
-    // Marks the staged samples that carry tx_eob or tx_time, before they are published to the io thread. It reads the
-    // tags of the nStaged samples alone, each once. A tag the span has not retired comes back at a negative index and
-    // is skipped.
+    // Marks the staged samples that carry gr:tx_eob or gr:tx_time, before they are published to the io thread. It reads
+    // the tags of the nStaged samples alone, each once. A tag the span has not retired comes back at a negative index
+    // and is skipped.
     void markBurstTags(InputSpanLike auto& input, std::size_t nStaged) {
         for (const auto& [relIndex, tagMap] : input.tags(nStaged)) {
             if (relIndex >= 0) {
@@ -400,25 +400,25 @@ block starts. The start fails when the taper refuses them.)">;
         }
     }
 
-    // True when the tag holds tx_eob = true. A tx_eob that is not a bool is reported and ignored.
+    // True when the tag holds gr:tx_eob = true. A gr:tx_eob that is not a bool is reported and ignored.
     [[nodiscard]] bool tagEndsBurst(const property_map& tagMap, std::uint64_t position) {
-        const auto it = tagMap.find(std::string_view(gr::tag::TX_EOB.shortKey()));
+        const auto it = tagMap.find(std::string_view(gr::tag::TX_EOB.key()));
         if (it == tagMap.end()) {
             return false;
         }
         if (const bool* endsBurst = it->second.template get_if<bool>(); endsBurst != nullptr) {
             return *endsBurst;
         }
-        reportIgnoredBurstTag(gr::tag::TX_EOB.shortKey(), position, "a bool");
+        reportIgnoredBurstTag(gr::tag::TX_EOB.key(), position, "a bool");
         return false;
     }
 
     void addBurstMark(std::uint64_t position, const property_map& tagMap) {
         BurstMark mark{.position = position, .endsBurst = tagEndsBurst(tagMap, position), .timeNs = std::nullopt};
-        if (const auto it = tagMap.find(std::string_view(gr::tag::TX_TIME.shortKey())); it != tagMap.end()) {
+        if (const auto it = tagMap.find(std::string_view(gr::tag::TX_TIME.key())); it != tagMap.end()) {
             mark.timeNs = deviceTimeNs<std::uint64_t, std::uint32_t, std::uint16_t, std::uint8_t, std::int64_t, std::int32_t, std::int16_t, std::int8_t>(it->second);
             if (!mark.timeNs.has_value()) {
-                reportIgnoredBurstTag(gr::tag::TX_TIME.shortKey(), position, "an integer from 0 to 2^63 - 1");
+                reportIgnoredBurstTag(gr::tag::TX_TIME.key(), position, "an integer from 0 to 2^63 - 1");
             }
         }
         if (!mark.endsBurst && !mark.timeNs.has_value()) {

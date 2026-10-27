@@ -324,7 +324,7 @@ const boost::ut::suite<"CpmModulate"> cpmModulateTests = [] {
         const auto values = gr::Tensor<float>(static_cast<std::size_t>(kSymbols), 1.0f);
         auto&      source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSymbols}, {"values", values}, {"sample_rate", kRate}});
         for (const std::size_t at : kAt) {
-            source._tags.emplace_back(at, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("symbol")}});
+            source._tags.emplace_back(at, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("symbol")}});
         }
 
         auto& modulator = graph.emplaceBlock<CpmModulate<float>>({{"samples_per_symbol", static_cast<gr::Size_t>(kSps)}, {"modulation_index", 0.5}, {"pulse", std::string("rect")}});
@@ -342,10 +342,10 @@ const boost::ut::suite<"CpmModulate"> cpmModulateTests = [] {
         std::vector<std::size_t> offsets;
         std::vector<float>       rates;
         for (const gr::Tag& seenTag : sink._tags) {
-            if (seenTag.map.contains(gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()))) {
+            if (seenTag.map.contains(gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()))) {
                 offsets.push_back(seenTag.index);
             }
-            if (const auto found = seenTag.map.find(gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey())); found != seenTag.map.end()) {
+            if (const auto found = seenTag.map.find(gr::property_map::key_type(gr::tag::SAMPLE_RATE.key())); found != seenTag.map.end()) {
                 if (const float* rate = found->second.get_if<float>(); rate != nullptr) {
                     rates.push_back(*rate);
                 }

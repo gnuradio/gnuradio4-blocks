@@ -143,7 +143,7 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
 
         gr::Graph flow;
         auto&     source = flow.emplaceBlock<TagSource<T>>({{"n_samples_max", kNSamples}, {"sample_rate", kRate}, {"disconnect_on_done", false}});
-        source._tags     = {gr::Tag{0UZ, {{"frequency", kCenter}}}};
+        source._tags     = {gr::Tag{0UZ, {{gr::tag::FREQUENCY.key(), kCenter}}}};
         auto& rotator    = flow.emplaceBlock<Rotator<T>>({{"sample_rate", kRate}, {"frequency_shift", kShift}});
         auto& sink       = flow.emplaceBlock<TagSink<T, ProcessFunction::USE_PROCESS_ONE>>({{"disconnect_on_done", false}});
         expect(flow.connect<"out", "in">(source, rotator).has_value());
@@ -155,7 +155,7 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
 
         std::vector<double> centers;
         for (const gr::Tag& sinkTag : sink._tags) {
-            const auto it = sinkTag.map.find(gr::tag::FREQUENCY.shortKey());
+            const auto it = sinkTag.map.find(gr::tag::FREQUENCY.key());
             if (it != sinkTag.map.end()) {
                 if (const double* center = it->second.get_if<double>(); center != nullptr) {
                     centers.push_back(*center);

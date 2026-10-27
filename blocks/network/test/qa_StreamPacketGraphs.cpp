@@ -172,7 +172,7 @@ const boost::ut::suite<"stream link example graphs"> streamLinkExampleTests = []
         // the rate the sender stated crosses as a tag, which is how the receiving half knows what it is holding
         bool rateSeen = false;
         for (const gr::Tag& seenTag : tags) {
-            const auto entry = seenTag.map.find(gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()));
+            const auto entry = seenTag.map.find(gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()));
             if (entry != seenTag.map.end() && entry->second.get_if<float>() != nullptr) {
                 rateSeen = true;
                 expect(eq(*entry->second.get_if<float>(), 2000000.0f)) << "the rate arrived, but not the one the sender stated";

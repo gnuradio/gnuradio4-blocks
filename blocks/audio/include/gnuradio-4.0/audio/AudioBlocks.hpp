@@ -308,7 +308,7 @@ private:
         return static_cast<std::int64_t>(detail::wallClockNs()) - detail::AudioSourceState<T>::framesToNs(nFrames - 1U + nBehind, rate);
     }
 
-    // trigger_time marks the capture of the chunk's first sample, the sample the tag is published on
+    // gr:trigger_time marks the capture of the chunk's first sample, the sample the tag is published on
     void maybeEmitTimingTag(std::uint64_t tNowNs, std::int64_t tCaptureNs) {
         const auto intervalNs = static_cast<std::uint64_t>(tag_interval.value * 1e9f);
         if (tNowNs - _lastTagTimeNs < intervalNs) {
@@ -358,14 +358,14 @@ private:
         for (const auto& clkTag : tagData) {
             ++nTagsConsumed;
 
-            if (auto it = clkTag.map.find(std::pmr::string(gr::tag::TRIGGER_TIME.shortKey())); it != clkTag.map.end()) {
+            if (auto it = clkTag.map.find(std::pmr::string(gr::tag::TRIGGER_TIME.key())); it != clkTag.map.end()) {
                 if (auto* timePtr = it->second.template get_if<std::uint64_t>()) {
                     auto triggerUtcNs = static_cast<std::int64_t>(*timePtr);
 
                     std::int64_t localNs      = 0;
                     bool         hasLocalTime = false;
 
-                    if (auto metaIt = clkTag.map.find(std::pmr::string(gr::tag::TRIGGER_META_INFO.shortKey())); metaIt != clkTag.map.end()) {
+                    if (auto metaIt = clkTag.map.find(std::pmr::string(gr::tag::TRIGGER_META_INFO.key())); metaIt != clkTag.map.end()) {
                         if (auto* metaMap = metaIt->second.template get_if<property_map>()) {
                             if (auto ltIt = metaMap->find(std::pmr::string("local_time")); ltIt != metaMap->end()) {
                                 if (auto* ltPtr = ltIt->second.template get_if<std::uint64_t>()) {
@@ -381,7 +381,7 @@ private:
                 }
             }
 
-            if (auto it = clkTag.map.find(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey())); it != clkTag.map.end()) {
+            if (auto it = clkTag.map.find(std::pmr::string(gr::tag::TRIGGER_NAME.key())); it != clkTag.map.end()) {
                 if (auto* namePtr = it->second.template get_if<std::pmr::string>()) {
                     if (!namePtr->empty()) {
                         _clockTriggerName = std::string(*namePtr);
@@ -443,8 +443,8 @@ Publishes timing tags with estimated consumption rate and software latency.)"">;
 
     gr::PortIn<T> in;
 
-    gr::Annotated<float, "sample_rate", gr::Visible, gr::Unit<"Hz">, gr::Doc<"PCM sample rate. Updated automatically; not intended to be set by the user.">>                                                                                                                                                          sample_rate    = 48000.f;
-    gr::Annotated<gr::Size_t, "num_channels", gr::Visible, gr::Doc<"PCM interleaved channel count. Updated automatically; not intended to be set by the user.">>                                                                                                                                                      num_channels   = 1U;
+    gr::Annotated<float, "sample_rate", gr::Visible, gr::Unit<"Hz">, gr::Doc<"PCM sample rate; can follow gr:sample_rate">>                                                                                                                                                                                           sample_rate    = 48000.f;
+    gr::Annotated<gr::Size_t, "num_channels", gr::Visible, gr::Doc<"PCM interleaved channel count; can follow gr:num_channels">>                                                                                                                                                                                      num_channels   = 1U;
     gr::Annotated<float, "io_buffer_size", gr::Visible, gr::Unit<"s">, gr::Limits<0.1f, 10.f>, gr::Doc<"I/O staging buffer size in seconds">>                                                                                                                                                                         io_buffer_size = 5.0f;
     gr::Annotated<std::string, "device", gr::Visible, gr::Doc<"Device selector: empty or 'default' for system default, substring match on name, or '@id:...' for exact ID. A default selection prefers PulseAudio, an explicit one keeps the platform's own backend order.">>                                         device;
     gr::Annotated<std::string, "backend", gr::Visible, gr::Doc<"Audio backend: 'auto' (default) leaves the choice to the device selector, or name one of the platform's backends, e.g. 'pulseaudio', 'jack', 'alsa', 'dummy'. A backend that is not available is a start error, never a connection to another one.">> backend = std::string("auto");

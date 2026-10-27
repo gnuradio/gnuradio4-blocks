@@ -9,6 +9,7 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/basic/VectorSource.hpp>
 #include <gnuradio-4.0/testing/GraphTestBlocks.hpp>
 
@@ -76,10 +77,12 @@ const boost::ut::suite<"ExpectSink"> expectSinkTests = [] {
         expect(error.contains("tags with key 'mark' at [4], expected at [3]")) << error;
     };
 
-    "a key with the gr: prefix matches tag_key"_test = [&] {
-        const std::string error = runIntoSink<float>(property_map{{"n", gr::Size_t(4)}, {"at", gr::Size_t(4)}, {"key", std::string("gr:mark")}}, //
-            property_map{{"expected", oneToFour}, {"tag_key", std::string("mark")}, {"tag_indices", std::vector<gr::Size_t>{4U}}});
-        expect(error.empty()) << error;
+    "tag_key matches a tag key only as spelled"_test = [&] {
+        const property_map prefixed{{"n", gr::Size_t(4)}, {"at", gr::Size_t(4)}, {"key", std::string("gr:mark")}};
+        const std::string  spelled = runIntoSink<float>(prefixed, property_map{{"expected", oneToFour}, {"tag_key", std::string("gr:mark")}, {"tag_indices", std::vector<gr::Size_t>{4U}}});
+        expect(spelled.empty()) << spelled;
+        const std::string unprefixed = runIntoSink<float>(prefixed, property_map{{"expected", oneToFour}, {"tag_key", std::string("mark")}, {"tag_indices", std::vector<gr::Size_t>{4U}}});
+        expect(unprefixed.contains("tags with key 'mark' at [], expected at [4]")) << unprefixed;
     };
 
     "a repeated index in tag_indices counts once"_test = [&] {
@@ -114,14 +117,16 @@ const boost::ut::suite<"ExpectSink expected_tags"> expectedTagsTests = [] {
 
     "a listed end-of-stream tag matches at the sample count"_test = [&] {
         const std::string error = runIntoSink<float>(property_map{{"n", gr::Size_t(4)}, {"key", std::string()}}, //
-            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"4", property_map{{"end_of_stream", true}}}}}, {"tags_exact", true}});
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"4", property_map{{gr::tag::END_OF_STREAM.key(), true}}}}}, {"tags_exact", true}});
         expect(error.empty()) << error;
     };
 
-    "a key with the gr: prefix matches the listed key"_test = [&] {
-        const std::string error = runIntoSink<float>(property_map{{"n", gr::Size_t(4)}, {"at", gr::Size_t(2)}, {"key", std::string("gr:mark")}}, //
-            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"2", property_map{{"mark", std::string("x")}}}}}, {"tags_exact", true}});
-        expect(error.empty()) << error;
+    "a listed key matches a tag key only as spelled"_test = [&] {
+        const property_map prefixed{{"n", gr::Size_t(4)}, {"at", gr::Size_t(2)}, {"key", std::string("gr:mark")}};
+        const std::string  spelled = runIntoSink<float>(prefixed, property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"2", property_map{{"gr:mark", std::string("x")}}}}}, {"tags_exact", true}});
+        expect(spelled.empty()) << spelled;
+        const std::string unprefixed = runIntoSink<float>(prefixed, property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"2", property_map{{"mark", std::string("x")}}}}}, {"tags_exact", true}});
+        expect(unprefixed.contains("tag 'gr:mark' at sample 2 is ") && unprefixed.contains("expected no such tag")) << unprefixed;
     };
 
     "a wrong value fails with the index, the key and both values"_test = [&] {

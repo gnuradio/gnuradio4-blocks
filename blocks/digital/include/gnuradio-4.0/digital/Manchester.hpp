@@ -76,7 +76,7 @@ IEC 62386 lighting is `ieee802_3`.
 An item carries `bits_per_item` significant bits in its low positions, traversed in `bit_order` on both ports. Bits
 above that are masked away rather than rejected, because a stream value must not be able to stop a graph.
 
-The block is exactly 1:2, so a forwarded `sample_rate` is doubled and a tag arriving at input item t leaves at output
+The block is exactly 1:2, so a forwarded `gr:sample_rate` is doubled and a tag arriving at input item t leaves at output
 item 2t. Being a rate changer it forwards only the framework's own tag vocabulary: a custom key does not survive it.
 )"">;
 
@@ -143,7 +143,7 @@ Misalignment is loud in proportion to the data's transition density and complete
 where it produces the complement of the data: the same symptom as reading the wrong `convention`, which is why that
 setting is required and has no default. See ManchesterEncoder for the conventions and the item model.
 
-The block is exactly 2:1, so a forwarded `sample_rate` is halved and a tag arriving at input item t leaves at output
+The block is exactly 2:1, so a forwarded `gr:sample_rate` is halved and a tag arriving at input item t leaves at output
 item floor(t/2). Being a rate changer it forwards the framework's own tag vocabulary only.
 )"">;
 
@@ -155,7 +155,7 @@ item floor(t/2). Being a rate changer it forwards the framework's own tag vocabu
     Annotated<gr::Size_t, "bits_per_item", Unit<"bit">, Doc<"significant bits per item, 1 to 8, on every port">>                                        bits_per_item = 8U;
     Annotated<gr::math::BitOrder, "bit_order", Doc<"the traversal of each item's field, not the order of bytes">>                                       bit_order     = gr::math::BitOrder::MsbFirst;
     Annotated<gr::Size_t, "chip_phase", Doc<"0 or 1: the parity of the absolute chip index at which a pair starts">>                                    chip_phase    = 0U;
-    Annotated<std::string, "align_tag_key", Doc<"tag key whose position re-anchors the pairing grid; empty disables tag-driven alignment">>             align_tag_key = std::string(gr::tag::TRIGGER_NAME.shortKey());
+    Annotated<std::string, "align_tag_key", Doc<"tag key whose position re-anchors the pairing grid; empty disables tag-driven alignment">>             align_tag_key = std::string(gr::tag::TRIGGER_NAME.key());
     Annotated<std::string, "align_tag_value", Doc<"if non-empty, the tag's value at that key must be a string equal to this; empty matches any value">> align_tag_value{};
     Annotated<bool, "flush_partial", Doc<"at end of stream emit the trailing partial item, its pad positions flagged as violations">>                   flush_partial = true;
 

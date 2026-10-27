@@ -274,7 +274,7 @@ struct Collector : gr::Block<Collector<TItem>> {
 
 /// @brief A copy that forwards every key of every tag at the offset the tag arrived at.
 template<typename TItem>
-struct EveryKeyCopy : gr::Block<EveryKeyCopy<TItem>, gr::UnfilteredTagPropagation> {
+struct EveryKeyCopy : gr::Block<EveryKeyCopy<TItem>> {
     gr::PortIn<TItem>  in;
     gr::PortOut<TItem> out;
     GR_MAKE_REFLECTABLE(EveryKeyCopy, in, out);
@@ -671,7 +671,7 @@ const boost::ut::suite<"DataSetToPacket"> dataSetToPacketTests = [] {
         }
         { // (b) the port's most recent tag beats the axis
             const Record<float>    input[]{makeExtractedRecord<float>(1024UZ, 1e6f)};
-            const std::vector<Tag> inTags{Tag{0UZ, property_map{{"sample_rate", 96000.f}}}};
+            const std::vector<Tag> inTags{Tag{0UZ, property_map{{gr::tag::SAMPLE_RATE.key(), 96000.f}}}};
             auto                   block   = make<DataSetToPacket<float>>();
             const auto             capture = run<float>(block, input, 0UZ, std::span<const Tag>(inTags));
             expect(eq(read<float>(metaOf(capture.packets.at(0UZ)), "sample_rate").value_or(0.f), 96000.f));
@@ -700,10 +700,10 @@ const boost::ut::suite<"DataSetToPacket"> dataSetToPacketTests = [] {
     };
 
     // The compile-time half
-    "the block is not admissible for UnfilteredTagPropagation"_test = [] {
-        static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<DataSetToPacket<std::uint8_t>>, "asynchronous outputs and NoTagPropagation each refuse the flag on their own");
-        static_assert(!gr::block::kUnfilteredTagPropagationAdmissible<DataSetToPacket<float>>);
-        expect(!gr::block::kUnfilteredTagPropagationAdmissible<DataSetToPacket<std::uint8_t>>);
+    "the block does not keep tag offsets"_test = [] {
+        static_assert(!DataSetToPacket<std::uint8_t>::keepsTagOffsets(), "asynchronous outputs and NoTagPropagation each rule it out on their own");
+        static_assert(!DataSetToPacket<float>::keepsTagOffsets());
+        expect(!DataSetToPacket<std::uint8_t>::keepsTagOffsets());
     };
 
     // A tag belongs to its record and to no other, and nothing is published on out
@@ -713,7 +713,7 @@ const boost::ut::suite<"DataSetToPacket"> dataSetToPacketTests = [] {
             records.push_back(makeRecord<float>(5UZ));
         }
         for (const std::size_t at : {0UZ, 1UZ, 7UZ}) {
-            const std::vector<Tag> inTags{Tag{at, property_map{{"sample_rate", 96000.f}, {"probe", std::string("here")}}}};
+            const std::vector<Tag> inTags{Tag{at, property_map{{gr::tag::SAMPLE_RATE.key(), 96000.f}, {"probe", std::string("here")}}}};
             for (const std::size_t room : {0UZ, 1UZ, 4UZ}) {
                 auto       block   = make<DataSetToPacket<float>>();
                 const auto capture = run<float>(block, std::span<const Record<float>>(records), room, std::span<const Tag>(inTags));

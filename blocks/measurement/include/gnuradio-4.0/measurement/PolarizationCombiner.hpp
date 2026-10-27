@@ -85,7 +85,7 @@ GR_REGISTER_BLOCK(gr::blocks::measurement::PolarizationCombiner)
  *
  * `nWindows()` counts the full windows, and `nWindowResets()` the partial windows a setting change discarded.
  * `nBranchSwitches()` counts the changes of the selected branch under 'selection'. `nSaturatedFigures()` counts the
- * saturated figures, two at most per window. `nDroppedSampleTags()` counts the `n_dropped_samples` tags on either
+ * saturated figures, two at most per window. `nDroppedSampleTags()` counts the `gr:n_dropped_samples` tags on either
  * branch.
  */
 struct PolarizationCombiner : Block<PolarizationCombiner> {
@@ -239,7 +239,7 @@ amplitude ratio, the two branch ratios, the combined ratio and the combining gai
     [[nodiscard]] std::uint64_t nWindowResets() const noexcept { return _nWindowResets.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t nBranchSwitches() const noexcept { return _nBranchSwitches.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t nSaturatedFigures() const noexcept { return _nSaturatedFigures.load(std::memory_order_relaxed); }
-    /// @brief `n_dropped_samples` tags seen on either branch. Callable from any thread.
+    /// @brief `gr:n_dropped_samples` tags seen on either branch. Callable from any thread.
     [[nodiscard]] std::uint64_t nDroppedSampleTags() const noexcept { return _nDroppedSampleTags.load(std::memory_order_relaxed); }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& in0Span, InputSpanLike auto& in1Span, OutputSpanLike auto& outSpan, OutputSpanLike auto& orthoSpan, OutputSpanLike auto& measurementsSpan) {
@@ -301,8 +301,8 @@ private:
         return work::Status::ERROR;
     }
 
-    /// @brief Counts the `n_dropped_samples` tags on the @p count samples this call takes, on either branch. A tag on a
-    /// later sample is counted by the call that takes that sample.
+    /// @brief Counts the `gr:n_dropped_samples` tags on the @p count samples this call takes, on either branch. A tag
+    /// on a later sample is counted by the call that takes that sample.
     void countDroppedTags(InputSpanLike auto& in0Span, InputSpanLike auto& in1Span, std::size_t count) {
         const std::uint64_t base   = _streamAt;
         const auto          onSpan = [this, base, count](const auto& span) {
@@ -311,7 +311,7 @@ private:
                 if (at < base || at >= base + count) {
                     continue;
                 }
-                if (tag.map.find(gr::tag::N_DROPPED_SAMPLES.shortKey()) == tag.map.end()) {
+                if (tag.map.find(gr::tag::N_DROPPED_SAMPLES.key()) == tag.map.end()) {
                     continue;
                 }
                 _nDroppedSampleTags.fetch_add(1ULL, std::memory_order_relaxed);

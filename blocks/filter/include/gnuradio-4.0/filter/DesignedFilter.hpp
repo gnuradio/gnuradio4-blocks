@@ -61,18 +61,16 @@ or a named window over a fixed length is enough; `FirFilter` is the one to reach
 hand. This block is the FIR-only third: an arbitrary length, complex taps, and the Hilbert and root-raised-cosine
 profiles neither of the others offers.
 
-`sample_rate` is the reserved stream key under the framework's standard rule: explicitly configuring it removes it
-from the auto-update set, so a stated rate wins over stream tags and a redesign to a new rate arrives by restaging the
-setting; left unconfigured, a stream tag updates it and redesigns. A passing rate tag is forwarded divided by the
-decimation, so downstream reads the rate of the stream this block hands it. A refused settings change leaves the
-previous design running.
+A graph may couple `sample_rate` to `gr:sample_rate`. A tag that changes it then redesigns the filter. A passing rate
+tag is forwarded divided by the decimation, so downstream reads the rate of the stream this block hands it. A refused
+settings change leaves the previous design running.
 )"">;
 
     PortIn<TSample> in;
     PortOut<TOut>   out;
 
     Annotated<std::string, "profile", Visible, Doc<"lowpass | highpass | bandpass | bandstop | hilbert | complex_bandpass | complex_bandstop | root_raised_cosine">>       profile          = "lowpass";
-    Annotated<float, "sample_rate", Unit<"Hz">, Visible, Doc<"the design's rate reference; the reserved stream key, so a passing tag redesigns to it">>                    sample_rate      = 1.0f;
+    Annotated<float, "sample_rate", Unit<"Hz">, Visible, Doc<"the design's rate reference; can follow gr:sample_rate">>                                                    sample_rate      = 1.0f;
     Annotated<double, "cutoff", Unit<"Hz">, Visible, Doc<"-6 dB point; the lower edge of a band form">>                                                                    cutoff           = 0.0;
     Annotated<double, "high_cutoff", Unit<"Hz">, Visible, Doc<"-6 dB point, band forms only">>                                                                             high_cutoff      = 0.0;
     Annotated<double, "transition_width", Unit<"Hz">, Visible, Doc<"applied to every edge; sets the length unless taps is stated">>                                        transition_width = 0.0;

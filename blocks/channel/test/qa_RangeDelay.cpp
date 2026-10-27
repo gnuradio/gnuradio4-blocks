@@ -171,12 +171,12 @@ template<typename T, typename TBlock>
 }
 
 [[nodiscard]] gr::Tag triggerTag(std::size_t index, std::uint64_t timeNs) { //
-    return gr::Tag{index, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_TIME.shortKey()), timeNs}}};
+    return gr::Tag{index, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_TIME.key()), timeNs}}};
 }
 
 [[nodiscard]] gr::Tag triggerTag(std::size_t index, std::uint64_t timeNs, float offsetSeconds) {
-    return gr::Tag{index, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_TIME.shortKey()), timeNs}, //
-                              {gr::property_map::key_type(gr::tag::TRIGGER_OFFSET.shortKey()), offsetSeconds}}};
+    return gr::Tag{index, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_TIME.key()), timeNs}, //
+                              {gr::property_map::key_type(gr::tag::TRIGGER_OFFSET.key()), offsetSeconds}}};
 }
 
 /// The prototype's delivered passband ripple and stopband as linear amplitudes. They are the two floors under the
@@ -887,7 +887,7 @@ int main() {
         expect(that % (fromTrigger->anchorIndex() == static_cast<std::uint64_t>(at))) << "the tag's own stream index becomes the anchor index";
         expect(that % (fromTrigger->anchorNs() == static_cast<std::int64_t>(tNs))) << "and the tag's value becomes the anchor time";
 
-        // trigger_offset, whose float spacing is 0.116 ns at 1 ms and 119.2 ns at 1 s, so both are exact here
+        // gr:trigger_offset, whose float spacing is 0.116 ns at 1 ms and 119.2 ns at 1 s, so both are exact here
         auto                       milli = configured<RangeDelay<C>>([&] {
             auto s             = table;
             s["anchor_source"] = std::string("first_trigger");
@@ -1006,7 +1006,7 @@ int main() {
         expect(that % (std::abs(std::arg(std::complex<double>(static_cast<double>(single.samples[at2].real()), static_cast<double>(single.samples[at2].imag())))) > 0.5)) << "where the continuous run has accumulated a phase by then";
 
         // a trigger time off the nanosecond axis, and one that is not a nanosecond count at all
-        const std::vector<gr::Tag> offAxis{gr::Tag{at, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_TIME.shortKey()), std::uint64_t{1ULL << 63U}}}}};
+        const std::vector<gr::Tag> offAxis{gr::Tag{at, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_TIME.key()), std::uint64_t{1ULL << 63U}}}}};
         auto                       refusing   = configured<DopplerShift<C>>([&] {
             auto s             = table;
             s["anchor_source"] = std::string("first_trigger");
@@ -1017,7 +1017,7 @@ int main() {
         expect(!refusing->anchorArmed()) << "and leaves the anchor where it was, which is unarmed";
         expect(std::ranges::equal(refusedRun.samples, input)) << "so the stream passes through unshifted";
 
-        const std::vector<gr::Tag> mistyped{gr::Tag{at, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_TIME.shortKey()), double{2.5e17}}}}};
+        const std::vector<gr::Tag> mistyped{gr::Tag{at, gr::property_map{{gr::property_map::key_type(gr::tag::TRIGGER_TIME.key()), double{2.5e17}}}}};
         auto                       unreadable = configured<DopplerShift<C>>([&] {
             auto s             = table;
             s["anchor_source"] = std::string("first_trigger");
@@ -1043,7 +1043,7 @@ int main() {
 
         const std::vector<float>   input(n, 1.f);
         const std::vector<gr::Tag> tags{gr::Tag{100UZ, gr::property_map{{"marker", std::int64_t{1}}}}, //
-            gr::Tag{200UZ, gr::property_map{{gr::property_map::key_type(gr::tag::FREQUENCY.shortKey()), 437e6}}}};
+            gr::Tag{200UZ, gr::property_map{{gr::property_map::key_type(gr::tag::FREQUENCY.key()), 437e6}}}};
         const auto                 driven = drive<float>(*block, std::span<const float>(input), std::span<const gr::Tag>(tags), 64UZ);
 
         const std::size_t expected = 100UZ + static_cast<std::size_t>(std::ceil(kDelay + latency));
@@ -1103,9 +1103,9 @@ int main() {
         auto                  block = configured<RangeDelay<float>>({{"schedule_times_ns", std::vector<std::int64_t>{0LL, 1'000'000'000LL}}, {"schedule_delays_s", std::vector<double>{1e-3, 1e-3}}, {"sample_rate", 1.e3f}, {"order", 1}, {"bank_size", gr::Size_t{32U}}});
 
         const std::vector<float>   input(n, 1.f);
-        const std::vector<gr::Tag> tags{gr::Tag{50UZ, gr::property_map{{gr::property_map::key_type(gr::tag::N_DROPPED_SAMPLES.shortKey()), gr::Size_t{17U}}}}, //
-            gr::Tag{100UZ, gr::property_map{{gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), 2.e3f}}},                                            //
-            gr::Tag{150UZ, gr::property_map{{gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), 1.e3f}}}};
+        const std::vector<gr::Tag> tags{gr::Tag{50UZ, gr::property_map{{gr::property_map::key_type(gr::tag::N_DROPPED_SAMPLES.key()), gr::Size_t{17U}}}}, //
+            gr::Tag{100UZ, gr::property_map{{gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()), 2.e3f}}},                                            //
+            gr::Tag{150UZ, gr::property_map{{gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()), 1.e3f}}}};
         const auto                 driven = drive<float>(*block, std::span<const float>(input), std::span<const gr::Tag>(tags), 64UZ);
 
         expect(that % (block->nDiscontinuities() == 1ULL)) << "a dropped-sample marker is a gap the schedule's mapping cannot bridge, counted";
@@ -1126,9 +1126,9 @@ int main() {
 
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", false}, {"sample_rate", kRate}});
-        source._tags     = {gr::Tag{50UZ, {{gr::property_map::key_type(gr::tag::N_DROPPED_SAMPLES.shortKey()), gr::Size_t{17U}}}}, //
-                gr::Tag{100UZ, {{gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), 2.f * kRate}}},                      //
-                gr::Tag{150UZ, {{gr::property_map::key_type(gr::tag::SAMPLE_RATE.shortKey()), kRate}}},                            //
+        source._tags     = {gr::Tag{50UZ, {{gr::property_map::key_type(gr::tag::N_DROPPED_SAMPLES.key()), gr::Size_t{17U}}}}, //
+                gr::Tag{100UZ, {{gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()), 2.f * kRate}}},                      //
+                gr::Tag{150UZ, {{gr::property_map::key_type(gr::tag::SAMPLE_RATE.key()), kRate}}},                            //
                 gr::Tag{250UZ, {{"marker", std::int64_t{7}}}}};
         auto& block      = graph.emplaceBlock<RangeDelay<float>>({{"schedule_times_ns", std::vector<std::int64_t>{0LL, 1'000'000'000LL}}, {"schedule_delays_s", std::vector<double>{kDelay, kDelay}}, {"sample_rate", kRate}, {"order", 1}, {"bank_size", gr::Size_t{32U}}});
         auto& sink       = graph.emplaceBlock<EndSink<float>>();
@@ -1141,7 +1141,7 @@ int main() {
 
         expect(that % (sink._samples.size() == static_cast<std::size_t>(kSamples))) << "every output";
         expect(that % (sink.indicesOf("marker") == std::vector<std::size_t>{static_cast<std::size_t>(kSamples)})) << "the marker leaves once, at the end-of-stream index";
-        expect(that % (sink.indicesOf(gr::tag::N_DROPPED_SAMPLES.shortKey()) == std::vector<std::size_t>{50UZ})) << "a reserved key stays on its sample";
+        expect(that % (sink.indicesOf(gr::tag::N_DROPPED_SAMPLES.key()) == std::vector<std::size_t>{50UZ})) << "a reserved key stays on its sample";
         expect(that % (block.nRateDisagreements() == 1ULL)) << "the tagged rate that differs from the setting is counted";
         expect(that % (std::abs(block.currentDelaySamples() - kDelay * static_cast<double>(kRate)) < 1e-9)) << std::format("and the configured rate converts the delay: {} samples", block.currentDelaySamples());
     };

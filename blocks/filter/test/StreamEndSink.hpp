@@ -51,7 +51,7 @@ namespace gr::blocks::filter::testing {
  * @brief Records every sample and every tag of its input, the tags at the stream's end-of-stream index included.
  *
  * A tag at the index one past the last sample sits on no sample. A sample-by-sample consumer never sees it. This sink
- * reads its input's tag ring when the stream ends and records every tag there, the `end_of_stream` tag among them.
+ * reads its input's tag ring when the stream ends and records every tag there, the `gr:end_of_stream` tag among them.
  */
 template<typename T>
 struct StreamEndSink : gr::Block<StreamEndSink<T>> {
@@ -80,7 +80,7 @@ struct StreamEndSink : gr::Block<StreamEndSink<T>> {
 
     [[nodiscard]] std::vector<std::size_t> offsetsOf(std::string_view key) const { return testing::offsetsOf(_tags, key); }
 
-    /// @brief The index of the `end_of_stream` tag, where the stream's end reached this sink.
+    /// @brief The index of the `gr:end_of_stream` tag, where the stream's end reached this sink.
     [[nodiscard]] std::optional<std::size_t> endIndex() const {
         const std::vector<std::size_t> ends = offsetsOf(static_cast<std::pmr::string>(gr::tag::END_OF_STREAM));
         return ends.empty() ? std::nullopt : std::optional<std::size_t>(ends.front());
@@ -121,7 +121,7 @@ template<typename T, typename TBlock>
 struct EndRun {
     bool                       ran     = false;
     std::size_t                samples = 0UZ;
-    std::optional<std::size_t> endIndex;   ///< the index of the `end_of_stream` tag
+    std::optional<std::size_t> endIndex;   ///< the index of the `gr:end_of_stream` tag
     std::vector<gr::Tag>       tags;       ///< every tag, those at the end-of-stream index included
     std::vector<gr::Tag>       sampleTags; ///< the tags a sample-by-sample consumer sees
 
@@ -192,19 +192,24 @@ inline void expectAtStreamEnd(const EndRun& run, std::size_t outputs, std::initi
  */
 template<typename T>
 struct StagedOutputSpan : gr::blocks::testing::span::OutputSpan<T> {
-    std::vector<gr::Tag> staged;
-    std::size_t          tagsPublished = 0UZ;
+    /// @brief The tags the span holds, with the publish() of an output span's tag writer.
+    struct Tags : std::vector<gr::Tag> {
+        void publish(std::size_t) const noexcept {}
+    };
+
+    Tags        tags;
+    std::size_t tagsPublished = 0UZ;
 
     StagedOutputSpan(std::span<T> items, std::size_t at) : gr::blocks::testing::span::OutputSpan<T>(items, at) {}
 
     void publishTag(const gr::property_map& tagData, std::size_t tagOffset = 0UZ) {
-        staged.resize(tagsPublished);
-        staged.push_back(gr::Tag{this->streamIndex + tagOffset, tagData});
+        tags.resize(tagsPublished);
+        tags.push_back(gr::Tag{this->streamIndex + tagOffset, tagData});
         ++tagsPublished;
     }
 
     /// @brief The tags the span passes on when it is released.
-    [[nodiscard]] std::vector<gr::Tag> released() const { return {staged.begin(), staged.begin() + static_cast<std::ptrdiff_t>(tagsPublished)}; }
+    [[nodiscard]] std::vector<gr::Tag> released() const { return {tags.begin(), tags.begin() + static_cast<std::ptrdiff_t>(tagsPublished)}; }
 };
 
 /// @brief What the framework runs of a block after a stop request that arrives with input queued.

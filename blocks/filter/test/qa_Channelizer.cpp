@@ -8,6 +8,7 @@
 #include <format>
 #include <memory>
 #include <numbers>
+#include <optional>
 #include <print>
 #include <span>
 #include <string>
@@ -147,10 +148,23 @@ template<typename TBlock>
     return offsets;
 }
 
+/// The `gr:sample_rate` value of the first tag on sample 0 that carries the key, if it is a float.
+[[nodiscard]] std::optional<float> rateOnFirstSample(std::span<const gr::Tag> tags) {
+    const auto key = gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()};
+    for (const gr::Tag& tag : tags) {
+        if (tag.index == 0UZ && tag.map.contains(key)) {
+            const auto* rate = tag.map.at(key).get_if<float>();
+            return rate != nullptr ? std::optional<float>(*rate) : std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
 /// Everything the sinks of one channelizer run collected.
 struct BankRun {
     std::vector<std::vector<CF>>      samples{};
     std::vector<std::vector<gr::Tag>> tags{};
+    float                             sourceRate = 0.f; ///< the rate the source states on sample 0
 };
 
 /**
@@ -165,6 +179,7 @@ struct BankRun {
     gr::Graph graph;
     auto&     source = graph.emplaceBlock<TagSource<CF>>({{"n_samples_max", nSamples}, {"mark_tag", false}, {"values", gr::Tensor<CF>(gr::data_from, values)}});
     source._tags.assign(inputTags.begin(), inputTags.end());
+    const float sourceRate = source.sample_rate;
 
     auto& bank = graph.emplaceBlock<PolyphaseChannelizer<float>>(std::move(settings));
     expect(graph.connect(source, "out"s, bank, "in"s).has_value()) << "the single input connects";
@@ -181,6 +196,7 @@ struct BankRun {
     expect(scheduler.runAndWait().has_value());
 
     BankRun run;
+    run.sourceRate = sourceRate;
     for (const ChannelSink* sink : sinks) {
         run.samples.emplace_back(sink->_samples.begin(), sink->_samples.end());
         run.tags.push_back(sink->_tags);
@@ -554,17 +570,24 @@ const boost::ut::suite<"Channelizer"> channelizerTests = [] {
             const float       channelRate = inputRate / static_cast<float>(stride);
 
             std::vector<gr::Tag> inputTags;
-            inputTags.emplace_back(512UZ, gr::property_map{{gr::property_map::key_type{"sample_rate"}, gr::pmt::Value(inputRate)}});
+            inputTags.emplace_back(512UZ, gr::property_map{{gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}, gr::pmt::Value(inputRate)}});
 
             const auto run = runInGraph({{"n_channels", channels}, {"oversample", oversample}}, tonePeriod(static_cast<std::size_t>(channels), 0UZ), nSamples, inputTags);
 
-            const auto* forwarded = std::ranges::find_if(run.tags[0], [](const gr::Tag& entry) { return entry.map.contains(gr::property_map::key_type{"sample_rate"}); }).base();
+            // The source states its own rate on sample 0. Every channel carries it divided by the stride.
+            for (std::size_t channel = 0UZ; channel < run.tags.size(); ++channel) {
+                const auto own = rateOnFirstSample(run.tags[channel]);
+                expect(own.has_value() && *own == run.sourceRate / static_cast<float>(stride)) << std::format("oversample {}: channel {} states the source's {} Hz over the stride on sample 0", oversample, channel, run.sourceRate);
+            }
+
+            // The tag under test is the one past it.
+            const auto* forwarded = std::ranges::find_if(run.tags[0], [](const gr::Tag& entry) { return entry.index > 0UZ && entry.map.contains(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}); }).base();
             expect(forwarded != run.tags[0].data() + run.tags[0].size()) << std::format("oversample {}: channel zero carries the rate tag", oversample);
             if (forwarded == run.tags[0].data() + run.tags[0].size()) {
                 continue;
             }
 
-            const auto* rate = forwarded->map.at(gr::property_map::key_type{"sample_rate"}).get_if<float>();
+            const auto* rate = forwarded->map.at(gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}).get_if<float>();
             expect(rate != nullptr) << "the forwarded rate is still a float";
             if (rate != nullptr) {
                 expect(eq(*rate, channelRate)) << std::format("oversample {}: a bank fed {} Hz runs each channel at {} Hz, so the tag reads {}", oversample, inputRate, channelRate, *rate);
@@ -799,7 +822,7 @@ const boost::ut::suite<"Channelizer"> channelizerTests = [] {
         constexpr gr::Size_t channels = 4U;
         constexpr gr::Size_t nSamples = 4096U;
         const std::size_t    stride   = static_cast<std::size_t>(channels);
-        const auto           rateKey  = gr::property_map::key_type{"sample_rate"};
+        const auto           rateKey  = gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()};
 
         std::vector<gr::Tag> inputTags;
         inputTags.emplace_back(512UZ, gr::property_map{{rateKey, gr::pmt::Value(48000.f)}});
@@ -809,10 +832,12 @@ const boost::ut::suite<"Channelizer"> channelizerTests = [] {
         const auto run = runInGraph({{"n_channels", channels}}, tonePeriod(static_cast<std::size_t>(channels), 0UZ), nSamples, inputTags);
 
         for (std::size_t channel = 0UZ; channel < run.tags.size(); ++channel) {
-            const auto rates = offsetsOf(run.tags[channel], "sample_rate");
-            expect(eq(rates.size(), 2UZ)) << std::format("channel {} carries both rate tags", channel);
+            const auto rates = offsetsOf(run.tags[channel], gr::tag::SAMPLE_RATE.key());
+            expect(rates == std::vector<std::size_t>{0UZ, 512UZ / stride, 1024UZ / stride}) << std::format("channel {} carries the source's own rate and both rate tags", channel);
+            const auto own = rateOnFirstSample(run.tags[channel]);
+            expect(own.has_value() && *own == run.sourceRate / static_cast<float>(stride)) << std::format("channel {}: the source's {} Hz on sample 0 is divided by the stride", channel, run.sourceRate);
             for (const gr::Tag& entry : run.tags[channel]) {
-                if (!entry.map.contains(rateKey)) {
+                if (entry.index == 0UZ || !entry.map.contains(rateKey)) {
                     continue;
                 }
                 const gr::pmt::Value& rate = entry.map.at(rateKey);

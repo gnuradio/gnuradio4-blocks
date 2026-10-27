@@ -30,6 +30,11 @@ struct TestParams {
     bool                                           ignoreOrder{false};
 };
 
+constexpr float kSourceRate = 1000.f; // each source states this rate on its first sample
+
+/// the rate tag a source writes, at the output index where that source's first sample lands
+gr::Tag rateTag(std::size_t index) { return {index, {{gr::tag::SAMPLE_RATE.key(), kSourceRate}}}; }
+
 std::vector<gr::Tensor<double>> values(std::initializer_list<std::initializer_list<double>> data) {
     std::vector<gr::Tensor<double>> result;
     for (const auto tensorData : data) {
@@ -58,7 +63,7 @@ void execute_selector_test(TestParams params, std::source_location location = st
     selector = std::addressof(graph.emplaceBlock<gr::blocks::basic::Selector<double>>({{"n_inputs", nSources}, {"n_outputs", nSinks}, {"map_in", mapIn}, {"map_out", mapOut}, {"back_pressure", params.backPressure}, {"sync_combined_ports", params.syncCombinedPorts}, {"disconnect_on_done", false}}));
 
     for (gr::Size_t i = 0; i < nSources; ++i) {
-        sources.push_back(std::addressof(graph.emplaceBlock<TagSource<double>>({{"n_samples_max", params.nSamples}, {"values", params.inValues[i]}, {"disconnect_on_done", false}})));
+        sources.push_back(std::addressof(graph.emplaceBlock<TagSource<double>>({{"n_samples_max", params.nSamples}, {"values", params.inValues[i]}, {"sample_rate", kSourceRate}, {"disconnect_on_done", false}})));
         expect(sources[i]->settings().applyStagedParameters().forwardParameters.empty());
         sources[i]->_tags = params.inTags[i];
         expect(graph.connect(*sources[i], "out"s, *selector, "inputs#"s + std::to_string(i)).has_value());
@@ -227,7 +232,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),                                     //
             .outValues                   = values({{1, 1, 1, 1, 1}, {2, 2, 2, 2, 2}, {3, 3, 3, 3, 3}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},                                    //
-            .outTags                     = {{tag1}, {tag2}, {tag3}},
+            .outTags                     = {{rateTag(0), tag1}, {rateTag(0), tag2}, {rateTag(0), tag3}},
             .monitorSource               = -1U, //
             .monitorValues               = {},  //
             .backPressure                = false,
@@ -241,7 +246,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),           //
             .outValues                   = values({{}, {2, 2, 2, 2, 2}, {}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},          //
-            .outTags                     = {{}, {tag2}, {}},
+            .outTags                     = {{}, {rateTag(0), tag2}, {}},
             .monitorSource               = -1U, //
             .monitorValues               = {},  //
             .backPressure                = false,
@@ -258,7 +263,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),                                         //
             .outValues                   = values({{}, {1, 2, 2, 3, 3, 3, 1, 1, 1, 1, 2, 2, 2, 3, 3}, {}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},                                        //
-            .outTags                     = {{}, {newTag1, newTag2, newTag3}, {}},
+            .outTags                     = {{}, {rateTag(0), rateTag(1), rateTag(3), newTag1, newTag2, newTag3}, {}},
             .monitorSource               = -1U, //
             .monitorValues               = {},  //
             .backPressure                = false,
@@ -276,7 +281,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),                                         //
             .outValues                   = values({{}, {1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3}, {}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},                                        //
-            .outTags                     = {{}, {newTag1, newTag2, newTag3}, {}},
+            .outTags                     = {{}, {rateTag(0), rateTag(1), rateTag(2), newTag1, newTag2, newTag3}, {}},
             .monitorSource               = -1U, //
             .monitorValues               = {},  //
             .backPressure                = false,
@@ -293,7 +298,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),                      //
             .outValues                   = values({{}, {2, 3, 2, 3, 2, 3, 2, 3, 2, 3}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},                     //
-            .outTags                     = {{}, {newTag2, newTag3}},
+            .outTags                     = {{}, {rateTag(0), rateTag(1), newTag2, newTag3}},
             .monitorSource               = -1U, //
             .monitorValues               = {},  //
             .backPressure                = false,
@@ -308,7 +313,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),                                     //
             .outValues                   = values({{2, 2, 2, 2, 2}, {2, 2, 2, 2, 2}, {2, 2, 2, 2, 2}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},                                    //
-            .outTags                     = {{tag2}, {tag2}, {tag2}},
+            .outTags                     = {{rateTag(0), tag2}, {rateTag(0), tag2}, {rateTag(0), tag2}},
             .monitorSource               = -1U, //
             .monitorValues               = {},  //
             .backPressure                = false,
@@ -324,7 +329,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),                                     //
             .outValues                   = values({{1, 1, 1, 1, 1}, {2, 2, 2, 2, 2}, {3, 3, 3, 3, 3}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},                                    //
-            .outTags                     = {{tag1}, {tag2}, {tag3}},
+            .outTags                     = {{rateTag(0), tag1}, {rateTag(0), tag2}, {rateTag(0), tag3}},
             .monitorSource               = -1U, //
             .monitorValues               = {},  //
             .backPressure                = true,
@@ -338,7 +343,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),           //
             .outValues                   = values({{}, {2, 2, 2, 2, 2}, {}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},          //
-            .outTags                     = {{}, {tag2}, {}},
+            .outTags                     = {{}, {rateTag(0), tag2}, {}},
             .monitorSource               = -1U, //
             .monitorValues               = {},  //
             .backPressure                = true,
@@ -355,7 +360,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),                                         //
             .outValues                   = values({{}, {1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3}, {}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},                                        //
-            .outTags                     = {{}, {newTag1, newTag2, newTag3}, {}},
+            .outTags                     = {{}, {rateTag(0), rateTag(1), rateTag(2), newTag1, newTag2, newTag3}, {}},
             .monitorSource               = -1U, //
             .monitorValues               = {},  //
             .backPressure                = true,
@@ -369,7 +374,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),                                     //
             .outValues                   = values({{2, 2, 2, 2, 2}, {2, 2, 2, 2, 2}, {2, 2, 2, 2, 2}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},                                    //
-            .outTags                     = {{tag2}, {tag2}, {tag2}},
+            .outTags                     = {{rateTag(0), tag2}, {rateTag(0), tag2}, {rateTag(0), tag2}},
             .monitorSource               = -1U, //
             .monitorValues               = {},  //
             .backPressure                = true,
@@ -385,7 +390,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),                                     //
             .outValues                   = values({{1, 1, 1, 1, 1}, {2, 2, 2, 2, 2}, {3, 3, 3, 3, 3}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},                                    //
-            .outTags                     = {{tag1}, {tag2}, {tag3}},
+            .outTags                     = {{rateTag(0), tag1}, {rateTag(0), tag2}, {rateTag(0), tag3}},
             .monitorSource               = 0U,              // set monitor index
             .monitorValues               = {1, 1, 1, 1, 1}, //
             .backPressure                = false,
@@ -399,7 +404,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),           //
             .outValues                   = values({{}, {2, 2, 2, 2, 2}, {}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},          //
-            .outTags                     = {{}, {tag2}, {}},
+            .outTags                     = {{}, {rateTag(0), tag2}, {}},
             .monitorSource               = 0U,              // set monitor index
             .monitorValues               = {1, 1, 1, 1, 1}, // monitor has values even if port is not mapped
             .backPressure                = false,
@@ -416,7 +421,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),                                         //
             .outValues                   = values({{}, {1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3}, {}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},                                        //
-            .outTags                     = {{}, {newTag1, newTag2, newTag3}, {}},
+            .outTags                     = {{}, {rateTag(0), rateTag(1), rateTag(2), newTag1, newTag2, newTag3}, {}},
             .monitorSource               = 1U,              // set monitor index
             .monitorValues               = {2, 2, 2, 2, 2}, //
             .backPressure                = false,
@@ -430,7 +435,7 @@ const boost::ut::suite SelectorTest = [] {
             .inValues                    = values({{1}, {2}, {3}}),                                     //
             .outValues                   = values({{2, 2, 2, 2, 2}, {2, 2, 2, 2, 2}, {2, 2, 2, 2, 2}}), //
             .inTags                      = {{tag1}, {tag2}, {tag3}},                                    //
-            .outTags                     = {{tag2}, {tag2}, {tag2}},
+            .outTags                     = {{rateTag(0), tag2}, {rateTag(0), tag2}, {rateTag(0), tag2}},
             .monitorSource               = 1U,              //
             .monitorValues               = {2, 2, 2, 2, 2}, //
             .backPressure                = false,
@@ -446,7 +451,7 @@ const boost::ut::suite SelectorTest = [] {
         const std::vector<Tag> inTags{Tag{1UZ, {{"key1", "value1"}}}, Tag{700UZ, {{"key2", "value2"}}}, Tag{1500UZ, {{"key3", "value3"}}}};
 
         gr::Graph graph;
-        auto&     source = graph.emplaceBlock<TagSource<double>>({{"n_samples_max", kNSamples}, {"values", values({{1}})[0]}, {"disconnect_on_done", false}});
+        auto&     source = graph.emplaceBlock<TagSource<double>>({{"n_samples_max", kNSamples}, {"values", values({{1}})[0]}, {"sample_rate", kSourceRate}, {"disconnect_on_done", false}});
         source._tags     = inTags;
 
         auto& selectSource = graph.emplaceBlock<DrippingSelect>({{"disconnect_on_done", false}});
@@ -468,8 +473,10 @@ const boost::ut::suite SelectorTest = [] {
 
         expect(eq(sink._samples.size(), static_cast<std::size_t>(kNSamples))) << "the mapped output must receive the whole stream";
         expect(gt(monitorSink.nSeen, kMonitorBuffer)) << "more samples than the monitor ring holds must have crossed it, or the source was never monitor-bound";
-        expect(eq(sink._tags.size(), inTags.size())) << "a tag published against a count larger than the one consumed arrives a second time";
-        for (const Tag& tag : inTags) {
+        std::vector<Tag> published{rateTag(0UZ)};
+        published.insert(published.end(), inTags.begin(), inTags.end());
+        expect(eq(sink._tags.size(), published.size())) << "a tag published against a count larger than the one consumed arrives a second time";
+        for (const Tag& tag : published) {
             const auto nMatching = std::ranges::count_if(sink._tags, [&tag](const Tag& seen) { return seen.map == tag.map; });
             expect(eq(static_cast<std::size_t>(nMatching), 1UZ)) << std::format("the tag at input index {} must arrive exactly once", tag.index);
         }

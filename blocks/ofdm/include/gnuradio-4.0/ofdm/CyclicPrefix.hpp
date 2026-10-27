@@ -40,7 +40,7 @@ GR_REGISTER_BLOCK(gr::blocks::ofdm::CpInsert)
  * tag.
  *
  * With `emit_trigger` set, the block tags the first sample of each frame, the first prefix sample of the symbol at
- * position 0. The tag holds `trigger_name` set to `trigger_label` and `trigger_offset` 0. `CpRemove` and
+ * position 0. The tag holds `gr:trigger_name` set to `trigger_label` and `gr:trigger_offset` 0. `CpRemove` and
  * `SchmidlCoxSync` take the same label by default.
  *
  * The prefix is a copy of the symbol's last samples. `cp_len` holds one prefix length or a cycle of lengths. The block
@@ -71,8 +71,8 @@ struct CpInsert : Block<CpInsert, NoTagPropagation> {
 
     Annotated<std::vector<gr::Size_t>, "cp_len", Visible, Doc<"prefix samples, constant or a per-symbol cycle">>            cp_len        = std::vector<gr::Size_t>{16U};
     Annotated<gr::Size_t, "window_len", Visible, Doc<"raised-cosine edge samples shared with the next symbol; 0 disables">> window_len    = 0U;
-    Annotated<bool, "emit_trigger", Doc<"tag the first sample of every frame with trigger_name">>                           emit_trigger  = true;
-    Annotated<std::string, "trigger_label", Doc<"trigger_name of the emitted tags">>                                        trigger_label = std::string("ofdm_frame");
+    Annotated<bool, "emit_trigger", Doc<"tag the first sample of every frame with gr:trigger_name">>                        emit_trigger  = true;
+    Annotated<std::string, "trigger_label", Doc<"gr:trigger_name of the emitted tags">>                                     trigger_label = std::string("ofdm_frame");
 
     GR_MAKE_REFLECTABLE(CpInsert, in, out, cp_len, window_len, emit_trigger, trigger_label);
 
@@ -140,7 +140,7 @@ struct CpInsert : Block<CpInsert, NoTagPropagation> {
                     break;
                 }
                 if (_outAt == 0UZ && _triggerReady) {
-                    outSpan.publishTag(property_map{{gr::tag::TRIGGER_NAME.shortKey(), _accepted.label}, {gr::tag::TRIGGER_OFFSET.shortKey(), 0.f}}, written);
+                    outSpan.publishTag(property_map{{gr::tag::TRIGGER_NAME.key(), _accepted.label}, {gr::tag::TRIGGER_OFFSET.key(), 0.f}}, written);
                     _triggerReady = false;
                 }
                 const std::size_t take = std::min(_out.size() - _outAt, outSpan.size() - written);
@@ -273,7 +273,7 @@ GR_REGISTER_BLOCK(gr::blocks::ofdm::CpRemove)
  * index in the stream), `frame_index`, `symbol_in_frame`, `sample_start` (the input index of the cut's first sample)
  * and `discarded_samples` (the `nDiscarded()` total at the cut). The block forwards no input tag.
  *
- * A frame starts at a trigger, a tag whose `trigger_name` equals `trigger_label`, on the first prefix sample of the
+ * A frame starts at a trigger, a tag whose `gr:trigger_name` equals `trigger_label`, on the first prefix sample of the
  * frame's first symbol. `CpInsert` and `SchmidlCoxSync` put their triggers there. An empty `trigger_label` accepts
  * every trigger. From the trigger the block skips each symbol's prefix and cuts the `fft_len` samples after it.
  * `cp_len` holds one prefix length or a cycle of lengths, read at the symbol's position in the frame. A frame runs
@@ -294,7 +294,7 @@ GR_REGISTER_BLOCK(gr::blocks::ofdm::CpRemove)
  * `nDiscarded()` counts the discarded samples. `start()` sets it and the indices to 0.
  */
 struct CpRemove : Block<CpRemove, NoTagPropagation> {
-    using Description = Doc<"Cuts a complex stream into one DataSet<complex<float>> record of fft_len bins per symbol and takes its forward transform. A frame starts at a tag whose trigger_name equals trigger_label, on the first prefix sample of its first symbol. The block skips each prefix, cuts fft_len samples moved by timing_offset and discards the samples between frames">;
+    using Description = Doc<"Cuts a complex stream into one DataSet<complex<float>> record of fft_len bins per symbol and takes its forward transform. A frame starts at a tag whose gr:trigger_name equals trigger_label, on the first prefix sample of its first symbol. The block skips each prefix, cuts fft_len samples moved by timing_offset and discards the samples between frames">;
 
     PortIn<Complex>                  in;
     PortOut<DataSet<Complex>, Async> out;
@@ -304,7 +304,7 @@ struct CpRemove : Block<CpRemove, NoTagPropagation> {
     Annotated<gr::Size_t, "n_sync", Visible, Doc<"sync symbols at a frame's head, cut like data symbols">>                                                                                     n_sync        = 0U;
     Annotated<gr::Size_t, "frame_len", Visible, Doc<"data symbols per frame; 0 cuts until the next trigger">>                                                                                  frame_len     = 0U;
     Annotated<std::int32_t, "timing_offset", Visible, Unit<"samples">, Doc<"signed bias of the cut, in [-min(cp_len), 0]">, Limits<std::numeric_limits<std::int32_t>::min(), std::int32_t{0}>> timing_offset = 0;
-    Annotated<std::string, "trigger_label", Doc<"trigger_name that starts a frame; empty accepts any trigger">>                                                                                trigger_label = std::string("ofdm_frame");
+    Annotated<std::string, "trigger_label", Doc<"gr:trigger_name that starts a frame; empty accepts any trigger">>                                                                             trigger_label = std::string("ofdm_frame");
     Annotated<std::string, "signal_name", Doc<"the emitted record's signal name">>                                                                                                             signal_name   = std::string("ofdm_symbol");
 
     GR_MAKE_REFLECTABLE(CpRemove, in, out, fft_len, cp_len, n_sync, frame_len, timing_offset, trigger_label, signal_name);
@@ -465,7 +465,7 @@ private:
     }
 
     [[nodiscard]] bool isTrigger(const property_map& tagMap) const {
-        const auto entry = tagMap.find(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey()));
+        const auto entry = tagMap.find(std::pmr::string(gr::tag::TRIGGER_NAME.key()));
         if (entry == tagMap.end()) {
             return false;
         }

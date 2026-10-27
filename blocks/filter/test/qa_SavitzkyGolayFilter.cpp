@@ -709,8 +709,8 @@ const boost::ut::suite<"SavitzkyGolayFilter tag placement"> sgTagPlacementTests 
         for (const Case& c : {Case{11U, false, 5UZ}, Case{10U, false, 5UZ}, Case{10U, true, 0UZ}}) {
             gr::Graph graph;
             auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kSamples}, {"mark_tag", true}});
-            source._tags.emplace_back(kAt, gr::property_map{{gr::property_map::key_type{"trigger_name"}, std::string("impulse")}});
-            source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{"trigger_meta_info"}, std::string("last")}, {gr::property_map::key_type{"tx_eob"}, true}});
+            source._tags.emplace_back(kAt, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("impulse")}});
+            source._tags.emplace_back(kSamples - 1UZ, gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_META_INFO.key()}, std::string("last")}, {gr::property_map::key_type{gr::tag::TX_EOB.key()}, true}});
             gr::property_map settings{{"window_size", c.window}, {"poly_order", gr::Size_t{2}}};
             if (c.causal) {
                 settings.insert_or_assign(gr::property_map::key_type{"alignment"}, std::string("Causal"));
@@ -724,15 +724,15 @@ const boost::ut::suite<"SavitzkyGolayFilter tag placement"> sgTagPlacementTests 
             expect(scheduler.runAndWait().has_value());
 
             const std::string label = std::format("W = {} {}", c.window, c.causal ? "causal" : "centered");
-            expect(that % (sinks->end.offsetsOf("trigger_name") == std::vector<std::size_t>{kAt + c.lag})) << label << ": the tag on the lagged output";
+            expect(that % (sinks->end.offsetsOf(gr::tag::TRIGGER_NAME.key()) == std::vector<std::size_t>{kAt + c.lag})) << label << ": the tag on the lagged output";
             const auto head = std::span<const float>(sinks->end._samples).first(2UZ * kAt);
             expect(eq(static_cast<std::size_t>(std::ranges::max_element(head) - head.begin()), kAt + c.lag)) << label << ": the impulse peaks on that output";
             if (c.lag == 0UZ) { // the causal fit makes an output for the last input, which carries its tags
                 expect(eq(sinks->end._samples.size(), std::size_t{kSamples})) << label << ": every output, and none past the last input";
-                expect(that % (sinks->end.offsetsOf("trigger_meta_info") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": the tag on the last input on the last output";
-                expect(that % (gr::blocks::filter::testing::offsetsOf(sinks->samples._tags, "tx_eob") == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": the burst end tag on the last sample, whatever keys the core forwards";
+                expect(that % (sinks->end.offsetsOf(gr::tag::TRIGGER_META_INFO.key()) == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": the tag on the last input on the last output";
+                expect(that % (gr::blocks::filter::testing::offsetsOf(sinks->samples._tags, gr::tag::TX_EOB.key()) == std::vector<std::size_t>{kSamples - 1UZ})) << label << ": the burst end tag on the last sample, whatever keys the core forwards";
             } else {
-                gr::blocks::filter::testing::expectAtStreamEnd(*sinks, kSamples, {"trigger_meta_info", "tx_eob"}, label);
+                gr::blocks::filter::testing::expectAtStreamEnd(*sinks, kSamples, {gr::tag::TRIGGER_META_INFO.key(), gr::tag::TX_EOB.key()}, label);
             }
         }
     };

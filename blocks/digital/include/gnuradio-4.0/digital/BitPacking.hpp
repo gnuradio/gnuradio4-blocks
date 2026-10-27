@@ -53,8 +53,7 @@ template<std::unsigned_integral TIndex>
  *
  * Holding is ordinary here rather than a corner case: at `1:8` packing seven of every eight tags map into the
  * current call and the eighth may not, and at `8:1` unpacking a tag near the end of a call routinely lands past the
- * output span. Order and multiplicity are preserved and no tag is deduplicated. Every key is republished verbatim,
- * a key outside the auto-forward set included.
+ * output span. Order and multiplicity are preserved and no tag is deduplicated. Every key is republished verbatim.
  *
  * The input and output positions are kept in `std::uint64_t`. A 32-bit `std::size_t` makes a span's `streamIndex`
  * wrap at 2^32 items, and `widenStreamIndex` carries each position past the wrap. A change of the field width or of a
@@ -198,7 +197,7 @@ agree on it explicitly.
 `PackBits(k)` is `RepackBits(bits_in = 1, bits_out = k)` and shares its arithmetic; it exists because one width and
 one order are easier to configure correctly than four settings. Nothing comes out until `k` items have arrived,
 which is the declared chunk size rather than a startup rule, and a tag moves to the output item holding the bit it
-marked, `floor(t / k)`, so `k` consecutive input tags share one output offset in input order. `sample_rate` is
+marked, `floor(t / k)`, so `k` consecutive input tags share one output offset in input order. `gr:sample_rate` is
 forwarded unchanged: the item rate falls by `k` but the sample rate does not.
 
 `flush_partial` emits the final incomplete item at end of stream, its unfilled positions zero; clearing it drops
@@ -275,7 +274,7 @@ packing end and the unpacking end of a chain have to agree on it explicitly.
 period, so the block carries no state at all, every call is a whole number of items on both sides, and
 `flush_partial` can never do anything — it is kept and documented as inert rather than hidden, because a setting
 that sometimes does nothing is better than one that says when only in a table. A tag moves to the first of the `k`
-items its own item became, `k * t`, so the map is exact and no two tags collide. `sample_rate` is forwarded
+items its own item became, `k * t`, so the map is exact and no two tags collide. `gr:sample_rate` is forwarded
 unchanged: the item rate rises by `k` but the sample rate does not.
 )"">;
 
@@ -350,7 +349,7 @@ item consumed before it is grouped as the old configuration grouped it, and the 
 
 A tag moves to the output item holding the first bit of the item it marked, `floor(t * bits_in / bits_out)`, in
 integer arithmetic. Packing therefore puts several input tags on one output offset, in input order. Every key is
-forwarded verbatim, including keys the framework's own forwarder would filter. `sample_rate` is forwarded unchanged
+forwarded verbatim, including keys the framework's own forwarder would filter. `gr:sample_rate` is forwarded unchanged
 and is a stated limitation: the item rate changes by `bits_in / bits_out` but the sample rate does not, so rewriting
 the key would claim the stream slowed down.
 

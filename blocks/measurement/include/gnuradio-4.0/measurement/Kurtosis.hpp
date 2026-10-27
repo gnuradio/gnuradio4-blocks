@@ -63,7 +63,7 @@ GR_REGISTER_BLOCK(gr::blocks::measurement::Kurtosis, [T], [ float, std::complex<
  * With `emit_records` set and the `measurements` port connected, the block also emits one scalar `DataSet<float>`
  * record per reading. Its metadata states `input_domain` ('complex' or 'real'), `window`, `n_samples`, `valid`,
  * `signal_name` and `sample_rate`, and its `sample_start` is the stream index of the window's first sample. When
- * `n_dropped_samples` tags report missing samples within the window, the record states their sum in
+ * `gr:n_dropped_samples` tags report missing samples within the window, the record states their sum in
  * `n_dropped_samples`. A window that held a NaN or infinite sample states `non_finite` true. A window of zero power or
  * with a non-finite sample reads zero in all three values and states `valid` false. The block passes no input tag on.
  *
@@ -73,7 +73,7 @@ GR_REGISTER_BLOCK(gr::blocks::measurement::Kurtosis, [T], [ float, std::complex<
  *
  * `nWindows()` counts the full windows, and `nDegenerateWindows()` the readings of zero power or with a non-finite
  * sample. `nWindowResets()` counts the partial windows a change of `window` discarded, and `nDroppedSampleTags()` the
- * `n_dropped_samples` tags on the input.
+ * `gr:n_dropped_samples` tags on the input.
  */
 template<typename T>
 requires(std::same_as<T, float> || std::same_as<T, std::complex<float>>)
@@ -102,7 +102,7 @@ record has `valid` false. It passes no input tag on.
     gr::measurement::KurtosisAccumulator<T> _acc{};
     gr::measurement::MeasurementSlot<4UZ>   _slot{}; ///< excess_kurtosis, normalized_fourth_moment, mean_power, coverage
 
-    /// @brief One `n_dropped_samples` tag, with its stream position and the number of samples it reports missing.
+    /// @brief One `gr:n_dropped_samples` tag, with its stream position and the number of samples it reports missing.
     struct DroppedTag {
         std::uint64_t at;
         std::uint64_t count;
@@ -178,7 +178,7 @@ record has `valid` false. It passes no input tag on.
     [[nodiscard]] std::uint64_t nWindows() const noexcept { return _nWindows.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t nDegenerateWindows() const noexcept { return _nDegenerateWindows.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t nWindowResets() const noexcept { return _nWindowResets.load(std::memory_order_relaxed); }
-    /// @brief `n_dropped_samples` tags seen on the input stream. Callable from any thread.
+    /// @brief `gr:n_dropped_samples` tags seen on the input stream. Callable from any thread.
     [[nodiscard]] std::uint64_t nDroppedSampleTags() const noexcept { return _nDroppedSampleTags.load(std::memory_order_relaxed); }
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
@@ -211,8 +211,8 @@ record has `valid` false. It passes no input tag on.
     }
 
 private:
-    /// @brief Collects the `n_dropped_samples` tags on the first @p count samples of @p inSpan. A tag on a later sample
-    /// waits for the call that takes that sample.
+    /// @brief Collects the `gr:n_dropped_samples` tags on the first @p count samples of @p inSpan. A tag on a later
+    /// sample waits for the call that takes that sample.
     void scanDroppedTags(InputSpanLike auto& inSpan, std::size_t count) {
         _droppedTags.clear();
         const std::size_t first = inSpan.streamIndex;
@@ -220,7 +220,7 @@ private:
             if (tag.index < first || tag.index - first >= count) {
                 continue;
             }
-            const auto it = tag.map.find(gr::tag::N_DROPPED_SAMPLES.shortKey());
+            const auto it = tag.map.find(gr::tag::N_DROPPED_SAMPLES.key());
             if (it == tag.map.end()) {
                 continue;
             }

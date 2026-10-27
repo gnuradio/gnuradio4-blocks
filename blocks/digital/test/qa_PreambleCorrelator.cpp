@@ -103,7 +103,7 @@ struct Rng {
 }
 
 [[nodiscard]] float metaFloat(const gr::Tag& tag, std::string_view key) {
-    const auto outer = tag.map.find(gr::property_map::key_type(gr::tag::TRIGGER_META_INFO.shortKey()));
+    const auto outer = tag.map.find(gr::property_map::key_type(gr::tag::TRIGGER_META_INFO.key()));
     if (outer == tag.map.end()) {
         return std::numeric_limits<float>::quiet_NaN();
     }
@@ -116,7 +116,7 @@ struct Rng {
 }
 
 [[nodiscard]] float triggerOffsetOf(const gr::Tag& tag) {
-    const auto entry = tag.map.find(gr::property_map::key_type(gr::tag::TRIGGER_OFFSET.shortKey()));
+    const auto entry = tag.map.find(gr::property_map::key_type(gr::tag::TRIGGER_OFFSET.key()));
     return entry == tag.map.end() ? std::numeric_limits<float>::quiet_NaN() : entry->second.value_or(std::numeric_limits<float>::quiet_NaN());
 }
 
@@ -382,7 +382,7 @@ const boost::ut::suite<"preamble correlator"> preambleTests = [] {
         const std::vector<CF> word    = syncWord(kLength, 0x5151ULL);
         const std::vector<CF> stream  = plant(std::span<const CF>(word), kAt, 256UZ);
 
-        const gr::property_map::key_type triggerName{gr::tag::TRIGGER_NAME.shortKey()};
+        const gr::property_map::key_type triggerName{gr::tag::TRIGGER_NAME.key()};
         const std::vector<gr::Tag>       planted{gr::Tag{4UZ, gr::property_map{{triggerName, gr::pmt::Value(std::string("access_code"))}}}};
 
         PreambleCorrelator<float> block = make<PreambleCorrelator<float>>({{"sequence", interleaved(std::span<const CF>(word))}, {"threshold", 0.5f}, {"trigger_label", std::string("preamble")}});

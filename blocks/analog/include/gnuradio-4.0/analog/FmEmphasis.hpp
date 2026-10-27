@@ -101,8 +101,8 @@ exactly at `f_c`: with `k = tan(pi*f_c/sample_rate)` the recursion is `y[n] = b0
 the stream through bit for bit at the same sample index — the block adds no delay either way, so switching in and out
 of it moves nothing in time. On this half that is also the analytic limit, the corner `1/(2*pi*tau)` running off to
 infinity; `FmPreemphasis` spells it the same way by definition rather than by limit, so a chain can carry one `tau`
-and turn the pair off together. A `sample_rate` tag retunes the filter,
-and a settings change recomputes the coefficients while keeping the delay elements, so retuning a live audio stream
+and turn the pair off together. A `gr:sample_rate` tag retunes the filter where a graph couples `sample_rate` to it.
+A settings change recomputes the coefficients while keeping the delay elements, so retuning a live audio stream
 produces a short transient rather than a click. A non-positive rate or `tau`, or a corner outside `(0, sample_rate/2)`,
 throws at settings time.
 
@@ -110,7 +110,7 @@ Prewarping places the corner exactly but leaves the response between DC and Nyqu
 prototype the transmitter used: at `tau = 75 us` the attenuation at 15 kHz is -20.63 dB at 48 kHz against -17.07 dB for
 the analog curve.
 
-The block is 1:1, so every input tag key passes through at its own offset, `sample_rate` carrying this block's value.
+The block is 1:1. Every input tag leaves at its own offset with the values it arrived with.
 )"">;
 
     PortIn<T>  in;
@@ -176,7 +176,7 @@ taking `tau` to zero would send the low corner to infinity and the filter to sil
 unit circle. Cascading this block with `FmDeemphasis` at the same `sample_rate` and `tau` is exactly a single-pole lowpass
 with prewarped corner `high_corner`, because the pre-emphasis zero cancels the de-emphasis pole.
 
-The block is 1:1, so every input tag key passes through at its own offset, `sample_rate` carrying this block's value.
+The block is 1:1. Every input tag leaves at its own offset with the values it arrived with.
 )"">;
 
     PortIn<T>  in;

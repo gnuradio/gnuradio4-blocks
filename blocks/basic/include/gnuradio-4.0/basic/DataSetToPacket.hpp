@@ -146,7 +146,7 @@ record k.
                 }
                 ++tagIt;
             }
-            if (const pmt::Value* rate = detail::find(arrivingTag, tag::SAMPLE_RATE.shortKey()); rate != nullptr) {
+            if (const pmt::Value* rate = detail::find(arrivingTag, tag::SAMPLE_RATE.key()); rate != nullptr) {
                 if (const float* value = rate->get_if<float>(); value != nullptr) {
                     _tagRate = *value; // rate route 2, from the port rather than from any one record
                 }
@@ -240,17 +240,17 @@ private:
         bool statedRate = false;
         if (signalIndex < ds.meta_information.size()) { // the record's own statement about itself, copied key for key
             for (const auto& [key, value] : ds.meta_information[signalIndex]) {
-                const std::string_view name = gr::dataset::shortKey(std::string_view(key));
+                const std::string_view name = gr::dataset::recordName(std::string_view(key));
                 if (!gr::dataset::holdsVocabularyType(gr::dataset::vocabularyType(name), value)) {
                     ++nMetaKeysDropped; // a typed read on the far side would return nothing and report nothing
                     continue;
                 }
-                statedRate = statedRate || name == tag::SAMPLE_RATE.shortKey(); // rate route 1, which is the absence of a derivation
+                statedRate = statedRate || name == tag::SAMPLE_RATE.name(); // rate route 1, which is the absence of a derivation
                 map.insert_or_assign(key, value);
             }
         }
         for (const auto& [key, value] : arrivingTag) { // the tag at this record's index annotates this record
-            const std::string_view name = gr::dataset::shortKey(std::string_view(key));
+            const std::string_view name = gr::dataset::recordName(std::string_view(key));
             if (!gr::dataset::holdsVocabularyType(gr::dataset::vocabularyType(name), value)) {
                 ++nMetaKeysDropped;
                 continue;
@@ -258,23 +258,23 @@ private:
             map.insert_or_assign(key, value);
         }
 
-        detail::putDerived(map, tag::SIGNAL_NAME.shortKey(), pmt::Value(ds.signal_names[signalIndex]), nMetaKeysOverridden);
+        detail::putDerived(map, tag::SIGNAL_NAME.name(), pmt::Value(ds.signal_names[signalIndex]), nMetaKeysOverridden);
         if (signalIndex < ds.signal_quantities.size()) {
-            detail::putDerived(map, tag::SIGNAL_QUANTITY.shortKey(), pmt::Value(ds.signal_quantities[signalIndex]), nMetaKeysOverridden);
+            detail::putDerived(map, tag::SIGNAL_QUANTITY.name(), pmt::Value(ds.signal_quantities[signalIndex]), nMetaKeysOverridden);
         }
         if (signalIndex < ds.signal_units.size()) {
-            detail::putDerived(map, tag::SIGNAL_UNIT.shortKey(), pmt::Value(ds.signal_units[signalIndex]), nMetaKeysOverridden);
+            detail::putDerived(map, tag::SIGNAL_UNIT.name(), pmt::Value(ds.signal_units[signalIndex]), nMetaKeysOverridden);
         }
         if constexpr (std::is_arithmetic_v<T>) { // a complex signal_range holds two samples ordered by magnitude, not two limits
             if (signalIndex < ds.signal_ranges.size()) {
-                detail::putDerived(map, tag::SIGNAL_MIN.shortKey(), pmt::Value(static_cast<float>(ds.signal_ranges[signalIndex].min)), nMetaKeysOverridden);
-                detail::putDerived(map, tag::SIGNAL_MAX.shortKey(), pmt::Value(static_cast<float>(ds.signal_ranges[signalIndex].max)), nMetaKeysOverridden);
+                detail::putDerived(map, tag::SIGNAL_MIN.name(), pmt::Value(static_cast<float>(ds.signal_ranges[signalIndex].min)), nMetaKeysOverridden);
+                detail::putDerived(map, tag::SIGNAL_MAX.name(), pmt::Value(static_cast<float>(ds.signal_ranges[signalIndex].max)), nMetaKeysOverridden);
             }
         }
         if (!statedRate) { // routes 2 and 3, in that order; an absent rate is a stated absence and is not counted
             const std::optional<float> derived = _tagRate.has_value() ? _tagRate : detail::axisRate(ds, valuesPerSignal, static_cast<double>(_tolerance));
             if (derived.has_value()) {
-                detail::putDerived(map, tag::SAMPLE_RATE.shortKey(), pmt::Value(*derived), nMetaKeysOverridden);
+                detail::putDerived(map, tag::SAMPLE_RATE.name(), pmt::Value(*derived), nMetaKeysOverridden);
             }
         }
 
@@ -297,7 +297,7 @@ private:
             stamp(map, ds, signalIndex, "source_id", pmt::Value(source_label.value));
         }
         if (frequency_hz.value != 0.0) {
-            stamp(map, ds, signalIndex, tag::FREQUENCY.shortKey(), pmt::Value(frequency_hz.value));
+            stamp(map, ds, signalIndex, tag::FREQUENCY.name(), pmt::Value(frequency_hz.value));
         }
         return packet;
     }

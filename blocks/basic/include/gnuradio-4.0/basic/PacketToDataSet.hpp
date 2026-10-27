@@ -211,7 +211,7 @@ private:
     /// @brief Copy `source` into `map`, dropping and counting a vocabulary key whose type disagrees with the table.
     void copyInto(property_map& map, const property_map& source) {
         for (const auto& [key, value] : source) {
-            const std::string_view name = gr::dataset::shortKey(std::string_view(key));
+            const std::string_view name = gr::dataset::recordName(std::string_view(key));
             if (!gr::dataset::holdsVocabularyType(gr::dataset::vocabularyType(name), value)) {
                 ++nMetaKeysDropped; // a typed read on this value would return nothing and report nothing
                 continue;
@@ -223,8 +223,8 @@ private:
     /// @brief Lift the two range ends into `signal_ranges`, or leave it empty and count the pair that did not fit.
     void liftRange(DataSet<T>& record, const property_map& map) {
         if constexpr (std::is_arithmetic_v<T>) { // a complex signal_range holds two samples ordered by magnitude, not two limits
-            const pmt::Value* low  = detail::find(map, tag::SIGNAL_MIN.shortKey());
-            const pmt::Value* high = detail::find(map, tag::SIGNAL_MAX.shortKey());
+            const pmt::Value* low  = detail::find(map, tag::SIGNAL_MIN.name());
+            const pmt::Value* high = detail::find(map, tag::SIGNAL_MAX.name());
             if (low == nullptr || high == nullptr) {
                 return; // a range with one end is not a range; the key that is present still crossed in the map
             }
@@ -263,16 +263,16 @@ private:
 
         record.timing_events.resize(1UZ); // one list per signal, and nothing ever puts an entry in it
 
-        if (const std::optional<std::string> name = readString(map, tag::SIGNAL_NAME.shortKey()); name.has_value()) {
+        if (const std::optional<std::string> name = readString(map, tag::SIGNAL_NAME.name()); name.has_value()) {
             record.signal_names.push_back(*name);
         } else {
             record.signal_names.push_back(signal_label.value); // a record with no signal name is unusable downstream
             ++nSignalNamesSynthesized;
         }
-        if (const std::optional<std::string> quantity = readString(map, tag::SIGNAL_QUANTITY.shortKey()); quantity.has_value()) {
+        if (const std::optional<std::string> quantity = readString(map, tag::SIGNAL_QUANTITY.name()); quantity.has_value()) {
             record.signal_quantities.push_back(*quantity);
         }
-        if (const std::optional<std::string> unit = readString(map, tag::SIGNAL_UNIT.shortKey()); unit.has_value()) {
+        if (const std::optional<std::string> unit = readString(map, tag::SIGNAL_UNIT.name()); unit.has_value()) {
             record.signal_units.push_back(*unit);
         }
         liftRange(record, map);

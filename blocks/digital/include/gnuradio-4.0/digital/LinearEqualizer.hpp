@@ -45,7 +45,7 @@ driving the output modulus toward the constellation's own `E|a|^4 / E|a|^2`. Con
 the channel inverse up to an arbitrary phase rotation, which downstream carrier recovery owns.
 
 The reference for `lms` and `nlms` is either the decision — the constellation point nearest the output — or a stated
-training sequence. A training run starts where a `trigger_name` tag marks a frame, offset by the filter's own group
+training sequence. A training run starts where a `gr:trigger_name` tag marks a frame, offset by the filter's own group
 delay, and lasts as long as the sequence; between runs the block continues on decisions. With no trigger ever
 arriving the block adapts on decisions from the start, which is degraded rather than broken, and `n_training_bursts`
 says which happened.
@@ -163,7 +163,6 @@ observations, on the measurement conventions, is what will make them readable ou
     template<typename TInputSpans, typename TOutputSpans>
     void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
         const std::size_t                                 sps = _sps;
-        std::optional<property_map>                       cachedSettings;
         std::vector<std::pair<std::size_t, property_map>> arriving;
         gr::for_each_reader_span(
             [&](auto& span) {
@@ -174,7 +173,7 @@ observations, on the measurement conventions, is what will make them readable ou
                     if (relIndex < 0) { // already forwarded when it first arrived
                         continue;
                     }
-                    auto forwarded = this->filterAndSubstituteTag(tagMap.get(), cachedSettings);
+                    auto forwarded = this->filterAndSubstituteTag(tagMap.get());
                     if (!forwarded.empty()) {
                         arriving.emplace_back(static_cast<std::size_t>(relIndex) / sps, std::move(forwarded));
                     }
@@ -209,7 +208,7 @@ observations, on the measurement conventions, is what will make them readable ou
             if (relIndex < 0) {
                 continue;
             }
-            if (tagMap.get().contains(std::pmr::string(gr::tag::TRIGGER_NAME.shortKey()))) {
+            if (tagMap.get().contains(std::pmr::string(gr::tag::TRIGGER_NAME.key()))) {
                 _pendingStarts.push_back((static_cast<std::size_t>(relIndex) + _filter.groupDelay()) / sps);
             }
         }

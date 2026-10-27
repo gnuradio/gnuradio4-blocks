@@ -153,9 +153,9 @@ struct Rng {
     return false;
 }
 
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<ConstellationDecoder<float>>, "passes the every-key predicate: no Resampling<> or Stride<>, no asynchronous port, no tag policy other than UnfilteredTagPropagation and no forwardTags() override");
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<ConstellationEncoder<float>>);
-static_assert(gr::block::kUnfilteredTagPropagationAdmissible<SymbolMap>);
+static_assert(ConstellationDecoder<float>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
+static_assert(ConstellationEncoder<float>::keepsTagOffsets());
+static_assert(SymbolMap::keepsTagOffsets());
 
 } // namespace
 
@@ -311,7 +311,7 @@ const boost::ut::suite<"constellation blocks"> constellationBlockTests = [] {
         for (const Named& row : kNamed) {
             std::vector<gr::Tag> incoming;
             for (const std::size_t at : kOffset) {
-                incoming.emplace_back(kBase + at, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("symbol")}});
+                incoming.emplace_back(kBase + at, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("symbol")}});
             }
 
             ConstellationSoftDecoder<float> block = make<ConstellationSoftDecoder<float>>(settingsOf(row));
@@ -447,8 +447,8 @@ const boost::ut::suite<"constellation blocks"> constellationBlockTests = [] {
     "a 1:1 block passes a reserved tag at the same offset"_test = [] {
         gr::Graph graph;
         auto&     source = graph.emplaceBlock<TagSource<std::uint8_t, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 512U}, {"mark_tag", false}});
-        source._tags.emplace_back(7UZ, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("packet")}});
-        source._tags.emplace_back(64UZ, gr::property_map{{gr::tag::TRIGGER_NAME.shortKey(), std::string("packet")}});
+        source._tags.emplace_back(7UZ, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("packet")}});
+        source._tags.emplace_back(64UZ, gr::property_map{{gr::tag::TRIGGER_NAME.key(), std::string("packet")}});
 
         auto& mapper = graph.emplaceBlock<SymbolMap>({{"map", std::vector<std::uint8_t>{1U, 0U}}});
         auto& sink   = graph.emplaceBlock<TagSink<std::uint8_t, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
@@ -462,7 +462,7 @@ const boost::ut::suite<"constellation blocks"> constellationBlockTests = [] {
 
         std::vector<std::size_t> offsets;
         for (const gr::Tag& seenTag : sink._tags) {
-            if (seenTag.map.contains(gr::property_map::key_type(gr::tag::TRIGGER_NAME.shortKey()))) {
+            if (seenTag.map.contains(gr::property_map::key_type(gr::tag::TRIGGER_NAME.key()))) {
                 offsets.push_back(seenTag.index);
             }
         }
