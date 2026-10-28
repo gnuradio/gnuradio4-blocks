@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <deque>
 #include <limits>
+#include <map>
 #include <print>
 #include <string_view>
 #include <thread>
@@ -241,6 +242,7 @@ class DataSinkRegistry {
     std::map<std::string, Entry> _sink_by_signal_name;
 
 public:
+    // A sink is found under its signal_name from the time the name applies until the sink stops or is destroyed.
     template<DataSinkOrDataSetSinkLike TSink>
     void registerSink(TSink* sink, std::source_location location = std::source_location::current()) {
         std::lock_guard lg{_mutex};
@@ -258,11 +260,12 @@ public:
         sink->_registered                       = true;
     }
 
+    // Removes every entry that holds the sink. A sink refused a new signal_name keeps its entry under the old name.
     template<DataSinkOrDataSetSinkLike TSink>
     void unregisterSink(TSink* sink) {
         std::lock_guard lg{_mutex};
         std::erase_if(_sinks, [sink](const Entry& entry) { return entry.sink == sink; });
-        eraseSignalName(sink->signal_name.value, sink);
+        std::erase_if(_sink_by_signal_name, [sink](const auto& named) { return named.second.sink == sink; });
         sink->_registered = false;
     }
 
@@ -454,9 +457,11 @@ private:
     }
 };
 
+// The registry is never destroyed. A sink held by an object of static storage duration unregisters during exit, and
+// it may do so after every other function-local static is gone.
 __attribute__((visibility("default"))) inline DataSinkRegistry& globalDataSinkRegistry() {
-    static DataSinkRegistry instance;
-    return instance;
+    static auto* const instance = new DataSinkRegistry;
+    return *instance;
 }
 
 namespace detail {
@@ -620,6 +625,12 @@ public:
     bool _registered = false; // status should be updated by DataSinkRegistry
 
     using Block<DataSink<T>>::Block; // needed to inherit mandatory base-class Block(property_map) constructor
+
+    ~DataSink() {
+        if (_registered) {
+            globalDataSinkRegistry().unregisterSink(this);
+        }
+    }
 
     void settingsChanged(const property_map& oldSettings, const property_map& /*newSettings*/) {
         if (oldSettings.contains("signal_name")) {
@@ -1183,6 +1194,12 @@ public:
     bool _registered = false; // status should be updated by DataSinkRegistry
 
     using Block<DataSetSink<T>>::Block; // needed to inherit mandatory base-class Block(property_map) constructor
+
+    ~DataSetSink() {
+        if (_registered) {
+            globalDataSinkRegistry().unregisterSink(this);
+        }
+    }
 
     void settingsChanged(const property_map& oldSettings, const property_map& /*newSettings*/) {
         if (oldSettings.contains("signal_name")) {

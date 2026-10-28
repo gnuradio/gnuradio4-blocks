@@ -8,6 +8,8 @@ add_basic_test(qa_Converter)
 add_basic_test(qa_Selector)
 add_basic_test(qa_sources)
 add_basic_test(qa_DataSink)
+# the case ends at process exit, where a graph of static storage duration destroys its registered sinks
+add_basic_test(qa_DataSinkExitOrder)
 # qa_DataSinkRegistry looks up sinks that the shared block library creates. Under Emscripten that library is a static
 # archive linked into the program, and the lookup has no second shared object to cross.
 if(NOT EMSCRIPTEN)
