@@ -114,7 +114,7 @@ const suite<"SchmittTrigger Block"> triggerTests = [] {
                 });
             }
 
-            gr::scheduler::Simple sched;
+            gr::scheduler::Simple<> sched;
             if (auto ret = sched.exchange(std::move(graph)); !ret) {
                 throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
             }

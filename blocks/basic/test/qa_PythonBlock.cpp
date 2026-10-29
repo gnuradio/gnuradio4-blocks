@@ -330,7 +330,7 @@ def process_bulk(ins, outs):
         expect(graph.connect(src, "out", block, "inputs#0").has_value());
         expect(graph.connect(block, "outputs#0", sink, "in").has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         if (auto ret = sched.exchange(std::move(graph)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -395,7 +395,7 @@ def process_bulk(ins, outs):
         expect(graph.connect(src, "out", block, "inputs#0").has_value());
         expect(graph.connect(block, "outputs#0", sink, "in").has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         if (auto ret = sched.exchange(std::move(graph)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
