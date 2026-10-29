@@ -175,13 +175,18 @@ void create(ContainerType& container, Type windowFunction, const T param = std::
         detail::fillSymmetric<T>(container, n, [a](const std::size_t i) { return static_cast<T>(0.53836) - static_cast<T>(0.46164) * std::cos(a * static_cast<T>(i)); });
         return;
     }
-#ifdef __GNUC__
+#if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
 #endif
     case HannExp:
-#ifdef __GNUC__
+#if defined(__GNUC__)
 #pragma GCC diagnostic pop
+#elif defined(_MSC_VER)
+#pragma warning(pop)
 #endif
     case Hann: {
         // formula: w(n) = 0.5 - 0.5 * cos((2 * pi * n) / (N - 1))
