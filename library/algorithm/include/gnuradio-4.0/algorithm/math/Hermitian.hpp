@@ -147,9 +147,11 @@ requires detail::FloatingElement<T>
     values.resize({n});
     vectors.resize({n, n});
     for (std::size_t k = 0UZ; k < n; ++k) {
-        values[k] = std::real(W[order[k], order[k]]);
+        // MSVC reads the first index of W[order[k], order[k]] as a discarded comma operand (C4834)
+        const std::size_t j = order[k];
+        values[k]           = std::real(W[j, j]);
         for (std::size_t i = 0UZ; i < n; ++i) {
-            vectors[i, k] = V[i, order[k]];
+            vectors[i, k] = V[i, j];
         }
     }
     return converged ? eig::Status::Success : eig::Status::MaxIterations;
