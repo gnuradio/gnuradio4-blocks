@@ -305,7 +305,7 @@ void create(ContainerType& container, Type windowFunction, const T param = std::
         // formula: x = n/(N - 1); w = 0.5 (1 - cos(2 pi x / alpha)) for x < alpha/2, 1 in between, mirrored at the far end
         // alpha == 0 is Rectangular and alpha == 1 is Hann, both exactly
         if (p <= static_cast<T>(0)) {
-            std::ranges::fill(container, 1);
+            std::ranges::fill(container, static_cast<T>(1));
             return;
         }
         const T taper = static_cast<T>(n - 1) * p / static_cast<T>(2); // taper length in samples

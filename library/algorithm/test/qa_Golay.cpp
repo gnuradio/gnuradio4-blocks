@@ -75,7 +75,7 @@ const boost::ut::suite<"golay"> golayTests = [] {
             const std::uint32_t cw = golay23Encode(static_cast<std::uint16_t>(info));
             misses += gf2Remainder(cw, 23U, kGolayGenerator, kDegree) != 0U ? 1UZ : 0UZ;
             for (unsigned k = 0U; k < 23U; ++k) {
-                misses += golaySyndrome(cw ^ (1U << k)) != gf2Remainder(1U << k, 23U, kGolayGenerator, kDegree) ? 1UZ : 0UZ;
+                misses += golaySyndrome(cw ^ (1U << k)) != gf2Remainder(std::uint64_t{1} << k, 23U, kGolayGenerator, kDegree) ? 1UZ : 0UZ;
             }
         }
         expect(eq(misses, 0UZ)) << "every codeword is a multiple, and a one-bit error's syndrome is that bit's remainder";
