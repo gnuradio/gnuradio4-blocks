@@ -1024,7 +1024,7 @@ private:
     cfg.bitsPerItem  = 8U;
     cfg.transparency = Transparency::ByteEscape;
     cfg.escapeItem   = 0xDBU;
-    cfg.escapeMap    = {{0xDCU, 0xC0U}, {0xDDU, 0xDBU}};
+    cfg.escapeMap    = {{std::uint8_t{0xDC}, std::uint8_t{0xC0}}, {std::uint8_t{0xDD}, std::uint8_t{0xDB}}};
     configureDelimiter(cfg);
     return cfg;
 }
