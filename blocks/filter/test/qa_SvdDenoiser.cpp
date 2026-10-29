@@ -337,7 +337,7 @@ const boost::ut::suite<"SvdDenoiser tag placement"> svdTagPlacementTests = [] {
             auto  sinks = gr::blocks::filter::testing::connectEndSinks<float>(graph, block);
             expect(graph.connect<"out", "in">(source, block).has_value());
             expect(fatal(sinks.has_value()));
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
 

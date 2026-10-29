@@ -154,7 +154,7 @@ template<typename TFunction>
     boost::ut::expect(graph.connect<"out", "in">(source, allocate).has_value());
     boost::ut::expect((recordEdge > 0UZ ? graph.connect<"out", "in">(allocate, counter, gr::EdgeParameters{.minBufferSize = recordEdge}) : graph.connect<"out", "in">(allocate, counter)).has_value());
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     boost::ut::expect(scheduler.runAndWait().has_value());
     return {static_cast<std::size_t>(counter.count.value), allocate.nTruncated()};
@@ -766,7 +766,7 @@ const boost::ut::suite<"OFDM carrier allocator"> _allocator = [] {
             expect(graph.connect<"out", "in">(source, allocate).has_value());
             expect(graph.connect<"out", "in">(allocate, sink).has_value());
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             Run result;
             result.completed = scheduler.runAndWait().has_value();

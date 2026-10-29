@@ -190,7 +190,7 @@ template<typename TFunction>
     boost::ut::expect(graph.connect<"out", "in">(allocate, insert).has_value());
     boost::ut::expect(graph.connect<"out", "in">(insert, sink, gr::EdgeParameters{.minBufferSize = sampleEdge}).has_value());
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     boost::ut::expect(scheduler.runAndWait().has_value());
     return static_cast<std::size_t>(sink._nSamplesProduced);
@@ -800,7 +800,7 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
         expect(graph.connect<"out", "in">(allocate, prefix).has_value());
         expect(graph.connect<"out", "in">(prefix, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
         const std::vector<CF> first(sink._samples.begin(), sink._samples.end());
@@ -908,7 +908,7 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
         expect(graph.connect<"out", "in">(source, cut).has_value());
         expect(graph.connect<"out", "in">(cut, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
         expect(eq(sink.count.value, std::uint64_t{2})) << "two whole symbols";
@@ -948,7 +948,7 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
             expect(graph.connect<"out", "in">(source, cut).has_value());
             expect(graph.connect<"out", "in">(cut, sink).has_value());
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             Run result;
             result.completed                             = scheduler.runAndWait().has_value();

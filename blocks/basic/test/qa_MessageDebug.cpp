@@ -167,7 +167,7 @@ const boost::ut::suite<"MessageDebug"> messageDebugTests = [] {
         auto&     debug  = flow.emplaceBlock<MessageDebug>({{"name", std::string("debug")}, {"display", false}});
         expect(fatal(flow.connect<"out", "messages">(source, debug).has_value()));
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(fatal(scheduler.exchange(std::move(flow)).has_value()));
         expect(fatal(scheduler.runAndWait().has_value()));
 

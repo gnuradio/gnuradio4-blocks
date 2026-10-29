@@ -462,7 +462,7 @@ const boost::ut::suite SelectorTest = [] {
         expect(graph.connect(selector, "outputs#0"s, sink, "in"s).has_value());
         expect(graph.connect(selector, "monitor"s, monitorSink, "in"s, {.minBufferSize = kMonitorBuffer}).has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         expect(sched.exchange(std::move(graph)).has_value());
         expect(sched.runAndWait().has_value());
 

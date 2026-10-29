@@ -418,7 +418,7 @@ const boost::ut::suite<"doppler shift"> dopplerShiftTests = [] {
             expect(graph.connect<"out", "in">(source, block).has_value());
             expect(graph.connect<"out", "in">(block, sink).has_value());
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
 

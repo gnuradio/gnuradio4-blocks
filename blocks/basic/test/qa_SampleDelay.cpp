@@ -237,7 +237,7 @@ struct EveryKeyCopy : gr::Block<EveryKeyCopy<T>, gr::UnfilteredTagPropagation> {
         boost::ut::expect(graph.connect<"out", "in">(block, sink).has_value());
     }
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     boost::ut::expect(scheduler.runAndWait().has_value());
     return offsetsOf(sink._tags);

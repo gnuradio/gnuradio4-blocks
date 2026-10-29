@@ -75,7 +75,7 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
 
         expect(g.connect<"out", "in">(src, sink).has_value());
 
-        gr::scheduler::Simple sch;
+        gr::scheduler::Simple<> sch;
         if (auto ret = sch.exchange(std::move(g)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -108,7 +108,7 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
         expect(g.connect<"out", "in">(src, monitor).has_value());
         expect(g.connect<"out", "in">(monitor, sink).has_value());
 
-        gr::scheduler::Simple sch;
+        gr::scheduler::Simple<> sch;
         if (auto ret = sch.exchange(std::move(g)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -135,7 +135,7 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
         expect(g.connect<"out", "in">(src, delay).has_value());
         expect(g.connect<"out", "in">(delay, sink).has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         expect(fatal(sched.exchange(std::move(g)).has_value()));
         std::thread runner([&sched] { std::ignore = sched.runAndWait(); });
 
@@ -175,7 +175,7 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
             expect(g.connect<"out", "in">(src, monitor).has_value());
             expect(g.connect<"out", "in">(monitor, sink).has_value());
 
-            gr::scheduler::Simple sch;
+            gr::scheduler::Simple<> sch;
             if (auto ret = sch.exchange(std::move(g)); !ret) {
                 throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
             }
@@ -202,7 +202,7 @@ const boost::ut::suite<"testing flow blocks"> testingFlowBlocks = [] {
         expect(g.connect<"out", "in">(src, monitor).has_value());
         expect(g.connect<"outRate", "in">(monitor, sink).has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         expect(sched.exchange(std::move(g)).has_value());
         expect(sched.runAndWait().has_value());
 

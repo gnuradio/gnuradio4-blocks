@@ -329,7 +329,7 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
             expect(graph.connect<"out", "in">(source, resampler).has_value());
             expect(graph.connect<"out", "in">(resampler, sink).has_value());
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
 
@@ -377,7 +377,7 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
             expect(graph.connect<"out", "in">(source, resampler).has_value());
             expect(graph.connect<"out", "in">(resampler, sink).has_value());
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
 
@@ -559,7 +559,7 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
             expect(graph.connect<"out", "in">(source, block).has_value());
             expect(fatal(sinks.has_value()));
             expect(gt(block.groupDelaySamples(), 2.0)) << std::format("r = {}: the prototype delays the last two inputs past the last output", rate);
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
 
@@ -586,7 +586,7 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
 
         expect(graph.connect<"out", "in">(source, block).has_value());
         expect(fatal(sinks.has_value()));
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 

@@ -63,7 +63,7 @@ template<typename T, typename BlockUnderTest>
     boost::ut::expect(graph.connect(src, std::string("out"), block, inputPort).has_value());
     boost::ut::expect(graph.connect(block, std::string("out"), sink, std::string("in")).has_value());
 
-    gr::scheduler::Simple sched;
+    gr::scheduler::Simple<> sched;
     boost::ut::expect(sched.exchange(std::move(graph)).has_value());
     boost::ut::expect(sched.runAndWait().has_value());
 

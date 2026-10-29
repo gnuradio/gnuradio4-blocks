@@ -100,7 +100,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
 
         expect(g.connect<"out", "in">(src, sink).has_value());
 
-        gr::scheduler::Simple sch;
+        gr::scheduler::Simple<> sch;
         if (auto ret = sch.exchange(std::move(g)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -117,7 +117,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
         expect(g.connect<"out", "in">(src, head).has_value());
         expect(g.connect<"out", "in">(head, sink).has_value());
 
-        gr::scheduler::Simple sch;
+        gr::scheduler::Simple<> sch;
         if (auto ret = sch.exchange(std::move(g)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -141,7 +141,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
         expect(g.connect<"out", "in">(src, head).has_value());
         expect(g.connect<"out", "in">(head, sink).has_value());
 
-        gr::scheduler::Simple sch;
+        gr::scheduler::Simple<> sch;
         if (auto ret = sch.exchange(std::move(g)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -164,7 +164,7 @@ const boost::ut::suite<"Null[..] and Testing Blocks"> nullSourcesTests = [] {
         expect(g.connect<"out", "in">(src, head).has_value());
         expect(g.connect<"out", "in">(head, sink).has_value());
 
-        gr::scheduler::Simple sch;
+        gr::scheduler::Simple<> sch;
         if (auto ret = sch.exchange(std::move(g)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
