@@ -30,7 +30,6 @@ function(set_project_warnings target_name)
       /w14311 # 'variable': pointer truncation from 'type1' to 'type2'
       /w14545 # expression before comma evaluates to a function which is missing an argument list
       /w14546 # function call before comma missing argument list
-      /w14547 # 'operator': operator before comma has no effect; expected operator with side-effect
       /w14549 # 'operator': operator before comma has no effect; did you intend 'operator'?
       /w14555 # expression has no effect; expected expression with side- effect
       /w14619 # pragma warning: there is no warning number 'number'
@@ -40,6 +39,14 @@ function(set_project_warnings target_name)
       /w14906 # string literal cast to 'LPWSTR'
       /w14928 # illegal copy-initialization; more than one user-defined conversion has been implicitly applied
       /permissive- # standards conformance mode for MSVC compiler.
+      # Structurally incompatible with how this codebase is written
+      /wd4702 # unreachable code: fires on the fallback `return` of every `if constexpr` dispatch chain
+      /wd4324 # structure padded due to alignment specifier: precisely what alignas(kCacheLine) asks for
+      /wd4146 # unary minus applied to unsigned type: `-1UZ` is the codebase's invalid-index sentinel
+      /wd4624 # destructor implicitly deleted: the port-descriptor tag types delete theirs on purpose
+      /wd4547 # 'operator before comma has no effect': misfires on every C++23 `tensor[i + 1, j]`
+      /wd4251 # 'member' needs dll-interface: the exported types hold std:: members, as the whole API does
+      /wd4275 # non dll-interface base: gr::exception derives from std::exception
   )
 
   set(CLANG_WARNINGS
