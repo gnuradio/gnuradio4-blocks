@@ -1,0 +1,1025 @@
+# CrcCheck under each parameter set of crc-round-trip.yaml, fed every single-bit corruption of one protected record:
+# two payload bytes and the CRC appended big-endian, one record per bit of the whole record, in bit order. The failing
+# sink expects every record with crc_ok false, and the passing sink expects none. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc32_source
+      records:
+        0:
+          signal_values: [172, 118, 227, 22, 4, 82]
+        1:
+          signal_values: [175, 118, 227, 22, 4, 82]
+        2:
+          signal_values: [169, 118, 227, 22, 4, 82]
+        3:
+          signal_values: [165, 118, 227, 22, 4, 82]
+        4:
+          signal_values: [189, 118, 227, 22, 4, 82]
+        5:
+          signal_values: [141, 118, 227, 22, 4, 82]
+        6:
+          signal_values: [237, 118, 227, 22, 4, 82]
+        7:
+          signal_values: [45, 118, 227, 22, 4, 82]
+        8:
+          signal_values: [173, 119, 227, 22, 4, 82]
+        9:
+          signal_values: [173, 116, 227, 22, 4, 82]
+        10:
+          signal_values: [173, 114, 227, 22, 4, 82]
+        11:
+          signal_values: [173, 126, 227, 22, 4, 82]
+        12:
+          signal_values: [173, 102, 227, 22, 4, 82]
+        13:
+          signal_values: [173, 86, 227, 22, 4, 82]
+        14:
+          signal_values: [173, 54, 227, 22, 4, 82]
+        15:
+          signal_values: [173, 246, 227, 22, 4, 82]
+        16:
+          signal_values: [173, 118, 226, 22, 4, 82]
+        17:
+          signal_values: [173, 118, 225, 22, 4, 82]
+        18:
+          signal_values: [173, 118, 231, 22, 4, 82]
+        19:
+          signal_values: [173, 118, 235, 22, 4, 82]
+        20:
+          signal_values: [173, 118, 243, 22, 4, 82]
+        21:
+          signal_values: [173, 118, 195, 22, 4, 82]
+        22:
+          signal_values: [173, 118, 163, 22, 4, 82]
+        23:
+          signal_values: [173, 118, 99, 22, 4, 82]
+        24:
+          signal_values: [173, 118, 227, 23, 4, 82]
+        25:
+          signal_values: [173, 118, 227, 20, 4, 82]
+        26:
+          signal_values: [173, 118, 227, 18, 4, 82]
+        27:
+          signal_values: [173, 118, 227, 30, 4, 82]
+        28:
+          signal_values: [173, 118, 227, 6, 4, 82]
+        29:
+          signal_values: [173, 118, 227, 54, 4, 82]
+        30:
+          signal_values: [173, 118, 227, 86, 4, 82]
+        31:
+          signal_values: [173, 118, 227, 150, 4, 82]
+        32:
+          signal_values: [173, 118, 227, 22, 5, 82]
+        33:
+          signal_values: [173, 118, 227, 22, 6, 82]
+        34:
+          signal_values: [173, 118, 227, 22, 0, 82]
+        35:
+          signal_values: [173, 118, 227, 22, 12, 82]
+        36:
+          signal_values: [173, 118, 227, 22, 20, 82]
+        37:
+          signal_values: [173, 118, 227, 22, 36, 82]
+        38:
+          signal_values: [173, 118, 227, 22, 68, 82]
+        39:
+          signal_values: [173, 118, 227, 22, 132, 82]
+        40:
+          signal_values: [173, 118, 227, 22, 4, 83]
+        41:
+          signal_values: [173, 118, 227, 22, 4, 80]
+        42:
+          signal_values: [173, 118, 227, 22, 4, 86]
+        43:
+          signal_values: [173, 118, 227, 22, 4, 90]
+        44:
+          signal_values: [173, 118, 227, 22, 4, 66]
+        45:
+          signal_values: [173, 118, 227, 22, 4, 114]
+        46:
+          signal_values: [173, 118, 227, 22, 4, 18]
+        47:
+          signal_values: [173, 118, 227, 22, 4, 210]
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc32_check
+      width: !!uint32 32
+      poly: !!uint64 79764919
+      initial_value: !!uint64 4294967295
+      final_xor: !!uint64 4294967295
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: big
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc32_ok
+      records: {}
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc32_fail
+      records:
+        0:
+          meta_information:
+            crc_ok: false
+        1:
+          meta_information:
+            crc_ok: false
+        2:
+          meta_information:
+            crc_ok: false
+        3:
+          meta_information:
+            crc_ok: false
+        4:
+          meta_information:
+            crc_ok: false
+        5:
+          meta_information:
+            crc_ok: false
+        6:
+          meta_information:
+            crc_ok: false
+        7:
+          meta_information:
+            crc_ok: false
+        8:
+          meta_information:
+            crc_ok: false
+        9:
+          meta_information:
+            crc_ok: false
+        10:
+          meta_information:
+            crc_ok: false
+        11:
+          meta_information:
+            crc_ok: false
+        12:
+          meta_information:
+            crc_ok: false
+        13:
+          meta_information:
+            crc_ok: false
+        14:
+          meta_information:
+            crc_ok: false
+        15:
+          meta_information:
+            crc_ok: false
+        16:
+          meta_information:
+            crc_ok: false
+        17:
+          meta_information:
+            crc_ok: false
+        18:
+          meta_information:
+            crc_ok: false
+        19:
+          meta_information:
+            crc_ok: false
+        20:
+          meta_information:
+            crc_ok: false
+        21:
+          meta_information:
+            crc_ok: false
+        22:
+          meta_information:
+            crc_ok: false
+        23:
+          meta_information:
+            crc_ok: false
+        24:
+          meta_information:
+            crc_ok: false
+        25:
+          meta_information:
+            crc_ok: false
+        26:
+          meta_information:
+            crc_ok: false
+        27:
+          meta_information:
+            crc_ok: false
+        28:
+          meta_information:
+            crc_ok: false
+        29:
+          meta_information:
+            crc_ok: false
+        30:
+          meta_information:
+            crc_ok: false
+        31:
+          meta_information:
+            crc_ok: false
+        32:
+          meta_information:
+            crc_ok: false
+        33:
+          meta_information:
+            crc_ok: false
+        34:
+          meta_information:
+            crc_ok: false
+        35:
+          meta_information:
+            crc_ok: false
+        36:
+          meta_information:
+            crc_ok: false
+        37:
+          meta_information:
+            crc_ok: false
+        38:
+          meta_information:
+            crc_ok: false
+        39:
+          meta_information:
+            crc_ok: false
+        40:
+          meta_information:
+            crc_ok: false
+        41:
+          meta_information:
+            crc_ok: false
+        42:
+          meta_information:
+            crc_ok: false
+        43:
+          meta_information:
+            crc_ok: false
+        44:
+          meta_information:
+            crc_ok: false
+        45:
+          meta_information:
+            crc_ok: false
+        46:
+          meta_information:
+            crc_ok: false
+        47:
+          meta_information:
+            crc_ok: false
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc16_source
+      records:
+        0:
+          signal_values: [55, 116, 140, 47]
+        1:
+          signal_values: [52, 116, 140, 47]
+        2:
+          signal_values: [50, 116, 140, 47]
+        3:
+          signal_values: [62, 116, 140, 47]
+        4:
+          signal_values: [38, 116, 140, 47]
+        5:
+          signal_values: [22, 116, 140, 47]
+        6:
+          signal_values: [118, 116, 140, 47]
+        7:
+          signal_values: [182, 116, 140, 47]
+        8:
+          signal_values: [54, 117, 140, 47]
+        9:
+          signal_values: [54, 118, 140, 47]
+        10:
+          signal_values: [54, 112, 140, 47]
+        11:
+          signal_values: [54, 124, 140, 47]
+        12:
+          signal_values: [54, 100, 140, 47]
+        13:
+          signal_values: [54, 84, 140, 47]
+        14:
+          signal_values: [54, 52, 140, 47]
+        15:
+          signal_values: [54, 244, 140, 47]
+        16:
+          signal_values: [54, 116, 141, 47]
+        17:
+          signal_values: [54, 116, 142, 47]
+        18:
+          signal_values: [54, 116, 136, 47]
+        19:
+          signal_values: [54, 116, 132, 47]
+        20:
+          signal_values: [54, 116, 156, 47]
+        21:
+          signal_values: [54, 116, 172, 47]
+        22:
+          signal_values: [54, 116, 204, 47]
+        23:
+          signal_values: [54, 116, 12, 47]
+        24:
+          signal_values: [54, 116, 140, 46]
+        25:
+          signal_values: [54, 116, 140, 45]
+        26:
+          signal_values: [54, 116, 140, 43]
+        27:
+          signal_values: [54, 116, 140, 39]
+        28:
+          signal_values: [54, 116, 140, 63]
+        29:
+          signal_values: [54, 116, 140, 15]
+        30:
+          signal_values: [54, 116, 140, 111]
+        31:
+          signal_values: [54, 116, 140, 175]
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc16_check
+      width: !!uint32 16
+      poly: !!uint64 4129
+      initial_value: !!uint64 65535
+      final_xor: !!uint64 0
+      input_reflected: false
+      result_reflected: false
+      crc_byte_order: big
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc16_ok
+      records: {}
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc16_fail
+      records:
+        0:
+          meta_information:
+            crc_ok: false
+        1:
+          meta_information:
+            crc_ok: false
+        2:
+          meta_information:
+            crc_ok: false
+        3:
+          meta_information:
+            crc_ok: false
+        4:
+          meta_information:
+            crc_ok: false
+        5:
+          meta_information:
+            crc_ok: false
+        6:
+          meta_information:
+            crc_ok: false
+        7:
+          meta_information:
+            crc_ok: false
+        8:
+          meta_information:
+            crc_ok: false
+        9:
+          meta_information:
+            crc_ok: false
+        10:
+          meta_information:
+            crc_ok: false
+        11:
+          meta_information:
+            crc_ok: false
+        12:
+          meta_information:
+            crc_ok: false
+        13:
+          meta_information:
+            crc_ok: false
+        14:
+          meta_information:
+            crc_ok: false
+        15:
+          meta_information:
+            crc_ok: false
+        16:
+          meta_information:
+            crc_ok: false
+        17:
+          meta_information:
+            crc_ok: false
+        18:
+          meta_information:
+            crc_ok: false
+        19:
+          meta_information:
+            crc_ok: false
+        20:
+          meta_information:
+            crc_ok: false
+        21:
+          meta_information:
+            crc_ok: false
+        22:
+          meta_information:
+            crc_ok: false
+        23:
+          meta_information:
+            crc_ok: false
+        24:
+          meta_information:
+            crc_ok: false
+        25:
+          meta_information:
+            crc_ok: false
+        26:
+          meta_information:
+            crc_ok: false
+        27:
+          meta_information:
+            crc_ok: false
+        28:
+          meta_information:
+            crc_ok: false
+        29:
+          meta_information:
+            crc_ok: false
+        30:
+          meta_information:
+            crc_ok: false
+        31:
+          meta_information:
+            crc_ok: false
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc8_source
+      records:
+        0:
+          signal_values: [237, 121, 0]
+        1:
+          signal_values: [238, 121, 0]
+        2:
+          signal_values: [232, 121, 0]
+        3:
+          signal_values: [228, 121, 0]
+        4:
+          signal_values: [252, 121, 0]
+        5:
+          signal_values: [204, 121, 0]
+        6:
+          signal_values: [172, 121, 0]
+        7:
+          signal_values: [108, 121, 0]
+        8:
+          signal_values: [236, 120, 0]
+        9:
+          signal_values: [236, 123, 0]
+        10:
+          signal_values: [236, 125, 0]
+        11:
+          signal_values: [236, 113, 0]
+        12:
+          signal_values: [236, 105, 0]
+        13:
+          signal_values: [236, 89, 0]
+        14:
+          signal_values: [236, 57, 0]
+        15:
+          signal_values: [236, 249, 0]
+        16:
+          signal_values: [236, 121, 1]
+        17:
+          signal_values: [236, 121, 2]
+        18:
+          signal_values: [236, 121, 4]
+        19:
+          signal_values: [236, 121, 8]
+        20:
+          signal_values: [236, 121, 16]
+        21:
+          signal_values: [236, 121, 32]
+        22:
+          signal_values: [236, 121, 64]
+        23:
+          signal_values: [236, 121, 128]
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc8_check
+      width: !!uint32 8
+      poly: !!uint64 7
+      initial_value: !!uint64 255
+      final_xor: !!uint64 0
+      input_reflected: false
+      result_reflected: false
+      crc_byte_order: big
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc8_ok
+      records: {}
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc8_fail
+      records:
+        0:
+          meta_information:
+            crc_ok: false
+        1:
+          meta_information:
+            crc_ok: false
+        2:
+          meta_information:
+            crc_ok: false
+        3:
+          meta_information:
+            crc_ok: false
+        4:
+          meta_information:
+            crc_ok: false
+        5:
+          meta_information:
+            crc_ok: false
+        6:
+          meta_information:
+            crc_ok: false
+        7:
+          meta_information:
+            crc_ok: false
+        8:
+          meta_information:
+            crc_ok: false
+        9:
+          meta_information:
+            crc_ok: false
+        10:
+          meta_information:
+            crc_ok: false
+        11:
+          meta_information:
+            crc_ok: false
+        12:
+          meta_information:
+            crc_ok: false
+        13:
+          meta_information:
+            crc_ok: false
+        14:
+          meta_information:
+            crc_ok: false
+        15:
+          meta_information:
+            crc_ok: false
+        16:
+          meta_information:
+            crc_ok: false
+        17:
+          meta_information:
+            crc_ok: false
+        18:
+          meta_information:
+            crc_ok: false
+        19:
+          meta_information:
+            crc_ok: false
+        20:
+          meta_information:
+            crc_ok: false
+        21:
+          meta_information:
+            crc_ok: false
+        22:
+          meta_information:
+            crc_ok: false
+        23:
+          meta_information:
+            crc_ok: false
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc64_source
+      records:
+        0:
+          signal_values: [206, 234, 42, 86, 162, 102, 220, 102, 159, 71]
+        1:
+          signal_values: [205, 234, 42, 86, 162, 102, 220, 102, 159, 71]
+        2:
+          signal_values: [203, 234, 42, 86, 162, 102, 220, 102, 159, 71]
+        3:
+          signal_values: [199, 234, 42, 86, 162, 102, 220, 102, 159, 71]
+        4:
+          signal_values: [223, 234, 42, 86, 162, 102, 220, 102, 159, 71]
+        5:
+          signal_values: [239, 234, 42, 86, 162, 102, 220, 102, 159, 71]
+        6:
+          signal_values: [143, 234, 42, 86, 162, 102, 220, 102, 159, 71]
+        7:
+          signal_values: [79, 234, 42, 86, 162, 102, 220, 102, 159, 71]
+        8:
+          signal_values: [207, 235, 42, 86, 162, 102, 220, 102, 159, 71]
+        9:
+          signal_values: [207, 232, 42, 86, 162, 102, 220, 102, 159, 71]
+        10:
+          signal_values: [207, 238, 42, 86, 162, 102, 220, 102, 159, 71]
+        11:
+          signal_values: [207, 226, 42, 86, 162, 102, 220, 102, 159, 71]
+        12:
+          signal_values: [207, 250, 42, 86, 162, 102, 220, 102, 159, 71]
+        13:
+          signal_values: [207, 202, 42, 86, 162, 102, 220, 102, 159, 71]
+        14:
+          signal_values: [207, 170, 42, 86, 162, 102, 220, 102, 159, 71]
+        15:
+          signal_values: [207, 106, 42, 86, 162, 102, 220, 102, 159, 71]
+        16:
+          signal_values: [207, 234, 43, 86, 162, 102, 220, 102, 159, 71]
+        17:
+          signal_values: [207, 234, 40, 86, 162, 102, 220, 102, 159, 71]
+        18:
+          signal_values: [207, 234, 46, 86, 162, 102, 220, 102, 159, 71]
+        19:
+          signal_values: [207, 234, 34, 86, 162, 102, 220, 102, 159, 71]
+        20:
+          signal_values: [207, 234, 58, 86, 162, 102, 220, 102, 159, 71]
+        21:
+          signal_values: [207, 234, 10, 86, 162, 102, 220, 102, 159, 71]
+        22:
+          signal_values: [207, 234, 106, 86, 162, 102, 220, 102, 159, 71]
+        23:
+          signal_values: [207, 234, 170, 86, 162, 102, 220, 102, 159, 71]
+        24:
+          signal_values: [207, 234, 42, 87, 162, 102, 220, 102, 159, 71]
+        25:
+          signal_values: [207, 234, 42, 84, 162, 102, 220, 102, 159, 71]
+        26:
+          signal_values: [207, 234, 42, 82, 162, 102, 220, 102, 159, 71]
+        27:
+          signal_values: [207, 234, 42, 94, 162, 102, 220, 102, 159, 71]
+        28:
+          signal_values: [207, 234, 42, 70, 162, 102, 220, 102, 159, 71]
+        29:
+          signal_values: [207, 234, 42, 118, 162, 102, 220, 102, 159, 71]
+        30:
+          signal_values: [207, 234, 42, 22, 162, 102, 220, 102, 159, 71]
+        31:
+          signal_values: [207, 234, 42, 214, 162, 102, 220, 102, 159, 71]
+        32:
+          signal_values: [207, 234, 42, 86, 163, 102, 220, 102, 159, 71]
+        33:
+          signal_values: [207, 234, 42, 86, 160, 102, 220, 102, 159, 71]
+        34:
+          signal_values: [207, 234, 42, 86, 166, 102, 220, 102, 159, 71]
+        35:
+          signal_values: [207, 234, 42, 86, 170, 102, 220, 102, 159, 71]
+        36:
+          signal_values: [207, 234, 42, 86, 178, 102, 220, 102, 159, 71]
+        37:
+          signal_values: [207, 234, 42, 86, 130, 102, 220, 102, 159, 71]
+        38:
+          signal_values: [207, 234, 42, 86, 226, 102, 220, 102, 159, 71]
+        39:
+          signal_values: [207, 234, 42, 86, 34, 102, 220, 102, 159, 71]
+        40:
+          signal_values: [207, 234, 42, 86, 162, 103, 220, 102, 159, 71]
+        41:
+          signal_values: [207, 234, 42, 86, 162, 100, 220, 102, 159, 71]
+        42:
+          signal_values: [207, 234, 42, 86, 162, 98, 220, 102, 159, 71]
+        43:
+          signal_values: [207, 234, 42, 86, 162, 110, 220, 102, 159, 71]
+        44:
+          signal_values: [207, 234, 42, 86, 162, 118, 220, 102, 159, 71]
+        45:
+          signal_values: [207, 234, 42, 86, 162, 70, 220, 102, 159, 71]
+        46:
+          signal_values: [207, 234, 42, 86, 162, 38, 220, 102, 159, 71]
+        47:
+          signal_values: [207, 234, 42, 86, 162, 230, 220, 102, 159, 71]
+        48:
+          signal_values: [207, 234, 42, 86, 162, 102, 221, 102, 159, 71]
+        49:
+          signal_values: [207, 234, 42, 86, 162, 102, 222, 102, 159, 71]
+        50:
+          signal_values: [207, 234, 42, 86, 162, 102, 216, 102, 159, 71]
+        51:
+          signal_values: [207, 234, 42, 86, 162, 102, 212, 102, 159, 71]
+        52:
+          signal_values: [207, 234, 42, 86, 162, 102, 204, 102, 159, 71]
+        53:
+          signal_values: [207, 234, 42, 86, 162, 102, 252, 102, 159, 71]
+        54:
+          signal_values: [207, 234, 42, 86, 162, 102, 156, 102, 159, 71]
+        55:
+          signal_values: [207, 234, 42, 86, 162, 102, 92, 102, 159, 71]
+        56:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 103, 159, 71]
+        57:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 100, 159, 71]
+        58:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 98, 159, 71]
+        59:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 110, 159, 71]
+        60:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 118, 159, 71]
+        61:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 70, 159, 71]
+        62:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 38, 159, 71]
+        63:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 230, 159, 71]
+        64:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 158, 71]
+        65:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 157, 71]
+        66:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 155, 71]
+        67:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 151, 71]
+        68:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 143, 71]
+        69:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 191, 71]
+        70:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 223, 71]
+        71:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 31, 71]
+        72:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 159, 70]
+        73:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 159, 69]
+        74:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 159, 67]
+        75:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 159, 79]
+        76:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 159, 87]
+        77:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 159, 103]
+        78:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 159, 7]
+        79:
+          signal_values: [207, 234, 42, 86, 162, 102, 220, 102, 159, 199]
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc64_check
+      width: !!uint32 64
+      poly: !!uint64 4823603603198064275
+      initial_value: !!uint64 18446744073709551615
+      final_xor: !!uint64 18446744073709551615
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: big
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc64_ok
+      records: {}
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc64_fail
+      records:
+        0:
+          meta_information:
+            crc_ok: false
+        1:
+          meta_information:
+            crc_ok: false
+        2:
+          meta_information:
+            crc_ok: false
+        3:
+          meta_information:
+            crc_ok: false
+        4:
+          meta_information:
+            crc_ok: false
+        5:
+          meta_information:
+            crc_ok: false
+        6:
+          meta_information:
+            crc_ok: false
+        7:
+          meta_information:
+            crc_ok: false
+        8:
+          meta_information:
+            crc_ok: false
+        9:
+          meta_information:
+            crc_ok: false
+        10:
+          meta_information:
+            crc_ok: false
+        11:
+          meta_information:
+            crc_ok: false
+        12:
+          meta_information:
+            crc_ok: false
+        13:
+          meta_information:
+            crc_ok: false
+        14:
+          meta_information:
+            crc_ok: false
+        15:
+          meta_information:
+            crc_ok: false
+        16:
+          meta_information:
+            crc_ok: false
+        17:
+          meta_information:
+            crc_ok: false
+        18:
+          meta_information:
+            crc_ok: false
+        19:
+          meta_information:
+            crc_ok: false
+        20:
+          meta_information:
+            crc_ok: false
+        21:
+          meta_information:
+            crc_ok: false
+        22:
+          meta_information:
+            crc_ok: false
+        23:
+          meta_information:
+            crc_ok: false
+        24:
+          meta_information:
+            crc_ok: false
+        25:
+          meta_information:
+            crc_ok: false
+        26:
+          meta_information:
+            crc_ok: false
+        27:
+          meta_information:
+            crc_ok: false
+        28:
+          meta_information:
+            crc_ok: false
+        29:
+          meta_information:
+            crc_ok: false
+        30:
+          meta_information:
+            crc_ok: false
+        31:
+          meta_information:
+            crc_ok: false
+        32:
+          meta_information:
+            crc_ok: false
+        33:
+          meta_information:
+            crc_ok: false
+        34:
+          meta_information:
+            crc_ok: false
+        35:
+          meta_information:
+            crc_ok: false
+        36:
+          meta_information:
+            crc_ok: false
+        37:
+          meta_information:
+            crc_ok: false
+        38:
+          meta_information:
+            crc_ok: false
+        39:
+          meta_information:
+            crc_ok: false
+        40:
+          meta_information:
+            crc_ok: false
+        41:
+          meta_information:
+            crc_ok: false
+        42:
+          meta_information:
+            crc_ok: false
+        43:
+          meta_information:
+            crc_ok: false
+        44:
+          meta_information:
+            crc_ok: false
+        45:
+          meta_information:
+            crc_ok: false
+        46:
+          meta_information:
+            crc_ok: false
+        47:
+          meta_information:
+            crc_ok: false
+        48:
+          meta_information:
+            crc_ok: false
+        49:
+          meta_information:
+            crc_ok: false
+        50:
+          meta_information:
+            crc_ok: false
+        51:
+          meta_information:
+            crc_ok: false
+        52:
+          meta_information:
+            crc_ok: false
+        53:
+          meta_information:
+            crc_ok: false
+        54:
+          meta_information:
+            crc_ok: false
+        55:
+          meta_information:
+            crc_ok: false
+        56:
+          meta_information:
+            crc_ok: false
+        57:
+          meta_information:
+            crc_ok: false
+        58:
+          meta_information:
+            crc_ok: false
+        59:
+          meta_information:
+            crc_ok: false
+        60:
+          meta_information:
+            crc_ok: false
+        61:
+          meta_information:
+            crc_ok: false
+        62:
+          meta_information:
+            crc_ok: false
+        63:
+          meta_information:
+            crc_ok: false
+        64:
+          meta_information:
+            crc_ok: false
+        65:
+          meta_information:
+            crc_ok: false
+        66:
+          meta_information:
+            crc_ok: false
+        67:
+          meta_information:
+            crc_ok: false
+        68:
+          meta_information:
+            crc_ok: false
+        69:
+          meta_information:
+            crc_ok: false
+        70:
+          meta_information:
+            crc_ok: false
+        71:
+          meta_information:
+            crc_ok: false
+        72:
+          meta_information:
+            crc_ok: false
+        73:
+          meta_information:
+            crc_ok: false
+        74:
+          meta_information:
+            crc_ok: false
+        75:
+          meta_information:
+            crc_ok: false
+        76:
+          meta_information:
+            crc_ok: false
+        77:
+          meta_information:
+            crc_ok: false
+        78:
+          meta_information:
+            crc_ok: false
+        79:
+          meta_information:
+            crc_ok: false
+connections:
+  - [crc32_source, out, crc32_check, in]
+  - [crc32_check, ok, crc32_ok, in]
+  - [crc32_check, fail, crc32_fail, in]
+  - [crc16_source, out, crc16_check, in]
+  - [crc16_check, ok, crc16_ok, in]
+  - [crc16_check, fail, crc16_fail, in]
+  - [crc8_source, out, crc8_check, in]
+  - [crc8_check, ok, crc8_ok, in]
+  - [crc8_check, fail, crc8_fail, in]
+  - [crc64_source, out, crc64_check, in]
+  - [crc64_check, ok, crc64_ok, in]
+  - [crc64_check, fail, crc64_fail, in]
