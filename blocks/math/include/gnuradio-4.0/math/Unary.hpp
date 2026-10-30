@@ -254,10 +254,17 @@ struct Sign {
     using Description = Doc<"@brief Outputs -1, 0 or +1 by the sign of each sample. A NaN sample stays NaN.">;
     template<typename T>
     using result                = T;
-    static constexpr bool kSimd = false;
+    static constexpr bool kSimd = true;
     template<typename V, typename B>
     [[nodiscard]] static constexpr V apply(const V& x, const B& /*block*/) noexcept {
-        return x > V(0) ? V(1) : (x < V(0) ? V(-1) : x);
+        if constexpr (meta::any_simd<V>) {
+            V sign                = x;
+            where(x > V(0), sign) = V(1);
+            where(x < V(0), sign) = V(-1);
+            return sign;
+        } else {
+            return x > V(0) ? V(1) : (x < V(0) ? V(-1) : x);
+        }
     }
 };
 
@@ -265,10 +272,14 @@ struct Sqrt {
     using Description = Doc<"@brief Outputs the square root of each sample, and NaN for a negative sample.">;
     template<typename T>
     using result                = T;
-    static constexpr bool kSimd = false;
+    static constexpr bool kSimd = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::sqrt(x);
+        if constexpr (meta::any_simd<V>) {
+            return vir::stdx::sqrt(x);
+        } else {
+            return std::sqrt(x);
+        }
     }
 };
 
@@ -397,10 +408,17 @@ struct Floor {
     using Description = Doc<"@brief Rounds each sample down to an integer value.">;
     template<typename T>
     using result                = T;
-    static constexpr bool kSimd = false;
+    static constexpr bool kSimd = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::floor(x);
+        if constexpr (meta::any_simd<V>) {
+            // libstdc++'s simd can give +0 where the result is -0: floor, ceil and round for float on x86 without
+            // SSE4.1, as in ceil(-0.25), and round with SSE4.1 or AVX. Each result has the sign of x, so copysign
+            // restores it.
+            return vir::stdx::copysign(vir::stdx::floor(x), x);
+        } else {
+            return std::floor(x);
+        }
     }
 };
 
@@ -408,10 +426,14 @@ struct Ceil {
     using Description = Doc<"@brief Rounds each sample up to an integer value.">;
     template<typename T>
     using result                = T;
-    static constexpr bool kSimd = false;
+    static constexpr bool kSimd = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::ceil(x);
+        if constexpr (meta::any_simd<V>) {
+            return vir::stdx::copysign(vir::stdx::ceil(x), x);
+        } else {
+            return std::ceil(x);
+        }
     }
 };
 
@@ -419,10 +441,14 @@ struct Round {
     using Description = Doc<"@brief Rounds each sample to the nearest integer value, halves away from zero.">;
     template<typename T>
     using result                = T;
-    static constexpr bool kSimd = false;
+    static constexpr bool kSimd = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::round(x);
+        if constexpr (meta::any_simd<V>) {
+            return vir::stdx::copysign(vir::stdx::round(x), x);
+        } else {
+            return std::round(x);
+        }
     }
 };
 

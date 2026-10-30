@@ -1,5 +1,6 @@
 # Sqrt: out = sqrt(in), NaN for a negative sample.
 #   0 0.25 4 2 -1 -> 0 0.5 2 1.4142135623730951 NaN
+# Error bound: 0; IEEE 754 rounds the square root correctly, so every call gives the expected value exactly.
 blocks:
   - id: gr::blocks::basic::VectorSource<float32>
     parameters:
@@ -12,8 +13,8 @@ blocks:
     parameters:
       name: sink_f32
       expected: !!float32 [0.0, 0.5, 2.0, 1.4142135623730951, .nan]
-      relative_tolerance: 1e-6
-      tolerance: 1e-6
+      tolerance: 0.0
+      relative_tolerance: 0.0
   - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
@@ -25,8 +26,8 @@ blocks:
     parameters:
       name: sink_f64
       expected: !!float64 [0.0, 0.5, 2.0, 1.4142135623730951, .nan]
-      relative_tolerance: 1e-12
-      tolerance: 1e-12
+      tolerance: 0.0
+      relative_tolerance: 0.0
 connections:
   - [source_f32, out, sqrt_f32, in]
   - [sqrt_f32, out, sink_f32, in]
