@@ -99,6 +99,8 @@ gr_digital_graph_test(graph_digital_delimiter_framer_fcs graphs/delimiter-framer
 gr_digital_graph_test(graph_digital_delimiter_framer_ones graphs/delimiter-framer-ones.yaml)
 gr_digital_graph_test(graph_digital_delimiter_framer_records graphs/delimiter-framer-records.yaml)
 gr_digital_graph_test(graph_digital_delimiter_framer_settings graphs/delimiter-framer-settings.yaml)
+gr_digital_graph_test(graph_digital_pam_slicer graphs/pam-slicer.yaml)
+gr_digital_graph_test(graph_digital_pam_settings graphs/pam-settings.yaml)
 
 # The settings graphs with settings changed that the block accepts.
 gr_digital_graph_test(
@@ -617,6 +619,31 @@ gr_add_failing_graph_test(
   SET
   "byte_framer.end_delimiter=\"\""
   "byte_framer.bits_per_item=!!uint32 1")
+gr_add_failing_graph_test(
+  graph_digital_refused_slicer_labels
+  graphs/pam-settings.yaml
+  "PamSlicer[^\n]* throws: labels holds 2 entries for 4 levels. one per level rank"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "slicer_block.labels=!!uint32 [0, 1]")
+gr_add_failing_graph_test(
+  graph_digital_refused_slicer_odd_levels
+  graphs/pam-settings.yaml
+  "PamSlicer[^\n]* throws: n_levels must be even and at least 2, got 3"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "slicer_block.n_levels=!!uint32 3"
+  "slicer_block.labels=!!uint32 [0, 1, 2]")
+gr_add_failing_graph_test(
+  graph_digital_refused_tracker_odd_levels
+  graphs/pam-settings.yaml
+  "LevelTracker[^\n]* throws: n_levels must be even and at least 2, got 3"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "tracker_block.n_levels=!!uint32 3")
 
 # A record the block refuses, on the block's reason.
 gr_add_failing_graph_test(

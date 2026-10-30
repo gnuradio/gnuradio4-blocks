@@ -37,17 +37,6 @@ void init(TBlock& block) {
     }
 }
 
-template<typename TBlock>
-[[nodiscard]] TBlock make(gr::property_map settings = {}) {
-    TBlock block(std::move(settings));
-    block.settings().init();
-    std::ignore = block.settings().applyStagedParameters();
-    if constexpr (requires { block.start(); }) {
-        block.start();
-    }
-    return block;
-}
-
 /// A deterministic four-level symbol stream on the ±1/±3 grid, scaled and shifted.
 [[nodiscard]] std::vector<float> symbols(std::size_t count, double scale, double shift, std::uint64_t seed) {
     std::uint64_t      state = seed;
@@ -204,32 +193,6 @@ const boost::ut::suite<"PamSymbols"> pamSymbolsTests = [] {
             init(block);
             expect(that % (run(block, in, chunk) == want)) << std::format("chunk {}", chunk);
         }
-    };
-
-    "the slicer's decision table, thresholds and label maps"_test = [] {
-        auto identity = make<PamSlicer<float>>();
-        auto c4fm     = make<PamSlicer<float>>({{"labels", std::vector<gr::Size_t>{3U, 2U, 0U, 1U}}});
-
-        struct Case {
-            float        x;
-            std::uint8_t rank;
-        };
-        // Ranks by region: the thresholds sit at -2, 0, +2 with ties toward the upper region,
-        // and the outer regions are unbounded.
-        for (const Case c : {Case{-1e30f, 0}, Case{-3.f, 0}, Case{-2.01f, 0}, Case{-2.f, 1}, Case{-1.f, 1}, Case{-0.01f, 1}, Case{0.f, 2}, Case{1.f, 2}, Case{1.99f, 2}, Case{2.f, 3}, Case{3.f, 3}, Case{1e30f, 3}}) {
-            expect(eq(identity.processOne(c.x), c.rank)) << std::format("identity at {}", c.x);
-            constexpr std::uint8_t kC4fm[4]{3U, 2U, 0U, 1U};
-            expect(eq(c4fm.processOne(c.x), kC4fm[c.rank])) << std::format("c4fm at {}", c.x);
-        }
-    };
-
-    "refusals fire by name"_test = [] {
-        expect(throws([] { std::ignore = make<PamSlicer<float>>({{"labels", std::vector<gr::Size_t>{0U, 1U}}}); })) << "a label per level";
-        expect(throws([] { std::ignore = make<PamSlicer<float>>({{"n_levels", gr::Size_t(3)}, {"labels", std::vector<gr::Size_t>{0U, 1U, 2U}}}); })) << "even M only";
-        expect(throws([] {
-            LevelTracker<float> tracker({{"n_levels", gr::Size_t(3)}});
-            init(tracker);
-        })) << "even M only";
     };
 
     "the record port carries what the readers carry, and an unwired one changes nothing"_test = [] {

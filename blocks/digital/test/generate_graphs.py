@@ -1484,6 +1484,52 @@ block's reason.
     return g
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# PamSlicer and LevelTracker
+
+SLICER_INPUTS = [-1e30, -3.0, -2.01, -2.0, -1.0, -0.01, 0.0, 1.0, 1.99, 2.0, 3.0, 1e30]
+SLICER_RANKS = [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3]
+
+
+def pam_slicer():
+    g = Graph(
+        "pam-slicer.yaml",
+        """
+PamSlicer over four levels, fed a value inside, at and on each side of every threshold at -2, 0 and +2, and the
+two outer extremes. The identity sink expects each value's level rank, the upper region taking a value on its
+threshold. The labeled chain maps the ranks to the C4FM labels 3, 2, 0 and 1, and its sink expects those labels.
+""",
+    )
+    src = g.vector_source("slicer_source", "float32", SLICER_INPUTS)
+    for name, labels in (("identity", None), ("c4fm", [3, 2, 0, 1])):
+        params = {} if labels is None else {"labels": U32s(labels)}
+        sl = g.block(DIG + "PamSlicer<float32>", name + "_slicer", params)
+        g.connect(src, sl)
+        expected = SLICER_RANKS if labels is None else [labels[r] for r in SLICER_RANKS]
+        g.connect(sl, g.expect_sink(name + "_sink", "uint8", expected))
+    return g
+
+
+def pam_settings():
+    g = Graph(
+        "pam-settings.yaml",
+        """
+PamSlicer and LevelTracker over four levels, each with no symbol to process. The run passes as written. A case that
+changes a setting through SET checks that the block refuses it, and the refusal ends the run with the block's
+reason.
+""",
+    )
+    for name, block, kind in (
+        ("slicer", "PamSlicer<float32>", "uint8"),
+        ("tracker", "LevelTracker<float32>", "float32"),
+    ):
+        src = g.vector_source(name + "_source", "float32", [])
+        b = g.block(DIG + block, name + "_block")
+        g.connect(src, b)
+        g.connect(b, g.expect_sink(name + "_sink", kind, []))
+    return g
+
+
 GRAPHS = [
     crc_round_trip,
     crc_append,
@@ -1508,6 +1554,8 @@ GRAPHS = [
     framer_ones,
     framer_records,
     framer_settings,
+    pam_slicer,
+    pam_settings,
 ]
 
 
