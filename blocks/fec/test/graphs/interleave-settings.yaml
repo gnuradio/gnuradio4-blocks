@@ -1,0 +1,148 @@
+# One chain per interleaver kind and direction, each with settings the block accepts and no record to process: a
+# 4 x 5 rectangle, a 4 x 3 convolutional interleaver and the permutation table 2, 0, 1, for uint8 items, and a 4 x 5
+# rectangle and the permutation for float items. The run passes as written. A case that changes a setting through SET
+# checks that the block refuses it, and the refusal ends the run with the block's reason.
+# Written by generate_graphs.py with no seed and no oracle: the interleave chains hold no record.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: block_source
+      records: {}
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: block_block
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: block_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: block_back_source
+      records: {}
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: block_back_block
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: block_back_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: conv_source
+      records: {}
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: conv_block
+      kind: convolutional
+      branches: !!uint32 4
+      unit_delay: !!uint32 3
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: conv_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: conv_back_source
+      records: {}
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: conv_back_block
+      kind: convolutional
+      branches: !!uint32 4
+      unit_delay: !!uint32 3
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: conv_back_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: table_source
+      records: {}
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: table_block
+      kind: permutation
+      table: !!uint32 [2, 0, 1]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: table_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: table_back_source
+      records: {}
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: table_back_block
+      kind: permutation
+      table: !!uint32 [2, 0, 1]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: table_back_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: float_source
+      records: {}
+  - id: gr::blocks::fec::Interleave<float32>
+    parameters:
+      name: float_block
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: float_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: float_back_source
+      records: {}
+  - id: gr::blocks::fec::Deinterleave<float32>
+    parameters:
+      name: float_back_block
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: float_back_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: float_table_source
+      records: {}
+  - id: gr::blocks::fec::Interleave<float32>
+    parameters:
+      name: float_table_block
+      kind: permutation
+      table: !!uint32 [2, 0, 1]
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: float_table_sink
+      records: {}
+connections:
+  - [block_source, out, block_block, in]
+  - [block_block, out, block_sink, in]
+  - [block_back_source, out, block_back_block, in]
+  - [block_back_block, out, block_back_sink, in]
+  - [conv_source, out, conv_block, in]
+  - [conv_block, out, conv_sink, in]
+  - [conv_back_source, out, conv_back_block, in]
+  - [conv_back_block, out, conv_back_sink, in]
+  - [table_source, out, table_block, in]
+  - [table_block, out, table_sink, in]
+  - [table_back_source, out, table_back_block, in]
+  - [table_back_block, out, table_back_sink, in]
+  - [float_source, out, float_block, in]
+  - [float_block, out, float_sink, in]
+  - [float_back_source, out, float_back_block, in]
+  - [float_back_block, out, float_back_sink, in]
+  - [float_table_source, out, float_table_block, in]
+  - [float_table_block, out, float_table_sink, in]

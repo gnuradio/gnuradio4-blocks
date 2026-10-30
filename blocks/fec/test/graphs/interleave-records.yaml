@@ -1,0 +1,171 @@
+# Interleave and Deinterleave with a record's metadata and with the records they refuse, under a 4 x 5 rectangle. The
+# carried chain interleaves a record with two meta keys, and the sink expects them unchanged, no uncorrectable_errors
+# key, the signal name and the extent. The refused chains give Interleave a record of 23 items, one of 40 and an empty
+# record, and give Deinterleave with an output window of 12 items from 2 a record of 23 items and one of 40. Each sink
+# expects the good record alone, its whole frames or their windows, and the block's line at stop counts the records
+# refused. The window chains interleave 20 distinct items and deinterleave them with a window of 9 items from 7 and a
+# window from 15 to the frame's end, and the sinks expect those items of the original frame.
+# Written by generate_graphs.py with no seed. Oracle: the input items and their frames.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: carried_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202
+          ]
+          signal_names: [fec]
+          meta_information:
+            corrected_errors: !!uint32 3
+            who: earlier stage
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: carried_interleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: carried_sink
+      records:
+        0:
+          signal_values: [
+            11, 196, 125, 54, 48, 233, 162, 91, 85, 14, 199, 128, 122, 51, 236, 165, 159, 88, 17, 202
+          ]
+          signal_names: [fec]
+          extents: [20]
+          meta_information:
+            corrected_errors: !!uint32 3
+            who: earlier stage
+          meta_absent: [uncorrectable_errors]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: refused_interleave_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57
+          ]
+        1:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174
+          ]
+        2:
+          signal_values: []
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: refused_interleave_interleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: refused_interleave_sink
+      records:
+        0:
+          signal_values: [
+            11, 196, 125, 54, 48, 233, 162, 91, 85, 14, 199, 128, 122, 51, 236, 165, 159, 88, 17, 202, 239, 168, 97,
+            26, 20, 205, 134, 63, 57, 242, 171, 100, 94, 23, 208, 137, 131, 60, 245, 174
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: refused_deinterleave_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57
+          ]
+        1:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174
+          ]
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: refused_deinterleave_deinterleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+      output_offset: !!uint32 2
+      output_length: !!uint32 12
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: refused_deinterleave_sink
+      records:
+        0:
+          signal_values: [
+            51, 199, 91, 48, 196, 88, 236, 128, 85, 233, 125, 17, 23, 171, 63, 20, 168, 60, 208, 100, 57, 205, 97,
+            245
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: window_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: window_interleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: window_deinterleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+      output_offset: !!uint32 7
+      output_length: !!uint32 9
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: window_sink
+      records:
+        0:
+          signal_values: [14, 51, 88, 125, 162, 199, 236, 17, 54]
+          extents: [9]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: tail_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: tail_interleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: tail_deinterleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+      output_offset: !!uint32 15
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: tail_sink
+      records:
+        0:
+          signal_values: [54, 91, 128, 165, 202]
+          extents: [5]
+connections:
+  - [carried_source, out, carried_interleave, in]
+  - [carried_interleave, out, carried_sink, in]
+  - [refused_interleave_source, out, refused_interleave_interleave, in]
+  - [refused_interleave_interleave, out, refused_interleave_sink, in]
+  - [refused_deinterleave_source, out, refused_deinterleave_deinterleave, in]
+  - [refused_deinterleave_deinterleave, out, refused_deinterleave_sink, in]
+  - [window_source, out, window_interleave, in]
+  - [window_interleave, out, window_deinterleave, in]
+  - [window_deinterleave, out, window_sink, in]
+  - [tail_source, out, tail_interleave, in]
+  - [tail_interleave, out, tail_deinterleave, in]
+  - [tail_deinterleave, out, tail_sink, in]

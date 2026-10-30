@@ -1,0 +1,501 @@
+# Interleave into Deinterleave for the framed kinds. Each source record holds three frames of distinct item values.
+# The block chains use the rectangle shapes 1 x 16, 16 x 1, 4 x 4, 3 x 17, 17 x 3 and 4 x 6, rows by columns. The
+# permutation chains use the table of the same shape, built by writing a frame row by row and reading it column by
+# column. Every sink expects the record back unchanged. The float chain sends a record of float values through a
+# 4 x 5 rectangle.
+# Written by generate_graphs.py with no seed. Oracle: the input record, returned unchanged.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: block_1x16_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: block_1x16_interleave
+      kind: block
+      rows: !!uint32 1
+      cols: !!uint32 16
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: block_1x16_deinterleave
+      kind: block
+      rows: !!uint32 1
+      cols: !!uint32 16
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: block_1x16_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: table_1x16_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: table_1x16_interleave
+      kind: permutation
+      table: !!uint32 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: table_1x16_deinterleave
+      kind: permutation
+      table: !!uint32 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: table_1x16_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: block_16x1_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: block_16x1_interleave
+      kind: block
+      rows: !!uint32 16
+      cols: !!uint32 1
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: block_16x1_deinterleave
+      kind: block
+      rows: !!uint32 16
+      cols: !!uint32 1
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: block_16x1_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: table_16x1_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: table_16x1_interleave
+      kind: permutation
+      table: !!uint32 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: table_16x1_deinterleave
+      kind: permutation
+      table: !!uint32 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: table_16x1_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: block_4x4_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: block_4x4_interleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 4
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: block_4x4_deinterleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 4
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: block_4x4_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: table_4x4_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: table_4x4_interleave
+      kind: permutation
+      table: !!uint32 [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15]
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: table_4x4_deinterleave
+      kind: permutation
+      table: !!uint32 [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: table_4x4_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: block_3x17_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78, 115, 152, 189, 226, 7, 44, 81, 118, 155, 192, 229, 10, 47, 84, 121, 158, 195, 232,
+            13, 50, 87, 124, 161, 198, 235, 16, 53, 90, 127, 164, 201, 238, 19, 56, 93, 130, 167, 204, 241, 22, 59,
+            96, 133, 170, 207, 244, 25, 62, 99, 136, 173, 210, 247, 28, 65, 102, 139, 176, 213, 250, 31, 68, 105,
+            142, 179, 216, 253, 34, 71, 108, 145, 182, 219, 0, 37, 74, 111, 148, 185, 222, 3
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: block_3x17_interleave
+      kind: block
+      rows: !!uint32 3
+      cols: !!uint32 17
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: block_3x17_deinterleave
+      kind: block
+      rows: !!uint32 3
+      cols: !!uint32 17
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: block_3x17_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78, 115, 152, 189, 226, 7, 44, 81, 118, 155, 192, 229, 10, 47, 84, 121, 158, 195, 232,
+            13, 50, 87, 124, 161, 198, 235, 16, 53, 90, 127, 164, 201, 238, 19, 56, 93, 130, 167, 204, 241, 22, 59,
+            96, 133, 170, 207, 244, 25, 62, 99, 136, 173, 210, 247, 28, 65, 102, 139, 176, 213, 250, 31, 68, 105,
+            142, 179, 216, 253, 34, 71, 108, 145, 182, 219, 0, 37, 74, 111, 148, 185, 222, 3
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: table_3x17_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78, 115, 152, 189, 226, 7, 44, 81, 118, 155, 192, 229, 10, 47, 84, 121, 158, 195, 232,
+            13, 50, 87, 124, 161, 198, 235, 16, 53, 90, 127, 164, 201, 238, 19, 56, 93, 130, 167, 204, 241, 22, 59,
+            96, 133, 170, 207, 244, 25, 62, 99, 136, 173, 210, 247, 28, 65, 102, 139, 176, 213, 250, 31, 68, 105,
+            142, 179, 216, 253, 34, 71, 108, 145, 182, 219, 0, 37, 74, 111, 148, 185, 222, 3
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: table_3x17_interleave
+      kind: permutation
+      table: !!uint32 [
+        0, 17, 34, 1, 18, 35, 2, 19, 36, 3, 20, 37, 4, 21, 38, 5, 22, 39, 6, 23, 40, 7, 24, 41, 8, 25, 42, 9, 26,
+        43, 10, 27, 44, 11, 28, 45, 12, 29, 46, 13, 30, 47, 14, 31, 48, 15, 32, 49, 16, 33, 50
+      ]
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: table_3x17_deinterleave
+      kind: permutation
+      table: !!uint32 [
+        0, 17, 34, 1, 18, 35, 2, 19, 36, 3, 20, 37, 4, 21, 38, 5, 22, 39, 6, 23, 40, 7, 24, 41, 8, 25, 42, 9, 26,
+        43, 10, 27, 44, 11, 28, 45, 12, 29, 46, 13, 30, 47, 14, 31, 48, 15, 32, 49, 16, 33, 50
+      ]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: table_3x17_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78, 115, 152, 189, 226, 7, 44, 81, 118, 155, 192, 229, 10, 47, 84, 121, 158, 195, 232,
+            13, 50, 87, 124, 161, 198, 235, 16, 53, 90, 127, 164, 201, 238, 19, 56, 93, 130, 167, 204, 241, 22, 59,
+            96, 133, 170, 207, 244, 25, 62, 99, 136, 173, 210, 247, 28, 65, 102, 139, 176, 213, 250, 31, 68, 105,
+            142, 179, 216, 253, 34, 71, 108, 145, 182, 219, 0, 37, 74, 111, 148, 185, 222, 3
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: block_17x3_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78, 115, 152, 189, 226, 7, 44, 81, 118, 155, 192, 229, 10, 47, 84, 121, 158, 195, 232,
+            13, 50, 87, 124, 161, 198, 235, 16, 53, 90, 127, 164, 201, 238, 19, 56, 93, 130, 167, 204, 241, 22, 59,
+            96, 133, 170, 207, 244, 25, 62, 99, 136, 173, 210, 247, 28, 65, 102, 139, 176, 213, 250, 31, 68, 105,
+            142, 179, 216, 253, 34, 71, 108, 145, 182, 219, 0, 37, 74, 111, 148, 185, 222, 3
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: block_17x3_interleave
+      kind: block
+      rows: !!uint32 17
+      cols: !!uint32 3
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: block_17x3_deinterleave
+      kind: block
+      rows: !!uint32 17
+      cols: !!uint32 3
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: block_17x3_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78, 115, 152, 189, 226, 7, 44, 81, 118, 155, 192, 229, 10, 47, 84, 121, 158, 195, 232,
+            13, 50, 87, 124, 161, 198, 235, 16, 53, 90, 127, 164, 201, 238, 19, 56, 93, 130, 167, 204, 241, 22, 59,
+            96, 133, 170, 207, 244, 25, 62, 99, 136, 173, 210, 247, 28, 65, 102, 139, 176, 213, 250, 31, 68, 105,
+            142, 179, 216, 253, 34, 71, 108, 145, 182, 219, 0, 37, 74, 111, 148, 185, 222, 3
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: table_17x3_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78, 115, 152, 189, 226, 7, 44, 81, 118, 155, 192, 229, 10, 47, 84, 121, 158, 195, 232,
+            13, 50, 87, 124, 161, 198, 235, 16, 53, 90, 127, 164, 201, 238, 19, 56, 93, 130, 167, 204, 241, 22, 59,
+            96, 133, 170, 207, 244, 25, 62, 99, 136, 173, 210, 247, 28, 65, 102, 139, 176, 213, 250, 31, 68, 105,
+            142, 179, 216, 253, 34, 71, 108, 145, 182, 219, 0, 37, 74, 111, 148, 185, 222, 3
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: table_17x3_interleave
+      kind: permutation
+      table: !!uint32 [
+        0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48, 1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34,
+        37, 40, 43, 46, 49, 2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41, 44, 47, 50
+      ]
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: table_17x3_deinterleave
+      kind: permutation
+      table: !!uint32 [
+        0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48, 1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34,
+        37, 40, 43, 46, 49, 2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41, 44, 47, 50
+      ]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: table_17x3_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78, 115, 152, 189, 226, 7, 44, 81, 118, 155, 192, 229, 10, 47, 84, 121, 158, 195, 232,
+            13, 50, 87, 124, 161, 198, 235, 16, 53, 90, 127, 164, 201, 238, 19, 56, 93, 130, 167, 204, 241, 22, 59,
+            96, 133, 170, 207, 244, 25, 62, 99, 136, 173, 210, 247, 28, 65, 102, 139, 176, 213, 250, 31, 68, 105,
+            142, 179, 216, 253, 34, 71, 108, 145, 182, 219, 0, 37, 74, 111, 148, 185, 222, 3
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: block_4x6_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: block_4x6_interleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 6
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: block_4x6_deinterleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 6
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: block_4x6_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: table_4x6_source
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78
+          ]
+  - id: gr::blocks::fec::Interleave<uint8>
+    parameters:
+      name: table_4x6_interleave
+      kind: permutation
+      table: !!uint32 [
+        0, 6, 12, 18, 1, 7, 13, 19, 2, 8, 14, 20, 3, 9, 15, 21, 4, 10, 16, 22, 5, 11, 17, 23
+      ]
+  - id: gr::blocks::fec::Deinterleave<uint8>
+    parameters:
+      name: table_4x6_deinterleave
+      kind: permutation
+      table: !!uint32 [
+        0, 6, 12, 18, 1, 7, 13, 19, 2, 8, 14, 20, 3, 9, 15, 21, 4, 10, 16, 22, 5, 11, 17, 23
+      ]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: table_4x6_sink
+      records:
+        0:
+          signal_values: [
+            11, 48, 85, 122, 159, 196, 233, 14, 51, 88, 125, 162, 199, 236, 17, 54, 91, 128, 165, 202, 239, 20, 57,
+            94, 131, 168, 205, 242, 23, 60, 97, 134, 171, 208, 245, 26, 63, 100, 137, 174, 211, 248, 29, 66, 103,
+            140, 177, 214, 251, 32, 69, 106, 143, 180, 217, 254, 35, 72, 109, 146, 183, 220, 1, 38, 75, 112, 149,
+            186, 223, 4, 41, 78
+          ]
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: float_source
+      records:
+        0:
+          signal_values: !!float32 [
+            -2.0, -1.75, -1.5, -1.25, -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0,
+            2.25, 2.5, 2.75
+          ]
+  - id: gr::blocks::fec::Interleave<float32>
+    parameters:
+      name: float_interleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+  - id: gr::blocks::fec::Deinterleave<float32>
+    parameters:
+      name: float_deinterleave
+      kind: block
+      rows: !!uint32 4
+      cols: !!uint32 5
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: float_sink
+      records:
+        0:
+          signal_values: !!float32 [
+            -2.0, -1.75, -1.5, -1.25, -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0,
+            2.25, 2.5, 2.75
+          ]
+connections:
+  - [block_1x16_source, out, block_1x16_interleave, in]
+  - [block_1x16_interleave, out, block_1x16_deinterleave, in]
+  - [block_1x16_deinterleave, out, block_1x16_sink, in]
+  - [table_1x16_source, out, table_1x16_interleave, in]
+  - [table_1x16_interleave, out, table_1x16_deinterleave, in]
+  - [table_1x16_deinterleave, out, table_1x16_sink, in]
+  - [block_16x1_source, out, block_16x1_interleave, in]
+  - [block_16x1_interleave, out, block_16x1_deinterleave, in]
+  - [block_16x1_deinterleave, out, block_16x1_sink, in]
+  - [table_16x1_source, out, table_16x1_interleave, in]
+  - [table_16x1_interleave, out, table_16x1_deinterleave, in]
+  - [table_16x1_deinterleave, out, table_16x1_sink, in]
+  - [block_4x4_source, out, block_4x4_interleave, in]
+  - [block_4x4_interleave, out, block_4x4_deinterleave, in]
+  - [block_4x4_deinterleave, out, block_4x4_sink, in]
+  - [table_4x4_source, out, table_4x4_interleave, in]
+  - [table_4x4_interleave, out, table_4x4_deinterleave, in]
+  - [table_4x4_deinterleave, out, table_4x4_sink, in]
+  - [block_3x17_source, out, block_3x17_interleave, in]
+  - [block_3x17_interleave, out, block_3x17_deinterleave, in]
+  - [block_3x17_deinterleave, out, block_3x17_sink, in]
+  - [table_3x17_source, out, table_3x17_interleave, in]
+  - [table_3x17_interleave, out, table_3x17_deinterleave, in]
+  - [table_3x17_deinterleave, out, table_3x17_sink, in]
+  - [block_17x3_source, out, block_17x3_interleave, in]
+  - [block_17x3_interleave, out, block_17x3_deinterleave, in]
+  - [block_17x3_deinterleave, out, block_17x3_sink, in]
+  - [table_17x3_source, out, table_17x3_interleave, in]
+  - [table_17x3_interleave, out, table_17x3_deinterleave, in]
+  - [table_17x3_deinterleave, out, table_17x3_sink, in]
+  - [block_4x6_source, out, block_4x6_interleave, in]
+  - [block_4x6_interleave, out, block_4x6_deinterleave, in]
+  - [block_4x6_deinterleave, out, block_4x6_sink, in]
+  - [table_4x6_source, out, table_4x6_interleave, in]
+  - [table_4x6_interleave, out, table_4x6_deinterleave, in]
+  - [table_4x6_deinterleave, out, table_4x6_sink, in]
+  - [float_source, out, float_interleave, in]
+  - [float_interleave, out, float_deinterleave, in]
+  - [float_deinterleave, out, float_sink, in]
