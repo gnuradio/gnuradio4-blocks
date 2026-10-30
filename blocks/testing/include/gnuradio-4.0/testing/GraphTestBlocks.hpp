@@ -2,7 +2,6 @@
 #define GNURADIO_TESTING_GRAPH_TEST_BLOCKS_HPP
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -23,7 +22,9 @@
 #include <gnuradio-4.0/DataSet.hpp>
 #include <gnuradio-4.0/PmtTypeHelpers.hpp>
 #include <gnuradio-4.0/Tag.hpp>
+#include <gnuradio-4.0/Tensor.hpp>
 #include <gnuradio-4.0/algorithm/dataset/DataSetRecords.hpp>
+#include <gnuradio-4.0/algorithm/dataset/IndexedMaps.hpp>
 #include <gnuradio-4.0/formatter/ValueFormatter.hpp>
 #include <gnuradio-4.0/meta/formatter.hpp>
 
@@ -244,19 +245,26 @@ end of `expected` ends the run with an error that names its index.
 A non-empty `tag_key` also checks the tags. The sample indices of the tags carrying that key must equal
 `tag_indices` when the stream ends, each index counted once. An empty `tag_indices` requires that no tag
 carries the key. A tag at the end-of-stream index, one past the last sample, has the sample count as its index.
-`expected_tags` maps sample indices to the tags expected there. Each key of the map is a sample index written as
-a string, and each value is a map of tag keys and values. The block reads `expected_tags` when it starts.
-Every listed key must arrive on a tag at its index.
+`expected_tags` maps sample indices to the tags expected there, in the form of the `tags` setting of
+`basic::VectorSource`. Each key of the map is a sample index written as a decimal string, and each value is a map of
+tag keys and values or a list of such maps. The block reads `expected_tags` when it starts.
+A map checks keys. Every key it lists must arrive on a tag at its index, on one tag or spread over several.
+A list checks tags. As many tags as the list holds must arrive at its index, and the tag at each position must carry
+every key of the map at that position. A tag that carries only the end-of-stream key is not counted. A tag a block
+forwards from its settings counts as a tag of the list at its index.
 A tag key with the `gr:` prefix matches the listed key without it. A numeric expected value is compared in its
 own type: the received value must convert to that type and back without loss and be equal. Any other
 value must have the same type and be equal. A wrong value ends the run with an error that names the index, the key,
 the received value and the expected value. A listed key still missing at the end of the stream ends the run
-with an error that names the index, the key and the expected value.
+with an error that names the index, the key and the expected value. For a list, the error also names the position
+of the tag. A tag past the end of a list ends the run with an error that names the index and the tag. A list
+with tags still missing at the end of the stream ends the run with an error that names the index and both counts.
 With `tags_exact`, a tag key not listed at its index ends the run with an error that names the index, the key
-and the value. This check skips the end-of-stream key. A listed end-of-stream key is matched like any other.
+and the value. At an index with a list, the map at the tag's position lists the keys. This check skips the
+end-of-stream key. A listed end-of-stream key is matched like any other.
 `tags_exact` also refuses a setting an upstream block forwards as a tag, such as `sample_rate`, unless `expected_tags`
 lists it.
-Two spellings of one index that list the same tag key end the run with an error that names both spellings.
+Two keys that name one index end the run with an error that names both spellings.
 )"">;
 
     PortIn<T> in;
@@ -267,50 +275,73 @@ Two spellings of one index that list the same tag key end the run with an error 
     Annotated<gr::Size_t, "received", Doc<"samples received and matched">>                                received           = 0U;
     Annotated<std::string, "tag_key", Doc<"tag key whose indices are checked">>                           tag_key{};
     Annotated<std::vector<gr::Size_t>, "tag_indices", Doc<"sample indices of the tags carrying tag_key">> tag_indices{};
-    Annotated<property_map, "expected_tags", Doc<"tag keys and values expected at each sample index">>    expected_tags{};
+    Annotated<property_map, "expected_tags", Doc<"tags or tag keys expected at each sample index">>       expected_tags{};
     Annotated<bool, "tags_exact", Doc<"refuse tag keys unlisted at their sample index">>                  tags_exact = false;
 
     GR_MAKE_REFLECTABLE(ExpectSink, in, expected, tolerance, relative_tolerance, received, tag_key, tag_indices, expected_tags, tags_exact);
 
     struct ExpectedTag {
         std::size_t index = 0UZ;
-        std::string spelling{};
         std::string key{};
         pmt::Value  value{};
         bool        seen = false;
     };
 
-    bool                     _failed = false;
-    std::vector<std::size_t> _tagged{};
-    std::vector<ExpectedTag> _expectedTags{};
+    /// The tags a list expects at one index, in order, and the number that has arrived.
+    struct ExpectedList {
+        std::size_t               index = 0UZ;
+        std::vector<property_map> maps{};
+        std::size_t               seen = 0UZ;
+    };
+
+    bool                      _failed = false;
+    std::vector<std::size_t>  _tagged{};
+    std::vector<ExpectedTag>  _expectedTags{};
+    std::vector<ExpectedList> _expectedLists{};
 
     void start() {
         received = 0U;
         _failed  = false;
         _tagged.clear();
         _expectedTags.clear();
+        _expectedLists.clear();
+        std::vector<std::pair<std::size_t, std::string_view>> spellings;
         for (const auto& [indexKey, entry] : expected_tags.value) {
-            std::size_t       index = 0UZ;
-            const char* const last  = indexKey.data() + indexKey.size();
-            const auto [parsed, ec] = std::from_chars(indexKey.data(), last, index);
-            if (indexKey.empty() || ec != std::errc{} || parsed != last) {
+            const std::optional<std::size_t> index = gr::dataset::parseIndex<std::size_t>(std::string_view(indexKey));
+            if (!index.has_value()) {
                 failAtStart(std::format("expected_tags key '{}' is not a sample index", indexKey));
                 return;
             }
-            const property_map* tagMap = entry.get_if<property_map>();
-            if (tagMap == nullptr) {
-                failAtStart(std::format("expected_tags entry at sample {} is {}, expected a map of tag keys and values", index, entry));
+            spellings.emplace_back(*index, std::string_view(indexKey));
+            if (const property_map* tagMap = entry.get_if<property_map>(); tagMap != nullptr) {
+                for (const auto& [key, value] : *tagMap) {
+                    _expectedTags.push_back(ExpectedTag{.index = *index, .key = std::string(key), .value = value});
+                }
+                continue;
+            }
+            const Tensor<pmt::Value>* list = entry.get_if<Tensor<pmt::Value>>();
+            if (list == nullptr) {
+                failAtStart(std::format("expected_tags entry at sample {} is {}, expected a map of tag keys and values or a list of such maps", *index, entry));
                 return;
             }
-            for (const auto& [key, value] : *tagMap) {
-                _expectedTags.push_back(ExpectedTag{.index = index, .spelling = std::string(indexKey), .key = std::string(key), .value = value});
+            ExpectedList expectedList{.index = *index};
+            for (const pmt::Value& element : *list) {
+                const property_map* map = element.get_if<property_map>();
+                if (map == nullptr) {
+                    failAtStart(std::format("expected_tags entry at sample {} holds {}, expected a map of tag keys and values", *index, element));
+                    return;
+                }
+                expectedList.maps.push_back(*map);
             }
+            _expectedLists.push_back(std::move(expectedList));
+        }
+        std::ranges::sort(spellings);
+        if (const auto twice = std::ranges::adjacent_find(spellings, {}, &std::pair<std::size_t, std::string_view>::first); twice != spellings.end()) {
+            failAtStart(std::format("expected_tags keys '{}' and '{}' both name sample {}", twice->second, std::next(twice)->second, twice->first));
+            return;
         }
         std::ranges::sort(_expectedTags, {}, [](const ExpectedTag& tag) { return std::tie(tag.index, tag.key); });
-        const auto duplicate = std::ranges::adjacent_find(_expectedTags, [](const ExpectedTag& a, const ExpectedTag& b) { return a.index == b.index && a.key == b.key; });
-        if (duplicate != _expectedTags.end()) {
-            failAtStart(std::format("expected_tags keys '{}' and '{}' both list tag '{}' at sample {}", duplicate->spelling, std::next(duplicate)->spelling, duplicate->key, duplicate->index));
-        }
+        std::ranges::sort(_expectedLists, {}, &ExpectedList::index);
     }
 
     void stop() {
@@ -386,15 +417,22 @@ Two spellings of one index that list the same tag key end the run with an error 
         return status;
     }
 
+    /// Returns the error for the lowest index with a listed key that has not arrived or a list with tags missing.
     [[nodiscard]] std::optional<std::string> missingTag() const {
-        const auto missing = std::ranges::find_if(_expectedTags, [](const ExpectedTag& tag) { return !tag.seen; });
-        if (missing == _expectedTags.end()) {
-            return std::nullopt;
+        const auto missing   = std::ranges::find_if(_expectedTags, [](const ExpectedTag& tag) { return !tag.seen; });
+        const auto shortList = std::ranges::find_if(_expectedLists, [](const ExpectedList& list) { return list.seen < list.maps.size(); });
+        if (missing != _expectedTags.end() && (shortList == _expectedLists.end() || missing->index < shortList->index)) {
+            return std::format("tag '{}' at sample {} is missing, expected {}", missing->key, missing->index, detail::describe(missing->value));
         }
-        return std::format("tag '{}' at sample {} is missing, expected {}", missing->key, missing->index, detail::describe(missing->value));
+        if (shortList != _expectedLists.end()) {
+            return std::format("sample {} carries {} tags, expected {}", shortList->index, shortList->seen, shortList->maps.size());
+        }
+        return std::nullopt;
     }
 
-    [[nodiscard]] bool checksTags() const { return !_expectedTags.empty() || tags_exact.value; }
+    [[nodiscard]] bool checksTags() const { return !_expectedTags.empty() || !_expectedLists.empty() || tags_exact.value; }
+
+    [[nodiscard]] static bool isEndOfStreamKey(std::string_view key) { return key == tag::END_OF_STREAM.shortKey() || key == tag::END_OF_STREAM.key(); }
 
     /// A tag at a negative relative index belongs to an earlier call and is skipped.
     [[nodiscard]] std::optional<std::string> readTags(InputSpanLike auto& input) {
@@ -417,11 +455,14 @@ Two spellings of one index that list the same tag key end the run with an error 
         if (!checksTags()) {
             return std::nullopt;
         }
+        if (const auto list = std::ranges::find(_expectedLists, index, &ExpectedList::index); list != _expectedLists.end()) {
+            return readListedTag(*list, map);
+        }
         for (const auto& [mapKey, value] : map) {
             const std::string_view key(mapKey);
             const auto             listed = std::ranges::find_if(_expectedTags, [index, key](const ExpectedTag& tag) { return tag.index == index && (key == tag.key || (key.starts_with("gr:") && key.substr(3) == tag.key)); });
             if (listed == _expectedTags.end()) {
-                if (tags_exact.value && key != tag::END_OF_STREAM.shortKey() && key != tag::END_OF_STREAM.key()) {
+                if (tags_exact.value && !isEndOfStreamKey(key)) {
                     return std::format("tag '{}' at sample {} is {}, expected no such tag", key, index, detail::describe(value));
                 }
                 continue;
@@ -430,6 +471,41 @@ Two spellings of one index that list the same tag key end the run with an error 
                 return std::format("tag '{}' at sample {} is {}", listed->key, index, detail::describeMismatch(value, listed->value));
             }
             listed->seen = true;
+        }
+        return std::nullopt;
+    }
+
+    /// Checks a tag at the index of `list` against the map at the next position of the list.
+    [[nodiscard]] std::optional<std::string> readListedTag(ExpectedList& list, const property_map& map) {
+        if (!map.empty() && std::ranges::all_of(map, [](const auto& entry) { return isEndOfStreamKey(std::string_view(entry.first)); })) {
+            return std::nullopt;
+        }
+        const std::size_t position = list.seen;
+        if (position >= list.maps.size()) {
+            return std::format("tag {} at sample {} is {}, beyond the {} tags expected there", position, list.index, pmt::Value(map), list.maps.size());
+        }
+        ++list.seen;
+        const property_map& wanted = list.maps[position];
+        for (const auto& [wantedKey, wantedValue] : wanted) {
+            auto found = map.find(wantedKey);
+            if (found == map.end()) {
+                found = map.find(std::pmr::string("gr:") + wantedKey);
+            }
+            if (found == map.end()) {
+                return std::format("tag {} at sample {} lacks key '{}', expected {}", position, list.index, std::string_view(wantedKey), detail::describe(wantedValue));
+            }
+            if (!detail::valueMatches(found->second, wantedValue)) {
+                return std::format("tag {} at sample {} key '{}' is {}", position, list.index, std::string_view(wantedKey), detail::describeMismatch(found->second, wantedValue));
+            }
+        }
+        if (tags_exact.value) {
+            for (const auto& [mapKey, value] : map) {
+                const std::string_view key(mapKey);
+                const bool             listed = wanted.contains(mapKey) || (key.starts_with("gr:") && wanted.contains(std::pmr::string(key.substr(3))));
+                if (!listed && !isEndOfStreamKey(key)) {
+                    return std::format("tag {} at sample {} key '{}' is {}, expected no such key", position, list.index, key, detail::describe(value));
+                }
+            }
         }
         return std::nullopt;
     }
