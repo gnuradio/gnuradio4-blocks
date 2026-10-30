@@ -65,7 +65,7 @@ SOFTWARE.
 #define ALWAYS_INLINE(return_type) inline return_type __attribute__((always_inline))
 #define NEVER_INLINE(return_type)  return_type __attribute__((noinline))
 #define RESTRICT                   __restrict
-#elif defined(COMPILER_MSVC)
+#elif defined(_MSC_VER)
 #define ALWAYS_INLINE(return_type) __forceinline return_type
 #define NEVER_INLINE(return_type)  __declspec(noinline) return_type
 #define RESTRICT                   __restrict
@@ -106,25 +106,25 @@ template<typename Vec>
 constexpr static ALWAYS_INLINE(auto) blend_lo2_hi1(const Vec& a, const Vec& b) noexcept {
     // takes low from 2nd arg, high from 1st (compact, FFT convention)
     // equivalent for lane 'i': out[i] = (i < 2) ? b[i] : a[i];
-    constexpr int size = Vec::size();
+    constexpr int size = static_cast<int>(Vec::size());
     return vir::simd_permute<size>(stdx::concat(b, a), [](int i) { return i < 2 ? i : i + size; });
 }
 
 template<typename Vec>
 constexpr static ALWAYS_INLINE(auto) interleave(const Vec& in1, const Vec& in2, Vec& out1, Vec& out2) noexcept {
-    constexpr int size   = Vec::size();
+    constexpr int size   = static_cast<int>(Vec::size());
     std::tie(out1, out2) = stdx::split<Vec>(vir::simd_permute(stdx::concat(in1, in2), [](int i) { return (i >> 1) + size * (i & 1); }));
 }
 
 template<typename Vec>
 constexpr static ALWAYS_INLINE(auto) uninterleave(const Vec& in1, const Vec& in2, Vec& out1, Vec& out2) noexcept {
-    constexpr int size   = Vec::size();
+    constexpr int size   = static_cast<int>(Vec::size());
     std::tie(out1, out2) = stdx::split<Vec>(vir::simd_permute(stdx::concat(in1, in2), [](int i) noexcept -> int { return (i % size) * 2 + (i / size); }));
 }
 
 template<typename Vec>
 constexpr static ALWAYS_INLINE(auto) transpose(Vec& x0, Vec& x1, Vec& x2, Vec& x3) noexcept {
-    constexpr int size          = Vec::size();
+    constexpr int size          = static_cast<int>(Vec::size());
     const auto [y0, y1, y2, y3] = stdx::split<Vec>(vir::simd_permute(stdx::concat(x0, x1, x2, x3), [](int i) noexcept -> int { return (i % size) * size + (i / size); }));
     x0                          = y0;
     x1                          = y1;

@@ -176,7 +176,7 @@ namespace windowMetrics {
 
 } // namespace windowMetrics
 
-template<typename TInput, typename TOutput, template<typename, typename> typename TAlgo>
+template<typename TInput, typename TOutput, template<typename, typename, auto...> typename TAlgo>
 struct TestTypes {
     using InType   = TInput;
     using OutType  = TOutput;
