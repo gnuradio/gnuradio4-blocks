@@ -1,6 +1,3 @@
-add_ut_test(qa_PunctureBlocks)
-target_link_libraries(qa_PunctureBlocks PRIVATE gr-fec)
-
 add_ut_test(qa_InterleaveBlocks)
 target_link_libraries(qa_InterleaveBlocks PRIVATE gr-fec)
 
@@ -27,6 +24,10 @@ gr_fec_graph_test(graph_fec_conv_encode graphs/conv-encode.yaml)
 gr_fec_graph_test(graph_fec_conv_decode graphs/conv-decode.yaml)
 gr_fec_graph_test(graph_fec_conv_records graphs/conv-records.yaml)
 gr_fec_graph_test(graph_fec_conv_settings graphs/conv-settings.yaml)
+gr_fec_graph_test(graph_fec_puncture_patterns graphs/puncture-patterns.yaml)
+gr_fec_graph_test(graph_fec_puncture_chain graphs/puncture-chain.yaml)
+gr_fec_graph_test(graph_fec_puncture_records graphs/puncture-records.yaml)
+gr_fec_graph_test(graph_fec_puncture_settings graphs/puncture-settings.yaml)
 
 # The settings graphs with one setting changed that the block accepts.
 gr_fec_graph_test(
@@ -268,6 +269,54 @@ gr_add_failing_graph_test(
   $<TARGET_FILE_DIR:GrFecBlocksShared>
   SET
   "decoder_block.termination=running")
+gr_add_failing_graph_test(
+  graph_fec_refused_puncture_empty
+  graphs/puncture-settings.yaml
+  "fec::Puncture#[0-9]+' throws: pattern has no default"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "puncture_block.pattern=\"\"")
+gr_add_failing_graph_test(
+  graph_fec_refused_depuncture_empty
+  graphs/puncture-settings.yaml
+  "fec::Depuncture#[0-9]+' throws: pattern has no default"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "depuncture_block.pattern=\"\"")
+gr_add_failing_graph_test(
+  graph_fec_refused_puncture_spelling
+  graphs/puncture-settings.yaml
+  "fec::Puncture#[0-9]+' init\\(\\) throws: pattern spells one keep or delete per coded bit as '1' or '0', got '1102'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "puncture_block.pattern=\"1102\"")
+gr_add_failing_graph_test(
+  graph_fec_refused_depuncture_spelling
+  graphs/puncture-settings.yaml
+  "fec::Depuncture#[0-9]+' init\\(\\) throws: pattern spells one keep or delete per coded bit as '1' or '0', got '11 0'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "depuncture_block.pattern=\"11 0\"")
+gr_add_failing_graph_test(
+  graph_fec_refused_puncture_none_kept
+  graphs/puncture-settings.yaml
+  "fec::Puncture#[0-9]+' init\\(\\) throws: pattern deletes every position and would carry nothing, got '0000'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "puncture_block.pattern=\"0000\"")
+gr_add_failing_graph_test(
+  graph_fec_refused_depuncture_none_kept
+  graphs/puncture-settings.yaml
+  "fec::Depuncture#[0-9]+' init\\(\\) throws: pattern deletes every position and would carry nothing, got '0'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "depuncture_block.pattern=\"0\"")
 
 # Each registration below matches the line a block prints at stop, for the totals of a run and for the counts no output
 # record carries. A block leaves out a counter at zero, so an expression that ends at the line break also requires each
@@ -503,3 +552,62 @@ gr_fec_graph_test(
   graphs/conv-records.yaml
   PASS_REGULAR_EXPRESSION
   "ViterbiDecode 'refused_step_decoder': records refused: 1")
+# The puncture pair. '1110' keeps 6 of 8 coded bits, '111001' keeps 8 of 12, and the phase chain keeps 8 of 10 in each
+# of two records. The erasure chain emits 8 values from 6. The punctured chains carry three frames of 30 information
+# bits, 72 coded bits each, which Puncture thins by its pattern and Depuncture restores to 72.
+gr_fec_graph_test(
+  graph_fec_counters_puncture_two_thirds
+  graphs/puncture-patterns.yaml
+  PASS_REGULAR_EXPRESSION
+  "Puncture 'two_thirds_puncture': records: 1, bits kept: 6\n")
+gr_fec_graph_test(
+  graph_fec_counters_puncture_three_quarters
+  graphs/puncture-patterns.yaml
+  PASS_REGULAR_EXPRESSION
+  "Puncture 'three_quarters_puncture': records: 1, bits kept: 8\n")
+gr_fec_graph_test(
+  graph_fec_counters_puncture_phase
+  graphs/puncture-patterns.yaml
+  PASS_REGULAR_EXPRESSION
+  "Puncture 'phase_puncture': records: 2, bits kept: 16\n")
+gr_fec_graph_test(
+  graph_fec_counters_depuncture_erasure
+  graphs/puncture-patterns.yaml
+  PASS_REGULAR_EXPRESSION
+  "Depuncture 'erasure_depuncture': records: 1, items emitted: 8\n")
+math(EXPR _codedBits "2 * (30 + 6)")
+math(EXPR _restored "3 * ${_codedBits}")
+set(_punctureRates two_thirds three_quarters)
+set(_punctureKeeps 3 4)
+set(_puncturePeriods 4 6)
+foreach(
+  _rate
+  _keeps
+  _period
+  IN
+  ZIP_LISTS
+  _punctureRates
+  _punctureKeeps
+  _puncturePeriods)
+  math(EXPR _kept "3 * ${_codedBits} * ${_keeps} / ${_period}")
+  gr_fec_graph_test(
+    graph_fec_counters_puncture_chain_${_rate}
+    graphs/puncture-chain.yaml
+    PASS_REGULAR_EXPRESSION
+    "Puncture '${_rate}_encode_puncture': records: 3, bits kept: ${_kept}\n")
+  gr_fec_graph_test(
+    graph_fec_counters_depuncture_chain_${_rate}
+    graphs/puncture-chain.yaml
+    PASS_REGULAR_EXPRESSION
+    "Depuncture '${_rate}_decode_depuncture': records: 3, items emitted: ${_restored}\n")
+endforeach()
+gr_fec_graph_test(
+  graph_fec_counters_refused_puncture
+  graphs/puncture-records.yaml
+  PASS_REGULAR_EXPRESSION
+  "Puncture 'refused_puncture_puncture': records: 1, bits kept: 6, records refused: 1")
+gr_fec_graph_test(
+  graph_fec_counters_refused_depuncture
+  graphs/puncture-records.yaml
+  PASS_REGULAR_EXPRESSION
+  "Depuncture 'refused_depuncture_depuncture': records: 1, items emitted: 8, records refused: 2")

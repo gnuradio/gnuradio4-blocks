@@ -1,0 +1,345 @@
+# The punctured chain under the classic K = 7 code, at both published rates. Three frames of 30 seeded bits carry a
+# `seq` key, and each terminates into 72 coded bits, a whole number of periods of both patterns. The encode chains
+# run ConvEncode into Puncture, and the sinks expect the bits the pattern keeps. The decode chains start from those
+# bits as soft values, a one at +1.0 and a zero at -1.0, and run Depuncture into ViterbiDecodeSoft. The sinks expect
+# each frame's information back in order. The corrected count equals the deleted positions that carried a one, since
+# an erasure decides to zero. The noisy chain's source holds two rate 2/3 frames, each the punctured coding of 96
+# seeded bits, as soft values with seeded Gaussian noise of standard deviation 0.4 added. Its sink expects the
+# information back, and a corrected count of those deleted ones plus the values whose sign the noise changed.
+# Written by generate_graphs.py from seed 0xD1B54A32D192ED03 ^ 0x1, and ^ 0x3 for the noisy chain's information. The
+# noise of frame i has the seed 0x2545F4914F6CDD1D plus i times 0x9E3779B97F4A7C15. Oracle: the generator's
+# convolutional encoder.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: two_thirds_encode_source
+      records:
+        0:
+          signal_values: [
+            0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1
+          ]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          signal_values: [
+            0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0
+          ]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          signal_values: [
+            1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0
+          ]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: two_thirds_encode_coder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::fec::Puncture
+    parameters:
+      name: two_thirds_encode_puncture
+      pattern: "1110"
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: two_thirds_encode_sink
+      records:
+        0:
+          signal_values: [
+            0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+            0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1
+          ]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          signal_values: [
+            0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1,
+            0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0
+          ]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          signal_values: [
+            1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1,
+            0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0
+          ]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: two_thirds_decode_source
+      records:
+        0:
+          signal_values: !!float32 [
+            -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0,
+            1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0,
+            -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0
+          ]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          signal_values: !!float32 [
+            -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0,
+            -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0,
+            1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0
+          ]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          signal_values: !!float32 [
+            1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0,
+            1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0,
+            1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0
+          ]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::fec::Depuncture
+    parameters:
+      name: two_thirds_decode_depuncture
+      pattern: "1110"
+  - id: gr::blocks::fec::ViterbiDecodeSoft
+    parameters:
+      name: two_thirds_decode_decoder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: two_thirds_decode_sink
+      records:
+        0:
+          signal_values: [
+            0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1
+          ]
+          meta_information:
+            seq: !!uint32 0
+            corrected_errors: !!uint32 7
+        1:
+          signal_values: [
+            0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0
+          ]
+          meta_information:
+            seq: !!uint32 1
+            corrected_errors: !!uint32 10
+        2:
+          signal_values: [
+            1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0
+          ]
+          meta_information:
+            seq: !!uint32 2
+            corrected_errors: !!uint32 7
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: three_quarters_encode_source
+      records:
+        0:
+          signal_values: [
+            1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1
+          ]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          signal_values: [
+            1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1
+          ]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          signal_values: [
+            0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1
+          ]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: three_quarters_encode_coder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::fec::Puncture
+    parameters:
+      name: three_quarters_encode_puncture
+      pattern: "111001"
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: three_quarters_encode_sink
+      records:
+        0:
+          signal_values: [
+            1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0,
+            1, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1
+          ]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          signal_values: [
+            1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
+            1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1
+          ]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          signal_values: [
+            0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0,
+            0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1
+          ]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: three_quarters_decode_source
+      records:
+        0:
+          signal_values: !!float32 [
+            1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0,
+            1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0,
+            -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0
+          ]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          signal_values: !!float32 [
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0,
+            1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0,
+            1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0
+          ]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          signal_values: !!float32 [
+            -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0,
+            -1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0,
+            1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0
+          ]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::fec::Depuncture
+    parameters:
+      name: three_quarters_decode_depuncture
+      pattern: "111001"
+  - id: gr::blocks::fec::ViterbiDecodeSoft
+    parameters:
+      name: three_quarters_decode_decoder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: three_quarters_decode_sink
+      records:
+        0:
+          signal_values: [
+            1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1
+          ]
+          meta_information:
+            seq: !!uint32 0
+            corrected_errors: !!uint32 12
+        1:
+          signal_values: [
+            1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1
+          ]
+          meta_information:
+            seq: !!uint32 1
+            corrected_errors: !!uint32 13
+        2:
+          signal_values: [
+            0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1
+          ]
+          meta_information:
+            seq: !!uint32 2
+            corrected_errors: !!uint32 10
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: noisy_source
+      records:
+        0:
+          signal_values: !!float32 [
+            1.3684745, 0.7042286, -1.5350305, 1.466001, 1.1511674, 1.0498278, -0.332365, -0.33739114, -0.89891243,
+            -0.56047755, -0.8088006, 1.6848423, -1.3598886, 1.1567072, -1.0042711, -1.8232224, 1.3693488,
+            -1.1507477, -0.45719266, -0.648138, -0.9771978, -1.5811882, 1.0377703, 0.76775444, 0.7597034, 0.7172093,
+            -1.7282072, 1.3078188, -1.1995617, -1.6560128, 1.0911548, 1.1827017, -0.106563956, -0.64546704,
+            1.1638473, -1.2478845, -0.40564188, -1.0164146, 0.5729219, -0.7219208, 1.5801575, 0.8839707, 1.3887706,
+            -1.0304706, 0.46802932, -1.0625685, -1.0542802, 1.1382726, 0.041549224, -0.6213117, -0.6678755,
+            0.77057534, 0.7407107, 1.1249241, -0.87238747, -1.4174479, 1.413, 0.5983901, 1.0300853, -0.32108247,
+            -1.6595242, -1.1059403, -0.43434697, 0.58107394, 1.709172, 0.98258024, 1.4296253, 1.0980704,
+            -0.036370136, 1.3398314, 1.0704813, 0.33582923, -1.1879382, 1.2658732, -1.2069722, 1.569673, 1.7452632,
+            -0.6967838, 1.0781041, 0.24995038, 1.1735777, 1.6513228, -1.0577028, 0.9124819, 0.30675784, 0.1636862,
+            -1.1083361, 1.0553406, -1.7542304, -0.8442645, 0.9084483, -1.1367341, 0.5751711, 1.219729, 0.6935932,
+            -1.433948, 1.3979694, 0.57510763, 0.6717053, 0.714466, -0.5607565, 0.20450439, 0.73284256, 1.0814887,
+            -1.5499343, 0.2238803, -1.0099791, -1.0314324, 1.4417158, 1.0065335, 1.4915116, 0.9539682, 1.0046275,
+            0.49818695, -1.6170007, 1.0942615, 1.3474283, 1.3799329, 1.0263554, 1.1574273, 1.8602244, 1.4480488,
+            -0.66208893, 1.5734555, -1.3257401, 1.5230718, -0.21104988, -0.64684385, -1.1134708, 0.7475264,
+            -1.4589055, -0.4093393, -0.9240661, 0.6708031, 1.2865626, -1.1331801, 1.3916248, -1.0315048, 0.8902405,
+            -0.78235984, -1.0623645, -0.7648449, 0.960692, -1.2412138, 1.1437618, 1.2821206, 1.0996488, 1.0330462,
+            -1.4420853, 0.8000541, -1.4639908, -0.83602136, -0.96429616
+          ]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          signal_values: !!float32 [
+            -0.82607424, -0.8161436, 0.57711315, -1.0038829, 1.2795408, 1.0755146, -1.4105474, 0.808675, -1.3843125,
+            -0.89362043, -0.7714017, -0.53788406, -0.42861518, -1.0625931, -0.9105452, -0.9478319, -0.91508704,
+            -0.38005167, -1.0506334, -1.2651417, -0.077339344, -1.076624, 0.32657072, -0.93879896, -1.1389534,
+            1.2425952, 1.1717807, 1.2339677, -1.11173, 0.90035087, 1.1396534, 0.48227483, -0.9215481, 1.3771365,
+            -1.0174176, 0.9753031, -1.502209, 0.87043697, 0.43971583, 0.80215794, -1.344824, -1.1529788, 0.24812676,
+            0.8231571, 0.41090217, 1.3398842, -1.521283, 0.38015562, 0.77261746, -0.766649, -0.9774972, -1.3344109,
+            -1.3955222, 0.7252618, 1.3076098, 1.4389046, -1.4247853, 1.3323052, 0.95110184, -0.6869067, -1.1222405,
+            0.69846076, 1.4586359, -0.9182924, -1.5148456, 0.3692311, 1.2651908, -1.0809168, 0.9307647, -1.5686648,
+            0.6348759, -1.0448995, 0.92567945, 0.94398165, 0.62616074, -0.4329416, -1.896781, 1.3747879, -1.1546549,
+            0.8760683, 1.0526989, -0.8002188, 1.2162373, 0.14922659, 0.84416634, -1.5813903, 0.9621298, -0.99652046,
+            -1.4279032, -0.8079126, 0.92958784, 0.9576146, 0.18189742, 0.69538593, -0.9704665, -1.263414,
+            -0.9146428, 0.4464475, 1.0789745, 1.1693326, -1.4360094, -1.1348398, -1.0714632, -0.929687, -1.4450125,
+            -0.79134566, -1.0131966, -1.3316094, 1.229212, -0.47284114, -1.1882166, -1.0316797, 0.245897,
+            -0.5561319, -1.3380975, 1.0352675, 0.9219964, -1.1711285, -1.5472757, -0.68923014, -1.1530402,
+            1.4393327, 1.5754052, 1.1568767, -0.59276277, 1.1036614, 1.186684, -1.1623826, 0.9014634, -0.9562374,
+            -0.102945425, -0.9945891, -1.2279869, 1.0758772, -0.8749603, -1.1452346, 0.8153596, 1.3438334,
+            0.37622124, -0.9246077, 0.26638505, -1.2430502, 0.63209224, 0.91722405, 0.89528596, 1.3771278,
+            1.1494375, 0.7922395, 0.7657806, 0.59458065, 1.5731561, -1.2654539, 1.319725
+          ]
+          meta_information:
+            seq: !!uint32 1
+  - id: gr::blocks::fec::Depuncture
+    parameters:
+      name: noisy_depuncture
+      pattern: "1110"
+  - id: gr::blocks::fec::ViterbiDecodeSoft
+    parameters:
+      name: noisy_decoder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: noisy_sink
+      records:
+        0:
+          signal_values: [
+            1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1,
+            1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1,
+            0, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0
+          ]
+          meta_information:
+            seq: !!uint32 0
+            corrected_errors: !!uint32 18
+        1:
+          signal_values: [
+            0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 0, 1,
+            0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0,
+            0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1
+          ]
+          meta_information:
+            seq: !!uint32 1
+            corrected_errors: !!uint32 31
+connections:
+  - [two_thirds_encode_source, out, two_thirds_encode_coder, in]
+  - [two_thirds_encode_coder, out, two_thirds_encode_puncture, in]
+  - [two_thirds_encode_puncture, out, two_thirds_encode_sink, in]
+  - [two_thirds_decode_source, out, two_thirds_decode_depuncture, in]
+  - [two_thirds_decode_depuncture, out, two_thirds_decode_decoder, in]
+  - [two_thirds_decode_decoder, out, two_thirds_decode_sink, in]
+  - [three_quarters_encode_source, out, three_quarters_encode_coder, in]
+  - [three_quarters_encode_coder, out, three_quarters_encode_puncture, in]
+  - [three_quarters_encode_puncture, out, three_quarters_encode_sink, in]
+  - [three_quarters_decode_source, out, three_quarters_decode_depuncture, in]
+  - [three_quarters_decode_depuncture, out, three_quarters_decode_decoder, in]
+  - [three_quarters_decode_decoder, out, three_quarters_decode_sink, in]
+  - [noisy_source, out, noisy_depuncture, in]
+  - [noisy_depuncture, out, noisy_decoder, in]
+  - [noisy_decoder, out, noisy_sink, in]
