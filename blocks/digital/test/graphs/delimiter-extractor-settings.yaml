@@ -1,0 +1,52 @@
+# DelimiterExtractor with settings it accepts and no item to process: 0xC0 over byte items with a bound of 16, the
+# flag 01111110 over bit items with a bound of 16, and the flag over float items. The run passes as written. A case
+# that changes settings through SET checks that the block refuses them, and the refusal ends the run with the block's
+# reason. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: byte_source
+      values: []
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: byte_extractor
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      max_payload_items: !!uint32 16
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: byte_out
+      records: {}
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: bit_source
+      values: []
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: bit_extractor
+      end_delimiter: "01111110"
+      max_payload_items: !!uint32 16
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bit_out
+      records: {}
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: float_source
+      values: !!float32 []
+  - id: gr::blocks::digital::DelimiterExtractor<float32>
+    parameters:
+      name: float_extractor
+      end_delimiter: "01111110"
+      max_payload_items: !!uint32 16
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: float_out
+      records: {}
+connections:
+  - [byte_source, out, byte_extractor, in]
+  - [byte_extractor, out, byte_out, in]
+  - [bit_source, out, bit_extractor, in]
+  - [bit_extractor, out, bit_out, in]
+  - [float_source, out, float_extractor, in]
+  - [float_extractor, out, float_out, in]

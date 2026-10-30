@@ -1,0 +1,97 @@
+# DelimiterExtractor over HDLC framing, bit stuffing at five ones and a bound of 1024 items. The two-frame chain
+# carries 0x3F with one stuffed zero and then 0x00 with none. Its sink expects both records with their items, start
+# index, stuffing count, sequence number, label, signal name and extent, and its reject sink expects none. The soft
+# chain carries the first frame as floats of 0.75 and -0.25, and its sink expects those values rather than the bits
+# they slice to. The pack chain assembles the first frame least significant bit first, and its sink expects the one
+# byte 0x3F, its extent and the one stuffed zero. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: two_frames_source
+      values: [
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1,
+        1, 1, 1, 1, 0
+      ]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: two_frames_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: two_frames_out
+      records:
+        0:
+          signal_values: [1, 1, 1, 1, 1, 1, 0, 0]
+          signal_names: [payload]
+          extents: [8]
+          meta_information:
+            sample_start: !!uint64 8
+            stuffing_removed: !!uint32 1
+            sequence: !!uint64 0
+            trigger_name: delimiter
+        1:
+          signal_values: [0, 0, 0, 0, 0, 0, 0, 0]
+          signal_names: [payload]
+          extents: [8]
+          meta_information:
+            sample_start: !!uint64 25
+            stuffing_removed: !!uint32 0
+            sequence: !!uint64 1
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: two_frames_reject
+      records: {}
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: soft_source
+      values: !!float32 [
+        -0.25, 0.75, 0.75, 0.75, 0.75, 0.75, 0.75, -0.25, 0.75, 0.75, 0.75, 0.75, 0.75, -0.25, 0.75, -0.25, -0.25,
+        -0.25, 0.75, 0.75, 0.75, 0.75, 0.75, 0.75, -0.25
+      ]
+  - id: gr::blocks::digital::DelimiterExtractor<float32>
+    parameters:
+      name: soft_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: soft_out
+      records:
+        0:
+          signal_values: !!float32 [
+            0.75, 0.75, 0.75, 0.75, 0.75, 0.75, -0.25, -0.25
+          ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: pack_source
+      values: [
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0
+      ]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: pack_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+      payload_pack_bits: !!uint32 8
+      payload_bit_order: LsbFirst
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: pack_out
+      records:
+        0:
+          signal_values: [63]
+          extents: [1]
+          meta_information:
+            stuffing_removed: !!uint32 1
+connections:
+  - [two_frames_source, out, two_frames_extractor, in]
+  - [two_frames_extractor, out, two_frames_out, in]
+  - [two_frames_extractor, reject, two_frames_reject, in]
+  - [soft_source, out, soft_extractor, in]
+  - [soft_extractor, out, soft_out, in]
+  - [pack_source, out, pack_extractor, in]
+  - [pack_extractor, out, pack_out, in]

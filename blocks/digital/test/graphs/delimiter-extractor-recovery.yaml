@@ -1,0 +1,86 @@
+# DelimiterExtractor abandoning a frame and recovering at the next delimiter. Abort: over HDLC framing a frame broken
+# by seven ones and then the frame 01100; the sink expects the second frame alone and the reject sink nothing.
+# Patient: the same wire with abort_ones 0, where the seven ones are payload, and the sink expects two records.
+# Restart: '$' opens and a line feed closes over byte items, and a second '$' arrives inside the first frame; the sink
+# expects the frame the second '$' opened. Each block's line at stop counts the aborts and restarts.
+# generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: abort_source
+      values: [
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1,
+        1, 1, 1, 1, 0
+      ]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: abort_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: abort_out
+      records:
+        0:
+          signal_values: [0, 1, 1, 0, 0]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: abort_reject
+      records: {}
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: patient_source
+      values: [
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1,
+        1, 1, 1, 1, 0
+      ]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: patient_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+      abort_ones: !!uint32 0
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: patient_out
+      records:
+        0: {}
+        1: {}
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: patient_reject
+      records: {}
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: restart_source
+      values: [36, 65, 66, 36, 67, 68, 10]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: restart_extractor
+      end_delimiter: "00001010"
+      start_delimiter: "00100100"
+      frame_open: start
+      bits_per_item: !!uint32 8
+      max_payload_items: !!uint32 64
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: restart_out
+      records:
+        0:
+          signal_values: [67, 68]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: restart_reject
+      records: {}
+connections:
+  - [abort_source, out, abort_extractor, in]
+  - [abort_extractor, out, abort_out, in]
+  - [abort_extractor, reject, abort_reject, in]
+  - [patient_source, out, patient_extractor, in]
+  - [patient_extractor, out, patient_out, in]
+  - [patient_extractor, reject, patient_reject, in]
+  - [restart_source, out, restart_extractor, in]
+  - [restart_extractor, out, restart_out, in]
+  - [restart_extractor, reject, restart_reject, in]
