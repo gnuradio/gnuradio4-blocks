@@ -1,0 +1,471 @@
+# CrcAppend and CrcCheck in one chain, for each of four parameter sets and both byte orders: CRC-32/ISO-HDLC,
+# CRC-16/IBM-3740, the CRC-8 of polynomial 0x07 and seed 0xFF, and CRC-64/XZ. Each source sends records of 1, 2 and 9
+# bytes: as long as the 8-bit and the 16-bit CRC, and longer than the 64-bit one. The passing sink expects each record
+# with its CRC appended, crc_ok true and the CRC it received, and the failing sink expects no record.
+# generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc32_big_source
+      records:
+        0:
+          signal_values: [173]
+        1:
+          signal_values: [118, 54]
+        2:
+          signal_values: [116, 236, 121, 207, 234, 139, 142, 21, 3]
+  - id: gr::blocks::digital::CrcAppend
+    parameters:
+      name: crc32_big_append
+      width: !!uint32 32
+      poly: !!uint64 79764919
+      initial_value: !!uint64 4294967295
+      final_xor: !!uint64 4294967295
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: big
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc32_big_check
+      width: !!uint32 32
+      poly: !!uint64 79764919
+      initial_value: !!uint64 4294967295
+      final_xor: !!uint64 4294967295
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: big
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc32_big_ok
+      records:
+        0:
+          signal_values: [173, 122, 101, 48, 216]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 2053451992
+        1:
+          signal_values: [118, 54, 247, 6, 89, 22]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 4144388374
+        2:
+          signal_values: [
+            116, 236, 121, 207, 234, 139, 142, 21, 3, 27, 92, 224, 160
+          ]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 459071648
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc32_big_fail
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc32_little_source
+      records:
+        0:
+          signal_values: [253]
+        1:
+          signal_values: [158, 31]
+        2:
+          signal_values: [255, 184, 117, 79, 25, 109, 239, 26, 222]
+  - id: gr::blocks::digital::CrcAppend
+    parameters:
+      name: crc32_little_append
+      width: !!uint32 32
+      poly: !!uint64 79764919
+      initial_value: !!uint64 4294967295
+      final_xor: !!uint64 4294967295
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: little
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc32_little_check
+      width: !!uint32 32
+      poly: !!uint64 79764919
+      initial_value: !!uint64 4294967295
+      final_xor: !!uint64 4294967295
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: little
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc32_little_ok
+      records:
+        0:
+          signal_values: [253, 44, 97, 14, 17]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 286155052
+        1:
+          signal_values: [158, 31, 158, 184, 19, 35]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 588495006
+        2:
+          signal_values: [
+            255, 184, 117, 79, 25, 109, 239, 26, 222, 122, 218, 79, 61
+          ]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 1028643450
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc32_little_fail
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc16_big_source
+      records:
+        0:
+          signal_values: [189]
+        1:
+          signal_values: [228, 19]
+        2:
+          signal_values: [63, 45, 125, 55, 245, 90, 236, 237, 82]
+  - id: gr::blocks::digital::CrcAppend
+    parameters:
+      name: crc16_big_append
+      width: !!uint32 16
+      poly: !!uint64 4129
+      initial_value: !!uint64 65535
+      final_xor: !!uint64 0
+      input_reflected: false
+      result_reflected: false
+      crc_byte_order: big
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc16_big_check
+      width: !!uint32 16
+      poly: !!uint64 4129
+      initial_value: !!uint64 65535
+      final_xor: !!uint64 0
+      input_reflected: false
+      result_reflected: false
+      crc_byte_order: big
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc16_big_ok
+      records:
+        0:
+          signal_values: [189, 151, 134]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 38790
+        1:
+          signal_values: [228, 19, 227, 43]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 58155
+        2:
+          signal_values: [63, 45, 125, 55, 245, 90, 236, 237, 82, 24, 22]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 6166
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc16_big_fail
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc16_little_source
+      records:
+        0:
+          signal_values: [246]
+        1:
+          signal_values: [9, 179]
+        2:
+          signal_values: [32, 94, 194, 185, 172, 187, 210, 13, 117]
+  - id: gr::blocks::digital::CrcAppend
+    parameters:
+      name: crc16_little_append
+      width: !!uint32 16
+      poly: !!uint64 4129
+      initial_value: !!uint64 65535
+      final_xor: !!uint64 0
+      input_reflected: false
+      result_reflected: false
+      crc_byte_order: little
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc16_little_check
+      width: !!uint32 16
+      poly: !!uint64 4129
+      initial_value: !!uint64 65535
+      final_xor: !!uint64 0
+      input_reflected: false
+      result_reflected: false
+      crc_byte_order: little
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc16_little_ok
+      records:
+        0:
+          signal_values: [246, 41, 110]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 28201
+        1:
+          signal_values: [9, 179, 47, 48]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 12335
+        2:
+          signal_values: [32, 94, 194, 185, 172, 187, 210, 13, 117, 88, 82]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 21080
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc16_little_fail
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc8_big_source
+      records:
+        0:
+          signal_values: [185]
+        1:
+          signal_values: [236, 95]
+        2:
+          signal_values: [217, 38, 18, 16, 38, 166, 121, 175, 198]
+  - id: gr::blocks::digital::CrcAppend
+    parameters:
+      name: crc8_big_append
+      width: !!uint32 8
+      poly: !!uint64 7
+      initial_value: !!uint64 255
+      final_xor: !!uint64 0
+      input_reflected: false
+      result_reflected: false
+      crc_byte_order: big
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc8_big_check
+      width: !!uint32 8
+      poly: !!uint64 7
+      initial_value: !!uint64 255
+      final_xor: !!uint64 0
+      input_reflected: false
+      result_reflected: false
+      crc_byte_order: big
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc8_big_ok
+      records:
+        0:
+          signal_values: [185, 213]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 213
+        1:
+          signal_values: [236, 95, 242]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 242
+        2:
+          signal_values: [217, 38, 18, 16, 38, 166, 121, 175, 198, 146]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 146
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc8_big_fail
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc8_little_source
+      records:
+        0:
+          signal_values: [227]
+        1:
+          signal_values: [200, 23]
+        2:
+          signal_values: [69, 115, 229, 190, 1, 169, 206, 93, 169]
+  - id: gr::blocks::digital::CrcAppend
+    parameters:
+      name: crc8_little_append
+      width: !!uint32 8
+      poly: !!uint64 7
+      initial_value: !!uint64 255
+      final_xor: !!uint64 0
+      input_reflected: false
+      result_reflected: false
+      crc_byte_order: little
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc8_little_check
+      width: !!uint32 8
+      poly: !!uint64 7
+      initial_value: !!uint64 255
+      final_xor: !!uint64 0
+      input_reflected: false
+      result_reflected: false
+      crc_byte_order: little
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc8_little_ok
+      records:
+        0:
+          signal_values: [227, 84]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 84
+        1:
+          signal_values: [200, 23, 247]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 247
+        2:
+          signal_values: [69, 115, 229, 190, 1, 169, 206, 93, 169, 34]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 34
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc8_little_fail
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc64_big_source
+      records:
+        0:
+          signal_values: [50]
+        1:
+          signal_values: [28, 128]
+        2:
+          signal_values: [99, 143, 76, 94, 48, 234, 47, 225, 38]
+  - id: gr::blocks::digital::CrcAppend
+    parameters:
+      name: crc64_big_append
+      width: !!uint32 64
+      poly: !!uint64 4823603603198064275
+      initial_value: !!uint64 18446744073709551615
+      final_xor: !!uint64 18446744073709551615
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: big
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc64_big_check
+      width: !!uint32 64
+      poly: !!uint64 4823603603198064275
+      initial_value: !!uint64 18446744073709551615
+      final_xor: !!uint64 18446744073709551615
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: big
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc64_big_ok
+      records:
+        0:
+          signal_values: [50, 109, 133, 116, 108, 63, 114, 53, 217]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 7891841930306401753
+        1:
+          signal_values: [28, 128, 122, 103, 21, 82, 98, 62, 115, 93]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 8820041838808167261
+        2:
+          signal_values: [
+            99, 143, 76, 94, 48, 234, 47, 225, 38, 98, 70, 216, 146, 107, 248, 114, 19
+          ]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 7081585587474952723
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc64_big_fail
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: crc64_little_source
+      records:
+        0:
+          signal_values: [250]
+        1:
+          signal_values: [117, 181]
+        2:
+          signal_values: [68, 182, 191, 18, 12, 18, 26, 28, 178]
+  - id: gr::blocks::digital::CrcAppend
+    parameters:
+      name: crc64_little_append
+      width: !!uint32 64
+      poly: !!uint64 4823603603198064275
+      initial_value: !!uint64 18446744073709551615
+      final_xor: !!uint64 18446744073709551615
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: little
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: crc64_little_check
+      width: !!uint32 64
+      poly: !!uint64 4823603603198064275
+      initial_value: !!uint64 18446744073709551615
+      final_xor: !!uint64 18446744073709551615
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: little
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc64_little_ok
+      records:
+        0:
+          signal_values: [250, 92, 1, 40, 252, 58, 143, 254, 55]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 4034819799671898460
+        1:
+          signal_values: [117, 181, 148, 114, 253, 196, 148, 37, 103, 177]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 12783227388204774036
+        2:
+          signal_values: [
+            68, 182, 191, 18, 12, 18, 26, 28, 178, 44, 83, 136, 29, 181, 82, 160, 37
+          ]
+          meta_information:
+            crc_ok: true
+            crc_value: !!uint64 2711257913515070252
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: crc64_little_fail
+      records: {}
+connections:
+  - [crc32_big_source, out, crc32_big_append, in]
+  - [crc32_big_append, out, crc32_big_check, in]
+  - [crc32_big_check, ok, crc32_big_ok, in]
+  - [crc32_big_check, fail, crc32_big_fail, in]
+  - [crc32_little_source, out, crc32_little_append, in]
+  - [crc32_little_append, out, crc32_little_check, in]
+  - [crc32_little_check, ok, crc32_little_ok, in]
+  - [crc32_little_check, fail, crc32_little_fail, in]
+  - [crc16_big_source, out, crc16_big_append, in]
+  - [crc16_big_append, out, crc16_big_check, in]
+  - [crc16_big_check, ok, crc16_big_ok, in]
+  - [crc16_big_check, fail, crc16_big_fail, in]
+  - [crc16_little_source, out, crc16_little_append, in]
+  - [crc16_little_append, out, crc16_little_check, in]
+  - [crc16_little_check, ok, crc16_little_ok, in]
+  - [crc16_little_check, fail, crc16_little_fail, in]
+  - [crc8_big_source, out, crc8_big_append, in]
+  - [crc8_big_append, out, crc8_big_check, in]
+  - [crc8_big_check, ok, crc8_big_ok, in]
+  - [crc8_big_check, fail, crc8_big_fail, in]
+  - [crc8_little_source, out, crc8_little_append, in]
+  - [crc8_little_append, out, crc8_little_check, in]
+  - [crc8_little_check, ok, crc8_little_ok, in]
+  - [crc8_little_check, fail, crc8_little_fail, in]
+  - [crc64_big_source, out, crc64_big_append, in]
+  - [crc64_big_append, out, crc64_big_check, in]
+  - [crc64_big_check, ok, crc64_big_ok, in]
+  - [crc64_big_check, fail, crc64_big_fail, in]
+  - [crc64_little_source, out, crc64_little_append, in]
+  - [crc64_little_append, out, crc64_little_check, in]
+  - [crc64_little_check, ok, crc64_little_ok, in]
+  - [crc64_little_check, fail, crc64_little_fail, in]

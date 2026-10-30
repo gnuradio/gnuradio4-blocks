@@ -1,0 +1,31 @@
+# CrcAppend fed a record of 8 bytes that names two signals. The block refuses to read two signals as one byte array,
+# and the refusal ends the run with the block's reason. The sink expects the record a single signal of those bytes
+# would become. A block that stopped refusing would then run to the end, and the exit case of the pair would fail.
+# generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: multi_source
+      records:
+        0:
+          signal_values: [51, 51, 51, 51, 51, 51, 51, 51]
+          signal_names: [payload, second]
+  - id: gr::blocks::digital::CrcAppend
+    parameters:
+      name: multi_append
+      width: !!uint32 32
+      poly: !!uint64 79764919
+      initial_value: !!uint64 4294967295
+      final_xor: !!uint64 4294967295
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: big
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: multi_sink
+      records:
+        0:
+          signal_values: [51, 51, 51, 51, 51, 51, 51, 51, 28, 140, 139, 205]
+connections:
+  - [multi_source, out, multi_append, in]
+  - [multi_append, out, multi_sink, in]

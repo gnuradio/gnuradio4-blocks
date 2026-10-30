@@ -1,0 +1,36 @@
+# CrcAppend and CrcCheck at their default settings, CRC-32/ISO-HDLC, each with no record to process. The run passes as
+# written. A case that changes settings through SET either runs to the end with settings the block accepts or ends
+# with the block's reason for refusing them. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: append_source
+      records: {}
+  - id: gr::blocks::digital::CrcAppend
+    parameters:
+      name: append_block
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: append_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: check_source
+      records: {}
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: check_block
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: check_ok
+      records: {}
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: check_fail
+      records: {}
+connections:
+  - [append_source, out, append_block, in]
+  - [append_block, out, append_sink, in]
+  - [check_source, out, check_block, in]
+  - [check_block, ok, check_ok, in]
+  - [check_block, fail, check_fail, in]
