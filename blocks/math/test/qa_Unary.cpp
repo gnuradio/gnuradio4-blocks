@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -36,10 +37,9 @@ template<typename TBlock, typename T>
     return output;
 }
 
-/// @brief The output of one simd call per vector, over the input padded with zeros to whole vectors.
-template<typename TBlock, typename T>
-[[nodiscard]] std::vector<T> simdPath(const TBlock& block, std::span<const T> input) {
-    using V                  = vir::stdx::native_simd<T>;
+/// @brief The output of one call per vector of type `V`, over the input padded with zeros to whole vectors.
+template<typename V, typename TBlock, typename T>
+[[nodiscard]] std::vector<T> simdPathOf(const TBlock& block, std::span<const T> input) {
     const std::size_t padded = (input.size() + V::size() - 1UZ) / V::size() * V::size();
     std::vector<T>    in(padded, T{0});
     std::ranges::copy(input, in.begin());
@@ -49,6 +49,12 @@ template<typename TBlock, typename T>
     }
     out.resize(input.size());
     return out;
+}
+
+/// @brief The output of one simd call per native vector, over the input padded with zeros to whole vectors.
+template<typename TBlock, typename T>
+[[nodiscard]] std::vector<T> simdPath(const TBlock& block, std::span<const T> input) {
+    return simdPathOf<vir::stdx::native_simd<T>>(block, input);
 }
 
 /// @brief Two vectors and three samples of the values at the ends of `T`, the minimum first and the maximum last.
@@ -72,7 +78,65 @@ template<typename T>
     return {{{T{1}, T{0}}, {T{1}, T{1}}, {T{-1}, L::min()}, {static_cast<T>(L::max() / 3), L::max()}}};
 }
 
+/// @brief Signed zeros, halves either side of an integer, the smallest magnitude from which every value is an integer,
+/// the normal and subnormal minimums, the largest finite values, the infinities and a NaN: the inputs where a vector
+/// rounding function or square root most often departs from the C library.
+template<std::floating_point T>
+[[nodiscard]] std::vector<T> exactInput() {
+    using L                         = std::numeric_limits<T>;
+    const T           integralLimit = T(1) / L::epsilon(); // 2^23 for float32, 2^52 for float64: every larger value is an integer
+    std::vector<T>    input{T(0), T(0.25), T(0.5), std::nextafter(T(0.5), T(0)), T(1), T(1.5), T(2), T(2.5), T(3.5), T(4), T(1e6) + T(0.5), integralLimit - T(0.5), integralLimit, integralLimit + T(1), L::min(), L::denorm_min(), L::max(), L::infinity(), L::quiet_NaN()};
+    const std::size_t positive = input.size();
+    for (std::size_t i = 0UZ; i < positive; ++i) {
+        input.push_back(-input[i]);
+    }
+    return input;
+}
+
+/// @brief True for two equal values of the same sign and for two NaNs.
+template<std::floating_point T>
+[[nodiscard]] bool sameValue(T a, T b) {
+    return (std::isnan(a) && std::isnan(b)) || (a == b && std::signbit(a) == std::signbit(b));
+}
+
+/// @brief The number of samples where `output` is not the same value as `reference` applied to `input`.
+template<typename T, typename F>
+[[nodiscard]] std::size_t mismatchCount(std::span<const T> input, const std::vector<T>& output, F reference) {
+    std::size_t mismatches = 0UZ;
+    for (std::size_t i = 0UZ; i < input.size(); ++i) {
+        mismatches += static_cast<std::size_t>(!sameValue(output[i], reference(input[i])));
+    }
+    return mismatches;
+}
+
+/// @brief The mismatches of the scalar call, the native simd call and the 32-wide simd call (the widest the scheduler
+/// runs) of a block made from `TBlock` against `reference`, over `exactInput`.
+template<typename TBlock, typename T, typename F>
+[[nodiscard]] std::size_t exactMismatches(F reference) {
+    static_assert(TBlock::kSimdPath);
+    TBlock block;
+    applySettings(block);
+    const std::vector<T>     input = exactInput<T>();
+    const std::span<const T> in(input);
+    return mismatchCount(in, scalarPath(block, in), reference) + mismatchCount(in, simdPathOf<vir::stdx::native_simd<T>>(block, in), reference) + mismatchCount(in, simdPathOf<vir::stdx::fixed_size_simd<T, 32>>(block, in), reference);
+}
+
 } // namespace
+
+const boost::ut::suite<"Unary exact simd"> unaryExactSimd = [] {
+    using namespace boost::ut;
+    using namespace gr::blocks::math;
+
+    // IEEE 754 defines the square root as correctly rounded and the rounding functions as exact, so the error bound of
+    // every call is zero: each output is the C library's value, with the sign of a zero and a NaN for a NaN.
+    "Sqrt, Floor, Ceil, Round and Sign give the C library's value in every call"_test = []<typename T>(const T&) {
+        expect(eq(exactMismatches<Sqrt<T>, T>([](T x) { return std::sqrt(x); }), 0UZ)) << "Sqrt";
+        expect(eq(exactMismatches<Floor<T>, T>([](T x) { return std::floor(x); }), 0UZ)) << "Floor";
+        expect(eq(exactMismatches<Ceil<T>, T>([](T x) { return std::ceil(x); }), 0UZ)) << "Ceil";
+        expect(eq(exactMismatches<Round<T>, T>([](T x) { return std::round(x); }), 0UZ)) << "Round";
+        expect(eq(exactMismatches<Sign<T>, T>([](T x) { return x > T(0) ? T(1) : (x < T(0) ? T(-1) : x); }), 0UZ)) << "Sign";
+    } | std::tuple<float, double>{};
+};
 
 const boost::ut::suite<"Unary integer wrap"> unaryWrap = [] {
     using namespace boost::ut;
