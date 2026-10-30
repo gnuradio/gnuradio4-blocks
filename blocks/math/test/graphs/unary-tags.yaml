@@ -5,18 +5,18 @@
 #   Negate<complex<float32>> rotates the carrier by pi: it drops phase_est, keeps freq_est.
 #   Negate<float32> has a real output: it keeps phase_est.
 blocks:
-  - id: gr::blocks::testing::VectorSource<complex<float32>>
+  - id: gr::blocks::basic::VectorSource<complex<float32>>
     parameters:
       name: complex_source
       values: !!complex32
         - (1.0, 2.0)
         - (3.0, 4.0)
         - (5.0, 6.0)
-      tag_indices: !!uint32 [1]
-      tag_map:
-        phase_est: 0.5
-        freq_est: 0.1
-        mark: frame
+      tags:
+        "1":
+          phase_est: 0.5
+          freq_est: 0.1
+          mark: frame
   - id: gr::blocks::math::Conjugate<complex<float32>>
     parameters:
       name: conjugate
@@ -93,15 +93,15 @@ blocks:
         - (-5.0, -6.0)
       tag_key: freq_est
       tag_indices: !!uint32 [1]
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: real_source
       values: !!float32 [1.0, 2.0, 3.0]
-      tag_indices: !!uint32 [1]
-      tag_map:
-        phase_est: 0.5
-        freq_est: 0.1
-        mark: frame
+      tags:
+        "1":
+          phase_est: 0.5
+          freq_est: 0.1
+          mark: frame
   - id: gr::blocks::math::Negate<float32>
     parameters:
       name: negate_real

@@ -4,7 +4,7 @@
 # probe_c32 keeps the default interval and does not measure in this run. The run passes when the graph ends on its
 # own.
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source_f32
       values: !!float32 [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
@@ -18,7 +18,7 @@ blocks:
     parameters:
       name: probe_f32
       min_update_ms: !!float32 0.0
-  - id: gr::blocks::testing::VectorSource<complex<float32>>
+  - id: gr::blocks::basic::VectorSource<complex<float32>>
     parameters:
       name: source_c32
       values: !!complex32

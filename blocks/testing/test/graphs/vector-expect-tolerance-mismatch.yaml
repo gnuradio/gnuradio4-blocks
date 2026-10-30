@@ -2,7 +2,7 @@
 # against 102.0 with a relative tolerance of 0.01. The run must end with an error naming sample 0. The
 # test registering this graph passes on the text of that error.
 blocks:
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source
       values: [100.0]

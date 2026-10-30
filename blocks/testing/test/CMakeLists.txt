@@ -15,7 +15,7 @@ add_ut_test(qa_UI_Integration)
 target_link_libraries(qa_UI_Integration PRIVATE gr-testing gr-basic gnuradio-algorithm)
 
 add_ut_test(qa_GraphTestBlocks)
-target_link_libraries(qa_GraphTestBlocks PRIVATE gr-testing)
+target_link_libraries(qa_GraphTestBlocks PRIVATE gr-basic gr-testing)
 
 gr_add_graph_test(graph_testing_vector_expect graphs/vector-expect.yaml)
 gr_add_graph_test(

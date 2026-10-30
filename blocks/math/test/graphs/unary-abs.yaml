@@ -4,7 +4,7 @@
 #   int32: -100000 0 3    -> 100000 0 3
 #   real:  -1.5 0 2.25    -> 1.5 0 2.25
 blocks:
-  - id: gr::blocks::testing::VectorSource<uint8>
+  - id: gr::blocks::basic::VectorSource<uint8>
     parameters:
       name: source_u8
       values: [0, 1, 200]
@@ -15,7 +15,7 @@ blocks:
     parameters:
       name: sink_u8
       expected: [0, 1, 200]
-  - id: gr::blocks::testing::VectorSource<int16>
+  - id: gr::blocks::basic::VectorSource<int16>
     parameters:
       name: source_i16
       values: [-5, 0, 7]
@@ -26,7 +26,7 @@ blocks:
     parameters:
       name: sink_i16
       expected: [5, 0, 7]
-  - id: gr::blocks::testing::VectorSource<int32>
+  - id: gr::blocks::basic::VectorSource<int32>
     parameters:
       name: source_i32
       values: [-100000, 0, 3]
@@ -37,7 +37,7 @@ blocks:
     parameters:
       name: sink_i32
       expected: [100000, 0, 3]
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source_f32
       values: !!float32 [-1.5, 0.0, 2.25]
@@ -48,7 +48,7 @@ blocks:
     parameters:
       name: sink_f32
       expected: !!float32 [1.5, 0.0, 2.25]
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
       values: !!float64 [-1.5, 0.0, 2.25]

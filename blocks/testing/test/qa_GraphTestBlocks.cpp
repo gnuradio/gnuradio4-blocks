@@ -3,15 +3,14 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <span>
 #include <string>
 #include <vector>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/basic/VectorSource.hpp>
 #include <gnuradio-4.0/testing/GraphTestBlocks.hpp>
-#include <gnuradio-4.0/testing/TestSpans.hpp>
 
 namespace {
 
@@ -102,10 +101,10 @@ const boost::ut::suite<"ExpectSink"> expectSinkTests = [] {
 const boost::ut::suite<"ExpectSink expected_tags"> expectedTagsTests = [] {
     using namespace boost::ut;
     using gr::property_map;
-    using gr::blocks::testing::VectorSource;
+    using gr::blocks::basic::VectorSource;
     const std::vector<float> oneToFour{1.f, 2.f, 3.f, 4.f};
     const property_map       frameTag{{"mark", std::string("frame")}, {"level", std::int64_t(3)}};
-    const property_map       source{{"values", oneToFour}, {"tag_indices", std::vector<gr::Size_t>{1U, 3U}}, {"tag_map", frameTag}};
+    const property_map       source{{"values", oneToFour}, {"tags", property_map{{"1", frameTag}, {"3", frameTag}}}};
 
     "two tags match exactly and the end-of-stream tag passes tags_exact"_test = [&] {
         const std::string error = runIntoSink<float, VectorSource>(source, //
@@ -134,7 +133,7 @@ const boost::ut::suite<"ExpectSink expected_tags"> expectedTagsTests = [] {
 
     "a numeric value is compared in the type of the expected value"_test = [&] {
         const auto runWithLevel = [&](gr::pmt::Value level, gr::pmt::Value expectedLevel) {
-            return runIntoSink<float, VectorSource>(property_map{{"values", oneToFour}, {"tag_indices", std::vector<gr::Size_t>{1U}}, {"tag_map", property_map{{"level", level}}}}, //
+            return runIntoSink<float, VectorSource>(property_map{{"values", oneToFour}, {"tags", property_map{{"1", property_map{{"level", level}}}}}}, //
                 property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", property_map{{"level", expectedLevel}}}}}});
         };
         const std::string widened = runWithLevel(gr::pmt::Value(gr::Size_t(3)), gr::pmt::Value(std::int64_t(3)));
@@ -189,22 +188,6 @@ const boost::ut::suite<"ExpectSink expected_tags"> expectedTagsTests = [] {
         const std::string error = runIntoSink<float, VectorSource>(source, //
             property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"one", frameTag}}}});
         expect(error.contains("expected_tags key 'one' is not a sample index")) << error;
-    };
-};
-
-const boost::ut::suite<"VectorSource"> vectorSourceTests = [] {
-    using namespace boost::ut;
-
-    "values shorter than the emitted count end the stream with nothing emitted"_test = [] {
-        gr::blocks::testing::VectorSource<float> source;
-        source.values   = std::vector<float>{1.f, 2.f, 3.f};
-        source._emitted = 5UZ;
-        std::vector<float>                           buffer(4UZ, 0.f);
-        gr::blocks::testing::span::OutputSpan<float> outSpan{std::span<float>(buffer)};
-        const gr::work::Status                       status = source.processBulk(outSpan);
-        expect(status == gr::work::Status::DONE);
-        expect(eq(outSpan.count, 0UZ));
-        expect(eq(source._emitted, 5UZ));
     };
 };
 

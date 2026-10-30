@@ -1,0 +1,48 @@
+# VectorSource tags into ExpectSink. The first source publishes one tag at sample 0, two tags at sample 1 and one at the
+# sample count, the end-of-stream index. Its sink expects each key at its index and no other key. The second source
+# publishes the tag of its first pass on all three passes. The run passes when every sink receives exactly its
+# expected samples and tags.
+blocks:
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: source_tags
+      values: [1.0, 2.0, 3.0]
+      tags:
+        "0":
+          mark: first
+        "1":
+          - level: !!uint32 3
+          - gate: open
+        "3":
+          mark: end
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_tags
+      expected: [1.0, 2.0, 3.0]
+      expected_tags:
+        "0":
+          mark: first
+        "1":
+          level: !!uint32 3
+          gate: open
+        "3":
+          mark: end
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: source_repeated
+      values: [1.0, 2.0]
+      repeat: !!uint64 3
+      repeat_tags: true
+      tags:
+        "1":
+          mark: second
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink_repeated
+      expected: [1.0, 2.0, 1.0, 2.0, 1.0, 2.0]
+      tag_key: mark
+      tag_indices: !!uint32 [1, 3, 5]
+connections:
+  - [source_tags, out, sink_tags, in]
+  - [source_repeated, out, sink_repeated, in]

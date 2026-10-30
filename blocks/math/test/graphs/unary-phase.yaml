@@ -1,7 +1,7 @@
 # Phase: out = arg(in) in radians, complex in, float32 out.
 #   (1,0) (0,1) (-1,0) (0,-1) (1,1) -> 0 pi/2 pi -pi/2 pi/4
 blocks:
-  - id: gr::blocks::testing::VectorSource<complex<float32>>
+  - id: gr::blocks::basic::VectorSource<complex<float32>>
     parameters:
       name: source_c32
       values: !!complex32

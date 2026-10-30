@@ -25,55 +25,7 @@
 
 namespace gr::blocks::testing {
 
-GR_REGISTER_BLOCK(gr::blocks::testing::VectorSource, [T], [ uint8_t, int16_t, int32_t, float, double, std::complex<float> ])
-
-template<typename T>
-struct VectorSource : Block<VectorSource<T>> {
-    using Description = Doc<R""(@brief Emits the samples of `values` in order and then ends the stream.
-
-The whole of `values` is emitted `repeat` times. An empty `values` ends the stream at once.
-The block publishes `tag_map` as a tag at every sample index in `tag_indices` below the sample count.
-An empty `tag_map` publishes no tag.
-)"">;
-
-    PortOut<T> out;
-
-    Annotated<std::vector<T>, "values", Doc<"samples to emit, in order">>                       values{};
-    Annotated<gr::Size_t, "repeat", Doc<"number of passes over the values">>                    repeat = 1U;
-    Annotated<std::vector<gr::Size_t>, "tag_indices", Doc<"sample indices that carry tag_map">> tag_indices{};
-    Annotated<property_map, "tag_map", Doc<"keys and values of the published tag">>             tag_map{};
-
-    GR_MAKE_REFLECTABLE(VectorSource, out, values, repeat, tag_indices, tag_map);
-
-    std::size_t _emitted = 0UZ;
-
-    void start() { _emitted = 0UZ; }
-
-    [[nodiscard]] work::Status processBulk(OutputSpanLike auto& outSpan) {
-        const std::size_t nValues = values->size();
-        const std::size_t total   = nValues * static_cast<std::size_t>(repeat.value);
-        const std::size_t n       = std::min(outSpan.size(), total > _emitted ? total - _emitted : 0UZ);
-        for (std::size_t i = 0UZ; i < n; ++i) {
-            outSpan[i] = values.value[(_emitted + i) % nValues];
-        }
-        if (!tag_map->empty()) {
-            std::vector<gr::Size_t> indices = tag_indices.value;
-            std::ranges::sort(indices);
-            indices.erase(std::ranges::unique(indices).begin(), indices.end());
-            for (const gr::Size_t tagIndex : indices) {
-                const std::size_t index = static_cast<std::size_t>(tagIndex);
-                if (index >= _emitted && index < _emitted + n) {
-                    outSpan.publishTag(tag_map.value, index - _emitted);
-                }
-            }
-        }
-        outSpan.publish(n);
-        _emitted += n;
-        return _emitted >= total ? work::Status::DONE : work::Status::OK;
-    }
-};
-
-GR_REGISTER_BLOCK(gr::blocks::testing::ExpectSink, [T], [ uint8_t, int16_t, int32_t, uint32_t, float, double, std::complex<float> ])
+GR_REGISTER_BLOCK(gr::blocks::testing::ExpectSink, [T], [ uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double, std::complex<float>, std::complex<double> ])
 
 template<typename T>
 struct ExpectSink : Block<ExpectSink<T>> {
