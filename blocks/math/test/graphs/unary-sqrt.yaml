@@ -1,7 +1,7 @@
 # Sqrt: out = sqrt(in), NaN for a negative sample.
 #   0 0.25 4 2 -1 -> 0 0.5 2 1.4142135623730951 NaN
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source_f32
       values: !!float32 [0.0, 0.25, 4.0, 2.0, -1.0]
@@ -14,7 +14,7 @@ blocks:
       expected: !!float32 [0.0, 0.5, 2.0, 1.4142135623730951, .nan]
       relative_tolerance: 1e-6
       tolerance: 1e-6
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
       values: !!float64 [0.0, 0.25, 4.0, 2.0, -1.0]

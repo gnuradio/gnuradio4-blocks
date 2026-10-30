@@ -2,7 +2,7 @@
 #   real:    -2 0 4 0.5          -> -0.5 0 0.25 2
 #   complex: (0,1) (0,0) (1,1)   -> (0,-1) (0,0) (0.5,-0.5), since 1/j = -j and 1/(1+j) = (1-j)/2
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source_f32
       values: !!float32 [-2.0, 0.0, 4.0, 0.5]
@@ -13,7 +13,7 @@ blocks:
     parameters:
       name: sink_f32
       expected: !!float32 [-0.5, 0.0, 0.25, 2.0]
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
       values: !!float64 [-2.0, 0.0, 4.0, 0.5]
@@ -24,7 +24,7 @@ blocks:
     parameters:
       name: sink_f64
       expected: !!float64 [-0.5, 0.0, 0.25, 2.0]
-  - id: gr::blocks::testing::VectorSource<complex<float32>>
+  - id: gr::blocks::basic::VectorSource<complex<float32>>
     parameters:
       name: source_c32
       values: !!complex32

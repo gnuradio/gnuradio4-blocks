@@ -1,7 +1,7 @@
 # Tan: out = tan(in), in radians.
 #   0 pi/4 -pi/4 atan(2) -> 0 1 -1 2
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source_f32
       values: !!float32
@@ -18,7 +18,7 @@ blocks:
       expected: !!float32 [0.0, 1.0, -1.0, 2.0]
       relative_tolerance: 1e-5
       tolerance: 1e-6
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
       values: !!float64

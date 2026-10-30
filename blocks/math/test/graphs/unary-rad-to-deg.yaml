@@ -1,7 +1,7 @@
 # RadToDeg: out = (in / pi) * 180.
 #   0 pi/2 -pi 1 -> 0 90 -180 57.29577951308232
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source_f32
       values: !!float32 [0.0, 1.5707963267948966, -3.141592653589793, 1.0]
@@ -14,7 +14,7 @@ blocks:
       expected: !!float32 [0.0, 90.0, -180.0, 57.29577951308232]
       relative_tolerance: 1e-6
       tolerance: 1e-6
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
       values: !!float64 [0.0, 1.5707963267948966, -3.141592653589793, 1.0]

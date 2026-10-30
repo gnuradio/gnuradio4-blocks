@@ -3,7 +3,7 @@ target_link_libraries(qa_BasicFileIo PRIVATE gr-fileio gr-basic gr-testing)
 if(NOT EMSCRIPTEN)
   # under node a poll from a worker thread does not return while the main thread blocks
   add_ut_test(qa_FdIo)
-  target_link_libraries(qa_FdIo PRIVATE gr-fileio gr-testing)
+  target_link_libraries(qa_FdIo PRIVATE gr-basic gr-fileio gr-testing)
 endif()
 add_ut_test(qa_WavFile)
 target_link_libraries(qa_WavFile PRIVATE gr-fileio gr-testing)

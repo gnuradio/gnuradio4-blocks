@@ -2,7 +2,7 @@
 # 3.0 against 3.5 with a tolerance of 0.25. The run must end with an error naming sample 2. The test
 # registering this graph passes on the text of that error.
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source
       values: [1.0, 2.0, 3.0, 4.0]

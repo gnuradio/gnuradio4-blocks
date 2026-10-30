@@ -5,14 +5,17 @@
 # tag at sample 3, one past the last sample. The run passes when every sink receives its samples and its
 # listed tags.
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source
       values: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-      tag_indices: !!uint32 [1, 4]
-      tag_map:
-        mark: frame
-        level: !!uint32 3
+      tags:
+        "1":
+          mark: frame
+          level: !!uint32 3
+        "4":
+          mark: frame
+          level: !!uint32 3
   - id: gr::blocks::testing::ExpectSink<float32>
     parameters:
       name: tagged
@@ -25,7 +28,7 @@ blocks:
           mark: frame
           level: 3
       tags_exact: true
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: plain
       values: [1.0, 2.0, 3.0]

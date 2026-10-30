@@ -40,6 +40,7 @@ add_basic_test(qa_PacketToDataSet)
 # the chain case runs the converted records into CrcCheck, so it needs the digital headers too
 target_link_libraries(qa_PacketToDataSet PRIVATE gr-digital)
 add_basic_test(qa_SyncBlock)
+add_basic_test(qa_VectorSource)
 
 if(PYTHON_AVAILABLE)
   add_basic_test(qa_PythonBlock)
@@ -62,6 +63,7 @@ gr_add_graph_test(
   $<TARGET_FILE_DIR:GrBasicBlocksShared>)
 
 gr_add_graph_test(graph_basic_null_head_expect graphs/null-head-expect.yaml)
+gr_add_graph_test(graph_basic_vector_source_expect graphs/vector-source-expect.yaml)
 
 # the graph names a basic block, and the case loads the basic plugin beside the testing one
 if(TARGET GrBasicBlocksShared)
