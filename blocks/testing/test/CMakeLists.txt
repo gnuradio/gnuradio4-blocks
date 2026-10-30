@@ -211,3 +211,77 @@ gr_add_failing_graph_test(
   "key 'flag' is true \\(bool\\), expected 1 \\(int64\\)"
   SET
   "sink.records={0: {meta_information: {flag: 1}}}")
+
+gr_add_graph_test(graph_testing_vector_tags graphs/vector-tags.yaml)
+gr_add_failing_graph_test(graph_testing_vector_tags_split graphs/vector-tags-split.yaml
+                          "sample 1 carries 1 tags, expected 2")
+gr_add_failing_graph_test(
+  graph_testing_vector_tags_joined
+  graphs/vector-tags-split.yaml
+  "tag 0 at sample 1 lacks key 'gate', expected \"open\""
+  SET
+  "source.tags={1: [{level: 3}, {gate: open}]}"
+  "sink.expected_tags={1: [{level: 3, gate: open}]}")
+gr_add_failing_graph_test(
+  graph_testing_vector_tags_beyond
+  graphs/vector-tags-split.yaml
+  "tag 1 at sample 1 is [^,]*, beyond the 1 tags expected there"
+  SET
+  "source.tags={1: [{level: 3}, {gate: open}]}"
+  "sink.expected_tags={1: [{level: 3}]}")
+gr_add_failing_graph_test(
+  graph_testing_vector_tags_value
+  graphs/vector-tags-split.yaml
+  "tag 0 at sample 1 key 'level' is 3, expected 4"
+  SET
+  "source.tags={1: [{level: 3}, {gate: open}]}"
+  "sink.expected_tags={1: [{level: 4}, {gate: open}]}")
+gr_add_failing_graph_test(
+  graph_testing_vector_tags_exact
+  graphs/vector-tags-split.yaml
+  "tag 0 at sample 1 key 'extra' is \"x\", expected no such key"
+  SET
+  "source.tags={1: [{level: 3, extra: x}, {gate: open}]}"
+  "sink.expected_tags={1: [{level: 3}, {gate: open}]}"
+  "sink.tags_exact=true")
+gr_add_failing_graph_test(graph_testing_vector_tags_past graphs/vector-tags-invalid.yaml
+                          "tags entry at sample 5 is past the 4 samples")
+gr_add_failing_graph_test(
+  graph_testing_vector_tags_key
+  graphs/vector-tags-invalid.yaml
+  "tags key 'x' is not a sample index"
+  SET
+  "source.tags={x: {mark: a}}")
+gr_add_failing_graph_test(
+  graph_testing_vector_tags_entry
+  graphs/vector-tags-invalid.yaml
+  "tags entry at 1 is 5, expected a map or a list of maps"
+  SET
+  "source.tags={1: 5}")
+gr_add_failing_graph_test(
+  graph_testing_vector_tags_list
+  graphs/vector-tags-invalid.yaml
+  "tags entry at 1 holds 5, expected a map"
+  SET
+  "source.tags={1: [5]}")
+gr_add_failing_graph_test(
+  graph_testing_vector_tags_expected_list
+  graphs/vector-tags-invalid.yaml
+  "expected_tags entry at sample 1 holds 5, expected a map of tag keys and values"
+  SET
+  "source.tags={}"
+  "sink.expected_tags={1: [5]}")
+gr_add_failing_graph_test(
+  graph_testing_vector_tags_expected_spelling
+  graphs/vector-tags-invalid.yaml
+  "expected_tags keys '0?1' and '0?1' both name sample 1"
+  SET
+  "source.tags={}"
+  "sink.expected_tags={1: [{a: x}], 01: {b: y}}")
+gr_add_failing_graph_test(
+  graph_testing_vector_tags_expected_spelling_maps
+  graphs/vector-tags-invalid.yaml
+  "expected_tags keys '0?1' and '0?1' both name sample 1"
+  SET
+  "source.tags={}"
+  "sink.expected_tags={1: {a: x}, 01: {b: y}}")

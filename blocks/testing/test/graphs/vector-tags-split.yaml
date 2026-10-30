@@ -1,0 +1,23 @@
+# basic::VectorSource publishing one tag with two keys at sample 1 into an ExpectSink that expects two tags there, one
+# key each. The run must end with an error naming the index and both tag counts, and with a nonzero exit status. The
+# tests registering this graph also publish two tags against a list of one tag with both keys, two tags against a
+# list of one tag, a wrong value, and a key the list does not name under `tags_exact`.
+blocks:
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: source
+      values: [1.0, 2.0, 3.0]
+      tags:
+        "1":
+          level: !!uint32 3
+          gate: open
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink
+      expected: [1.0, 2.0, 3.0]
+      expected_tags:
+        "1":
+          - level: !!uint32 3
+          - gate: open
+connections:
+  - [source, out, sink, in]
