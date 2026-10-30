@@ -13,6 +13,7 @@
 #include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/Tensor.hpp>
 
+#include <gnuradio-4.0/algorithm/dataset/DataSetRecords.hpp>
 #include <gnuradio-4.0/algorithm/dataset/IndexedMaps.hpp>
 
 namespace {
@@ -29,6 +30,11 @@ gr::pmt::Value listOf(std::initializer_list<property_map> maps) {
 
 std::string readError(const property_map& entries) {
     const auto read = gr::dataset::readIndexedMaps<std::uint64_t>(entries, "tags", "a sample index");
+    return read.has_value() ? std::string{} : read.error();
+}
+
+std::string recordError(const property_map& fields) {
+    const auto read = gr::dataset::readDataSetRecord<std::uint8_t>(3UZ, fields);
     return read.has_value() ? std::string{} : read.error();
 }
 
@@ -90,6 +96,81 @@ const boost::ut::suite<"index-keyed maps"> indexedMapsTests = [] {
         expect((*read)[1].map == first);
         expect((*read)[2].map == second);
         expect((*read)[3].map == third);
+    };
+};
+
+const boost::ut::suite<"DataSet records"> dataSetRecordsTests = [] {
+    using namespace boost::ut;
+    using namespace gr::dataset;
+    // The error of a read, or an empty string for a read that succeeded.
+    const auto errorOf = [](const auto& read) { return read.has_value() ? std::string{} : std::string(read.error()); };
+
+    "a null entry is an empty record and the records come back in index order"_test = [&] {
+        const property_map first{{"timestamp", 7}};
+        const auto         read = readRecordMaps(property_map{{"1", gr::pmt::Value()}, {"0", first}});
+        expect(fatal(read.has_value())) << errorOf(read);
+        expect(fatal(eq(read->size(), 2UZ)));
+        expect((*read)[0] == first);
+        expect((*read)[1].empty());
+        const auto none = readRecordMaps(property_map{});
+        expect(none.has_value() && none->empty());
+    };
+
+    "a records entry that is a list is refused"_test = [&] {
+        const auto read = readRecordMaps(property_map{{"0", listOf({property_map{}})}});
+        expect(fatal(!read.has_value()));
+        const std::string error = errorOf(read);
+        expect(error.starts_with("records entry at 0 is ") && error.ends_with(", expected a map of fields")) << error;
+    };
+
+    const std::vector<std::string> names{"a", "b"};
+
+    "absent fields take their defaults"_test = [&] {
+        const auto one = readDataSetRecord<std::uint8_t>(0UZ, property_map{{"signal_values", std::vector<std::uint8_t>{1U, 2U, 3U, 4U}}});
+        expect(fatal(one.has_value())) << errorOf(one);
+        expect(one->dataSet.signal_names == std::vector<std::string>{""});
+        expect(one->dataSet.extents == std::vector<std::int32_t>{4});
+        expect(eq(one->dataSet.timing_events.size(), 1UZ));
+        expect(one->dataSet.meta_information.empty());
+        expect(eq(one->dataSet.timestamp, gr::DataSet<std::uint8_t>{}.timestamp));
+        expect(one->lists("signal_values") && !one->lists("extents"));
+        const auto two = readDataSetRecord<std::uint8_t>(0UZ, property_map{{"signal_values", std::vector<std::uint8_t>{1U, 2U, 3U, 4U}}, {"signal_names", names}});
+        expect(fatal(two.has_value())) << errorOf(two);
+        expect(two->dataSet.signal_names == names);
+        expect(two->dataSet.extents == std::vector<std::int32_t>{static_cast<std::int32_t>(4UZ / names.size())});
+        expect(eq(two->dataSet.timing_events.size(), names.size()));
+    };
+
+    "values read from a typed list or from an untagged list of numbers"_test = [&] {
+        const std::pmr::vector<gr::pmt::Value> untagged{gr::pmt::Value(std::int64_t(0)), gr::pmt::Value(std::int64_t(255))};
+        const auto                             read = readDataSetRecord<std::uint8_t>(0UZ, property_map{{"signal_values", gr::pmt::Value(gr::Tensor<gr::pmt::Value>(untagged))}, {"extents", std::vector<std::int32_t>{2}}});
+        expect(fatal(read.has_value())) << errorOf(read);
+        expect(read->dataSet.signal_values == std::vector<std::uint8_t>{0U, 255U});
+        expect(read->dataSet.extents == std::vector<std::int32_t>{2});
+        const std::string wrongType = recordError(property_map{{"signal_values", std::vector<float>{1.f}}});
+        expect(wrongType.starts_with("record 3 field 'signal_values' is ") && wrongType.ends_with(", expected a list of uint8")) << wrongType;
+        const std::string tooLarge = recordError(property_map{{"signal_values", gr::pmt::Value(gr::Tensor<gr::pmt::Value>(std::pmr::vector<gr::pmt::Value>{gr::pmt::Value(std::int64_t(256))}))}});
+        expect(tooLarge.starts_with("record 3 field 'signal_values' element 256 does not convert to uint8: ")) << tooLarge;
+    };
+
+    "timing events keep their negative indices in index order"_test = [&] {
+        const property_map before{{"mark", std::string("before")}};
+        const property_map after{{"mark", std::string("after")}};
+        const auto         events = readTimingEvents(gr::pmt::Value(gr::Tensor<gr::pmt::Value>(std::pmr::vector<gr::pmt::Value>{gr::pmt::Value(property_map{{"2", after}, {"-1", before}}), gr::pmt::Value(property_map{})})));
+        expect(fatal(events.has_value())) << errorOf(events);
+        const TimingEvents wanted{{{-1, before}, {2, after}}, {}};
+        expect(*events == wanted);
+        const auto refused = readTimingEvents(gr::pmt::Value(5));
+        expect(fatal(!refused.has_value()));
+        expect(eq(errorOf(refused), std::string("is 5, expected a list with one map of events per signal")));
+    };
+
+    "a field error names the record index and the field"_test = [&] {
+        expect(eq(recordError(property_map{{"signal_value", 1}}), std::string("record 3 field 'signal_value' is not a record field")));
+        expect(eq(recordError(property_map{{"signal_units", 1}}), std::string("record 3 field 'signal_units' is 1, expected a list of strings")));
+        const gr::pmt::Value notMaps(gr::Tensor<gr::pmt::Value>(std::pmr::vector<gr::pmt::Value>{gr::pmt::Value(5)}));
+        expect(eq(recordError(property_map{{"meta_information", notMaps}}), std::string("record 3 field 'meta_information' holds 5, expected a map")));
+        expect(eq(recordError(property_map{{"meta_information", listOf({})}, {"signal_values", std::vector<std::uint8_t>{1U, 2U, 3U}}, {"signal_names", names}}), std::string("record 3 field 'extents' has no default for 3 values in 2 signals")));
     };
 };
 
