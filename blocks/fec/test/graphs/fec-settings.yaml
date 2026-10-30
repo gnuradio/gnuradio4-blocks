@@ -1,0 +1,92 @@
+# One chain per binary and Reed-Solomon block, each with settings the block accepts and no record to process. The run
+# passes as written. A case that changes a setting through SET checks that the block accepts the change or refuses it,
+# and the refusal ends the run with the block's reason.
+# Written by generate_graphs.py with no seed and no oracle: the fec chains hold no record.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: encoder_source
+      records: {}
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: encoder_block
+      code: golay24
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: encoder_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: decoder_source
+      records: {}
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: decoder_block
+      code: golay24
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: decoder_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: rs_encoder_source
+      records: {}
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: rs_encoder_block
+      roots: !!uint32 8
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: rs_encoder_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: rs_decoder_source
+      records: {}
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: rs_decoder_block
+      roots: !!uint32 8
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: rs_decoder_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ccsds_encoder_source
+      records: {}
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: ccsds_encoder_block
+      code: ccsds_255_223
+      basis: dual
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ccsds_encoder_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ccsds_decoder_source
+      records: {}
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: ccsds_decoder_block
+      code: ccsds_255_239
+      basis: conventional
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ccsds_decoder_sink
+      records: {}
+connections:
+  - [encoder_source, out, encoder_block, in]
+  - [encoder_block, out, encoder_sink, in]
+  - [decoder_source, out, decoder_block, in]
+  - [decoder_block, out, decoder_sink, in]
+  - [rs_encoder_source, out, rs_encoder_block, in]
+  - [rs_encoder_block, out, rs_encoder_sink, in]
+  - [rs_decoder_source, out, rs_decoder_block, in]
+  - [rs_decoder_block, out, rs_decoder_sink, in]
+  - [ccsds_encoder_source, out, ccsds_encoder_block, in]
+  - [ccsds_encoder_block, out, ccsds_encoder_sink, in]
+  - [ccsds_decoder_source, out, ccsds_decoder_block, in]
+  - [ccsds_decoder_block, out, ccsds_decoder_sink, in]

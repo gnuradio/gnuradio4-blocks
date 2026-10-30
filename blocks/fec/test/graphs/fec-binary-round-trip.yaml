@@ -1,0 +1,352 @@
+# FecEncode into FecDecode, one chain per binary code. Each source record carries four information words of seeded
+# bits, three for the length-15 BCH codes. The first sink checks that the encoder emits one record of that many
+# codewords. The second sink expects the information back with no corrected and no uncorrectable codeword.
+# Written by generate_graphs.py from seed 0x9E3779B97F4A7C15. Oracle: the drawn information.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: golay24_source
+      records:
+        0:
+          signal_values: [
+            1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0,
+            0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1
+          ]
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: golay24_coder
+      code: golay24
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: golay24_decoder
+      code: golay24
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: golay24_coded
+      records:
+        0:
+          extents: [96]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: golay24_sink
+      records:
+        0:
+          signal_values: [
+            1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0,
+            0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1
+          ]
+          extents: [48]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: golay23_source
+      records:
+        0:
+          signal_values: [
+            0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0,
+            1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1
+          ]
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: golay23_coder
+      code: golay23
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: golay23_decoder
+      code: golay23
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: golay23_coded
+      records:
+        0:
+          extents: [92]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: golay23_sink
+      records:
+        0:
+          signal_values: [
+            0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0,
+            1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1
+          ]
+          extents: [48]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: golay18_source
+      records:
+        0:
+          signal_values: [
+            0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0
+          ]
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: golay18_coder
+      code: golay18
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: golay18_decoder
+      code: golay18
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: golay18_coded
+      records:
+        0:
+          extents: [72]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: golay18_sink
+      records:
+        0:
+          signal_values: [
+            0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0
+          ]
+          extents: [24]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: hamming15_source
+      records:
+        0:
+          signal_values: [
+            0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0,
+            1, 1, 0, 1, 1, 0, 0, 0, 0
+          ]
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: hamming15_coder
+      code: hamming15
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: hamming15_decoder
+      code: hamming15
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: hamming15_coded
+      records:
+        0:
+          extents: [60]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: hamming15_sink
+      records:
+        0:
+          signal_values: [
+            0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0,
+            1, 1, 0, 1, 1, 0, 0, 0, 0
+          ]
+          extents: [44]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: hamming10_source
+      records:
+        0:
+          signal_values: [
+            0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0
+          ]
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: hamming10_coder
+      code: hamming10
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: hamming10_decoder
+      code: hamming10
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: hamming10_coded
+      records:
+        0:
+          extents: [40]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: hamming10_sink
+      records:
+        0:
+          signal_values: [
+            0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0
+          ]
+          extents: [24]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: bch63_source
+      records:
+        0:
+          signal_values: [
+            0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 1,
+            0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0
+          ]
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: bch63_coder
+      code: bch63
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: bch63_decoder
+      code: bch63
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bch63_coded
+      records:
+        0:
+          extents: [252]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bch63_sink
+      records:
+        0:
+          signal_values: [
+            0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 1,
+            0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0
+          ]
+          extents: [64]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: bch15_11_source
+      records:
+        0:
+          signal_values: [
+            0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1
+          ]
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: bch15_11_coder
+      code: bch15_11
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: bch15_11_decoder
+      code: bch15_11
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bch15_11_coded
+      records:
+        0:
+          extents: [45]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bch15_11_sink
+      records:
+        0:
+          signal_values: [
+            0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1
+          ]
+          extents: [33]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: bch15_7_source
+      records:
+        0:
+          signal_values: [
+            0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1
+          ]
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: bch15_7_coder
+      code: bch15_7
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: bch15_7_decoder
+      code: bch15_7
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bch15_7_coded
+      records:
+        0:
+          extents: [45]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bch15_7_sink
+      records:
+        0:
+          signal_values: [
+            0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1
+          ]
+          extents: [21]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: bch15_5_source
+      records:
+        0:
+          signal_values: [1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1]
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: bch15_5_coder
+      code: bch15_5
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: bch15_5_decoder
+      code: bch15_5
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bch15_5_coded
+      records:
+        0:
+          extents: [45]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bch15_5_sink
+      records:
+        0:
+          signal_values: [1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1]
+          extents: [15]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+connections:
+  - [golay24_source, out, golay24_coder, in]
+  - [golay24_coder, out, golay24_coded, in]
+  - [golay24_coder, out, golay24_decoder, in]
+  - [golay24_decoder, out, golay24_sink, in]
+  - [golay23_source, out, golay23_coder, in]
+  - [golay23_coder, out, golay23_coded, in]
+  - [golay23_coder, out, golay23_decoder, in]
+  - [golay23_decoder, out, golay23_sink, in]
+  - [golay18_source, out, golay18_coder, in]
+  - [golay18_coder, out, golay18_coded, in]
+  - [golay18_coder, out, golay18_decoder, in]
+  - [golay18_decoder, out, golay18_sink, in]
+  - [hamming15_source, out, hamming15_coder, in]
+  - [hamming15_coder, out, hamming15_coded, in]
+  - [hamming15_coder, out, hamming15_decoder, in]
+  - [hamming15_decoder, out, hamming15_sink, in]
+  - [hamming10_source, out, hamming10_coder, in]
+  - [hamming10_coder, out, hamming10_coded, in]
+  - [hamming10_coder, out, hamming10_decoder, in]
+  - [hamming10_decoder, out, hamming10_sink, in]
+  - [bch63_source, out, bch63_coder, in]
+  - [bch63_coder, out, bch63_coded, in]
+  - [bch63_coder, out, bch63_decoder, in]
+  - [bch63_decoder, out, bch63_sink, in]
+  - [bch15_11_source, out, bch15_11_coder, in]
+  - [bch15_11_coder, out, bch15_11_coded, in]
+  - [bch15_11_coder, out, bch15_11_decoder, in]
+  - [bch15_11_decoder, out, bch15_11_sink, in]
+  - [bch15_7_source, out, bch15_7_coder, in]
+  - [bch15_7_coder, out, bch15_7_coded, in]
+  - [bch15_7_coder, out, bch15_7_decoder, in]
+  - [bch15_7_decoder, out, bch15_7_sink, in]
+  - [bch15_5_source, out, bch15_5_coder, in]
+  - [bch15_5_coder, out, bch15_5_coded, in]
+  - [bch15_5_coder, out, bch15_5_decoder, in]
+  - [bch15_5_decoder, out, bch15_5_sink, in]

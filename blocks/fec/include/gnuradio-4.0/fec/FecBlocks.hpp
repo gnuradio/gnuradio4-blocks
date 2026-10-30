@@ -180,7 +180,7 @@ and the record that follows is processed normally, so a misaligned record costs 
     detail::BinaryCode _code{};
     bool               _configured = false;
 
-    // Plain members, read by the owning thread and by QA, and reported once at stop().
+    // FecEncode's counters are plain members, read by the owning thread and reported once at stop().
     std::uint64_t nRecords        = 0ULL; ///< records published on `out`
     std::uint64_t nCodewords      = 0ULL; ///< codewords those records carry
     std::uint64_t nRecordsRefused = 0ULL; ///< records whose length was not a multiple of the code's k
@@ -277,7 +277,7 @@ report a failure at all; the perfect codes report every word as valid.
     detail::BinaryCode _code{};
     bool               _configured = false;
 
-    // Plain members, read by the owning thread and by QA, and reported once at stop().
+    // FecDecode's counters are plain members, read by the owning thread and reported once at stop().
     std::uint64_t nRecords                = 0ULL; ///< records published on `out`
     std::uint64_t nCodewords              = 0ULL; ///< codewords those records carried
     std::uint64_t nRecordsRefused         = 0ULL; ///< records whose length was not a multiple of the code's n
