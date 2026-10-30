@@ -149,7 +149,7 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         expect(flow.connect<"out", "in">(source, rotator).has_value());
         expect(flow.connect<"out", "in">(rotator, sink).has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         expect(sched.exchange(std::move(flow)).has_value());
         expect(sched.runAndWait().has_value());
 

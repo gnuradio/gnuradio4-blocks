@@ -165,7 +165,7 @@ template<typename TBuild>
     auto& sink = graph.emplaceBlock<TagSink<std::uint8_t, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
     build(graph, source, sink);
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     boost::ut::expect(scheduler.runAndWait().has_value());
     return sink._tags;

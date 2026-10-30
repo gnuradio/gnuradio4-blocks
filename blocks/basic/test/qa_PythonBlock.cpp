@@ -38,7 +38,7 @@ std::vector<T> runLibraryBlock(std::string_view typeName, const std::string& pyt
     expect(graph.connect(gr::graph::findBlock(graph, src).value(), "out", python, "inputs#0").has_value());
     expect(graph.connect(python, "outputs#0", gr::graph::findBlock(graph, sink).value(), "in").has_value());
 
-    gr::scheduler::Simple sched;
+    gr::scheduler::Simple<> sched;
     if (auto ret = sched.exchange(std::move(graph)); !ret) {
         throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
     }
@@ -330,7 +330,7 @@ def process_bulk(ins, outs):
         expect(graph.connect(src, "out", block, "inputs#0").has_value());
         expect(graph.connect(block, "outputs#0", sink, "in").has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         if (auto ret = sched.exchange(std::move(graph)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -395,7 +395,7 @@ def process_bulk(ins, outs):
         expect(graph.connect(src, "out", block, "inputs#0").has_value());
         expect(graph.connect(block, "outputs#0", sink, "in").has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         if (auto ret = sched.exchange(std::move(graph)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -451,7 +451,7 @@ def process_bulk(ins, outs):
         expect(graph.connect(srcB, "out", blockB, "inputs#0").has_value());
         expect(graph.connect(blockB, "outputs#0", sinkB, "in").has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         if (auto ret = sched.exchange(std::move(graph)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -568,7 +568,7 @@ connections:
             if (sink == nullptr) {
                 return {};
             }
-            gr::scheduler::Simple sched;
+            gr::scheduler::Simple<> sched;
             if (!sched.exchange(std::move(graph)).has_value()) {
                 return {};
             }
@@ -664,7 +664,7 @@ def process_bulk(ins, outs, factor):
         expect(graph.connect(src, "out", block, "inputs#0").has_value());
         expect(graph.connect(block, "outputs#0", sink, "in").has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         expect(sched.exchange(std::move(graph)).has_value());
         expect(sched.runAndWait().has_value());
 
@@ -724,7 +724,7 @@ def process_bulk(ins, outs, factor):
         expect(graph.connect(src, "out", block, "inputs#0").has_value());
         expect(graph.connect(block, "outputs#0", sink, "in").has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         std::string           reported;
         if (sched.exchange(std::move(graph)).has_value()) {
             if (auto ran = sched.runAndWait(); !ran) {

@@ -37,7 +37,7 @@ void test_block(const TestParameters<T> p) {
     auto& sink = graph.emplaceBlock<TagSink<T, ProcessFunction::USE_PROCESS_ONE>>();
     expect(graph.connect(block, "out"s, sink, "in"s).has_value()) << "Failed to connect output port 'out' of block to input port of sink";
 
-    gr::scheduler::Simple sched;
+    gr::scheduler::Simple<> sched;
     if (auto ret = sched.exchange(std::move(graph)); !ret) {
         throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
     }
@@ -63,7 +63,7 @@ template<typename T, typename BlockUnderTest>
     boost::ut::expect(graph.connect(src, std::string("out"), block, inputPort).has_value());
     boost::ut::expect(graph.connect(block, std::string("out"), sink, std::string("in")).has_value());
 
-    gr::scheduler::Simple sched;
+    gr::scheduler::Simple<> sched;
     boost::ut::expect(sched.exchange(std::move(graph)).has_value());
     boost::ut::expect(sched.runAndWait().has_value());
 

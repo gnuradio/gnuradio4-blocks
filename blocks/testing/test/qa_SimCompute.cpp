@@ -20,7 +20,7 @@ const boost::ut::suite<"SimCompute"> simComputeTests = [] {
         auto&                   sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
         expect(g.connect<"out", "in">(src, sim).has_value());
         expect(g.connect<"out", "in">(sim, sink).has_value());
-        gr::scheduler::Simple sch;
+        gr::scheduler::Simple<> sch;
         if (auto ret = sch.exchange(std::move(g)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -36,7 +36,7 @@ const boost::ut::suite<"SimCompute"> simComputeTests = [] {
         auto&                   sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
         expect(g.connect<"out", "in">(src, sim).has_value());
         expect(g.connect<"out", "in">(sim, sink).has_value());
-        gr::scheduler::Simple sch;
+        gr::scheduler::Simple<> sch;
         if (auto ret = sch.exchange(std::move(g)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -52,7 +52,7 @@ const boost::ut::suite<"SimCompute"> simComputeTests = [] {
         auto&                   sink = g.emplaceBlock<CountingSink<T>>(property_map{{"n_samples_max", N}});
         expect(g.connect<"out", "in">(src, sim).has_value());
         expect(g.connect<"out", "in">(sim, sink).has_value());
-        gr::scheduler::Simple sch;
+        gr::scheduler::Simple<> sch;
         if (auto ret = sch.exchange(std::move(g)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }

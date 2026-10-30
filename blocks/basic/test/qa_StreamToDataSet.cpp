@@ -106,7 +106,7 @@ const boost::ut::suite<"StreamToDataSet Block"> selectorTest = [] {
             std::this_thread::sleep_for(std::chrono::seconds(1)); // wait for another second before closing down
         });
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         if (auto ret = sched.exchange(std::move(graph)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -192,7 +192,7 @@ void runTestStream(gr::Size_t nSamples, std::string filter, gr::Size_t preSample
     expect(graph.connect<"out", "in">(tagSrc, filterStreamToStream).has_value()) << locationStr;
     expect(graph.connect<"out", "in">(filterStreamToStream, streamSink).has_value()) << locationStr;
 
-    gr::scheduler::Simple sched;
+    gr::scheduler::Simple<> sched;
     if (auto ret = sched.exchange(std::move(graph)); !ret) {
         throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
     }
@@ -326,7 +326,7 @@ void runTestDataSet(gr::Size_t nSamples, std::string filter, gr::Size_t preSampl
     expect(graph.connect<"out", "in">(tagSrc, filterStreamToDataSet).has_value()) << locationStr;
     expect(graph.connect<"out", "in">(filterStreamToDataSet, dataSetSink).has_value()) << locationStr;
 
-    gr::scheduler::Simple sched;
+    gr::scheduler::Simple<> sched;
     if (auto ret = sched.exchange(std::move(graph)); !ret) {
         throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
     }
