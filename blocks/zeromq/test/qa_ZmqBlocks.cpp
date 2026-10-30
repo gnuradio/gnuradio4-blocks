@@ -1,5 +1,7 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -20,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include <sys/wait.h>
@@ -60,6 +63,15 @@ gr::property_map make_props(std::initializer_list<std::pair<std::string_view, gr
         out.emplace(gr::pmt::Value::Map::value_type{std::pmr::string(key.data(), key.size(), mr), value});
     }
     return out;
+}
+
+// copies the leading items of a received byte range; the range may start at any address
+template<typename T, std::size_t N>
+std::array<T, N> read_items(const std::uint8_t* bytes, std::size_t size) {
+    static_assert(std::is_trivially_copyable_v<T>);
+    std::array<T, N> items{};
+    std::memcpy(items.data(), bytes, std::min(size, sizeof(items)));
+    return items;
 }
 
 std::string endpoint_for(int offset) {
@@ -822,6 +834,33 @@ struct RecordingTaggedSink : gr::Block<RecordingTaggedSink> {
 };
 
 static gr::property_map wire_tag(std::string_view key, gr::pmt::Value value, gr::pmt::Value srcid = gr::pmt::Value{}) { return make_props({{"key", gr::pmt::Value(std::string(key))}, {"value", std::move(value)}, {"srcid", std::move(srcid)}}); }
+
+// sends 100 floats, each carrying a tag with the given key, through a push sink with tags enabled and returns what one pull receiver gets
+std::vector<std::vector<std::uint8_t>> push_tagged_floats(std::string_view key) {
+    gr::Graph  fg;
+    const auto endpoint = endpoint_for(26);
+
+    auto& source            = fg.emplaceBlock<TaggedSequenceSource<float>>();
+    source.values           = std::vector<float>(100, 1.f);
+    source.startup_delay_ms = 1000;
+    for (std::size_t i = 0; i < source.values.size(); ++i) {
+        source.tags.emplace_back(i, wire_tag(key, gr::pmt::Value(int32_t{11}), gr::pmt::Value("src-a")));
+    }
+    auto& push     = fg.emplaceBlock<gr::blocks::zeromq::ZmqPushSink<float>>(make_props({
+        {"endpoint", gr::pmt::Value(endpoint)},
+        {"timeout", gr::pmt::Value(25)},
+        {"bind", gr::pmt::Value(true)},
+        {"pass_tags", gr::pmt::Value(true)},
+    }));
+    auto  receiver = spawn_pull_receiver(TestEndpoint::bound_by(push), 1);
+
+    expect(fg.connect<"out", "in">(source, push).has_value());
+
+    gr::scheduler::Simple<gr::scheduler::ExecutionPolicy::multiThreaded> sched;
+    expect(sched.exchange(std::move(fg)).has_value());
+    expect(run_until_then_stop(sched, [&] { return receiver.wait_for(std::chrono::milliseconds{0}) == std::future_status::ready; }, std::chrono::milliseconds(3000)));
+    return receiver.get();
+}
 
 std::vector<gr::pmt::Value> make_pmt_fixtures() {
     gr::pmt::Value::Map metadata{std::pmr::get_default_resource()};
@@ -2018,8 +2057,8 @@ const suite ZmqBlocksTests = [] {
         if (replies.size() == 2) {
             expect(eq(replies[0].size(), 2U * sizeof(T)));
             expect(eq(replies[1].size(), 3U * sizeof(T)));
-            const auto* first  = reinterpret_cast<const T*>(replies[0].data());
-            const auto* second = reinterpret_cast<const T*>(replies[1].data());
+            const auto first  = read_items<T, 2UZ>(replies[0].data(), replies[0].size());
+            const auto second = read_items<T, 3UZ>(replies[1].data(), replies[1].size());
             expect(eq(first[0], 1.f));
             expect(eq(first[1], 2.f));
             expect(eq(second[0], 3.f));
@@ -2322,30 +2361,7 @@ const suite ZmqBlocksTests = [] {
     };
 
     "Push sink emits tag headers"_test = [] {
-        gr::Graph  fg;
-        const auto endpoint = endpoint_for(26);
-
-        auto& source            = fg.emplaceBlock<TaggedSequenceSource<float>>();
-        source.values           = std::vector<float>(100, 1.f);
-        source.startup_delay_ms = 1000;
-        for (std::size_t i = 0; i < source.values.size(); ++i) {
-            source.tags.emplace_back(i, wire_tag("alpha", gr::pmt::Value(int32_t{11}), gr::pmt::Value("src-a")));
-        }
-        auto& push     = fg.emplaceBlock<gr::blocks::zeromq::ZmqPushSink<float>>(make_props({
-            {"endpoint", gr::pmt::Value(endpoint)},
-            {"timeout", gr::pmt::Value(25)},
-            {"bind", gr::pmt::Value(true)},
-            {"pass_tags", gr::pmt::Value(true)},
-        }));
-        auto  receiver = spawn_pull_receiver(TestEndpoint::bound_by(push), 1);
-
-        expect(fg.connect<"out", "in">(source, push).has_value());
-
-        gr::scheduler::Simple<gr::scheduler::ExecutionPolicy::multiThreaded> sched;
-        expect(sched.exchange(std::move(fg)).has_value());
-        expect(run_until_then_stop(sched, [&] { return receiver.wait_for(std::chrono::milliseconds{0}) == std::future_status::ready; }, std::chrono::milliseconds(3000)));
-
-        auto messages = receiver.get();
+        const auto messages = push_tagged_floats("alpha");
         expect(eq(messages.size(), static_cast<std::size_t>(1)));
         if (messages.size() == 1) {
             std::uint64_t                            header_offset = 0;
@@ -2361,9 +2377,25 @@ const suite ZmqBlocksTests = [] {
                 const auto* payload      = messages[0].data() + consumed;
                 const auto  payload_size = messages[0].size() - consumed;
                 expect(eq(payload_size, 1UL * sizeof(float)));
-                const auto* floats = reinterpret_cast<const float*>(payload);
+                const auto floats = read_items<float, 1UZ>(payload, payload_size);
                 expect(eq(floats[0], 1.f));
             }
+        }
+    };
+
+    "Push sink payload follows a tag header that is not a multiple of the item size"_test = [] {
+        const auto messages = push_tagged_floats("beta");
+        expect(eq(messages.size(), static_cast<std::size_t>(1)));
+        if (messages.size() == 1) {
+            std::uint64_t                            header_offset = 0;
+            std::vector<zdetail::ZmqTagHeaderRecord> tags;
+            const auto                               consumed = zdetail::parse_tag_header(messages[0].data(), messages[0].size(), header_offset, tags);
+            expect(eq(tags.size(), static_cast<std::size_t>(1)));
+            expect(neq(consumed % alignof(float), 0UZ)) << "the payload offset must not be a multiple of the item size";
+            const auto payload_size = messages[0].size() - consumed;
+            expect(eq(payload_size, 1UL * sizeof(float)));
+            const auto floats = read_items<float, 1UZ>(messages[0].data() + consumed, payload_size);
+            expect(eq(floats[0], 1.f));
         }
     };
 
