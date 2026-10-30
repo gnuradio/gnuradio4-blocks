@@ -49,6 +49,7 @@ SOFTWARE.
 #include <bit>
 #include <cassert>
 #include <cmath>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -57,6 +58,7 @@ SOFTWARE.
 #include <numbers>
 #include <source_location>
 #include <span>
+#include <type_traits>
 
 #include <gnuradio-4.0/MemoryAllocators.hpp>
 #include <gnuradio-4.0/Message.hpp>
@@ -155,6 +157,17 @@ template<std::size_t Align, typename T>
 template<typename T>
 [[nodiscard]] constexpr bool isAligned(const T* p, std::size_t alignment) noexcept {
     return std::bit_cast<std::uintptr_t>(std::to_address(p)) % alignment == 0UZ;
+}
+
+// Converts a pointer to scalars into a pointer to SIMD vectors of the same constness.
+// The pointer must be aligned to alignof(Vec). Debug builds assert it; release builds do not check it.
+template<typename Vec, typename T>
+requires std::same_as<typename Vec::value_type, std::remove_const_t<T>>
+[[nodiscard]] constexpr ALWAYS_INLINE(auto*) asVectors(T* p) noexcept {
+    assert(isAligned<alignof(Vec)>(p));
+    using VoidPtr = std::conditional_t<std::is_const_v<T>, const void*, void*>;
+    using VecPtr  = std::conditional_t<std::is_const_v<T>, const Vec*, Vec*>;
+    return static_cast<VecPtr>(static_cast<VoidPtr>(p));
 }
 } // namespace details
 
@@ -528,8 +541,8 @@ struct SimdFFT {
         if constexpr (IsRealValued::value) {
             assert(canProcessSize(size(), Order::Ordered)); // non-multiple of 32 (while they can be computed) are very hard to bit-reverse
             if constexpr (direction == Direction::Forward) {
-                const V* vin  = reinterpret_cast<const V*>(input.data());
-                V*       vout = reinterpret_cast<V*>(output.data());
+                const V* vin  = details::asVectors<V>(input.data());
+                V*       vout = details::asVectors<V>(output.data());
 
                 const std::size_t dk = size() / 32; // For N=48: dk=1
 
@@ -548,13 +561,13 @@ struct SimdFFT {
                 }
 
                 // reversed_copy(dk, vin+2, 8, (v4sf*)(out + N/2))
-                details::reversed_copy(dk, vin + 2, 8, reinterpret_cast<V*>(output.data() + size() / 2));
+                details::reversed_copy(dk, vin + 2, 8, details::asVectors<V>(output.data() + size() / 2));
 
                 // reversed_copy(dk, vin+6, 8, (v4sf*)(out + N))
-                details::reversed_copy(dk, vin + 6, 8, reinterpret_cast<V*>(output.data() + size()));
+                details::reversed_copy(dk, vin + 6, 8, details::asVectors<V>(output.data() + size()));
             } else { // Backward
-                const V* vin  = reinterpret_cast<const V*>(input.data());
-                V*       vout = reinterpret_cast<V*>(output.data());
+                const V* vin  = details::asVectors<V>(input.data());
+                V*       vout = details::asVectors<V>(output.data());
 
                 const std::size_t dk = size() / 32;
 
@@ -570,8 +583,8 @@ struct SimdFFT {
                     vout[k * 8 + 5] = out4_1;
                 }
 
-                details::unreversed_copy(dk, reinterpret_cast<const V*>(input.data() + size() / 4), reinterpret_cast<V*>(output.data() + size() - 6 * L), -8);
-                details::unreversed_copy(dk, reinterpret_cast<const V*>(input.data() + 3 * size() / 4), reinterpret_cast<V*>(output.data() + size() - 2 * L), -8);
+                details::unreversed_copy(dk, details::asVectors<V>(input.data() + size() / 4), details::asVectors<V>(output.data() + size() - 6 * L), -8);
+                details::unreversed_copy(dk, details::asVectors<V>(input.data() + 3 * size() / 4), details::asVectors<V>(output.data() + size() - 2 * L), -8);
             }
             return;
         }
