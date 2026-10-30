@@ -110,8 +110,7 @@ tens of seconds to a few minutes inside the settings change, and longer in a Deb
 builds a new bank, drops the line's history and counts in `nBankRebuilds()`. A design that misses `attenuation_db` or
 its ripple limit is refused too, and the refusal gives the stopband and ripple it delivers. A change of table,
 direction, bias or rate takes effect at the next sample and keeps the history. A new rate re-times the whole stream from
-the anchor. As in `DopplerShift`, a refused value stays in its setting, and the block refuses each later change until a
-change replaces that value or makes it valid.
+the anchor.
 
 The settings `anchor_source`, `anchor_index`, `anchor_ns` and `honor_trigger_offset` and the counters
 `nIgnoredAnchors()`, `nReanchors()` and `nRefusedAnchors()` work as in `DopplerShift`. Until a trigger anchor is armed,

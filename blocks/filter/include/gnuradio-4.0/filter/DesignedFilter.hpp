@@ -65,8 +65,7 @@ profiles neither of the others offers.
 from the auto-update set, so a stated rate wins over stream tags and a redesign to a new rate arrives by restaging the
 setting; left unconfigured, a stream tag updates it and redesigns. A passing rate tag is forwarded divided by the
 decimation, so downstream reads the rate of the stream this block hands it. A refused settings change leaves the
-previous design running and is not absorbed: the member keeps the value that was refused, so re-stating it moves
-nothing and is not a second request, but the design stays stale and the next start refuses on it.
+previous design running.
 )"">;
 
     PortIn<TSample> in;
@@ -90,15 +89,14 @@ nothing and is not a second request, but the design stays stale and the next sta
     GR_MAKE_REFLECTABLE(DesignedFilter, in, out, profile, sample_rate, cutoff, high_cutoff, transition_width, gain, attenuation_db, window, window_param, taps, symbol_rate, alpha, decimation, designed_taps);
 
     std::vector<TTap> _designed;
-    bool              _designStale = true; /// the members have moved since `_designed` was built, a refused design included
+    bool              _designStale = true; /// set by a change of a design key, or by any change before the core is live, and kept by a design that throws; the next change or start designs again
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         const bool live = this->coreLive();
         // Everything except the decimation is design-affecting; redesigning on an unrelated
         // key is harmless (the same inputs produce the same taps) but the alignment replay is
-        // not free, so a named change is what triggers it. A design that threw built nothing and left the members
-        // holding the value it refused, so the flag stays set: the design is stale until one succeeds, and the
-        // next start refuses on it rather than running taps the members do not describe.
+        // not free. A named change triggers it. A design that throws builds nothing. The flag stays set, and the next
+        // change or start designs again.
         static constexpr std::array<std::string_view, 12UZ> kDesignKeys{"profile", "sample_rate", "cutoff", "high_cutoff", "transition_width", "gain", "attenuation_db", "window", "window_param", "taps", "symbol_rate", "alpha"};
         _designStale = _designStale || !live || std::ranges::any_of(kDesignKeys, [&newSettings](std::string_view key) { return newSettings.contains(gr::property_map::key_type{key}); });
 

@@ -91,8 +91,7 @@ inline constexpr gr::meta::fixed_string kAnchorNsDoc           = "schedule time 
 inline constexpr gr::meta::fixed_string kAnchorSourceDoc       = "'setting', 'first_trigger' or 'every_trigger'";
 inline constexpr gr::meta::fixed_string kHonorTriggerOffsetDoc = "move a trigger anchor by the tag's own trigger_offset seconds";
 
-/// The knot times, the knot values and the file name of a table, as a block last accepted them. A block compares them
-/// with its members to find a refused value staged again.
+/// The table settings a block last accepted. A change loads the table again when it names one of them.
 struct TableSettings {
     std::vector<std::int64_t> times{};
     std::vector<double>       values{};
@@ -102,8 +101,7 @@ struct TableSettings {
 };
 
 /// @brief True when a change moves @p key. Before the first accepted change every key moves. After it, a key moves
-/// when @p newSettings holds it or when @p differs says its member is not the value last accepted. A member that a
-/// refusal left as it was staged therefore moves again with the next change.
+/// when @p newSettings holds it or when @p differs says its member is not the value last accepted.
 [[nodiscard]] inline bool moves(const property_map& newSettings, bool configured, std::string_view key, bool differs) { return !configured || differs || newSettings.contains(std::pmr::string(key)); }
 
 /// A trigger tag's time and offset, read with the reserved keys' types. A tag without a time is no anchor event.
@@ -162,8 +160,7 @@ The knots come from `schedule_times_ns` and `schedule_offsets_hz`, or from the `
 a `#!gr4-trajectory 1` file named in `schedule_file`. Setting both is refused. With neither, the stream passes through.
 Every offset must stay under half of `sample_rate` in magnitude, and the refusal names the knot. `direction` 'apply'
 adds the offsets, and 'correct' subtracts them. A new table, direction or rate takes effect at the next sample and keeps
-the phase. A new rate re-times the whole stream from the anchor. A value the block refuses stays in its setting. Every
-later change is refused with that value's message until a change replaces the value or makes it valid.
+the phase. A new rate re-times the whole stream from the anchor.
 
 `anchor_source` selects what ties the schedule's time axis to the stream. Under 'setting', sample `anchor_index` is at
 time `anchor_ns`. Under 'first_trigger', the first `trigger_time` tag sets the anchor at its own sample, and later tags

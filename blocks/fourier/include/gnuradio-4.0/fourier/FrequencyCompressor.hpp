@@ -99,9 +99,6 @@ finite enters the vocoder as zero. Both ports are asynchronous, and each call pu
             next.sampleRate = sample_rate.value;
         }
         if (next.divisor > next.frame / 4U) {
-            divisor.value     = _accepted.divisor;
-            frame.value       = _accepted.frame;
-            sample_rate.value = _accepted.sampleRate;
             throw gr::exception(std::format("divisor ({}) must not exceed a quarter of the frame ({}): the synthesis hop would vanish", next.divisor, next.frame));
         }
         const bool replanned = next.divisor != _accepted.divisor || next.frame != _accepted.frame;
