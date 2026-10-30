@@ -1,0 +1,162 @@
+# DelimiterFramer with records it drops, records that forge its delimiter, and a record's metadata. Drops: SLIP
+# framing with a bound of 8, fed an empty record, three bytes, nine bytes and one byte; the sink expects the second
+# and fourth records framed. Forgery: 0xC0 over byte items with no transparency, fed a payload carrying 0xC0 twice;
+# the framed sink expects it framed with nothing inserted, and the extractor's sink three records, cut at the two
+# forged delimiters. Metadata: SLIP framing over three records; the sink expects the first record's keys beside a
+# stuffing count of 0 and one empty event list where it had an event, and the second record, 0xC0 and 0xDB, with both
+# escaped. Each framer's line at stop counts what it framed, emitted, escaped, refused or forged. generate_graphs.py
+# writes this file.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: drops_source
+      records:
+        0:
+          signal_values: []
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information: {}
+        1:
+          signal_values: [17, 34, 51]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information: {}
+        2:
+          signal_values: [68, 68, 68, 68, 68, 68, 68, 68, 68]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information: {}
+        3:
+          signal_values: [85]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information: {}
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: drops_framer
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      transparency: byte_escape
+      escape_item: !!uint32 219
+      escape_map: !!uint32 [220, 192, 221, 219]
+      max_payload_items: !!uint32 8
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: drops_framed
+      records:
+        0:
+          signal_values: [192, 17, 34, 51, 192]
+        1:
+          signal_values: [192, 85, 192]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: forgery_source
+      records:
+        0:
+          signal_values: [17, 192, 34, 192, 51]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information: {}
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: forgery_framer
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      max_payload_items: !!uint32 64
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: forgery_framed
+      records:
+        0:
+          signal_values: [192, 17, 192, 34, 192, 51, 192]
+          meta_information:
+            stuffing_inserted: !!uint32 0
+  - id: gr::blocks::basic::DataSetToStream<uint8>
+    parameters:
+      name: forgery_wire
+      boundary_label: ""
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: forgery_extractor
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      max_payload_items: !!uint32 64
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: forgery_received
+      records:
+        0:
+          signal_values: [17]
+        1:
+          signal_values: [34]
+        2:
+          signal_values: [51]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: metadata_source
+      records:
+        0:
+          signal_values: [17, 34]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 7
+            origin: qa
+          timing_events:
+            - 1:
+                marker: !!uint32 1
+        1:
+          signal_values: [192, 219]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 8
+        2:
+          signal_values: [51]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information: {}
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: metadata_framer
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      transparency: byte_escape
+      escape_item: !!uint32 219
+      escape_map: !!uint32 [220, 192, 221, 219]
+      max_payload_items: !!uint32 64
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: metadata_framed
+      records:
+        0:
+          meta_information:
+            packet: !!uint32 7
+            origin: qa
+            stuffing_inserted: !!uint32 0
+          timing_events:
+            - {}
+        1:
+          signal_values: [192, 219, 220, 219, 221, 192]
+          meta_information:
+            packet: !!uint32 8
+            stuffing_inserted: !!uint32 2
+        2: {}
+connections:
+  - [drops_source, out, drops_framer, in]
+  - [drops_framer, out, drops_framed, in]
+  - [forgery_source, out, forgery_framer, in]
+  - [forgery_framer, out, forgery_framed, in]
+  - [forgery_framer, out, forgery_wire, in]
+  - [forgery_wire, out, forgery_extractor, in]
+  - [forgery_extractor, out, forgery_received, in]
+  - [metadata_source, out, metadata_framer, in]
+  - [metadata_framer, out, metadata_framed, in]

@@ -1,0 +1,61 @@
+# DelimiterFramer over HDLC framing, each byte sent least significant bit first, framing the two bytes 0x7E and 0xFF.
+# The framed sink expects the flag, 0x7E with a zero stuffed after its fifth one, 0xFF with another, and the flag: 34
+# bit items and a stuffing count of 2. Through DataSetToStream a DelimiterExtractor with the same framing reads the
+# frame back, and its sink expects the two bytes and the two zeros it removed. The framer's line at stop counts the
+# record, the items and the stuffed bits. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: hdlc_source
+      records:
+        0:
+          signal_values: [126, 255]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information: {}
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: hdlc_framer
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+      payload_pack_bits: !!uint32 8
+      payload_bit_order: LsbFirst
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: hdlc_framed
+      records:
+        0:
+          signal_values: [
+            0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0
+          ]
+          extents: [34]
+          meta_information:
+            stuffing_inserted: !!uint32 2
+  - id: gr::blocks::basic::DataSetToStream<uint8>
+    parameters:
+      name: hdlc_wire
+      boundary_label: ""
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: hdlc_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+      payload_pack_bits: !!uint32 8
+      payload_bit_order: LsbFirst
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: hdlc_received
+      records:
+        0:
+          signal_values: [126, 255]
+          meta_information:
+            stuffing_removed: !!uint32 2
+connections:
+  - [hdlc_source, out, hdlc_framer, in]
+  - [hdlc_framer, out, hdlc_framed, in]
+  - [hdlc_framer, out, hdlc_wire, in]
+  - [hdlc_wire, out, hdlc_extractor, in]
+  - [hdlc_extractor, out, hdlc_received, in]

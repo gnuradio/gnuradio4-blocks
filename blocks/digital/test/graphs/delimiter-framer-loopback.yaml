@@ -1,0 +1,543 @@
+# DelimiterFramer and DelimiterExtractor at the two ends of one link, under HDLC, SLIP, PPP and NMEA 0183 framing.
+# Each source sends payloads of 1, 2, 7, 33 and 64 random bytes, upper-case letters under NMEA, each with a packet
+# number. The framed sink expects each packet number and the count of items the framer inserted, and an extent of both
+# delimiters, the payload items and those insertions. Through DataSetToStream the extractor's sink expects each
+# payload back and a removed count equal to the inserted one. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: hdlc_source
+      records:
+        0:
+          signal_values: [173]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 0
+        1:
+          signal_values: [118, 54]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 1
+        2:
+          signal_values: [116, 236, 121, 207, 234, 139, 142]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 2
+        3:
+          signal_values: [
+            21, 3, 253, 158, 31, 255, 184, 117, 79, 25, 109, 239, 26, 222, 189, 228, 19, 63, 45, 125, 55, 245, 90,
+            236, 237, 82, 246, 9, 179, 32, 94, 194, 185
+          ]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 3
+        4:
+          signal_values: [
+            172, 187, 210, 13, 117, 185, 236, 95, 217, 38, 18, 16, 38, 166, 121, 175, 198, 227, 200, 23, 69, 115,
+            229, 190, 1, 169, 206, 93, 169, 50, 28, 128, 99, 143, 76, 94, 48, 234, 47, 225, 38, 250, 117, 181, 68,
+            182, 191, 18, 12, 18, 26, 28, 178, 59, 63, 247, 174, 75, 7, 213, 212, 89, 47, 77
+          ]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 4
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: hdlc_framer
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 8192
+      payload_pack_bits: !!uint32 8
+      payload_bit_order: LsbFirst
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: hdlc_framed
+      records:
+        0:
+          extents: [24]
+          meta_information:
+            packet: !!uint32 0
+            stuffing_inserted: !!uint32 0
+        1:
+          extents: [32]
+          meta_information:
+            packet: !!uint32 1
+            stuffing_inserted: !!uint32 0
+        2:
+          extents: [73]
+          meta_information:
+            packet: !!uint32 2
+            stuffing_inserted: !!uint32 1
+        3:
+          extents: [287]
+          meta_information:
+            packet: !!uint32 3
+            stuffing_inserted: !!uint32 7
+        4:
+          extents: [535]
+          meta_information:
+            packet: !!uint32 4
+            stuffing_inserted: !!uint32 7
+  - id: gr::blocks::basic::DataSetToStream<uint8>
+    parameters:
+      name: hdlc_wire
+      boundary_label: ""
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: hdlc_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 8192
+      payload_pack_bits: !!uint32 8
+      payload_bit_order: LsbFirst
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: hdlc_received
+      records:
+        0:
+          signal_values: [173]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        1:
+          signal_values: [118, 54]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        2:
+          signal_values: [116, 236, 121, 207, 234, 139, 142]
+          meta_information:
+            stuffing_removed: !!uint32 1
+        3:
+          signal_values: [
+            21, 3, 253, 158, 31, 255, 184, 117, 79, 25, 109, 239, 26, 222, 189, 228, 19, 63, 45, 125, 55, 245, 90,
+            236, 237, 82, 246, 9, 179, 32, 94, 194, 185
+          ]
+          meta_information:
+            stuffing_removed: !!uint32 7
+        4:
+          signal_values: [
+            172, 187, 210, 13, 117, 185, 236, 95, 217, 38, 18, 16, 38, 166, 121, 175, 198, 227, 200, 23, 69, 115,
+            229, 190, 1, 169, 206, 93, 169, 50, 28, 128, 99, 143, 76, 94, 48, 234, 47, 225, 38, 250, 117, 181, 68,
+            182, 191, 18, 12, 18, 26, 28, 178, 59, 63, 247, 174, 75, 7, 213, 212, 89, 47, 77
+          ]
+          meta_information:
+            stuffing_removed: !!uint32 7
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: slip_source
+      records:
+        0:
+          signal_values: [173]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 0
+        1:
+          signal_values: [118, 54]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 1
+        2:
+          signal_values: [116, 236, 121, 207, 234, 139, 142]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 2
+        3:
+          signal_values: [
+            21, 3, 253, 158, 31, 255, 184, 117, 79, 25, 109, 239, 26, 222, 189, 228, 19, 63, 45, 125, 55, 245, 90,
+            236, 237, 82, 246, 9, 179, 32, 94, 194, 185
+          ]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 3
+        4:
+          signal_values: [
+            172, 187, 210, 13, 117, 185, 236, 95, 217, 38, 18, 16, 38, 166, 121, 175, 198, 227, 200, 23, 69, 115,
+            229, 190, 1, 169, 206, 93, 169, 50, 28, 128, 99, 143, 76, 94, 48, 234, 47, 225, 38, 250, 117, 181, 68,
+            182, 191, 18, 12, 18, 26, 28, 178, 59, 63, 247, 174, 75, 7, 213, 212, 89, 47, 77
+          ]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 4
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: slip_framer
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      transparency: byte_escape
+      escape_item: !!uint32 219
+      escape_map: !!uint32 [220, 192, 221, 219]
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: slip_framed
+      records:
+        0:
+          extents: [3]
+          meta_information:
+            packet: !!uint32 0
+            stuffing_inserted: !!uint32 0
+        1:
+          extents: [4]
+          meta_information:
+            packet: !!uint32 1
+            stuffing_inserted: !!uint32 0
+        2:
+          extents: [9]
+          meta_information:
+            packet: !!uint32 2
+            stuffing_inserted: !!uint32 0
+        3:
+          extents: [35]
+          meta_information:
+            packet: !!uint32 3
+            stuffing_inserted: !!uint32 0
+        4:
+          extents: [66]
+          meta_information:
+            packet: !!uint32 4
+            stuffing_inserted: !!uint32 0
+  - id: gr::blocks::basic::DataSetToStream<uint8>
+    parameters:
+      name: slip_wire
+      boundary_label: ""
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: slip_extractor
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      transparency: byte_escape
+      escape_item: !!uint32 219
+      escape_map: !!uint32 [220, 192, 221, 219]
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: slip_received
+      records:
+        0:
+          signal_values: [173]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        1:
+          signal_values: [118, 54]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        2:
+          signal_values: [116, 236, 121, 207, 234, 139, 142]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        3:
+          signal_values: [
+            21, 3, 253, 158, 31, 255, 184, 117, 79, 25, 109, 239, 26, 222, 189, 228, 19, 63, 45, 125, 55, 245, 90,
+            236, 237, 82, 246, 9, 179, 32, 94, 194, 185
+          ]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        4:
+          signal_values: [
+            172, 187, 210, 13, 117, 185, 236, 95, 217, 38, 18, 16, 38, 166, 121, 175, 198, 227, 200, 23, 69, 115,
+            229, 190, 1, 169, 206, 93, 169, 50, 28, 128, 99, 143, 76, 94, 48, 234, 47, 225, 38, 250, 117, 181, 68,
+            182, 191, 18, 12, 18, 26, 28, 178, 59, 63, 247, 174, 75, 7, 213, 212, 89, 47, 77
+          ]
+          meta_information:
+            stuffing_removed: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ppp_source
+      records:
+        0:
+          signal_values: [173]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 0
+        1:
+          signal_values: [118, 54]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 1
+        2:
+          signal_values: [116, 236, 121, 207, 234, 139, 142]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 2
+        3:
+          signal_values: [
+            21, 3, 253, 158, 31, 255, 184, 117, 79, 25, 109, 239, 26, 222, 189, 228, 19, 63, 45, 125, 55, 245, 90,
+            236, 237, 82, 246, 9, 179, 32, 94, 194, 185
+          ]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 3
+        4:
+          signal_values: [
+            172, 187, 210, 13, 117, 185, 236, 95, 217, 38, 18, 16, 38, 166, 121, 175, 198, 227, 200, 23, 69, 115,
+            229, 190, 1, 169, 206, 93, 169, 50, 28, 128, 99, 143, 76, 94, 48, 234, 47, 225, 38, 250, 117, 181, 68,
+            182, 191, 18, 12, 18, 26, 28, 178, 59, 63, 247, 174, 75, 7, 213, 212, 89, 47, 77
+          ]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 4
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: ppp_framer
+      end_delimiter: "01111110"
+      bits_per_item: !!uint32 8
+      transparency: byte_escape
+      escape_item: !!uint32 125
+      escape_map: !!uint32 [
+        32, 0, 33, 1, 34, 2, 35, 3, 36, 4, 37, 5, 38, 6, 39, 7, 40, 8, 41, 9, 42, 10, 43, 11, 44, 12, 45, 13, 46,
+        14, 47, 15, 48, 16, 49, 17, 50, 18, 51, 19, 52, 20, 53, 21, 54, 22, 55, 23, 56, 24, 57, 25, 58, 26, 59, 27,
+        60, 28, 61, 29, 62, 30, 63, 31, 93, 125, 94, 126
+      ]
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ppp_framed
+      records:
+        0:
+          extents: [3]
+          meta_information:
+            packet: !!uint32 0
+            stuffing_inserted: !!uint32 0
+        1:
+          extents: [4]
+          meta_information:
+            packet: !!uint32 1
+            stuffing_inserted: !!uint32 0
+        2:
+          extents: [9]
+          meta_information:
+            packet: !!uint32 2
+            stuffing_inserted: !!uint32 0
+        3:
+          extents: [43]
+          meta_information:
+            packet: !!uint32 3
+            stuffing_inserted: !!uint32 8
+        4:
+          extents: [78]
+          meta_information:
+            packet: !!uint32 4
+            stuffing_inserted: !!uint32 12
+  - id: gr::blocks::basic::DataSetToStream<uint8>
+    parameters:
+      name: ppp_wire
+      boundary_label: ""
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: ppp_extractor
+      end_delimiter: "01111110"
+      bits_per_item: !!uint32 8
+      transparency: byte_escape
+      escape_item: !!uint32 125
+      escape_map: !!uint32 [
+        32, 0, 33, 1, 34, 2, 35, 3, 36, 4, 37, 5, 38, 6, 39, 7, 40, 8, 41, 9, 42, 10, 43, 11, 44, 12, 45, 13, 46,
+        14, 47, 15, 48, 16, 49, 17, 50, 18, 51, 19, 52, 20, 53, 21, 54, 22, 55, 23, 56, 24, 57, 25, 58, 26, 59, 27,
+        60, 28, 61, 29, 62, 30, 63, 31, 93, 125, 94, 126
+      ]
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ppp_received
+      records:
+        0:
+          signal_values: [173]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        1:
+          signal_values: [118, 54]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        2:
+          signal_values: [116, 236, 121, 207, 234, 139, 142]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        3:
+          signal_values: [
+            21, 3, 253, 158, 31, 255, 184, 117, 79, 25, 109, 239, 26, 222, 189, 228, 19, 63, 45, 125, 55, 245, 90,
+            236, 237, 82, 246, 9, 179, 32, 94, 194, 185
+          ]
+          meta_information:
+            stuffing_removed: !!uint32 8
+        4:
+          signal_values: [
+            172, 187, 210, 13, 117, 185, 236, 95, 217, 38, 18, 16, 38, 166, 121, 175, 198, 227, 200, 23, 69, 115,
+            229, 190, 1, 169, 206, 93, 169, 50, 28, 128, 99, 143, 76, 94, 48, 234, 47, 225, 38, 250, 117, 181, 68,
+            182, 191, 18, 12, 18, 26, 28, 178, 59, 63, 247, 174, 75, 7, 213, 212, 89, 47, 77
+          ]
+          meta_information:
+            stuffing_removed: !!uint32 12
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: nmea_source
+      records:
+        0:
+          signal_values: [76]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 0
+        1:
+          signal_values: [75, 75]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 1
+        2:
+          signal_values: [89, 77, 72, 68, 77, 68, 83]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 2
+        3:
+          signal_values: [
+            82, 90, 78, 71, 86, 72, 77, 78, 66, 80, 76, 74, 75, 83, 70, 69, 80, 78, 72, 74, 80, 78, 85, 65, 74, 87,
+            85, 84, 78, 81, 73, 69, 90
+          ]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 3
+        4:
+          signal_values: [
+            89, 80, 81, 72, 78, 70, 65, 86, 80, 67, 67, 73, 73, 73, 86, 76, 67, 66, 71, 74, 90, 68, 86, 65, 74, 72,
+            85, 86, 74, 79, 65, 75, 86, 66, 67, 75, 67, 65, 86, 88, 75, 69, 78, 86, 65, 69, 82, 65, 71, 73, 85, 85,
+            79, 86, 90, 86, 69, 86, 84, 84, 77, 82, 90, 72
+          ]
+          signal_names: [payload]
+          signal_quantities: [""]
+          signal_units: [""]
+          meta_information:
+            packet: !!uint32 4
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: nmea_framer
+      end_delimiter: "0000110100001010"
+      start_delimiter: "00100100"
+      frame_open: start
+      bits_per_item: !!uint32 8
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: nmea_framed
+      records:
+        0:
+          extents: [4]
+          meta_information:
+            packet: !!uint32 0
+            stuffing_inserted: !!uint32 0
+        1:
+          extents: [5]
+          meta_information:
+            packet: !!uint32 1
+            stuffing_inserted: !!uint32 0
+        2:
+          extents: [10]
+          meta_information:
+            packet: !!uint32 2
+            stuffing_inserted: !!uint32 0
+        3:
+          extents: [36]
+          meta_information:
+            packet: !!uint32 3
+            stuffing_inserted: !!uint32 0
+        4:
+          extents: [67]
+          meta_information:
+            packet: !!uint32 4
+            stuffing_inserted: !!uint32 0
+  - id: gr::blocks::basic::DataSetToStream<uint8>
+    parameters:
+      name: nmea_wire
+      boundary_label: ""
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: nmea_extractor
+      end_delimiter: "0000110100001010"
+      start_delimiter: "00100100"
+      frame_open: start
+      bits_per_item: !!uint32 8
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: nmea_received
+      records:
+        0:
+          signal_values: [76]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        1:
+          signal_values: [75, 75]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        2:
+          signal_values: [89, 77, 72, 68, 77, 68, 83]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        3:
+          signal_values: [
+            82, 90, 78, 71, 86, 72, 77, 78, 66, 80, 76, 74, 75, 83, 70, 69, 80, 78, 72, 74, 80, 78, 85, 65, 74, 87,
+            85, 84, 78, 81, 73, 69, 90
+          ]
+          meta_information:
+            stuffing_removed: !!uint32 0
+        4:
+          signal_values: [
+            89, 80, 81, 72, 78, 70, 65, 86, 80, 67, 67, 73, 73, 73, 86, 76, 67, 66, 71, 74, 90, 68, 86, 65, 74, 72,
+            85, 86, 74, 79, 65, 75, 86, 66, 67, 75, 67, 65, 86, 88, 75, 69, 78, 86, 65, 69, 82, 65, 71, 73, 85, 85,
+            79, 86, 90, 86, 69, 86, 84, 84, 77, 82, 90, 72
+          ]
+          meta_information:
+            stuffing_removed: !!uint32 0
+connections:
+  - [hdlc_source, out, hdlc_framer, in]
+  - [hdlc_framer, out, hdlc_framed, in]
+  - [hdlc_framer, out, hdlc_wire, in]
+  - [hdlc_wire, out, hdlc_extractor, in]
+  - [hdlc_extractor, out, hdlc_received, in]
+  - [slip_source, out, slip_framer, in]
+  - [slip_framer, out, slip_framed, in]
+  - [slip_framer, out, slip_wire, in]
+  - [slip_wire, out, slip_extractor, in]
+  - [slip_extractor, out, slip_received, in]
+  - [ppp_source, out, ppp_framer, in]
+  - [ppp_framer, out, ppp_framed, in]
+  - [ppp_framer, out, ppp_wire, in]
+  - [ppp_wire, out, ppp_extractor, in]
+  - [ppp_extractor, out, ppp_received, in]
+  - [nmea_source, out, nmea_framer, in]
+  - [nmea_framer, out, nmea_framed, in]
+  - [nmea_framer, out, nmea_wire, in]
+  - [nmea_wire, out, nmea_extractor, in]
+  - [nmea_extractor, out, nmea_received, in]
