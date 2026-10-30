@@ -3,12 +3,17 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
+#include <memory_resource>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/Tensor.hpp>
+#include <gnuradio-4.0/basic/DataSetSource.hpp>
 #include <gnuradio-4.0/basic/VectorSource.hpp>
 #include <gnuradio-4.0/testing/GraphTestBlocks.hpp>
 
@@ -40,12 +45,12 @@ struct TagAtSource : gr::Block<TagAtSource<T>> {
     }
 };
 
-/// @brief Runs a source into an ExpectSink and returns the error message, empty when the run succeeds.
-template<typename T, template<typename> typename TSource = TagAtSource>
-std::string runIntoSink(gr::property_map sourceSettings, gr::property_map sinkSettings) {
+/// @brief Runs a source into a sink and returns the error message, empty when the run succeeds.
+template<typename TSource, typename TSink>
+std::string runChain(gr::property_map sourceSettings, gr::property_map sinkSettings) {
     gr::Graph graph;
-    auto&     source = graph.emplaceBlock<TSource<T>>(std::move(sourceSettings));
-    auto&     sink   = graph.emplaceBlock<gr::blocks::testing::ExpectSink<T>>(std::move(sinkSettings));
+    auto&     source = graph.emplaceBlock<TSource>(std::move(sourceSettings));
+    auto&     sink   = graph.emplaceBlock<TSink>(std::move(sinkSettings));
     if (!graph.connect<"out", "in">(source, sink).has_value()) {
         return "connect failed";
     }
@@ -55,6 +60,21 @@ std::string runIntoSink(gr::property_map sourceSettings, gr::property_map sinkSe
     }
     const auto result = scheduler.runAndWait();
     return result.has_value() ? std::string{} : std::string(result.error().message);
+}
+
+/// @brief Runs a source into an ExpectSink and returns the error message, empty when the run succeeds.
+template<typename T, template<typename> typename TSource = TagAtSource>
+std::string runIntoSink(gr::property_map sourceSettings, gr::property_map sinkSettings) {
+    return runChain<TSource<T>, gr::blocks::testing::ExpectSink<T>>(std::move(sourceSettings), std::move(sinkSettings));
+}
+
+/// @brief Returns a list of maps, the form of several tags at one index or of several meta maps.
+gr::pmt::Value listOf(std::initializer_list<gr::property_map> maps) {
+    std::pmr::vector<gr::pmt::Value> values;
+    for (const gr::property_map& map : maps) {
+        values.emplace_back(map);
+    }
+    return gr::pmt::Value(gr::Tensor<gr::pmt::Value>(std::move(values)));
 }
 
 } // namespace
@@ -188,6 +208,47 @@ const boost::ut::suite<"ExpectSink expected_tags"> expectedTagsTests = [] {
         const std::string error = runIntoSink<float, VectorSource>(source, //
             property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"one", frameTag}}}});
         expect(error.contains("expected_tags key 'one' is not a sample index")) << error;
+    };
+};
+
+const boost::ut::suite<"DataSet blocks"> dataSetTests = [] {
+    using namespace boost::ut;
+    using gr::property_map;
+    using Source = gr::blocks::basic::DataSetSource<std::uint8_t>;
+    using Sink   = gr::blocks::testing::ExpectDataSetSink<std::uint8_t>;
+    const property_map records{{"0", property_map{{"signal_values", std::vector<std::uint8_t>{1U, 2U, 3U}}, {"signal_names", std::vector<std::string>{"payload"}}, //
+                                         {"axis_names", std::vector<std::string>{"time"}}, {"meta_information", property_map{{"seq", std::uint32_t(0)}, {"ok", true}}}}},
+        {"1", property_map{}}, {"2", property_map{{"signal_values", std::vector<std::uint8_t>{4U}}, {"meta_information", property_map{{"seq", std::uint64_t(1ULL << 40U)}}}}}};
+
+    "DataSetSource records reach ExpectDataSetSink in order"_test = [&] {
+        const property_map wanted{{"0", property_map{{"signal_values", std::vector<std::uint8_t>{1U, 2U, 3U}}, {"extents", std::vector<std::int32_t>{3}}, {"signal_names", std::vector<std::string>{"payload"}}, //
+                                            {"axis_names", std::vector<std::string>{"time"}}, {"meta_information", property_map{{"seq", std::int64_t(0)}, {"ok", true}}}}},
+            {"1", property_map{{"signal_values", std::vector<std::uint8_t>{}}, {"extents", std::vector<std::int32_t>{0}}, {"meta_information", listOf({})}}}, {"2", property_map{{"meta_information", property_map{{"seq", std::uint64_t(1ULL << 40U)}}}, {"meta_absent", std::vector<std::string>{"ok"}}, {"meta_present", std::vector<std::string>{"seq"}}}}};
+        const std::string  error = runChain<Source, Sink>(property_map{{"records", records}}, property_map{{"records", wanted}, {"meta_exact", true}});
+        expect(error.empty()) << error;
+    };
+
+    "ExpectDataSetSink names the record, the field and both values"_test = [&] {
+        const std::string wrongMeta = runChain<Source, Sink>(property_map{{"records", records}}, //
+            property_map{{"records", property_map{{"0", property_map{{"meta_information", property_map{{"seq", std::int64_t(1)}}}}}, {"1", property_map{}}, {"2", property_map{}}}}});
+        expect(wrongMeta.contains("record 0 field 'meta_information' key 'seq' is 0 (uint32), expected 1 (int64)")) << wrongMeta;
+        const std::string wrongAxis = runChain<Source, Sink>(property_map{{"records", records}}, //
+            property_map{{"records", property_map{{"0", property_map{{"axis_names", std::vector<std::string>{"other"}}}}, {"1", property_map{}}, {"2", property_map{}}}}});
+        expect(wrongAxis.contains("record 0 field 'axis_names' is [time], expected [other]")) << wrongAxis;
+        const std::string missingKey = runChain<Source, Sink>(property_map{{"records", records}}, //
+            property_map{{"records", property_map{{"0", property_map{{"meta_present", std::vector<std::string>{"gone"}}}}, {"1", property_map{}}, {"2", property_map{}}}}});
+        expect(missingKey.contains("record 0 field 'meta_present' key 'gone' is missing")) << missingKey;
+        const std::string noMap = runChain<Source, Sink>(property_map{{"records", records}}, //
+            property_map{{"records", property_map{{"0", property_map{}}, {"1", property_map{{"meta_present", std::vector<std::string>{"seq"}}}}, {"2", property_map{}}}}});
+        expect(noMap.contains("record 1 field 'meta_present' key 'seq' is missing, the DataSet has no meta map")) << noMap;
+        const std::string tooFew = runChain<Source, Sink>(property_map{{"records", records}}, //
+            property_map{{"records", property_map{{"0", property_map{}}, {"1", property_map{}}, {"2", property_map{}}, {"3", property_map{}}}}});
+        expect(tooFew.contains("the stream ended after 3 DataSets, expected 4")) << tooFew;
+    };
+
+    "DataSetSource names the record and the field of a malformed entry"_test = [] {
+        const std::string error = runChain<Source, Sink>(property_map{{"records", property_map{{"0", property_map{{"signal_value", std::vector<std::uint8_t>{1U}}}}}}}, property_map{});
+        expect(error.contains("record 0 field 'signal_value' is not a record field")) << error;
     };
 };
 
