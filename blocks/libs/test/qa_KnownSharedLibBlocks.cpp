@@ -100,6 +100,22 @@ const boost::ut::suite TagTests = [] {
         expect(misplaced.empty()) << "registered in the wrong plugin or not at all:" << misplaced;
     };
 
+    "the basic plugin registers DataSetSource, the testing plugin does not"_test = [] {
+        gr::BlockRegistry basicOnly;
+        gr::BlockRegistry testingOnly;
+        expect(gt(gr::blocklib::initGrBasicBlocks(basicOnly), 0UZ));
+        expect(gt(gr::blocklib::initGrTestingBlocks(testingOnly), 0UZ));
+        std::string misplaced;
+        for (const std::string_view type : {"uint8"sv, "float32"sv}) {
+            const std::string basicKey   = std::format("gr::blocks::basic::DataSetSource<{}>", type);
+            const std::string testingKey = std::format("gr::blocks::testing::DataSetSource<{}>", type);
+            if (!basicOnly.contains(basicKey) || basicOnly.contains(testingKey) || testingOnly.contains(basicKey) || testingOnly.contains(testingKey)) {
+                misplaced += std::format(" DataSetSource<{}>", type);
+            }
+        }
+        expect(misplaced.empty()) << "registered in the wrong plugin or not at all:" << misplaced;
+    };
+
     "CheckAvailableBlocks"_test = [&] {
         expect(gt(registry.keys().size(), 20UZ));
 
