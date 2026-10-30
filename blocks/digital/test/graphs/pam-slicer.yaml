@@ -1,0 +1,31 @@
+# PamSlicer over four levels, fed a value inside, at and on each side of every threshold at -2, 0 and +2, and the two
+# outer extremes. The identity sink expects each value's level rank, the upper region taking a value on its threshold.
+# The labeled chain maps the ranks to the C4FM labels 3, 2, 0 and 1, and its sink expects those labels.
+# generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: slicer_source
+      values: !!float32 [
+        -1e+30, -3.0, -2.01, -2.0, -1.0, -0.01, 0.0, 1.0, 1.99, 2.0, 3.0, 1e+30
+      ]
+  - id: gr::blocks::digital::PamSlicer<float32>
+    parameters:
+      name: identity_slicer
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: identity_sink
+      expected: [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3]
+  - id: gr::blocks::digital::PamSlicer<float32>
+    parameters:
+      name: c4fm_slicer
+      labels: !!uint32 [3, 2, 0, 1]
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: c4fm_sink
+      expected: [3, 3, 3, 2, 2, 2, 0, 0, 0, 1, 1, 1]
+connections:
+  - [slicer_source, out, identity_slicer, in]
+  - [identity_slicer, out, identity_sink, in]
+  - [slicer_source, out, c4fm_slicer, in]
+  - [c4fm_slicer, out, c4fm_sink, in]

@@ -1,0 +1,31 @@
+# PamSlicer and LevelTracker over four levels, each with no symbol to process. The run passes as written. A case that
+# changes a setting through SET checks that the block refuses it, and the refusal ends the run with the block's
+# reason. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: slicer_source
+      values: !!float32 []
+  - id: gr::blocks::digital::PamSlicer<float32>
+    parameters:
+      name: slicer_block
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: slicer_sink
+      expected: []
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: tracker_source
+      values: !!float32 []
+  - id: gr::blocks::digital::LevelTracker<float32>
+    parameters:
+      name: tracker_block
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: tracker_sink
+      expected: !!float32 []
+connections:
+  - [slicer_source, out, slicer_block, in]
+  - [slicer_block, out, slicer_sink, in]
+  - [tracker_source, out, tracker_block, in]
+  - [tracker_block, out, tracker_sink, in]
