@@ -1138,6 +1138,352 @@ reason.
     return g
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# DelimiterFramer
+
+PPP_ORIGINALS = list(range(32)) + [0x7D, 0x7E]
+
+
+def framer_hdlc(bound):
+    return hdlc_framing(bound, payload_pack_bits=U32(8), payload_bit_order="LsbFirst")
+
+
+def framer_slip(bound):
+    return {
+        "end_delimiter": "11000000",
+        "bits_per_item": U32(8),
+        "transparency": "byte_escape",
+        "escape_item": U32(0xDB),
+        "escape_map": U32s([0xDC, 0xC0, 0xDD, 0xDB]),
+        "max_payload_items": U32(bound),
+    }
+
+
+def framer_ppp(bound):
+    flat = []
+    for original in PPP_ORIGINALS:
+        flat += [original ^ 0x20, original]
+    return {
+        "end_delimiter": FLAG,
+        "bits_per_item": U32(8),
+        "transparency": "byte_escape",
+        "escape_item": U32(0x7D),
+        "escape_map": U32s(flat),
+        "max_payload_items": U32(bound),
+    }
+
+
+def framer_nmea(bound):
+    return {
+        "end_delimiter": "0000110100001010",
+        "start_delimiter": "00100100",
+        "frame_open": "start",
+        "bits_per_item": U32(8),
+        "max_payload_items": U32(bound),
+    }
+
+
+def hdlc_frame(data):
+    """One framed record under framer_hdlc, and the zeros stuffed into it."""
+    bits = bits_lsb_first(data)
+    coded = stuff(bits)
+    return items_of(FLAG) + coded + items_of(FLAG), len(coded) - len(bits)
+
+
+def payload_record(data, meta=None, **more):
+    """The record the qa file's recordOf builds: one signal named payload and an empty unit and quantity."""
+    return record(
+        data,
+        names=["payload"],
+        signal_quantities=[""],
+        signal_units=[""],
+        meta=meta if meta is not None else {},
+        **more,
+    )
+
+
+def framer_chain(
+    g, prefix, inputs, settings, framed=None, received=None, extractor=None
+):
+    """A record source and DelimiterFramer, a sink on the framed records, and through DataSetToStream an extractor
+    and a sink on what it reads back. `framed` or `received` None leaves that branch out.
+    """
+    src = g.records_source(prefix + "_source", "uint8", inputs)
+    fr = g.block(DIG + "DelimiterFramer", prefix + "_framer", settings)
+    g.connect(src, fr)
+    if framed is not None:
+        g.connect(fr, g.records_sink(prefix + "_framed", "uint8", framed))
+    if received is not None:
+        wire = g.block(
+            "gr::blocks::basic::DataSetToStream<uint8>",
+            prefix + "_wire",
+            {"boundary_label": ""},
+        )
+        g.connect(fr, wire)
+        ext = g.block(
+            DIG + "DelimiterExtractor<uint8>",
+            prefix + "_extractor",
+            extractor or settings,
+        )
+        g.connect(wire, ext)
+        g.connect(ext, g.records_sink(prefix + "_received", "uint8", received))
+    return fr
+
+
+def framer_hdlc_graph():
+    g = Graph(
+        "delimiter-framer-hdlc.yaml",
+        """
+DelimiterFramer over HDLC framing, each byte sent least significant bit first, framing the two bytes 0x7E and 0xFF.
+The framed sink expects the flag, 0x7E with a zero stuffed after its fifth one, 0xFF with another, and the flag: 34
+bit items and a stuffing count of 2. Through DataSetToStream a DelimiterExtractor with the same framing reads the
+frame back, and its sink expects the two bytes and the two zeros it removed. The framer's line at stop counts the
+record, the items and the stuffed bits.
+""",
+    )
+    wire = items_of(FLAG + "011111010" + "111110111" + FLAG)
+    assert (wire, 2) == hdlc_frame([0x7E, 0xFF])
+    framed = [record(wire, extents=[34], meta={"stuffing_inserted": U32(2)})]
+    received = [record([0x7E, 0xFF], meta={"stuffing_removed": U32(2)})]
+    framer_chain(
+        g, "hdlc", [payload_record([0x7E, 0xFF])], framer_hdlc(1024), framed, received
+    )
+    return g
+
+
+def framer_loopback():
+    g = Graph(
+        "delimiter-framer-loopback.yaml",
+        """
+DelimiterFramer and DelimiterExtractor at the two ends of one link, under HDLC, SLIP, PPP and NMEA 0183 framing.
+Each source sends payloads of 1, 2, 7, 33 and 64 random bytes, upper-case letters under NMEA, each with a packet
+number. The framed sink expects each packet number and the count of items the framer inserted, and an extent of
+both delimiters, the payload items and those insertions. Through DataSetToStream the extractor's sink expects
+each payload back and a removed count equal to the inserted one.
+""",
+    )
+    framings = [
+        ("hdlc", framer_hdlc(8192), 8, 8, 8),
+        ("slip", framer_slip(1024), 1, 1, 1),
+        ("ppp", framer_ppp(1024), 1, 1, 1),
+        ("nmea", framer_nmea(1024), 1, 1, 2),
+    ]
+    for name, settings, unit, opening, closing in framings:
+        rng = Rng()
+        inputs, framed, received = [], [], []
+        for packet, length in enumerate((1, 2, 7, 33, 64)):
+            data = [
+                0x41 + rng.next() % 26 if name == "nmea" else rng.next() & 0xFF
+                for _ in range(length)
+            ]
+            if name == "hdlc":
+                inserted = hdlc_frame(data)[1]
+            elif name == "slip":
+                inserted = sum(1 for b in data if b in (0xC0, 0xDB))
+            elif name == "ppp":
+                inserted = sum(1 for b in data if b in PPP_ORIGINALS)
+            else:
+                inserted = 0
+            inputs.append(payload_record(data, meta={"packet": U32(packet)}))
+            emitted = opening + closing + unit * length + inserted
+            framed.append(
+                record(
+                    extents=[emitted],
+                    meta={"packet": U32(packet), "stuffing_inserted": U32(inserted)},
+                )
+            )
+            received.append(record(data, meta={"stuffing_removed": U32(inserted)}))
+        framer_chain(g, name, inputs, settings, framed, received)
+    return g
+
+
+def framer_fcs():
+    rng = Rng()
+    messages = [[0x41, 0x42, 0x43], [0xFF] * 24, rng.bytes(40)]
+    frames = [hdlc_frame(m + crc_bytes(crc_of(X25, m), 16, "little")) for m in messages]
+    g = Graph(
+        "delimiter-framer-fcs.yaml",
+        f"""
+The HDLC profile with a CRC-16/X-25 frame check sequence, low byte first, over three messages: three bytes, 24 bytes
+of 0xFF and 40 random bytes. Clean: CrcAppend, DelimiterFramer, DataSetToStream, DelimiterExtractor and CrcCheck
+with discard_crc in one chain. The framed sink expects each frame item by item, the all-ones frame with its
+{frames[1][1]} stuffed zeros, and the passing sink each message as it was sent. Flipped: the same three frames on one stream, with
+one item of the third frame inverted inside a run of ones short enough that no stuffing decision changes. The
+passing sink expects the first two messages, and the failing sink the third.
+""",
+    )
+    crc = crc_settings(X25, "little")
+    src = g.records_source(
+        "clean_source", "uint8", [payload_record(m) for m in messages]
+    )
+    app = g.block(DIG + "CrcAppend", "clean_append", crc)
+    g.connect(src, app)
+    fr = g.block(DIG + "DelimiterFramer", "clean_framer", framer_hdlc(8192))
+    g.connect(app, fr)
+    framed = [record(f, meta={"stuffing_inserted": U32(n)}) for f, n in frames]
+    assert frames[1][1] > 0
+    g.connect(fr, g.records_sink("clean_framed", "uint8", framed))
+    wire = g.block(
+        "gr::blocks::basic::DataSetToStream<uint8>",
+        "clean_wire",
+        {"boundary_label": ""},
+    )
+    g.connect(fr, wire)
+    ext = g.block(
+        DIG + "DelimiterExtractor<uint8>", "clean_extractor", framer_hdlc(8192)
+    )
+    g.connect(wire, ext)
+    ok = [record(m, meta={"crc_ok": True}) for m in messages]
+    check_chain(
+        g,
+        "clean",
+        None,
+        crc_settings(X25, "little", discard_crc=True),
+        ok,
+        [],
+        source=ext,
+    )
+
+    stream = frames[0][0] + frames[1][0] + frames[2][0]
+    earlier, target, at = len(frames[0][0]) + len(frames[1][0]), frames[2][0], None
+    for i in range(9, len(target) - 9):
+        if target[i] == 0:
+            continue
+        lo = hi = i
+        while lo > 0 and target[lo - 1]:
+            lo -= 1
+        while hi + 1 < len(target) and target[hi + 1]:
+            hi += 1
+        if hi - lo + 1 <= 4:
+            at = earlier + i
+            break
+    assert at is not None
+    stream[at] ^= 1
+    src = g.vector_source("flipped_source", "uint8", stream)
+    ext = g.block(
+        DIG + "DelimiterExtractor<uint8>", "flipped_extractor", framer_hdlc(8192)
+    )
+    g.connect(src, ext)
+    ok = [record(m, meta={"crc_ok": True}) for m in messages[:2]]
+    check_chain(
+        g,
+        "flipped",
+        None,
+        crc_settings(X25, "little", discard_crc=True),
+        ok,
+        [record(meta={"crc_ok": False})],
+        source=ext,
+    )
+    return g
+
+
+def framer_ones():
+    g = Graph(
+        "delimiter-framer-ones.yaml",
+        """
+DelimiterFramer and DelimiterExtractor at the two ends of one link under the delimiter 0111111, which ends in ones,
+with bit stuffing at five ones and no abort. The source sends 40 payloads of 1 to 64 random bits and then 011111,
+which ends in five ones. The received sink expects every payload back, and the framed sink expects one zero stuffed
+into the last frame, after its last item.
+""",
+    )
+    settings = {
+        "end_delimiter": "0111111",
+        "transparency": "bit_stuffing",
+        "abort_ones": U32(0),
+        "max_payload_items": U32(4096),
+    }
+    rng = Rng()
+    payloads = []
+    for _ in range(40):
+        length = 1 + rng.below(64)
+        payloads.append([rng.next() & 1 for _ in range(length)])
+    payloads.append([0, 1, 1, 1, 1, 1])
+    framed = [{} for _ in payloads[:-1]] + [record(meta={"stuffing_inserted": U32(1)})]
+    framer_chain(
+        g,
+        "ones",
+        [payload_record(p) for p in payloads],
+        settings,
+        framed,
+        [record(p) for p in payloads],
+    )
+    return g
+
+
+def framer_records():
+    g = Graph(
+        "delimiter-framer-records.yaml",
+        """
+DelimiterFramer with records it drops, records that forge its delimiter, and a record's metadata. Drops: SLIP
+framing with a bound of 8, fed an empty record, three bytes, nine bytes and one byte; the sink expects the second and
+fourth records framed. Forgery: 0xC0 over byte items with no transparency, fed a payload carrying 0xC0 twice; the
+framed sink expects it framed with nothing inserted, and the extractor's sink three records, cut at the two forged
+delimiters. Metadata: SLIP framing over three records; the sink expects the first record's keys beside a stuffing
+count of 0 and one empty event list where it had an event, and the second record, 0xC0 and 0xDB, with both escaped.
+Each framer's line at stop counts what it framed, emitted, escaped, refused or forged.
+""",
+    )
+    inputs = [
+        payload_record([]),
+        payload_record([0x11, 0x22, 0x33]),
+        payload_record([0x44] * 9),
+        payload_record([0x55]),
+    ]
+    framed = [record([0xC0, 0x11, 0x22, 0x33, 0xC0]), record([0xC0, 0x55, 0xC0])]
+    framer_chain(g, "drops", inputs, framer_slip(8), framed)
+
+    settings = {
+        "end_delimiter": "11000000",
+        "bits_per_item": U32(8),
+        "max_payload_items": U32(64),
+    }
+    data = [0x11, 0xC0, 0x22, 0xC0, 0x33]
+    framed = [record([0xC0] + data + [0xC0], meta={"stuffing_inserted": U32(0)})]
+    received = [record([0x11]), record([0x22]), record([0x33])]
+    framer_chain(g, "forgery", [payload_record(data)], settings, framed, received)
+
+    inputs = [
+        payload_record(
+            [0x11, 0x22],
+            meta={"packet": U32(7), "origin": "qa"},
+            timing_events=[{1: {"marker": U32(1)}}],
+        ),
+        payload_record([0xC0, 0xDB], meta={"packet": U32(8)}),
+        payload_record([0x33]),
+    ]
+    framed = [
+        record(
+            meta={"packet": U32(7), "origin": "qa", "stuffing_inserted": U32(0)},
+            timing_events=[{}],
+        ),
+        record(
+            [0xC0, 0xDB, 0xDC, 0xDB, 0xDD, 0xC0],
+            meta={"packet": U32(8), "stuffing_inserted": U32(2)},
+        ),
+        {},
+    ]
+    framer_chain(g, "metadata", inputs, framer_slip(64), framed)
+    return g
+
+
+def framer_settings():
+    g = Graph(
+        "delimiter-framer-settings.yaml",
+        """
+DelimiterFramer with settings it accepts and no record to process: SLIP and PPP framing with a bound of 256, the
+flag under bit stuffing with a bound of 16, and 0xC0 over byte items with a bound of 16. The run passes as written. A
+case that changes settings through SET checks that the block refuses them, and the refusal ends the run with the
+block's reason.
+""",
+    )
+    framer_chain(g, "slip", [], framer_slip(256), [])
+    framer_chain(g, "ppp", [], framer_ppp(256), [])
+    framer_chain(g, "stuffed", [], hdlc_framing(16), [])
+    framer_chain(g, "byte", [], byte_framing(16), [])
+    return g
+
+
 GRAPHS = [
     crc_round_trip,
     crc_append,
@@ -1156,6 +1502,12 @@ GRAPHS = [
     extractor_stuffing,
     extractor_crc,
     extractor_settings,
+    framer_hdlc_graph,
+    framer_loopback,
+    framer_fcs,
+    framer_ones,
+    framer_records,
+    framer_settings,
 ]
 
 

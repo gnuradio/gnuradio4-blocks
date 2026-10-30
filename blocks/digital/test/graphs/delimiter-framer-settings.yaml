@@ -1,0 +1,80 @@
+# DelimiterFramer with settings it accepts and no record to process: SLIP and PPP framing with a bound of 256, the
+# flag under bit stuffing with a bound of 16, and 0xC0 over byte items with a bound of 16. The run passes as written.
+# A case that changes settings through SET checks that the block refuses them, and the refusal ends the run with the
+# block's reason. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: slip_source
+      records: {}
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: slip_framer
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      transparency: byte_escape
+      escape_item: !!uint32 219
+      escape_map: !!uint32 [220, 192, 221, 219]
+      max_payload_items: !!uint32 256
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: slip_framed
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ppp_source
+      records: {}
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: ppp_framer
+      end_delimiter: "01111110"
+      bits_per_item: !!uint32 8
+      transparency: byte_escape
+      escape_item: !!uint32 125
+      escape_map: !!uint32 [
+        32, 0, 33, 1, 34, 2, 35, 3, 36, 4, 37, 5, 38, 6, 39, 7, 40, 8, 41, 9, 42, 10, 43, 11, 44, 12, 45, 13, 46,
+        14, 47, 15, 48, 16, 49, 17, 50, 18, 51, 19, 52, 20, 53, 21, 54, 22, 55, 23, 56, 24, 57, 25, 58, 26, 59, 27,
+        60, 28, 61, 29, 62, 30, 63, 31, 93, 125, 94, 126
+      ]
+      max_payload_items: !!uint32 256
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ppp_framed
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: stuffed_source
+      records: {}
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: stuffed_framer
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 16
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: stuffed_framed
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: byte_source
+      records: {}
+  - id: gr::blocks::digital::DelimiterFramer
+    parameters:
+      name: byte_framer
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      max_payload_items: !!uint32 16
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: byte_framed
+      records: {}
+connections:
+  - [slip_source, out, slip_framer, in]
+  - [slip_framer, out, slip_framed, in]
+  - [ppp_source, out, ppp_framer, in]
+  - [ppp_framer, out, ppp_framed, in]
+  - [stuffed_source, out, stuffed_framer, in]
+  - [stuffed_framer, out, stuffed_framed, in]
+  - [byte_source, out, byte_framer, in]
+  - [byte_framer, out, byte_framed, in]

@@ -93,6 +93,12 @@ gr_digital_graph_test(graph_digital_delimiter_extractor_events graphs/delimiter-
 gr_digital_graph_test(graph_digital_delimiter_extractor_stuffing graphs/delimiter-extractor-stuffing.yaml)
 gr_digital_graph_test(graph_digital_delimiter_extractor_crc graphs/delimiter-extractor-crc.yaml)
 gr_digital_graph_test(graph_digital_delimiter_extractor_settings graphs/delimiter-extractor-settings.yaml)
+gr_digital_graph_test(graph_digital_delimiter_framer_hdlc graphs/delimiter-framer-hdlc.yaml)
+gr_digital_graph_test(graph_digital_delimiter_framer_loopback graphs/delimiter-framer-loopback.yaml)
+gr_digital_graph_test(graph_digital_delimiter_framer_fcs graphs/delimiter-framer-fcs.yaml)
+gr_digital_graph_test(graph_digital_delimiter_framer_ones graphs/delimiter-framer-ones.yaml)
+gr_digital_graph_test(graph_digital_delimiter_framer_records graphs/delimiter-framer-records.yaml)
+gr_digital_graph_test(graph_digital_delimiter_framer_settings graphs/delimiter-framer-settings.yaml)
 
 # The settings graphs with settings changed that the block accepts.
 gr_digital_graph_test(
@@ -544,6 +550,73 @@ gr_add_failing_graph_test(
   $<TARGET_FILE_DIR:GrDigitalBlocksShared>
   SET
   "bit_extractor.end_delimiter=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_framer_introducer_unmapped
+  graphs/delimiter-framer-settings.yaml
+  "gr::digital::framerConfigure: the escape introducer is 219, which the escape map does not list as an original value"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "slip_framer.escape_map=!!uint32 [220, 192]")
+gr_add_failing_graph_test(
+  graph_digital_refused_framer_delimiter_unmapped
+  graphs/delimiter-framer-settings.yaml
+  "gr::digital::framerConfigure: an item of the end delimiter is 192, which the escape map does not list as an original value"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "slip_framer.escape_map=!!uint32 [221, 219]")
+gr_add_failing_graph_test(
+  graph_digital_refused_framer_pack_bytes
+  graphs/delimiter-framer-settings.yaml
+  "gr::digital::configureDelimiter: the pack stage assembles bits into items and needs bitsPerItem 1, got 8"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "slip_framer.payload_pack_bits=!!uint32 8")
+gr_add_failing_graph_test(
+  graph_digital_refused_framer_stuff_after_one
+  graphs/delimiter-framer-settings.yaml
+  "gr::digital::configureDelimiter: stuffAfterOnes must be in .2, 62., got 1"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "stuffed_framer.stuff_after_ones=!!uint32 1")
+gr_add_failing_graph_test(
+  graph_digital_refused_framer_destuffing
+  graphs/delimiter-framer-settings.yaml
+  "gr::digital::configureDelimiter: coded data may carry runs of up to 5 consecutive ones and \\\"0111110\\\" carries at most 5"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "stuffed_framer.end_delimiter=\"0111110\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_framer_required_both
+  graphs/delimiter-framer-settings.yaml
+  "DelimiterFramer[^\n]* throws: end_delimiter is required and has no default"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_framer.end_delimiter=\"\""
+  "byte_framer.bits_per_item=!!uint32 1"
+  "byte_framer.max_payload_items=!!uint32 0")
+gr_add_failing_graph_test(
+  graph_digital_refused_framer_required_bound
+  graphs/delimiter-framer-settings.yaml
+  "DelimiterFramer[^\n]* throws: max_payload_items is required and has no default"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_framer.max_payload_items=!!uint32 0")
+gr_add_failing_graph_test(
+  graph_digital_refused_framer_required_delimiter
+  graphs/delimiter-framer-settings.yaml
+  "DelimiterFramer[^\n]* throws: end_delimiter is required and has no default"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_framer.end_delimiter=\"\""
+  "byte_framer.bits_per_item=!!uint32 1")
 
 # A record the block refuses, on the block's reason.
 gr_add_failing_graph_test(
@@ -620,3 +693,23 @@ gr_digital_graph_test(
   graphs/delimiter-extractor-events.yaml
   PASS_REGULAR_EXPRESSION
   "gr::blocks::digital::DelimiterExtractor 'edge_extractor': [^\n]*, dropped timing events: 1")
+gr_digital_graph_test(
+  graph_digital_counters_hdlc
+  graphs/delimiter-framer-hdlc.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterFramer 'hdlc_framer': records framed: 1, items emitted: 34, stuffed bits: 2\n")
+gr_digital_graph_test(
+  graph_digital_counters_drops
+  graphs/delimiter-framer-records.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterFramer 'drops_framer': records framed: 2, items emitted: 8, records refused: 2")
+gr_digital_graph_test(
+  graph_digital_counters_forgery
+  graphs/delimiter-framer-records.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterFramer 'forgery_framer': records framed: 1, items emitted: 7, forged delimiters: 2")
+gr_digital_graph_test(
+  graph_digital_counters_metadata
+  graphs/delimiter-framer-records.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterFramer 'metadata_framer': records framed: 3, items emitted: 13, escaped items: 2")
