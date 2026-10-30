@@ -1,0 +1,59 @@
+# DelimiterExtractor into CrcCheck, as an HDLC receiver: three frames of three bytes, each followed by its CRC-16/X-25
+# frame check sequence low byte first, sent least significant bit first and stuffed between shared flags, with one
+# payload bit of the second frame changed. The extractor packs the bits into bytes least significant bit first and
+# refuses a frame below 24 bits. The passing sink expects the first and third frames with their check sequences, and
+# the failing sink the second. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: fcs_source
+      values: [
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1,
+        0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1,
+        0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1,
+        0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0,
+        0, 0, 1, 1, 1, 1, 1, 1, 0
+      ]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: fcs_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+      payload_pack_bits: !!uint32 8
+      payload_bit_order: LsbFirst
+      min_payload_items: !!uint32 24
+  - id: gr::blocks::digital::CrcCheck
+    parameters:
+      name: fcs_check
+      width: !!uint32 16
+      poly: !!uint64 4129
+      initial_value: !!uint64 65535
+      final_xor: !!uint64 65535
+      input_reflected: true
+      result_reflected: true
+      crc_byte_order: little
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: fcs_ok
+      records:
+        0:
+          signal_values: [65, 66, 67, 47, 159]
+          meta_information:
+            crc_ok: true
+        1:
+          signal_values: [71, 72, 73, 220, 27]
+          meta_information:
+            crc_ok: true
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: fcs_fail
+      records:
+        0:
+          meta_information:
+            crc_ok: false
+connections:
+  - [fcs_source, out, fcs_extractor, in]
+  - [fcs_extractor, out, fcs_check, in]
+  - [fcs_check, ok, fcs_ok, in]
+  - [fcs_check, fail, fcs_fail, in]

@@ -1,0 +1,89 @@
+# Input tags as the timing events of DelimiterExtractor's records, over HDLC framing. Interior: anchor A, 0x3F with
+# one stuffed zero, with a tag before the first flag and a tag on each of the nine raw payload items. The sink expects
+# one event per payload item at its index in the decoded record, and two at index 5, where the tag on the stuffed bit
+# moves to the next item. Edge: a frame of five ones whose last raw item is a stuffed zero carrying a tag, which falls
+# one past the record's end, and the sink expects the record with no event. Each block's line at stop counts the tags
+# outside a frame, on a removed item and dropped. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: interior_source
+      values: [
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0
+      ]
+      tags:
+        0:
+          marker: !!uint32 99
+        8:
+          marker: !!uint32 8
+        9:
+          marker: !!uint32 9
+        10:
+          marker: !!uint32 10
+        11:
+          marker: !!uint32 11
+        12:
+          marker: !!uint32 12
+        13:
+          marker: !!uint32 13
+        14:
+          marker: !!uint32 14
+        15:
+          marker: !!uint32 15
+        16:
+          marker: !!uint32 16
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: interior_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: interior_out
+      records:
+        0:
+          timing_events:
+            - 0:
+                marker: !!uint32 8
+              1:
+                marker: !!uint32 9
+              2:
+                marker: !!uint32 10
+              3:
+                marker: !!uint32 11
+              4:
+                marker: !!uint32 12
+              5:
+                - marker: !!uint32 13
+                - marker: !!uint32 14
+              6:
+                marker: !!uint32 15
+              7:
+                marker: !!uint32 16
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: edge_source
+      values: [0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0]
+      tags:
+        13:
+          marker: !!uint32 1
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: edge_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: edge_out
+      records:
+        0:
+          signal_values: [1, 1, 1, 1, 1]
+          timing_events:
+            - {}
+connections:
+  - [interior_source, out, interior_extractor, in]
+  - [interior_extractor, out, interior_out, in]
+  - [edge_source, out, edge_extractor, in]
+  - [edge_extractor, out, edge_out, in]

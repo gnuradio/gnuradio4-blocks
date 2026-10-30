@@ -729,6 +729,415 @@ would fail.
     return g
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# DelimiterExtractor
+
+
+def byte_framing(bound, floor=None):
+    p = {
+        "end_delimiter": "11000000",
+        "bits_per_item": U32(8),
+        "max_payload_items": U32(bound),
+    }
+    if floor is not None:
+        p["min_payload_items"] = U32(floor)
+    return p
+
+
+def hdlc_framing(bound, **more):
+    return {
+        "end_delimiter": FLAG,
+        "transparency": "bit_stuffing",
+        "max_payload_items": U32(bound),
+        **more,
+    }
+
+
+def extractor_chain(
+    g,
+    prefix,
+    stream,
+    settings,
+    out,
+    reject=None,
+    kind="uint8",
+    source_params=None,
+    stages=(),
+):
+    """A stream source, any stages, DelimiterExtractor and a sink on `out`; `reject` None leaves that port open."""
+    prev = g.vector_source(prefix + "_source", kind, stream, **(source_params or {}))
+    for bid, suffix, params in stages:
+        name = g.block(bid, prefix + "_" + suffix, params)
+        g.connect(prev, name)
+        prev = name
+    ext = g.block(f"{DIG}DelimiterExtractor<{kind}>", prefix + "_extractor", settings)
+    g.connect(prev, ext)
+    g.connect(ext, g.records_sink(prefix + "_out", kind, out))
+    if reject is not None:
+        g.connect(ext, g.records_sink(prefix + "_reject", kind, reject), "reject")
+    return ext
+
+
+# anchor A: the flag, 0x3F with one stuffed zero, the flag
+ANCHOR_A = FLAG + "111110100" + FLAG
+
+
+def extractor_records():
+    g = Graph(
+        "delimiter-extractor-records.yaml",
+        """
+DelimiterExtractor over HDLC framing, bit stuffing at five ones and a bound of 1024 items. The two-frame chain
+carries 0x3F with one stuffed zero and then 0x00 with none. Its sink expects both records with their items, start
+index, stuffing count, sequence number, label, signal name and extent, and its reject sink expects none. The soft
+chain carries the first frame as floats of 0.75 and -0.25, and its sink expects those values rather than the bits
+they slice to. The pack chain assembles the first frame least significant bit first, and its sink expects the one
+byte 0x3F, its extent and the one stuffed zero.
+""",
+    )
+    stream = items_of(FLAG + "111110100" + FLAG + "00000000" + FLAG)
+    common = {"names": ["payload"], "extents": [8]}
+    out = [
+        record(
+            [1, 1, 1, 1, 1, 1, 0, 0],
+            meta={
+                "sample_start": U64(8),
+                "stuffing_removed": U32(1),
+                "sequence": U64(0),
+                "trigger_name": "delimiter",
+            },
+            **common,
+        ),
+        record(
+            [0] * 8,
+            meta={
+                "sample_start": U64(25),
+                "stuffing_removed": U32(0),
+                "sequence": U64(1),
+            },
+            **common,
+        ),
+    ]
+    extractor_chain(g, "two_frames", stream, hdlc_framing(1024), out, [])
+    soft = [0.75 if b else -0.25 for b in items_of(ANCHOR_A)]
+    extractor_chain(
+        g,
+        "soft",
+        soft,
+        hdlc_framing(1024),
+        [record([0.75] * 6 + [-0.25] * 2, soft=True)],
+        kind="float32",
+    )
+    pack = hdlc_framing(1024, payload_pack_bits=U32(8), payload_bit_order="LsbFirst")
+    extractor_chain(
+        g,
+        "pack",
+        items_of(ANCHOR_A),
+        pack,
+        [record([0x3F], extents=[1], meta={"stuffing_removed": U32(1)})],
+    )
+    return g
+
+
+def extractor_refusals():
+    g = Graph(
+        "delimiter-extractor-refusals.yaml",
+        """
+The frames DelimiterExtractor refuses and the regions it does not count as frames, each followed by a frame it
+emits. Overrun: 0xC0 delimiters over byte items with a bound of four, a five-item region and then a three-item frame;
+the reject sink expects the first four items with the reason overrun. Survive: a hundred such regions in a row
+and then a two-item frame, with the reject port unconnected. Undersize: a floor of three and a two-item region,
+refused with the reason undersize. Idle: two delimiters back to back before a three-item frame, which keeps sequence
+number 0. Unaligned: twenty bits between flags with the pack stage at eight bits, refused unpacked with the reason
+unaligned. Each block's line at stop counts what it refused.
+""",
+    )
+    stream = [0xC0, 0x11, 0x22, 0x33, 0x44, 0x55, 0xC0, 0x66, 0x77, 0x88, 0xC0]
+    reject = [record([0x11, 0x22, 0x33, 0x44], meta={"discard_reason": "overrun"})]
+    extractor_chain(
+        g, "overrun", stream, byte_framing(4), [record([0x66, 0x77, 0x88])], reject
+    )
+    hostile = []
+    for _ in range(SURVIVE):
+        hostile += [0xC0, 1, 2, 3, 4, 5]
+    hostile += [0xC0, 0x99, 0xAA, 0xC0]
+    extractor_chain(g, "survive", hostile, byte_framing(4), [record([0x99, 0xAA])])
+    reject = [record([0x11, 0x22], meta={"discard_reason": "undersize"})]
+    extractor_chain(
+        g, "undersize", [0xC0, 0x11, 0x22, 0xC0], byte_framing(16, 3), [], reject
+    )
+    out = [record([0x11, 0x22, 0x33], meta={"sequence": U64(0)})]
+    extractor_chain(
+        g, "idle", [0xC0, 0xC0, 0x11, 0x22, 0x33, 0xC0], byte_framing(16, 3), out, []
+    )
+    payload = "10101010101010101010"
+    settings = {
+        "end_delimiter": FLAG,
+        "max_payload_items": U32(1024),
+        "payload_pack_bits": U32(8),
+    }
+    reject = [record(items_of(payload), meta={"discard_reason": "unaligned"})]
+    extractor_chain(
+        g, "unaligned", items_of(FLAG + payload + FLAG), settings, [], reject
+    )
+    return g
+
+
+SURVIVE = 100
+
+
+def extractor_recovery():
+    g = Graph(
+        "delimiter-extractor-recovery.yaml",
+        """
+DelimiterExtractor abandoning a frame and recovering at the next delimiter. Abort: over HDLC framing a frame broken
+by seven ones and then the frame 01100; the sink expects the second frame alone and the reject sink nothing. Patient:
+the same wire with abort_ones 0, where the seven ones are payload, and the sink expects two records. Restart: '$'
+opens and a line feed closes over byte items, and a second '$' arrives inside the first frame; the sink expects the
+frame the second '$' opened. Each block's line at stop counts the aborts and restarts.
+""",
+    )
+    stream = items_of(FLAG + "10100" + "1111111" + FLAG + "01100" + FLAG)
+    extractor_chain(
+        g, "abort", stream, hdlc_framing(1024), [record([0, 1, 1, 0, 0])], []
+    )
+    extractor_chain(
+        g, "patient", stream, hdlc_framing(1024, abort_ones=U32(0)), [{}, {}], []
+    )
+    settings = {
+        "end_delimiter": "00001010",
+        "start_delimiter": "00100100",
+        "frame_open": "start",
+        "bits_per_item": U32(8),
+        "max_payload_items": U32(64),
+    }
+    extractor_chain(
+        g,
+        "restart",
+        [0x24, 0x41, 0x42, 0x24, 0x43, 0x44, 0x0A],
+        settings,
+        [record([0x43, 0x44])],
+        [],
+    )
+    return g
+
+
+SYNC = format(0xACDDA4E2F28C20AC, "064b")
+PAYLOADS = [items_of("10110010"), items_of("01001101")]
+
+
+def extractor_triggers():
+    g = Graph(
+        "delimiter-extractor-triggers.yaml",
+        """
+Trigger tags and DelimiterExtractor over HDLC framing. Detector: a 64-bit sync word ahead of two frames, through
+AccessCodeCorrelator into the extractor. The sink expects the detector's label and distance on the first record
+alone, and the second record labeled by the extractor. Mid-frame: a trigger tag four items into the first of two
+frames, which the extractor abandons, and its sink expects the second frame alone. Passive: the same tag with
+trigger_resets false, and its sink expects both frames. Each resetting block's line at stop counts one reset.
+""",
+    )
+    wire = hdlc_wire(PAYLOADS)
+    stages = [(DIG + "AccessCodeCorrelator<uint8>", "detector", {"access_code": SYNC})]
+    out = [
+        record(
+            PAYLOADS[0], meta={"trigger_name": "access_code", "sync_errors": U32(0)}
+        ),
+        record(PAYLOADS[1], meta={"trigger_name": "delimiter"}, absent=["sync_errors"]),
+    ]
+    extractor_chain(
+        g, "detector", items_of(SYNC) + wire, hdlc_framing(1024), out, stages=stages
+    )
+    tags = {"tags": {12: {"gr:trigger_name": "access_code"}}}
+    extractor_chain(
+        g,
+        "mid_frame",
+        wire,
+        hdlc_framing(1024),
+        [record(PAYLOADS[1])],
+        source_params=tags,
+    )
+    passive = hdlc_framing(1024, trigger_resets=False)
+    extractor_chain(
+        g,
+        "passive",
+        wire,
+        passive,
+        [record(PAYLOADS[0]), record(PAYLOADS[1])],
+        source_params=tags,
+    )
+    return g
+
+
+def extractor_sequence():
+    g = Graph(
+        "delimiter-extractor-sequence.yaml",
+        """
+DelimiterExtractor over 0xC0 delimiters and byte items with a bound of 8 and a floor of 2, fed 100 regions: frames
+of four items, seven regions of twelve items at frames 3, 16, 29, 42, 55, 68 and 81, and three single items at
+frames 7, 40 and 73. The sink expects the 90 frames numbered 0 to 99 without the ten refused ones, and the reject
+sink expects those ten, in order, with their reasons.
+""",
+    )
+    rng = Rng()
+    undersize, overrun = (7, 40, 73), (3, 16, 29, 42, 55, 68, 81)
+    stream, out, reject = [0xC0], [], []
+    for which in range(100):
+        length = 1 if which in undersize else 12 if which in overrun else 4
+        stream += [1 + rng.next() % 0x7E for _ in range(length)] + [0xC0]
+        if which in undersize or which in overrun:
+            reason = "undersize" if which in undersize else "overrun"
+            reject.append(
+                record(meta={"sequence": U64(which), "discard_reason": reason})
+            )
+        else:
+            out.append(record(meta={"sequence": U64(which)}))
+    extractor_chain(g, "sequence", stream, byte_framing(8, 2), out, reject)
+    return g
+
+
+def extractor_events():
+    g = Graph(
+        "delimiter-extractor-events.yaml",
+        """
+Input tags as the timing events of DelimiterExtractor's records, over HDLC framing. Interior: anchor A, 0x3F with
+one stuffed zero, with a tag before the first flag and a tag on each of the nine raw payload items. The sink expects
+one event per payload item at its index in the decoded record, and two at index 5, where the tag on the stuffed bit
+moves to the next item. Edge: a frame of five ones whose last raw item is a stuffed zero carrying a tag, which falls
+one past the record's end, and the sink expects the record with no event. Each block's line at stop counts the tags
+outside a frame, on a removed item and dropped.
+""",
+    )
+    tags = {0: {"marker": U32(99)}}
+    for at in range(8, 17):
+        tags[at] = {"marker": U32(at)}
+    events = {}
+    for at, index in zip(range(8, 17), (0, 1, 2, 3, 4, 5, 5, 6, 7)):
+        events.setdefault(index, []).append({"marker": U32(at)})
+    events = {k: (v[0] if len(v) == 1 else v) for k, v in events.items()}
+    out = [record(timing_events=[events])]
+    extractor_chain(
+        g,
+        "interior",
+        items_of(ANCHOR_A),
+        hdlc_framing(1024),
+        out,
+        source_params={"tags": tags},
+    )
+    trailing = items_of(FLAG + "111110" + FLAG)
+    out = [record([1] * 5, timing_events=[{}])]
+    extractor_chain(
+        g,
+        "edge",
+        trailing,
+        hdlc_framing(1024),
+        out,
+        source_params={"tags": {13: {"marker": U32(1)}}},
+    )
+    return g
+
+
+STUFFED_FRAMES = 44
+
+
+def extractor_stuffing():
+    g = Graph(
+        "delimiter-extractor-stuffing.yaml",
+        f"""
+DelimiterExtractor over HDLC framing with a floor of five items, fed {STUFFED_FRAMES} stuffed frames of 1 to 64 random bits
+between shared flags. Each record's extent plus its stuffing count is the raw region between its two flags. The
+sink expects each emitted frame's sequence number, extent and stuffing count, and the reject sink the same for the
+frames shorter than five bits.
+""",
+    )
+    rng = Rng()
+    wire, out, reject = items_of(FLAG), [], []
+    for which in range(STUFFED_FRAMES):
+        length = 1 + rng.below(64)
+        payload = [rng.next() & 1 for _ in range(length)]
+        coded = stuff(payload)
+        wire += coded + items_of(FLAG)
+        r = record(
+            extents=[length],
+            meta={"sequence": U64(which), "stuffing_removed": U32(len(coded) - length)},
+        )
+        (reject if length < 5 else out).append(r)
+    assert len(reject) == 4, len(reject)
+    extractor_chain(
+        g, "identity", wire, hdlc_framing(4096, min_payload_items=U32(5)), out, reject
+    )
+    return g
+
+
+def extractor_crc():
+    g = Graph(
+        "delimiter-extractor-crc.yaml",
+        """
+DelimiterExtractor into CrcCheck, as an HDLC receiver: three frames of three bytes, each followed by its CRC-16/X-25
+frame check sequence low byte first, sent least significant bit first and stuffed between shared flags, with one
+payload bit of the second frame changed. The extractor packs the bits into bytes least significant bit first and
+refuses a frame below 24 bits. The passing sink expects the first and third frames with their check sequences, and
+the failing sink the second.
+""",
+    )
+    messages = [[0x41, 0x42, 0x43], [0x44, 0x45, 0x46], [0x47, 0x48, 0x49]]
+    frames, sent = [], []
+    for which, m in enumerate(messages):
+        data = m + crc_bytes(crc_of(X25, m), 16, "little")
+        sent.append(data)
+        bits = bits_lsb_first(data)
+        if which == 1:
+            bits[3] ^= 1
+        frames.append(bits)
+    extractor = hdlc_framing(
+        1024,
+        payload_pack_bits=U32(8),
+        payload_bit_order="LsbFirst",
+        min_payload_items=U32(24),
+    )
+    src = g.vector_source("fcs_source", "uint8", hdlc_wire(frames))
+    ext = g.block(DIG + "DelimiterExtractor<uint8>", "fcs_extractor", extractor)
+    g.connect(src, ext)
+    ok = [
+        record(sent[0], meta={"crc_ok": True}),
+        record(sent[2], meta={"crc_ok": True}),
+    ]
+    check_chain(
+        g,
+        "fcs",
+        None,
+        crc_settings(X25, "little"),
+        ok,
+        [record(meta={"crc_ok": False})],
+        source=ext,
+    )
+    return g
+
+
+def extractor_settings():
+    g = Graph(
+        "delimiter-extractor-settings.yaml",
+        """
+DelimiterExtractor with settings it accepts and no item to process: 0xC0 over byte items with a bound of 16, the
+flag 01111110 over bit items with a bound of 16, and the flag over float items. The run passes as written. A case
+that changes settings through SET checks that the block refuses them, and the refusal ends the run with the block's
+reason.
+""",
+    )
+    extractor_chain(g, "byte", [], byte_framing(16), [])
+    extractor_chain(
+        g, "bit", [], {"end_delimiter": FLAG, "max_payload_items": U32(16)}, []
+    )
+    extractor_chain(
+        g,
+        "float",
+        [],
+        {"end_delimiter": FLAG, "max_payload_items": U32(16)},
+        [],
+        kind="float32",
+    )
+    return g
+
+
 GRAPHS = [
     crc_round_trip,
     crc_append,
@@ -738,6 +1147,15 @@ GRAPHS = [
     crc_records,
     crc_settings_graph,
     crc_multi_signal,
+    extractor_records,
+    extractor_refusals,
+    extractor_recovery,
+    extractor_triggers,
+    extractor_sequence,
+    extractor_events,
+    extractor_stuffing,
+    extractor_crc,
+    extractor_settings,
 ]
 
 

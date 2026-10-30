@@ -1,0 +1,301 @@
+# DelimiterExtractor over HDLC framing with a floor of five items, fed 44 stuffed frames of 1 to 64 random bits
+# between shared flags. Each record's extent plus its stuffing count is the raw region between its two flags. The sink
+# expects each emitted frame's sequence number, extent and stuffing count, and the reject sink the same for the frames
+# shorter than five bits. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: identity_source
+      values: [
+        0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1,
+        1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0,
+        0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0,
+        0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1,
+        0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1,
+        1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0,
+        0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0,
+        0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0,
+        1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1,
+        0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0,
+        1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1,
+        1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1,
+        1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0,
+        0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1,
+        0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1,
+        1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0,
+        0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0,
+        0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1,
+        1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 1,
+        0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0,
+        0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1,
+        1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0,
+        1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0,
+        0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1,
+        0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0,
+        1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0,
+        1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0,
+        1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0,
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0,
+        1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0,
+        1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1,
+        1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1,
+        1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0,
+        0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0,
+        1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0,
+        0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1,
+        0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1,
+        1, 1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1,
+        1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1,
+        1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1,
+        1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1,
+        0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0,
+        1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0,
+        0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0,
+        0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1,
+        0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,
+        1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0,
+        0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0, 0,
+        0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0,
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0
+      ]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: identity_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 4096
+      min_payload_items: !!uint32 5
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: identity_out
+      records:
+        0:
+          extents: [46]
+          meta_information:
+            sequence: !!uint64 0
+            stuffing_removed: !!uint32 2
+        1:
+          extents: [54]
+          meta_information:
+            sequence: !!uint64 1
+            stuffing_removed: !!uint32 0
+        2:
+          extents: [22]
+          meta_information:
+            sequence: !!uint64 2
+            stuffing_removed: !!uint32 0
+        3:
+          extents: [42]
+          meta_information:
+            sequence: !!uint64 3
+            stuffing_removed: !!uint32 1
+        4:
+          extents: [36]
+          meta_information:
+            sequence: !!uint64 4
+            stuffing_removed: !!uint32 1
+        5:
+          extents: [56]
+          meta_information:
+            sequence: !!uint64 5
+            stuffing_removed: !!uint32 3
+        6:
+          extents: [15]
+          meta_information:
+            sequence: !!uint64 6
+            stuffing_removed: !!uint32 0
+        7:
+          extents: [51]
+          meta_information:
+            sequence: !!uint64 7
+            stuffing_removed: !!uint32 1
+        8:
+          extents: [33]
+          meta_information:
+            sequence: !!uint64 8
+            stuffing_removed: !!uint32 0
+        9:
+          extents: [52]
+          meta_information:
+            sequence: !!uint64 9
+            stuffing_removed: !!uint32 1
+        10:
+          extents: [22]
+          meta_information:
+            sequence: !!uint64 10
+            stuffing_removed: !!uint32 0
+        11:
+          extents: [40]
+          meta_information:
+            sequence: !!uint64 11
+            stuffing_removed: !!uint32 0
+        12:
+          extents: [22]
+          meta_information:
+            sequence: !!uint64 12
+            stuffing_removed: !!uint32 0
+        13:
+          extents: [49]
+          meta_information:
+            sequence: !!uint64 13
+            stuffing_removed: !!uint32 1
+        14:
+          extents: [33]
+          meta_information:
+            sequence: !!uint64 14
+            stuffing_removed: !!uint32 1
+        15:
+          extents: [54]
+          meta_information:
+            sequence: !!uint64 15
+            stuffing_removed: !!uint32 0
+        16:
+          extents: [49]
+          meta_information:
+            sequence: !!uint64 16
+            stuffing_removed: !!uint32 1
+        17:
+          extents: [58]
+          meta_information:
+            sequence: !!uint64 17
+            stuffing_removed: !!uint32 2
+        18:
+          extents: [6]
+          meta_information:
+            sequence: !!uint64 18
+            stuffing_removed: !!uint32 0
+        19:
+          extents: [50]
+          meta_information:
+            sequence: !!uint64 19
+            stuffing_removed: !!uint32 0
+        20:
+          extents: [17]
+          meta_information:
+            sequence: !!uint64 20
+            stuffing_removed: !!uint32 0
+        21:
+          extents: [37]
+          meta_information:
+            sequence: !!uint64 21
+            stuffing_removed: !!uint32 1
+        22:
+          extents: [36]
+          meta_information:
+            sequence: !!uint64 22
+            stuffing_removed: !!uint32 1
+        23:
+          extents: [19]
+          meta_information:
+            sequence: !!uint64 23
+            stuffing_removed: !!uint32 1
+        24:
+          extents: [15]
+          meta_information:
+            sequence: !!uint64 24
+            stuffing_removed: !!uint32 1
+        25:
+          extents: [56]
+          meta_information:
+            sequence: !!uint64 25
+            stuffing_removed: !!uint32 0
+        26:
+          extents: [18]
+          meta_information:
+            sequence: !!uint64 26
+            stuffing_removed: !!uint32 0
+        27:
+          extents: [14]
+          meta_information:
+            sequence: !!uint64 27
+            stuffing_removed: !!uint32 0
+        28:
+          extents: [21]
+          meta_information:
+            sequence: !!uint64 28
+            stuffing_removed: !!uint32 0
+        29:
+          extents: [59]
+          meta_information:
+            sequence: !!uint64 30
+            stuffing_removed: !!uint32 0
+        30:
+          extents: [40]
+          meta_information:
+            sequence: !!uint64 31
+            stuffing_removed: !!uint32 1
+        31:
+          extents: [30]
+          meta_information:
+            sequence: !!uint64 32
+            stuffing_removed: !!uint32 0
+        32:
+          extents: [56]
+          meta_information:
+            sequence: !!uint64 33
+            stuffing_removed: !!uint32 2
+        33:
+          extents: [56]
+          meta_information:
+            sequence: !!uint64 34
+            stuffing_removed: !!uint32 0
+        34:
+          extents: [10]
+          meta_information:
+            sequence: !!uint64 35
+            stuffing_removed: !!uint32 0
+        35:
+          extents: [51]
+          meta_information:
+            sequence: !!uint64 36
+            stuffing_removed: !!uint32 1
+        36:
+          extents: [25]
+          meta_information:
+            sequence: !!uint64 37
+            stuffing_removed: !!uint32 1
+        37:
+          extents: [51]
+          meta_information:
+            sequence: !!uint64 38
+            stuffing_removed: !!uint32 0
+        38:
+          extents: [24]
+          meta_information:
+            sequence: !!uint64 40
+            stuffing_removed: !!uint32 0
+        39:
+          extents: [37]
+          meta_information:
+            sequence: !!uint64 41
+            stuffing_removed: !!uint32 0
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: identity_reject
+      records:
+        0:
+          extents: [2]
+          meta_information:
+            sequence: !!uint64 29
+            stuffing_removed: !!uint32 0
+        1:
+          extents: [4]
+          meta_information:
+            sequence: !!uint64 39
+            stuffing_removed: !!uint32 0
+        2:
+          extents: [1]
+          meta_information:
+            sequence: !!uint64 42
+            stuffing_removed: !!uint32 0
+        3:
+          extents: [2]
+          meta_information:
+            sequence: !!uint64 43
+            stuffing_removed: !!uint32 0
+connections:
+  - [identity_source, out, identity_extractor, in]
+  - [identity_extractor, out, identity_out, in]
+  - [identity_extractor, reject, identity_reject, in]

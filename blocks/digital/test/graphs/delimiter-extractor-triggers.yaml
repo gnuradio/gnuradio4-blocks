@@ -1,0 +1,94 @@
+# Trigger tags and DelimiterExtractor over HDLC framing. Detector: a 64-bit sync word ahead of two frames, through
+# AccessCodeCorrelator into the extractor. The sink expects the detector's label and distance on the first record
+# alone, and the second record labeled by the extractor. Mid-frame: a trigger tag four items into the first of two
+# frames, which the extractor abandons, and its sink expects the second frame alone. Passive: the same tag with
+# trigger_resets false, and its sink expects both frames. Each resetting block's line at stop counts one reset.
+# generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: detector_source
+      values: [
+        1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1,
+        0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0,
+        1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: detector_detector
+      access_code: "1010110011011101101001001110001011110010100011000010000010101100"
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: detector_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: detector_out
+      records:
+        0:
+          signal_values: [1, 0, 1, 1, 0, 0, 1, 0]
+          meta_information:
+            trigger_name: access_code
+            sync_errors: !!uint32 0
+        1:
+          signal_values: [0, 1, 0, 0, 1, 1, 0, 1]
+          meta_information:
+            trigger_name: delimiter
+          meta_absent: [sync_errors]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: mid_frame_source
+      values: [
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1,
+        1, 1, 1, 0
+      ]
+      tags:
+        12:
+          "gr:trigger_name": access_code
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: mid_frame_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: mid_frame_out
+      records:
+        0:
+          signal_values: [0, 1, 0, 0, 1, 1, 0, 1]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: passive_source
+      values: [
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1,
+        1, 1, 1, 0
+      ]
+      tags:
+        12:
+          "gr:trigger_name": access_code
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: passive_extractor
+      end_delimiter: "01111110"
+      transparency: bit_stuffing
+      max_payload_items: !!uint32 1024
+      trigger_resets: false
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: passive_out
+      records:
+        0:
+          signal_values: [1, 0, 1, 1, 0, 0, 1, 0]
+        1:
+          signal_values: [0, 1, 0, 0, 1, 1, 0, 1]
+connections:
+  - [detector_source, out, detector_detector, in]
+  - [detector_detector, out, detector_extractor, in]
+  - [detector_extractor, out, detector_out, in]
+  - [mid_frame_source, out, mid_frame_extractor, in]
+  - [mid_frame_extractor, out, mid_frame_out, in]
+  - [passive_source, out, passive_extractor, in]
+  - [passive_extractor, out, passive_out, in]

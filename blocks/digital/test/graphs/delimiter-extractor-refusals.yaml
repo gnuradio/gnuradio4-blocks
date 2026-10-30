@@ -1,0 +1,155 @@
+# The frames DelimiterExtractor refuses and the regions it does not count as frames, each followed by a frame it
+# emits. Overrun: 0xC0 delimiters over byte items with a bound of four, a five-item region and then a three-item
+# frame; the reject sink expects the first four items with the reason overrun. Survive: a hundred such regions in a
+# row and then a two-item frame, with the reject port unconnected. Undersize: a floor of three and a two-item region,
+# refused with the reason undersize. Idle: two delimiters back to back before a three-item frame, which keeps sequence
+# number 0. Unaligned: twenty bits between flags with the pack stage at eight bits, refused unpacked with the reason
+# unaligned. Each block's line at stop counts what it refused. generate_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: overrun_source
+      values: [192, 17, 34, 51, 68, 85, 192, 102, 119, 136, 192]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: overrun_extractor
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      max_payload_items: !!uint32 4
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: overrun_out
+      records:
+        0:
+          signal_values: [102, 119, 136]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: overrun_reject
+      records:
+        0:
+          signal_values: [17, 34, 51, 68]
+          meta_information:
+            discard_reason: overrun
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: survive_source
+      values: [
+        192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1,
+        2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4,
+        5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192,
+        1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3,
+        4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5,
+        192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1,
+        2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4,
+        5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192,
+        1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3,
+        4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5,
+        192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1,
+        2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4,
+        5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192,
+        1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3,
+        4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5,
+        192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1,
+        2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4,
+        5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192,
+        1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 1, 2, 3, 4, 5, 192, 153, 170, 192
+      ]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: survive_extractor
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      max_payload_items: !!uint32 4
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: survive_out
+      records:
+        0:
+          signal_values: [153, 170]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: undersize_source
+      values: [192, 17, 34, 192]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: undersize_extractor
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      max_payload_items: !!uint32 16
+      min_payload_items: !!uint32 3
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: undersize_out
+      records: {}
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: undersize_reject
+      records:
+        0:
+          signal_values: [17, 34]
+          meta_information:
+            discard_reason: undersize
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: idle_source
+      values: [192, 192, 17, 34, 51, 192]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: idle_extractor
+      end_delimiter: "11000000"
+      bits_per_item: !!uint32 8
+      max_payload_items: !!uint32 16
+      min_payload_items: !!uint32 3
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: idle_out
+      records:
+        0:
+          signal_values: [17, 34, 51]
+          meta_information:
+            sequence: !!uint64 0
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: idle_reject
+      records: {}
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: unaligned_source
+      values: [
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0
+      ]
+  - id: gr::blocks::digital::DelimiterExtractor<uint8>
+    parameters:
+      name: unaligned_extractor
+      end_delimiter: "01111110"
+      max_payload_items: !!uint32 1024
+      payload_pack_bits: !!uint32 8
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: unaligned_out
+      records: {}
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: unaligned_reject
+      records:
+        0:
+          signal_values: [
+            1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0
+          ]
+          meta_information:
+            discard_reason: unaligned
+connections:
+  - [overrun_source, out, overrun_extractor, in]
+  - [overrun_extractor, out, overrun_out, in]
+  - [overrun_extractor, reject, overrun_reject, in]
+  - [survive_source, out, survive_extractor, in]
+  - [survive_extractor, out, survive_out, in]
+  - [undersize_source, out, undersize_extractor, in]
+  - [undersize_extractor, out, undersize_out, in]
+  - [undersize_extractor, reject, undersize_reject, in]
+  - [idle_source, out, idle_extractor, in]
+  - [idle_extractor, out, idle_out, in]
+  - [idle_extractor, reject, idle_reject, in]
+  - [unaligned_source, out, unaligned_extractor, in]
+  - [unaligned_extractor, out, unaligned_out, in]
+  - [unaligned_extractor, reject, unaligned_reject, in]

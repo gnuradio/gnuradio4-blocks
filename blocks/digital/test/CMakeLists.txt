@@ -84,6 +84,15 @@ gr_digital_graph_test(graph_digital_crc_guard graphs/crc-guard.yaml)
 gr_digital_graph_test(graph_digital_crc_skip graphs/crc-skip.yaml)
 gr_digital_graph_test(graph_digital_crc_records graphs/crc-records.yaml)
 gr_digital_graph_test(graph_digital_crc_settings graphs/crc-settings.yaml)
+gr_digital_graph_test(graph_digital_delimiter_extractor_records graphs/delimiter-extractor-records.yaml)
+gr_digital_graph_test(graph_digital_delimiter_extractor_refusals graphs/delimiter-extractor-refusals.yaml)
+gr_digital_graph_test(graph_digital_delimiter_extractor_recovery graphs/delimiter-extractor-recovery.yaml)
+gr_digital_graph_test(graph_digital_delimiter_extractor_triggers graphs/delimiter-extractor-triggers.yaml)
+gr_digital_graph_test(graph_digital_delimiter_extractor_sequence graphs/delimiter-extractor-sequence.yaml)
+gr_digital_graph_test(graph_digital_delimiter_extractor_events graphs/delimiter-extractor-events.yaml)
+gr_digital_graph_test(graph_digital_delimiter_extractor_stuffing graphs/delimiter-extractor-stuffing.yaml)
+gr_digital_graph_test(graph_digital_delimiter_extractor_crc graphs/delimiter-extractor-crc.yaml)
+gr_digital_graph_test(graph_digital_delimiter_extractor_settings graphs/delimiter-extractor-settings.yaml)
 
 # The settings graphs with settings changed that the block accepts.
 gr_digital_graph_test(
@@ -294,6 +303,247 @@ gr_add_failing_graph_test(
   $<TARGET_FILE_DIR:GrDigitalBlocksShared>
   SET
   "check_block.crc_byte_order=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_character
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: endDelimiter must be '0' and '1' characters only, got 'O' in \\\"110000O0\\\""
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_extractor.end_delimiter=\"110000O0\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_register
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: endDelimiter is 65 bits. the match register is one 64-bit word"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.end_delimiter=\"00000000000000000000000000000000000000000000000000000000000000000\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_whole_items
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: endDelimiter is 7 bits, which is not a whole number of 8-bit items"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_extractor.end_delimiter=\"1100000\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_bits_per_item
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: bitsPerItem must be in .1, 8., got 9"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_extractor.bits_per_item=!!uint32 9")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_frame_open
+  graphs/delimiter-extractor-settings.yaml
+  "frame_open must be 'delimiter', 'start' or 'immediate', got 'whenever'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.end_delimiter=\"11000000\""
+  "bit_extractor.frame_open=whenever")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_start_missing
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: frameOpen 'start' needs a startDelimiter"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.end_delimiter=\"11000000\""
+  "bit_extractor.frame_open=start")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_start_unused
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: frameOpen 'delimiter' consults no startDelimiter"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.end_delimiter=\"11000000\""
+  "bit_extractor.start_delimiter=\"00100100\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_transparency
+  graphs/delimiter-extractor-settings.yaml
+  "transparency must be 'none', 'bit_stuffing' or 'byte_escape', got 'magic'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.end_delimiter=\"11000000\""
+  "bit_extractor.transparency=magic")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_stuffing_outside
+  graphs/delimiter-extractor-settings.yaml
+  "stuff_after_ones and abort_ones belong to 'bit_stuffing' and transparency is 'none'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.stuff_after_ones=!!uint32 4")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_escape_outside
+  graphs/delimiter-extractor-settings.yaml
+  "escape_item and escape_map belong to 'byte_escape' and transparency is 'none'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.escape_item=!!uint32 219")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_stuffing_bytes
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: bit stuffing is a bit-level code and needs bitsPerItem 1, got 8"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.transparency=bit_stuffing"
+  "bit_extractor.bits_per_item=!!uint32 8")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_escape_bits
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: byte escaping needs a byte, so bitsPerItem must be 8, got 1"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.end_delimiter=\"11000000\""
+  "bit_extractor.transparency=byte_escape")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_stuff_after_one
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: stuffAfterOnes must be in .2, 62., got 1"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.transparency=bit_stuffing"
+  "bit_extractor.stuff_after_ones=!!uint32 1")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_abort_early
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: abortOnes 5 must exceed stuffAfterOnes 5"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.transparency=bit_stuffing"
+  "bit_extractor.abort_ones=!!uint32 5")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_escape_map_odd
+  graphs/delimiter-extractor-settings.yaml
+  "escape_map is a flat list of \\(escaped, original\\) pairs and must have an even length, got 1"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_extractor.transparency=byte_escape"
+  "byte_extractor.escape_item=!!uint32 219"
+  "byte_extractor.escape_map=!!uint32 [220]")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_escape_map_repeat
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: the escape map lists the escaped value 220 twice"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_extractor.transparency=byte_escape"
+  "byte_extractor.escape_item=!!uint32 219"
+  "byte_extractor.escape_map=!!uint32 [220, 192, 220, 219]")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_escape_item_wide
+  graphs/delimiter-extractor-settings.yaml
+  "escape_item is an item value and must be in .0, 255., got 300"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_extractor.transparency=byte_escape"
+  "byte_extractor.escape_item=!!uint32 300")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_floor_zero
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: minPayloadItems must be at least 1"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_extractor.min_payload_items=!!uint32 0")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_floor_above
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: minPayloadItems 5 exceeds maxPayloadItems 4"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_extractor.max_payload_items=!!uint32 4"
+  "byte_extractor.min_payload_items=!!uint32 5")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_bound_extent
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: maxPayloadItems is 2147483648. a record states its extent as a signed 32-bit count"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_extractor.max_payload_items=!!uint32 2147483648")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_pack_wide
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: packBits must be 0, for no packing, or in .1, 8., got 9"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.payload_pack_bits=!!uint32 9")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_pack_bytes
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: the pack stage assembles bits into items and needs bitsPerItem 1, got 8"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_extractor.payload_pack_bits=!!uint32 8")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_destuffing
+  graphs/delimiter-extractor-settings.yaml
+  "gr::digital::configureDelimiter: coded data may carry runs of up to 5 consecutive ones and \\\"0111110\\\" carries at most 5"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.end_delimiter=\"0111110\""
+  "bit_extractor.transparency=bit_stuffing")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_soft_bytes
+  graphs/delimiter-extractor-settings.yaml
+  "a soft item carries one sliced bit and nothing else, so bits_per_item must be 1 on a floating-point stream, got 8"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "float_extractor.end_delimiter=\"11000000\""
+  "float_extractor.bits_per_item=!!uint32 8")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_soft_pack
+  graphs/delimiter-extractor-settings.yaml
+  "the pack stage assembles bits into bytes and needs byte items. this stream is floating point"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "float_extractor.payload_pack_bits=!!uint32 8")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_required_both
+  graphs/delimiter-extractor-settings.yaml
+  "DelimiterExtractor[^\n]* throws: end_delimiter is required and has no default"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.end_delimiter=\"\""
+  "bit_extractor.max_payload_items=!!uint32 0")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_required_bound
+  graphs/delimiter-extractor-settings.yaml
+  "DelimiterExtractor[^\n]* throws: max_payload_items is required and has no default"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_extractor.max_payload_items=!!uint32 0")
+gr_add_failing_graph_test(
+  graph_digital_refused_extractor_required_delimiter
+  graphs/delimiter-extractor-settings.yaml
+  "DelimiterExtractor[^\n]* throws: end_delimiter is required and has no default"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "bit_extractor.end_delimiter=\"\"")
 
 # A record the block refuses, on the block's reason.
 gr_add_failing_graph_test(
@@ -302,3 +552,71 @@ gr_add_failing_graph_test(
   "CrcAppend[^\n]* reports an error on 'invokeProcessBulk': a CRC covers one flat byte array. this DataSet carries 2 signals"
   PLUGIN_DIRS
   $<TARGET_FILE_DIR:GrDigitalBlocksShared>)
+
+# The line a block prints at stop, for the counts no output record carries.
+gr_digital_graph_test(
+  graph_digital_counters_overrun
+  graphs/delimiter-extractor-refusals.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'overrun_extractor': frames emitted: 1, overrun frames: 1,")
+gr_digital_graph_test(
+  graph_digital_counters_survive
+  graphs/delimiter-extractor-refusals.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'survive_extractor': frames emitted: 1, overrun frames: 100,")
+gr_digital_graph_test(
+  graph_digital_counters_undersize
+  graphs/delimiter-extractor-refusals.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'undersize_extractor': undersize frames: 1(\n|, items)")
+gr_digital_graph_test(
+  graph_digital_counters_idle
+  graphs/delimiter-extractor-refusals.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'idle_extractor': frames emitted: 1, idle delimiters: 1")
+gr_digital_graph_test(
+  graph_digital_counters_unaligned
+  graphs/delimiter-extractor-refusals.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'unaligned_extractor': unaligned frames: 1,")
+gr_digital_graph_test(
+  graph_digital_counters_abort
+  graphs/delimiter-extractor-recovery.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'abort_extractor': frames emitted: 1, aborts: 1,")
+gr_digital_graph_test(
+  graph_digital_counters_patient
+  graphs/delimiter-extractor-recovery.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'patient_extractor': frames emitted: 2, items discarded")
+gr_digital_graph_test(
+  graph_digital_counters_restart
+  graphs/delimiter-extractor-recovery.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'restart_extractor': frames emitted: 1, restarts: 1,")
+gr_digital_graph_test(
+  graph_digital_counters_detector
+  graphs/delimiter-extractor-triggers.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'detector_extractor': frames emitted: 2, trigger resets: 1,")
+gr_digital_graph_test(
+  graph_digital_counters_mid_frame
+  graphs/delimiter-extractor-triggers.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'mid_frame_extractor': frames emitted: 1, trigger resets: 1,")
+gr_digital_graph_test(
+  graph_digital_counters_passive
+  graphs/delimiter-extractor-triggers.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'passive_extractor': frames emitted: 2, items discarded")
+gr_digital_graph_test(
+  graph_digital_counters_interior
+  graphs/delimiter-extractor-events.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'interior_extractor': [^\n]*, tags outside frames: 1, tags on removed items: 1"
+)
+gr_digital_graph_test(
+  graph_digital_counters_edge
+  graphs/delimiter-extractor-events.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::DelimiterExtractor 'edge_extractor': [^\n]*, dropped timing events: 1")
