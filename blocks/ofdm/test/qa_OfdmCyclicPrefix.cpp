@@ -677,7 +677,7 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
      * Each arm refuses a `CpInsert` or `CpRemove` application before a valid change of another key. The output equals
      * that of the valid change alone.
      */
-    "a valid change after a refused application leaves the refused values out"_test = [] {
+    "a refused application is written back, and a valid change after it leaves the refused values out"_test = [] {
         const std::vector<gr::DataSet<CF>> records{symbol(0UZ, 0UZ), symbol(1UZ, 1UZ), symbol(2UZ, 0UZ), symbol(3UZ, 1UZ)};
         const auto                         tagList = [](const std::vector<gr::Tag>& tags) {
             std::vector<std::string> list;
@@ -736,10 +736,11 @@ const boost::ut::suite<"OFDM cyclic prefix"> _cyclicPrefix = [] {
                 CpRemove block = make<CpRemove>(framing);
                 auto     out   = remove(block, stream, 0UZ, 100UZ, 4096UZ);
                 if (refuseFirst) {
+                    const std::int32_t accepted = block.timing_offset.value;
                     expect(refusal([&block, &arm] { change(block, arm.refused); }).contains("timing_offset")) << std::format("{}: the first application is refused", arm.name);
                     const std::optional<gr::pmt::Value> reported = block.settings().get("timing_offset");
-                    expect(reported.has_value() && reported->get_if<std::int32_t>() != nullptr && *reported->get_if<std::int32_t>() == -20) << "settings().get() returns the refused value";
-                    expect(refusal([&block] { change(block, {{"timing_offset", std::int32_t{-20}}}); }).empty()) << "the refused value sent again alone passes";
+                    expect(eq(block.timing_offset.value, accepted) && reported.has_value() && reported->get_if<std::int32_t>() != nullptr && *reported->get_if<std::int32_t>() == accepted) << "the member and settings().get() return the accepted value";
+                    expect(refusal([&block] { change(block, {{"timing_offset", std::int32_t{-20}}}); }).contains("timing_offset")) << "the refused value sent again alone is refused again";
                 }
                 expect(refusal([&block, &arm] { change(block, arm.valid); }).empty()) << std::format("{}: the valid change applies", arm.name);
                 const auto rest = remove(block, stream, 100UZ, stream.samples.size(), 4096UZ);

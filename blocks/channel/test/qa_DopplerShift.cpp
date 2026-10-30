@@ -267,34 +267,31 @@ const boost::ut::suite<"doppler shift"> dopplerShiftTests = [] {
         }
     };
 
-    // A refused value stays in its member. Staging it again beside the change that fits it takes the value
-    "a refused rate staged again beside a table that fits it reaches the samples"_test = [] {
+    // A refused rate is written back. The same rate staged again beside a table that fits it is taken
+    "a refused rate is written back, and staged again beside a table that fits it reaches the samples"_test = [] {
         constexpr std::size_t n = 1'000UZ;
 
         auto           block = configured<DopplerShift<C>>({{"sample_rate", 1'000.f}, {"schedule_times_ns", std::vector<std::int64_t>{0LL, 100'000'000'000LL}}, {"schedule_offsets_hz", std::vector<double>{100., 100.}}});
         const auto     input = ones(n);
         std::vector<C> out(n);
         expect(refusedLive(*block, {{"sample_rate", 150.f}})) << "150 Hz puts the 100 Hz knot past half the rate";
-        expect(that % (block->sample_rate.value == 150.f)) << "and the member keeps the refused value";
+        expect(that % (block->sample_rate.value == 1'000.f)) << "and the accepted rate is written back to its member";
         expect(!refusedLive(*block, {{"sample_rate", 150.f}, {"schedule_offsets_hz", std::vector<double>{50., 50.}}})) << "the same rate beside a table that fits it";
         std::ignore = block->processBulk(std::span<const C>(input), std::span<C>(out));
         expect(that % (block->sample_rate.value == 150.f));
         expect(that % (std::abs(instantaneousFrequency(out, n / 2UZ, 64UZ, 150.) - 50.) < 1e-3)) << "the output is the 50 Hz knot at 150 Hz";
     };
 
-    // A refused value held in its member refuses a change that names another setting
-    "a held refused rate refuses an unrelated change until a valid rate replaces it"_test = [] {
-        auto              block = configured<DopplerShift<C>>({{"sample_rate", 1'000.f}, {"schedule_times_ns", std::vector<std::int64_t>{0LL, 100'000'000'000LL}}, {"schedule_offsets_hz", std::vector<double>{100., 100.}}});
-        const std::string held  = refusalLive(*block, {{"sample_rate", 150.f}});
-        expect(fatal(!held.empty())) << "150 Hz puts the 100 Hz knot past half the rate";
+    // A refused rate is written back, and a later change of another setting is checked against the accepted rate
+    "a refused rate is written back, and a later change of another setting is taken"_test = [] {
+        auto              block   = configured<DopplerShift<C>>({{"sample_rate", 1'000.f}, {"schedule_times_ns", std::vector<std::int64_t>{0LL, 100'000'000'000LL}}, {"schedule_offsets_hz", std::vector<double>{100., 100.}}});
+        const std::string refusal = refusalLive(*block, {{"sample_rate", 150.f}});
+        expect(fatal(!refusal.empty())) << "150 Hz puts the 100 Hz knot past half the rate";
+        expect(that % (block->sample_rate.value == 1'000.f)) << "the accepted rate is written back to its member";
 
         const std::string unrelated = refusalLive(*block, {{"anchor_ns", std::int64_t{7}}});
-        expect(unrelated == held) << std::format("a new anchor time is refused with the held rate's message: {}", unrelated);
-        expect(that % (block->anchor_ns.value == 7LL)) << "the member holds the new anchor time";
-        expect(that % (block->anchorNs() == 0LL)) << "and the block keeps the accepted one";
-
-        expect(refusalLive(*block, {{"sample_rate", 1'000.f}}).empty()) << "a valid rate is taken";
-        expect(that % (block->anchorNs() == 7LL)) << "and the anchor time staged beside the held rate with it";
+        expect(unrelated.empty()) << std::format("a new anchor time is taken; the refusal: {}", unrelated);
+        expect(that % (block->anchor_ns.value == 7LL && block->anchorNs() == 7LL)) << "the member and the block take the new anchor time";
     };
 
     // The chunk boundaries cannot change a sample

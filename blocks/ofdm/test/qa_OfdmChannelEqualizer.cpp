@@ -775,8 +775,7 @@ const boost::ut::suite<"OFDM channel equalizer"> _equalizer = [] {
         onData[gr::ofdm::CarrierMap::binOf(kFft, 3).value()]  = CF(std::numeric_limits<float>::quiet_NaN(), 0.f);
         std::vector<CF> onPilot                               = channelSounding();
         onPilot[gr::ofdm::CarrierMap::binOf(kFft, 7).value()] = CF(0.f, std::numeric_limits<float>::infinity());
-        // A NaN equals no value, including the NaN its member holds. The framework stages the word again, and the block
-        // refuses it again.
+        // The core writes the accepted word back after each refusal, so the same word sent again is refused again.
         const std::vector<std::pair<std::string, std::vector<CF>>> words{{"a NaN on data carrier 3", onData}, {"the same NaN sent again", onData}, {"an infinity on pilot carrier 7", onPilot}};
         for (const auto& [name, word] : words) {
             std::ignore = block.settings().setStaged({{"sync_word", interleave(std::span<const CF>(word))}});

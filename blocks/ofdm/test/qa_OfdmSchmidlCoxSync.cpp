@@ -751,7 +751,7 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
      * Each arm refuses an application before a valid change of another key. The output and its tags equal those of
      * the valid change alone.
      */
-    "a valid change after a refused application leaves the refused values out"_test = [&clean, floor] {
+    "a refused application is written back, and a valid change after it leaves the refused values out"_test = [&clean, floor] {
         std::vector<CF> twice = clean;
         twice.insert(twice.end(), clean.begin(), clean.end());
         FrequencyOffset<CF>       impair  = make<FrequencyOffset<CF>>({{"sample_rate", static_cast<float>(kFft)}, {"frequency_offset", 0.25}});
@@ -790,12 +790,12 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
             expect(tagList(got.tags) == tagList(expected.tags)) << std::format("{}: {} against {}", arm.name, tagList(got.tags), tagList(expected.tags));
         }
 
-        // A refused value sent again alone passes with no refusal.
+        // A refused value is written back, and sent again alone it is refused again.
         SchmidlCoxSync block = make<SchmidlCoxSync>({{"fft_len", kFft}, {"cp_len", kCp}, {"r_floor", floor}});
         expect(apply(block, {{"cp_len", gr::Size_t{80U}}}).contains("cp_len"));
         const std::optional<gr::pmt::Value> reported = block.settings().get("cp_len");
-        expect(reported.has_value() && reported->get_if<gr::Size_t>() != nullptr && *reported->get_if<gr::Size_t>() == 80U) << "settings().get() returns the refused value";
-        expect(apply(block, {{"cp_len", gr::Size_t{80U}}}).empty()) << "the refused value sent again alone passes";
+        expect(eq(block.cp_len.value, kCp) && reported.has_value() && reported->get_if<gr::Size_t>() != nullptr && *reported->get_if<gr::Size_t>() == kCp) << "the member and settings().get() return the accepted value";
+        expect(apply(block, {{"cp_len", gr::Size_t{80U}}}).contains("cp_len")) << "the refused value sent again alone is refused again";
 
         // A NaN is outside the limits of threshold, and the framework refuses it each time it is sent.
         for (int attempt = 0; attempt < 2; ++attempt) {

@@ -66,7 +66,7 @@ const boost::ut::suite<"DataSinkRegistry"> dataSinkRegistryTests = [] {
         expect(owner != nullptr && other != nullptr) << fatal;
 
         // the other sink takes the owner's signal name at run time; the registry refuses it, and the other sink's
-        // signal_name stays shared_signal
+        // signal_name reads the empty name it held
         expect(other->settings().setStaged({{"signal_name", std::string("shared_signal")}}).empty());
         const bool refused = [&other] {
             try {

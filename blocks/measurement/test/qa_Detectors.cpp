@@ -412,24 +412,26 @@ const boost::ut::suite<"Detectors"> detectorTests = [] {
         check(bandwidth, "OccupiedBandwidth");
     };
 
-    "a refused setting changes nothing the detectors compute, and the limits refuse a value outside them alone"_test = [] {
+    "a refused setting is written back and changes nothing the detectors compute, and the limits refuse a value outside them alone"_test = [] {
         const std::vector<gr::DataSet<float>> input{densityRecord(threeLobes())};
 
-        // A block that read the refused members would report no detection, or one. The later change drops the lobe at
+        // A block that computed on the refused values would report no detection, or one. The later change drops the lobe at
         // bin 512, which lies within 20 kHz of the lobe at bin 200, and keeps the lobes at bins 200 and 800.
         PeakDetect peakReference({{"threshold_db", 20.0}});
         PeakDetect peakRefused({{"threshold_db", 20.0}});
         startBlock(peakReference);
         startBlock(peakRefused);
+        const std::string acceptedReference = peakRefused.reference.value;
+        const gr::Size_t  acceptedMaxPeaks  = peakRefused.max_peaks.value;
         expect(throws([&] { applyLive(peakRefused, {{"reference", std::string("bogus")}, {"threshold_db", 70.0}, {"max_peaks", gr::Size_t{1U}}}); })) << "an unknown reference is refused";
-        expect(eq(peakRefused.reference.value, std::string("bogus"))) << "and the refused value stays in its member";
+        expect(eq(peakRefused.reference.value, acceptedReference) && eq(peakRefused.threshold_db.value, 20.0) && eq(peakRefused.max_peaks.value, acceptedMaxPeaks)) << "and the accepted values are written back to the members";
         expect(nothrow([&] { applyLive(peakRefused, {{"min_distance_hz", 20000.0}}); })) << "a later change of another setting is applied";
-        expect(nothrow([&] { applyLive(peakRefused, {{"reference", std::string("bogus")}}); })) << "the refused value sent again alone equals its member and passes";
+        expect(throws([&] { applyLive(peakRefused, {{"reference", std::string("bogus")}}); })) << "the refused value sent again alone is refused again";
         applyLive(peakReference, {{"min_distance_hz", 20000.0}});
         const auto [peakStatus, peakTaken, peaks]      = workCall(peakRefused, input, 4UZ);
         const auto [refStatus, refTaken, peakExpected] = workCall(peakReference, input, 4UZ);
         expect(eq(peaks.size(), 1UZ) && eq(peakExpected.size(), 1UZ)) << fatal;
-        expect(eq(column(peaks.front(), 0UZ).size(), 2UZ)) << "the later change is in force and the refused members are ignored";
+        expect(eq(column(peaks.front(), 0UZ).size(), 2UZ)) << "the later change is in force and the refused values are not";
         expect(peaks.front().signal_values == peakExpected.front().signal_values) << "PeakDetect reports what a block given the later change alone reports";
 
         // Exponential noise with a tone 30 dB over its mean at bin 300. At 20 dB over the median only the tone is a
@@ -629,7 +631,7 @@ const boost::ut::suite<"Detectors"> detectorTests = [] {
 
     // A record holds at most 2^31 - 1 cells, and a cell's test window spans 2 (n_train + n_guard) + 1 of them. Two
     // halves of 2^32 sum to zero in a 32-bit size.
-    "a train and guard pair wider than any record is refused, and the margin does not wrap"_test = [] {
+    "a train and guard pair wider than any record is refused and written back, and the margin does not wrap"_test = [] {
         using gr::blocks::measurement::detail::kMaxCfarMargin;
         constexpr gr::Size_t  kHalf   = 1U << 31U;
         constexpr gr::Size_t  kWidest = kMaxCfarMargin;
@@ -651,12 +653,11 @@ const boost::ut::suite<"Detectors"> detectorTests = [] {
         expect(throws([&] { applyLive(block, {{"n_train", kOver}, {"n_guard", kOver}}); })) << "the block refuses a pair whose sum is one above the widest";
         expect(eq(block.testableCells(kBins), accepted)) << "and the accepted pair stays in force";
 
-        // The refused n_train equals its member, and the framework drops it before the block sees it.
-        constexpr std::size_t kNewGuard = 3UZ;
-        expect(nothrow([&] { applyLive(block, {{"n_train", kOver}, {"n_guard", gr::Size_t{kNewGuard}}}); })) << "the refused n_train sent again with a valid n_guard passes";
-        expect(eq(block.testableCells(kBins), kBins - 2UZ * (kTrain + kNewGuard))) << "the block applies the new n_guard and keeps the accepted n_train";
         const std::optional<gr::pmt::Value> reported = block.settings().get("n_train");
-        expect(reported.has_value() && reported->get_if<gr::Size_t>() != nullptr && *reported->get_if<gr::Size_t>() == kOver) << "while settings().get() returns the refused n_train";
+        expect(eq(block.n_train.value, gr::Size_t{kTrain}) && reported.has_value() && reported->get_if<gr::Size_t>() != nullptr && *reported->get_if<gr::Size_t>() == kTrain) << "the accepted n_train is written back to the member and settings().get()";
+        constexpr std::size_t kNewGuard = 3UZ;
+        expect(nothrow([&] { applyLive(block, {{"n_guard", gr::Size_t{kNewGuard}}}); })) << "a later change of n_guard alone is applied";
+        expect(eq(block.testableCells(kBins), kBins - 2UZ * (kTrain + kNewGuard))) << "the block applies the new n_guard and keeps the accepted n_train";
 
         expect(nothrow([&] { applyLive(block, {{"n_train", gr::Size_t{kWidest - 1U}}, {"n_guard", gr::Size_t{1U}}}); })) << "a pair whose sum is the widest is accepted";
         expect(eq(block.testableCells(2UZ * std::size_t{kWidest} + 1UZ), 1UZ)) << "a record of 2^31 - 1 cells has one testable cell";
