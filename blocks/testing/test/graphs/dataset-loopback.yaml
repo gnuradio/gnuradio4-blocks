@@ -1,0 +1,99 @@
+# DataSetSource into ExpectDataSetSink with uint8 records. Record 0 sets every field: typed meta values (uint32,
+# uint64, string and bool), an axis name, a timestamp, and timing events at a negative index and two at one index.
+# Record 1 is empty, record 2 carries an empty meta map, and record 3 has two signals and no values. Record 4 carries
+# two meta keys that the sink asks for with `meta_present`, whatever their values. Record 5 carries a float32 vector
+# as a meta value. The sink lists every field of record 0 under `meta_exact`, and the defaults of the other records.
+# The second chain carries no record. The run passes when every sink receives exactly its records.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: source
+      records:
+        0:
+          signal_values: [1, 2, 3, 255]
+          signal_names: [payload]
+          signal_quantities: [bytes]
+          signal_units: [""]
+          axis_names: [time]
+          timestamp: 1700000000000000000
+          meta_information:
+            count: !!uint32 3
+            big: !!uint64 1099511627776
+            who: src
+            flag: true
+          timing_events:
+            - "-1":
+                mark: before
+              2:
+                - mark: first
+                - mark: second
+        1: {}
+        2:
+          signal_values: [9]
+          meta_information: {}
+        3:
+          signal_names: [a, b]
+        4:
+          signal_values: [7]
+          meta_information:
+            seq: !!uint32 4
+            note: hello
+        5:
+          meta_information:
+            levels: !!float32 [1.0, 2.0]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: sink
+      meta_exact: true
+      records:
+        0:
+          signal_values: [1, 2, 3, 255]
+          extents: [4]
+          signal_names: [payload]
+          signal_quantities: [bytes]
+          signal_units: [""]
+          axis_names: [time]
+          timestamp: 1700000000000000000
+          meta_information:
+            count: !!uint32 3
+            big: !!uint64 1099511627776
+            who: src
+            flag: true
+          timing_events:
+            - "-1":
+                mark: before
+              2:
+                - mark: first
+                - mark: second
+        1:
+          signal_values: []
+          extents: [0]
+          signal_names: [""]
+          signal_quantities: []
+          signal_units: []
+          axis_names: []
+          timestamp: 0
+          meta_information: []
+          timing_events: [{}]
+        2:
+          signal_values: [9]
+          meta_information: {}
+        3:
+          signal_values: []
+          extents: [0]
+          timing_events: [{}, {}]
+        4:
+          signal_values: [7]
+          meta_present: [seq, note]
+        5:
+          meta_information:
+            levels: !!float32 [1.0, 2.0]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: none
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: nothing
+connections:
+  - [source, out, sink, in]
+  - [none, out, nothing, in]

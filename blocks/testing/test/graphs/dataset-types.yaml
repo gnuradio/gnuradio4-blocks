@@ -1,0 +1,35 @@
+# DataSetSource into ExpectDataSetSink for float32, the registered type besides uint8. The first sink accepts 1.0
+# against 1.005 with an absolute tolerance of 0.01. Its record also carries a NaN and an infinity, which match only
+# themselves. The second sink accepts 100.0 against 102.0 with a relative tolerance of 0.0197. The distance 2 is
+# within 0.0197 * 102, the bound scaled by the expected value, and beyond 0.0197 * 100, the bound scaled by the
+# received value. The run passes when every sink receives exactly its records.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: source_abs
+      records:
+        0:
+          signal_values: !!float32 [1.0, .nan, .inf]
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: sink_abs
+      tolerance: 0.01
+      records:
+        0:
+          signal_values: !!float32 [1.005, .nan, .inf]
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: source_rel
+      records:
+        0:
+          signal_values: !!float32 [100.0]
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: sink_rel
+      relative_tolerance: 0.0197
+      records:
+        0:
+          signal_values: !!float32 [102.0]
+connections:
+  - [source_abs, out, sink_abs, in]
+  - [source_rel, out, sink_rel, in]

@@ -1,0 +1,34 @@
+# A DataSetSource emitting two uint8 records into an ExpectDataSetSink whose record 0 expects 9 where the source
+# emits 2. The run must end with an error naming the record, the field, the value index and both values, and with a
+# nonzero exit status. The tests registering this graph also set the sink's records to each other difference the
+# sink reports: the value count, `extents`, `signal_names`, `axis_names`, `timestamp`, the meta map count, a missing
+# meta key, a meta key listed as null, a `meta_absent` key, a `meta_present` key that is missing and one asked of a
+# DataSet without a meta map, an unlisted key under `meta_exact`, the timing events with and without `meta_exact`, a
+# record past the last one listed and a stream with fewer records than listed. Two more set records the sink refuses
+# at the start: an unknown field, and a `meta_absent` that is not a list of strings.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: source
+      records:
+        0:
+          signal_values: [1, 2, 3]
+          signal_names: [payload]
+          axis_names: [time]
+          timestamp: 5
+          meta_information:
+            count: !!uint32 3
+            who: src
+          timing_events:
+            - 2: { mark: x }
+        1:
+          signal_values: [4]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: sink
+      records:
+        0:
+          signal_values: [1, 9, 3]
+        1: {}
+connections:
+  - [source, out, sink, in]
