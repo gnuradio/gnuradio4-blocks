@@ -6,6 +6,7 @@
 #include <array>
 #include <cerrno>
 #include <cstddef>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <stdexcept>
@@ -41,11 +42,12 @@ struct FileOpenCounter {
         alignas(inotify_event) std::array<char, 4096> events{};
         for (ssize_t nBytes = ::read(_fd, events.data(), events.size()); nBytes > 0; nBytes = ::read(_fd, events.data(), events.size())) {
             for (std::size_t offset = 0UZ; offset < static_cast<std::size_t>(nBytes);) {
-                const auto* event = reinterpret_cast<const inotify_event*>(events.data() + offset);
-                if ((event->mask & IN_OPEN) != 0U) {
+                inotify_event event{};
+                std::memcpy(&event, events.data() + offset, sizeof(inotify_event));
+                if ((event.mask & IN_OPEN) != 0U) {
                     ++nOpens;
                 }
-                offset += sizeof(inotify_event) + event->len;
+                offset += sizeof(inotify_event) + event.len;
             }
         }
         return nOpens;
