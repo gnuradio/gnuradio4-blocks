@@ -1,6 +1,3 @@
-add_ut_test(qa_InterleaveBlocks)
-target_link_libraries(qa_InterleaveBlocks PRIVATE gr-fec)
-
 # The fec family's tests are graph files run by rungraph. Each case loads the fec plugin beside the testing and basic
 # plugins.
 function(gr_fec_graph_test TEST_NAME GRAPH)
@@ -28,6 +25,12 @@ gr_fec_graph_test(graph_fec_puncture_patterns graphs/puncture-patterns.yaml)
 gr_fec_graph_test(graph_fec_puncture_chain graphs/puncture-chain.yaml)
 gr_fec_graph_test(graph_fec_puncture_records graphs/puncture-records.yaml)
 gr_fec_graph_test(graph_fec_puncture_settings graphs/puncture-settings.yaml)
+gr_fec_graph_test(graph_fec_interleave_framed graphs/interleave-framed.yaml)
+gr_fec_graph_test(graph_fec_interleave_convolutional graphs/interleave-convolutional.yaml)
+gr_fec_graph_test(graph_fec_interleave_burst graphs/interleave-burst.yaml)
+gr_fec_graph_test(graph_fec_interleave_ao40 graphs/interleave-ao40.yaml)
+gr_fec_graph_test(graph_fec_interleave_records graphs/interleave-records.yaml)
+gr_fec_graph_test(graph_fec_interleave_settings graphs/interleave-settings.yaml)
 
 # The settings graphs with one setting changed that the block accepts.
 gr_fec_graph_test(
@@ -317,6 +320,134 @@ gr_add_failing_graph_test(
   $<TARGET_FILE_DIR:GrFecBlocksShared>
   SET
   "depuncture_block.pattern=\"0\"")
+gr_add_failing_graph_test(
+  graph_fec_refused_interleave_kind_empty
+  graphs/interleave-settings.yaml
+  "kind has no default and must be set to 'block', 'convolutional' or 'permutation'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "block_block.kind=\"\"")
+gr_add_failing_graph_test(
+  graph_fec_refused_interleave_kind_unknown
+  graphs/interleave-settings.yaml
+  "kind must be 'block', 'convolutional' or 'permutation', got 'rectangular'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "block_block.kind=rectangular")
+gr_add_failing_graph_test(
+  graph_fec_refused_interleave_rows
+  graphs/interleave-settings.yaml
+  "fec::Interleave<uint8>#[0-9]+' init\\(\\) throws: kind 'block': [^\n]*rows is 0 [^\n]* needs at least one row"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "block_block.rows=!!uint32 0"
+  "block_block.cols=!!uint32 8")
+gr_add_failing_graph_test(
+  graph_fec_refused_deinterleave_cols
+  graphs/interleave-settings.yaml
+  "fec::Deinterleave<uint8>#[0-9]+' init\\(\\) throws: kind 'block': [^\n]*cols is 0 [^\n]* needs at least one column"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "block_back_block.rows=!!uint32 8"
+  "block_back_block.cols=!!uint32 0")
+gr_add_failing_graph_test(
+  graph_fec_refused_interleave_branches
+  graphs/interleave-settings.yaml
+  "branches is 1 [^\n]* below two branches there is nothing to interleave"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "conv_block.branches=!!uint32 1"
+  "conv_block.unit_delay=!!uint32 1")
+gr_add_failing_graph_test(
+  graph_fec_refused_interleave_unit_delay
+  graphs/interleave-settings.yaml
+  "unit_delay is 0 [^\n]* every branch would hold no cells"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "conv_block.unit_delay=!!uint32 0")
+gr_add_failing_graph_test(
+  graph_fec_refused_interleave_table_empty
+  graphs/interleave-settings.yaml
+  "table is required for kind 'permutation' and has no default"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "table_block.table=!!uint32 []")
+gr_add_failing_graph_test(
+  graph_fec_refused_deinterleave_table_repeat
+  graphs/interleave-settings.yaml
+  "fec::Deinterleave<uint8>#[0-9]+' init\\(\\) throws: [^\n]*table entry 2 repeats index 2"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "table_back_block.table=!!uint32 [0, 2, 2]")
+gr_add_failing_graph_test(
+  graph_fec_refused_interleave_table_outside
+  graphs/interleave-settings.yaml
+  "fec::Interleave<uint8>#[0-9]+' init\\(\\) throws: [^\n]*table entry 1 is 3, outside a 3-item frame"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "table_block.table=!!uint32 [0, 3, 1]")
+gr_add_failing_graph_test(
+  graph_fec_refused_interleave_fill
+  graphs/interleave-settings.yaml
+  "fill_value is one item of the byte carrier and must be 0 to 255, got 256"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "block_block.fill_value=!!uint32 256")
+gr_add_failing_graph_test(
+  graph_fec_refused_deinterleave_window_offset
+  graphs/interleave-settings.yaml
+  "output_offset 20 does not address the 20-item deinterleaved frame"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "block_back_block.output_offset=!!uint32 20")
+gr_add_failing_graph_test(
+  graph_fec_refused_deinterleave_window_end
+  graphs/interleave-settings.yaml
+  "output window .5, 21\\) runs past the 20-item deinterleaved frame"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "block_back_block.output_offset=!!uint32 5"
+  "block_back_block.output_length=!!uint32 16")
+gr_add_failing_graph_test(
+  graph_fec_refused_deinterleave_window_convolutional
+  graphs/interleave-settings.yaml
+  "the convolutional kind is stream-shaped and has no frame for an output window to address"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "conv_back_block.output_offset=!!uint32 1")
+gr_add_failing_graph_test(
+  graph_fec_refused_float_interleave_convolutional
+  graphs/interleave-settings.yaml
+  "fec::Interleave<float32>#[0-9]+' init\\(\\) throws: kind 'convolutional' carries bytes only"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "float_block.kind=convolutional"
+  "float_block.branches=!!uint32 4"
+  "float_block.unit_delay=!!uint32 3")
+gr_add_failing_graph_test(
+  graph_fec_refused_float_deinterleave_convolutional
+  graphs/interleave-settings.yaml
+  "fec::Deinterleave<float32>#[0-9]+' init\\(\\) throws: kind 'convolutional' carries bytes only"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrFecBlocksShared>
+  SET
+  "float_back_block.kind=convolutional"
+  "float_back_block.branches=!!uint32 4"
+  "float_back_block.unit_delay=!!uint32 3")
 
 # Each registration below matches the line a block prints at stop, for the totals of a run and for the counts no output
 # record carries. A block leaves out a counter at zero, so an expression that ends at the line break also requires each
@@ -611,3 +742,13 @@ gr_fec_graph_test(
   graphs/puncture-records.yaml
   PASS_REGULAR_EXPRESSION
   "Depuncture 'refused_depuncture_depuncture': records: 1, items emitted: 8, records refused: 2")
+gr_fec_graph_test(
+  graph_fec_counters_refused_interleave
+  graphs/interleave-records.yaml
+  PASS_REGULAR_EXPRESSION
+  "Interleave 'refused_interleave_interleave': records: 1, items: 40, records refused: 2")
+gr_fec_graph_test(
+  graph_fec_counters_refused_deinterleave
+  graphs/interleave-records.yaml
+  PASS_REGULAR_EXPRESSION
+  "Deinterleave 'refused_deinterleave_deinterleave': records: 1, items: 24, records refused: 1")

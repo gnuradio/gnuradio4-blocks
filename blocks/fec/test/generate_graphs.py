@@ -15,6 +15,7 @@ test:
 - the published codewords and the pinned Reed-Solomon parity
 - a convolutional encoder written from the generator polynomials
 - the puncture masks, and the channel noise drawn from its seed
+- the rectangle tables
 
 The other lists are a block's own output, captured by running the block through rungraph
 with the build tree's plugins (capture()). They are the binary and Reed-Solomon codewords a
@@ -1491,6 +1492,364 @@ Written by generate_graphs.py with no seed and no oracle: the puncture chains ho
     )
 
 
+# Interleaving.
+
+IL8 = FEC + "Interleave<uint8>"
+DL8 = FEC + "Deinterleave<uint8>"
+
+
+def rectangle_table(rows, cols):
+    """Write rows x cols row by row and read it column by column: the gather table
+    out[i] = in[table[i]]."""
+    grid = [[r * cols + c for c in range(cols)] for r in range(rows)]
+    return [grid[r][c] for c in range(cols) for r in range(rows)]
+
+
+def gather(values, table):
+    frame = len(table)
+    out = []
+    for f in range(len(values) // frame):
+        out += [values[f * frame + table[i]] for i in range(frame)]
+    return out
+
+
+def ramp(n):
+    return [(i * 37 + 11) & 0xFF for i in range(n)]
+
+
+def chunked(values, size):
+    return [values[i : i + size] for i in range(0, len(values), size)]
+
+
+def block_kind(rows, cols, **more):
+    return {"kind": "block", "rows": U32(rows), "cols": U32(cols), **more}
+
+
+def conv_kind(branches, unit_delay, **more):
+    return {
+        "kind": "convolutional",
+        "branches": U32(branches),
+        "unit_delay": U32(unit_delay),
+        **more,
+    }
+
+
+def perm_kind(table):
+    return {"kind": "permutation", "table": U32s(table)}
+
+
+def interleave_framed_graph():
+    g = Graph(
+        "interleave-framed.yaml",
+        """
+Interleave into Deinterleave for the framed kinds. Each source record holds three frames of distinct item values.
+The block chains use the rectangle shapes 1 x 16, 16 x 1, 4 x 4, 3 x 17, 17 x 3 and 4 x 6, rows by columns. The
+permutation chains use the table of the same shape, built by writing a frame row by row and reading it column by
+column. Every sink expects the record back unchanged. The float chain sends a record of float values through a
+4 x 5 rectangle.
+Written by generate_graphs.py with no seed. Oracle: the input record, returned unchanged.
+""",
+    )
+    for rows, cols in ((1, 16), (16, 1), (4, 4), (3, 17), (17, 3), (4, 6)):
+        items = ramp(3 * rows * cols)
+        for name, settings in (
+            (f"block_{rows}x{cols}", block_kind(rows, cols)),
+            (f"table_{rows}x{cols}", perm_kind(rectangle_table(rows, cols))),
+        ):
+            g.chain(
+                name,
+                "uint8",
+                [record(items)],
+                [(IL8, "interleave", settings), (DL8, "deinterleave", settings)],
+                "uint8",
+                [record(items)],
+            )
+    values = [0.25 * i - 2.0 for i in range(20)]
+    g.chain(
+        "float",
+        "float32",
+        [record(values, soft=True)],
+        [
+            (FEC + "Interleave<float32>", "interleave", block_kind(4, 5)),
+            (FEC + "Deinterleave<float32>", "deinterleave", block_kind(4, 5)),
+        ],
+        "float32",
+        [record(values, soft=True)],
+    )
+    return g
+
+
+def flatten_chain(g, prefix, kind, inputs, stages, expected):
+    """A source, the stages, DataSetToStream and an ExpectSink of the concatenated
+    values."""
+    prev = g.source(prefix + "_source", kind, inputs)
+    for bid, suffix, params in stages:
+        name = g.block(bid, prefix + "_" + suffix, params)
+        g.connect(prev, name)
+        prev = name
+    flat = g.block(f"gr::blocks::basic::DataSetToStream<{kind}>", prefix + "_flat")
+    g.connect(prev, flat)
+    sink = f"gr::blocks::testing::ExpectSink<{kind}>"
+    g.connect(flat, g.block(sink, prefix + "_sink", {"expected": expected}))
+
+
+def interleave_convolutional_graph():
+    g = Graph(
+        "interleave-convolutional.yaml",
+        """
+The convolutional kind, whose delay lines carry across records. The round trip chains send a ramp of item values
+that repeats after 256 items, in records of 29 items, through Interleave and Deinterleave with a fill value of 0xA5.
+The shapes are 2 x 1, 3 x 1, 4 x 3 and 8 x 2, branches by unit delay. Each sink receives the output records as one
+stream and expects B * (B - 1) * M fill items, then the input stream. The facts chain sends ten records of three
+items, each with a `seq` key, through a 4 x 1 interleaver. Each output record carries the `seq` of the record its
+first item entered in. The split chains cut one stream of 500 items into records of 37 and 200 items for a 5 x 4
+interleaver, and into records of 200 items for the matching deinterleaver. The one-item chains of both directions
+send the stream's first 165 items, two latencies of 80 items and one turn of the five branches, one item per record.
+Each split sink expects the block's output for the same items sent as one record.
+Written by generate_graphs.py with no seed. Oracle: the item ramp. The split sinks hold the block's output for the
+unsplit items, captured by the generator.
+""",
+    )
+    for branches, delay in ((2, 1), (3, 1), (4, 3), (8, 2)):
+        latency = branches * (branches - 1) * delay
+        items = latency * 4 + 137
+        stream = ramp(items)
+        settings = conv_kind(branches, delay, fill_value=U32(0xA5))
+        flatten_chain(
+            g,
+            f"round_trip_{branches}x{delay}",
+            "uint8",
+            [record(r) for r in chunked(stream, 29)],
+            [(IL8, "interleave", settings), (DL8, "deinterleave", settings)],
+            [0xA5] * latency + stream[: items - latency],
+        )
+    expected = [0, 1, 2, 1, 4, 1, 3, 5, 8, 5]
+    g.chain(
+        "facts",
+        "uint8",
+        [record(ramp(3), meta={"seq": U32(r)}) for r in range(10)],
+        [(IL8, "interleave", conv_kind(4, 1))],
+        "uint8",
+        [record(meta={"seq": U32(s)}) for s in expected],
+    )
+    branches, delay = 5, 4
+    settings = conv_kind(branches, delay)
+    stream = ramp(500)
+    head = stream[: 2 * branches * (branches - 1) * delay + branches]
+    assert len(head) == 165
+    for direction, bid, sizes in (
+        ("interleave", IL8, (1, 37, 200)),
+        ("deinterleave", DL8, (1, 200)),
+    ):
+        stages = [(bid, direction, settings)]
+        whole, first = capture(
+            [
+                ("uint8", [record(stream)], stages, "uint8"),
+                ("uint8", [record(head)], stages, "uint8"),
+            ]
+        )
+        assert len(whole) == 500 and first == whole[: len(head)]
+        for size in sizes:
+            items, out = (head, first) if size == 1 else (stream, whole)
+            flatten_chain(
+                g,
+                f"split_{direction}_{size}",
+                "uint8",
+                [record(r) for r in chunked(items, size)],
+                stages,
+                out,
+            )
+    return g
+
+
+def interleave_burst_graph():
+    g = Graph(
+        "interleave-burst.yaml",
+        """
+A burst against the classic K = 7 code with and without a 24 x 21 rectangle around it. 246 seeded information bits
+terminate into 504 coded bits, one rectangle. The forward chain checks Interleave against the rectangle's table,
+built by writing the coded bits row by row and reading them column by column. The spread chain starts from the
+interleaved bits with 24 adjacent bits flipped from 200, runs Deinterleave into ViterbiDecode, and expects the
+information back: the burst arrives at the decoder as single errors 21 bits apart. The bare chain decodes the coded
+bits with the same 24 bits flipped, a burst past the code's free distance. Its sink lists ViterbiDecode's output for
+that input, kept to show that the bare decode differs from the information. A change to the decoder's tie-breaking
+changes the list.
+Written by generate_graphs.py from seed 0x9E3779B97F4A7C15 ^ 0x8. Oracle: the rectangle's table. The bare sink holds
+ViterbiDecode's output for its input, captured by the generator.
+""",
+    )
+    rng = Lcg(SEED ^ 0x8)
+    info = rng.bits(246)
+    coded = classic(info)
+    assert len(coded) == 504
+    sent = gather(coded, rectangle_table(24, 21))
+    burst = list(range(200, 224))
+    g.chain(
+        "forward",
+        "uint8",
+        [record(coded)],
+        [(IL8, "interleave", block_kind(24, 21))],
+        "uint8",
+        [record(sent)],
+    )
+    g.chain(
+        "spread",
+        "uint8",
+        [record(flip(sent, burst))],
+        [
+            (DL8, "deinterleave", block_kind(24, 21)),
+            stage("ViterbiDecode", "decoder", **classic_settings()),
+        ],
+        "uint8",
+        [record(info)],
+    )
+    stages = [stage("ViterbiDecode", "decoder", **classic_settings())]
+    bare = capture([("uint8", [record(flip(coded, burst))], stages, "uint8")])[0]
+    assert len(bare) == 246 and bare != info
+    g.chain(
+        "bare", "uint8", [record(flip(coded, burst))], stages, "uint8", [record(bare)]
+    )
+    g.note(
+        "bare_sink",
+        """
+This list is ViterbiDecode's output for a burst past the free distance. It is kept to show that the bare decode
+differs from the information. A change to the decoder's tie-breaking changes it.
+""",
+    )
+    return g
+
+
+def interleave_ao40_graph():
+    g = Graph(
+        "interleave-ao40.yaml",
+        """
+The AO-40 telemetry rectangles, rows the stride and columns the sync items: 80 x 65 for the long form, 5200 items,
+and 51 x 52 for the short form, 2652 items. The source frame holds ones in its first sync items and zeros after.
+Each form's source feeds two Interleave blocks. The first runs the block kind under the rectangle. The second runs
+the permutation kind under the rectangle's table, built by writing a frame row by row and reading it column by
+column. Both sinks expect the ones at every stride-th transmitted position.
+Written by generate_graphs.py with no seed. Oracle: the stride arithmetic, which the rectangle's table reproduces.
+""",
+    )
+    for name, sync, stride in (("long", 65, 80), ("short", 52, 51)):
+        frame_items = sync * stride
+        frame = [1 if i < sync else 0 for i in range(frame_items)]
+        sent = [
+            1 if p % stride == 0 and p // stride < sync else 0
+            for p in range(frame_items)
+        ]
+        table = rectangle_table(stride, sync)
+        assert gather(frame, table) == sent
+        src = g.source(name + "_source", "uint8", [record(frame)])
+        for prefix, settings in (
+            (name, block_kind(stride, sync)),
+            (name + "_table", perm_kind(table)),
+        ):
+            interleave = g.block(IL8, prefix + "_interleave", settings)
+            g.connect(src, interleave)
+            g.connect(interleave, g.sink(prefix + "_sink", "uint8", [record(sent)]))
+    return g
+
+
+def interleave_records_graph():
+    g = Graph(
+        "interleave-records.yaml",
+        """
+Interleave and Deinterleave with a record's metadata and with the records they refuse, under a 4 x 5 rectangle. The
+carried chain interleaves a record with two meta keys, and the sink expects them unchanged, no uncorrectable_errors
+key, the signal name and the extent. The refused chains give Interleave a record of 23 items, one of 40 and an empty
+record, and give Deinterleave with an output window of 12 items from 2 a record of 23 items and one of 40. Each sink
+expects the good record alone, its whole frames or their windows, and the block's line at stop counts the records
+refused. The window chains interleave 20 distinct items and deinterleave them with a window of 9 items from 7 and a
+window from 15 to the frame's end, and the sinks expect those items of the original frame.
+Written by generate_graphs.py with no seed. Oracle: the input items and their frames.
+""",
+    )
+    items = ramp(20)
+    meta = {"corrected_errors": U32(3), "who": "earlier stage"}
+    g.chain(
+        "carried",
+        "uint8",
+        [record(items, names=["fec"], meta=meta)],
+        [(IL8, "interleave", block_kind(4, 5))],
+        "uint8",
+        [
+            record(
+                gather(items, rectangle_table(4, 5)),
+                names=["fec"],
+                extents=[20],
+                meta=meta,
+                absent=["uncorrectable_errors"],
+            )
+        ],
+    )
+    whole = ramp(40)
+    g.chain(
+        "refused_interleave",
+        "uint8",
+        [record(ramp(23)), record(whole), record([])],
+        [(IL8, "interleave", block_kind(4, 5))],
+        "uint8",
+        [record(gather(whole, rectangle_table(4, 5)))],
+    )
+    windowed = block_kind(4, 5, output_offset=U32(2), output_length=U32(12))
+    inverse = [0] * 20
+    for i, j in enumerate(rectangle_table(4, 5)):
+        inverse[j] = i
+    back = gather(whole, inverse)
+    g.chain(
+        "refused_deinterleave",
+        "uint8",
+        [record(ramp(23)), record(whole)],
+        [(DL8, "deinterleave", windowed)],
+        "uint8",
+        [record(back[2:14] + back[22:34])],
+    )
+    for name, offset, length, kept in (
+        ("window", 7, 9, items[7:16]),
+        ("tail", 15, 0, items[15:]),
+    ):
+        settings = block_kind(4, 5, output_offset=U32(offset))
+        if length:
+            settings["output_length"] = U32(length)
+        g.chain(
+            name,
+            "uint8",
+            [record(items)],
+            [(IL8, "interleave", block_kind(4, 5)), (DL8, "deinterleave", settings)],
+            "uint8",
+            [record(kept, extents=[len(kept)])],
+        )
+    return g
+
+
+def interleave_settings():
+    g = Graph(
+        "interleave-settings.yaml",
+        """
+One chain per interleaver kind and direction, each with settings the block accepts and no record to process: a
+4 x 5 rectangle, a 4 x 3 convolutional interleaver and the permutation table 2, 0, 1, for uint8 items, and a 4 x 5
+rectangle and the permutation for float items. The run passes as written. A case that changes a setting through SET
+checks that the block refuses it, and the refusal ends the run with the block's reason.
+Written by generate_graphs.py with no seed and no oracle: the interleave chains hold no record.
+""",
+    )
+    for name, kind, block, settings in (
+        ("block", "uint8", "Interleave", block_kind(4, 5)),
+        ("block_back", "uint8", "Deinterleave", block_kind(4, 5)),
+        ("conv", "uint8", "Interleave", conv_kind(4, 3)),
+        ("conv_back", "uint8", "Deinterleave", conv_kind(4, 3)),
+        ("table", "uint8", "Interleave", perm_kind([2, 0, 1])),
+        ("table_back", "uint8", "Deinterleave", perm_kind([2, 0, 1])),
+        ("float", "float32", "Interleave", block_kind(4, 5)),
+        ("float_back", "float32", "Deinterleave", block_kind(4, 5)),
+        ("float_table", "float32", "Interleave", perm_kind([2, 0, 1])),
+    ):
+        stages = [(f"{FEC}{block}<{kind}>", "block", settings)]
+        g.chain(name, kind, [], stages, kind, [])
+    return g
+
+
 GRAPHS = [
     fec_round_trip,
     fec_anchors,
@@ -1507,6 +1866,12 @@ GRAPHS = [
     puncture_chain_graph,
     puncture_records_graph,
     puncture_settings,
+    interleave_framed_graph,
+    interleave_convolutional_graph,
+    interleave_burst_graph,
+    interleave_ao40_graph,
+    interleave_records_graph,
+    interleave_settings,
 ]
 
 

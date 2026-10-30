@@ -211,7 +211,7 @@ record being consumed while the delay lines are still filling. Deinterleave puts
     detail::OriginQueue                    _origins{};
     bool                                   _configured = false;
 
-    // Plain members, read by the owning thread and by QA, and reported once at stop().
+    // Interleave's counters are plain members, read by the owning thread and reported once at stop().
     std::uint64_t nRecords        = 0ULL; ///< records published on `out`
     std::uint64_t nItems          = 0ULL; ///< items those records carry
     std::uint64_t nRecordsRefused = 0ULL; ///< records whose length was not a whole number of frames
@@ -326,7 +326,7 @@ Length refusals, the counters and the metadata carry are Interleave's, unchanged
     std::size_t                            _outLength  = 0UZ;
     std::vector<T>                         _whole{}; //!< the full deinterleaved frames, when only a window of them is emitted
 
-    // Plain members, read by the owning thread and by QA, and reported once at stop().
+    // Deinterleave's counters are plain members, read by the owning thread and reported once at stop().
     std::uint64_t nRecords        = 0ULL; ///< records published on `out`
     std::uint64_t nItems          = 0ULL; ///< items those records carry
     std::uint64_t nRecordsRefused = 0ULL; ///< records whose length was not a whole number of frames
