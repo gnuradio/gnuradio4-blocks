@@ -147,7 +147,7 @@ decoding counterparts.
     gr::fec::ConvolutionalCode _code{};
     bool                       _configured = false;
 
-    // Plain members, read by the owning thread and by QA, and reported once at stop().
+    // ConvEncode's counters are plain members, read by the owning thread and reported once at stop().
     std::uint64_t nRecords        = 0ULL; ///< frames published on `out`
     std::uint64_t nInfoBits       = 0ULL; ///< information bits those frames carry
     std::uint64_t nRecordsRefused = 0ULL; ///< records that were not a frame this code can encode
@@ -239,7 +239,7 @@ zero. The distance in `corrected_errors` is how far the received frame stood fro
     gr::fec::ConvTermination   _termination = gr::fec::ConvTermination::Terminated;
     bool                       _configured  = false;
 
-    // Plain members, read by the owning thread and by QA, and reported once at stop().
+    // ViterbiDecode's counters are plain members, read by the owning thread and reported once at stop().
     std::uint64_t nRecords         = 0ULL; ///< frames published on `out`
     std::uint64_t nInfoBits        = 0ULL; ///< information bits those frames carry
     std::uint64_t nRecordsRefused  = 0ULL; ///< records whose length was not a frame of this code
@@ -336,7 +336,7 @@ drops and the metadata carry are ViterbiDecode's.
     gr::fec::ConvTermination   _termination = gr::fec::ConvTermination::Terminated;
     bool                       _configured  = false;
 
-    // Plain members, read by the owning thread and by QA, and reported once at stop().
+    // ViterbiDecodeSoft's counters are plain members, read by the owning thread and reported once at stop().
     std::uint64_t nRecords         = 0ULL; ///< frames published on `out`
     std::uint64_t nInfoBits        = 0ULL; ///< information bits those frames carry
     std::uint64_t nRecordsRefused  = 0ULL; ///< records whose length was not a frame of this code

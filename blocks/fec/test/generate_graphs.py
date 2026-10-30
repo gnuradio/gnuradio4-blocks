@@ -13,6 +13,7 @@ test:
 
 - the drawn information, for a round trip
 - the published codewords and the pinned Reed-Solomon parity
+- a convolutional encoder written from the generator polynomials
 
 The other lists are a block's own output, captured by running the block through rungraph
 with the build tree's plugins (capture()). They are the binary and Reed-Solomon codewords a
@@ -882,6 +883,309 @@ Written by generate_graphs.py with no seed and no oracle: the fec chains hold no
     )
 
 
+# The convolutional code.
+
+
+def conv_encode(info, k, polys, invert=0):
+    """Terminated feed-forward encode: K-1 zero tail bits, and bit 0 of the
+    register is the current input bit."""
+    reg, out = 0, []
+    for b in list(info) + [0] * (k - 1):
+        reg = ((reg << 1) | b) & ((1 << k) - 1)
+        for j, g in enumerate(polys):
+            out.append((bin(reg & g).count("1") & 1) ^ ((invert >> j) & 1))
+    return out
+
+
+CLASSIC = (7, [0o171, 0o133])
+SHORTEST = (3, [0o7, 0o5])
+CCSDS = (7, [0o117, 0o155])
+
+
+def classic(info, invert=0):
+    return conv_encode(info, CLASSIC[0], CLASSIC[1], invert)
+
+
+def as_soft(bits):
+    return [1.0 if b & 1 else -1.0 for b in bits]
+
+
+def classic_settings(**more):
+    return {"constraint_length": U32(7), "polynomials": U32s(CLASSIC[1]), **more}
+
+
+def shortest_settings():
+    return {"constraint_length": U32(3), "polynomials": U32s(SHORTEST[1])}
+
+
+def conv_encode_graph():
+    g = Graph(
+        "conv-encode.yaml",
+        """
+ConvEncode's output order. The impulse chains encode a one followed by K - 1 zeros under the classic K = 7 code
+(171, 133 octal) and the K = 3 code (7, 5 octal). The sinks expect each generator polynomial, least significant bit
+first, interleaved one bit per polynomial per step, then zeros once the impulse has left the register. The
+convention chains encode seeded bits under 'ccsds_uninverted' and 'ccsds', the polynomials 117 and 155 octal. The
+'ccsds' sink expects the 'ccsds_uninverted' bits with every second coded bit complemented. The inverted chain sets
+invert_outputs to 1 under the classic code. Its first sink expects the classic encoding with every first coded bit
+complemented, and its second sink expects the information back from ViterbiDecode under the same setting, with
+nothing corrected.
+Written by generate_graphs.py from seed 0x9E3779B97F4A7C15 ^ 0x5. Oracle: the generator's convolutional encoder.
+""",
+    )
+    for name, (k, polys) in (("impulse_k7", CLASSIC), ("impulse_k3", SHORTEST)):
+        impulse = [1] + [0] * (k - 1)
+        expected = []
+        for step in range(2 * k - 1):
+            expected += [(p >> step) & 1 if step < k else 0 for p in polys]
+        assert expected == conv_encode(impulse, k, polys)
+        settings = {"constraint_length": U32(k), "polynomials": U32s(polys)}
+        g.chain(
+            name,
+            "uint8",
+            [record(impulse)],
+            [stage("ConvEncode", "coder", **settings)],
+            "uint8",
+            [record(expected)],
+        )
+    rng = Lcg(SEED ^ 0x5)
+    info = rng.bits(96)
+    uninverted = conv_encode(info, *CCSDS)
+    inverted = [b ^ (i & 1) for i, b in enumerate(uninverted)]
+    for name, expected in (("ccsds_uninverted", uninverted), ("ccsds", inverted)):
+        g.chain(
+            name,
+            "uint8",
+            [record(info)],
+            [stage("ConvEncode", "coder", code=name)],
+            "uint8",
+            [record(expected)],
+        )
+    info = rng.bits(80)
+    flipped = [b ^ (1 - (i & 1)) for i, b in enumerate(classic(info))]
+    assert flipped == classic(info, 1)
+    settings = classic_settings(invert_outputs=U32(1))
+    src = g.source("inverted_source", "uint8", [record(info)])
+    coder = g.block(FEC + "ConvEncode", "inverted_coder", settings)
+    decoder = g.block(FEC + "ViterbiDecode", "inverted_decoder", settings)
+    back = [record(info, meta={"corrected_errors": U32(0)})]
+    g.connect(src, coder)
+    g.connect(coder, g.sink("inverted_coded", "uint8", [record(flipped)]))
+    g.connect(coder, decoder)
+    g.connect(decoder, g.sink("inverted_sink", "uint8", back))
+    return g
+
+
+def conv_decode_graph():
+    g = Graph(
+        "conv-decode.yaml",
+        """
+ViterbiDecode and ViterbiDecodeSoft under the classic K = 7 code. The hard chain encodes 100 seeded bits. Its first
+sink expects the 212 coded bits, two per step over 106 steps, and its second the information back with nothing
+corrected and no uncorrectable_errors key. The soft chains decode the coded bits as soft values, a one at +1.0 and a
+zero at -1.0. The plain soft chain expects the information back with nothing corrected. The damaged soft chain
+negates the values at 11 and 93 and erases 40 to 43 to 0.0, and expects the information back. The open chains
+decode under termination 'open', where every step carries an information bit: the sinks expect the 120 information
+bits, then the six tail steps as zeros. The step chain decodes the first two coded bits, one step, under 'open'.
+Written by generate_graphs.py from seed 0x9E3779B97F4A7C15 ^ 0x6. Oracle: the drawn information and the generator's
+convolutional encoder.
+""",
+    )
+    rng = Lcg(SEED ^ 0x6)
+    info = rng.bits(100)
+    coded = classic(info)
+    assert len(coded) == 212
+    clean = {"corrected_errors": U32(0)}
+    back = [record(info, meta=clean, absent=["uncorrectable_errors"])]
+    src = g.source("hard_source", "uint8", [record(info)])
+    coder = g.block(FEC + "ConvEncode", "hard_coder", classic_settings())
+    decoder = g.block(FEC + "ViterbiDecode", "hard_decoder", classic_settings())
+    g.connect(src, coder)
+    g.connect(coder, g.sink("hard_coded", "uint8", [record(coded, extents=[212])]))
+    g.connect(coder, decoder)
+    g.connect(decoder, g.sink("hard_sink", "uint8", back))
+    soft = as_soft(coded)
+    g.chain(
+        "soft",
+        "float32",
+        [record(soft, soft=True)],
+        [stage("ViterbiDecodeSoft", "decoder", **classic_settings())],
+        "uint8",
+        [record(info, meta=clean)],
+    )
+    damaged = list(soft)
+    damaged[11], damaged[93] = -damaged[11], -damaged[93]
+    for p in (40, 41, 42, 43):
+        damaged[p] = 0.0
+    g.chain(
+        "soft_damaged",
+        "float32",
+        [record(damaged, soft=True)],
+        [stage("ViterbiDecodeSoft", "decoder", **classic_settings())],
+        "uint8",
+        [record(info)],
+    )
+    info = rng.bits(120)
+    open_ = classic_settings(termination="open")
+    g.chain(
+        "open",
+        "uint8",
+        [record(info)],
+        [
+            stage("ConvEncode", "coder", **classic_settings()),
+            stage("ViterbiDecode", "decoder", **open_),
+        ],
+        "uint8",
+        [record(info + [0] * 6, extents=[126])],
+    )
+    g.chain(
+        "open_soft",
+        "float32",
+        [record(as_soft(classic(info)), soft=True)],
+        [stage("ViterbiDecodeSoft", "decoder", **open_)],
+        "uint8",
+        [record(info + [0] * 6, extents=[126])],
+    )
+    g.chain(
+        "open_step",
+        "uint8",
+        [record(classic(info)[:2])],
+        [stage("ViterbiDecode", "decoder", **open_)],
+        "uint8",
+        [record(extents=[1])],
+    )
+    return g
+
+
+def conv_records_graph():
+    g = Graph(
+        "conv-records.yaml",
+        """
+ConvEncode, ViterbiDecode and ViterbiDecodeSoft with a record's metadata and with the records they refuse, under the
+classic K = 7 code. The carried chain decodes a frame of 100 seeded bits with coded bits 9 and 120 flipped. The
+record already counts 3 corrected errors, so the sink expects 5, and the other keys and the signal name unchanged.
+The bare chain decodes a frame without a metadata map, and the sink expects one map holding the count. The ordered
+chains carry three frames with a `seq` key. The encoder emits them in order, and the decoder, given each coded frame
+with bits 5, 61 and 150 flipped, returns each frame's information with 3 corrected errors. The refused chains give
+the encoder an empty record, the hard decoder a coded frame one bit short, the 12 zero bits of a tail alone and the
+whole frame, the soft decoder a soft frame one value short and the whole frame, and the terminated decoder one step.
+Each sink expects the whole frame alone, and the block's line at stop counts the records refused.
+Written by generate_graphs.py from seed 0x9E3779B97F4A7C15 ^ 0x7. Oracle: the drawn information and the generator's
+convolutional encoder.
+""",
+    )
+    rng = Lcg(SEED ^ 0x7)
+    info = rng.bits(100)
+    carried = {
+        "corrected_errors": U32(3),
+        "provenance": "earlier stage",
+        "sample_start": U64(4096),
+    }
+    g.chain(
+        "carried",
+        "uint8",
+        [record(flip(classic(info), [9, 120]), names=["fec"], meta=carried)],
+        [stage("ViterbiDecode", "decoder", **classic_settings())],
+        "uint8",
+        [record(info, names=["fec"], meta={**carried, "corrected_errors": U32(5)})],
+        meta_exact=True,
+    )
+    info = rng.bits(20)
+    g.chain(
+        "bare",
+        "uint8",
+        [record(classic(info))],
+        [stage("ViterbiDecode", "decoder", **classic_settings())],
+        "uint8",
+        [record(info, meta={"corrected_errors": U32(0)})],
+        meta_exact=True,
+    )
+    infos = [rng.bits(100) for _ in range(3)]
+    seq = [{"seq": U32(r)} for r in range(3)]
+    g.chain(
+        "ordered_encode",
+        "uint8",
+        [record(infos[r], meta=seq[r]) for r in range(3)],
+        [stage("ConvEncode", "coder", **classic_settings())],
+        "uint8",
+        [record(extents=[212], meta=seq[r]) for r in range(3)],
+    )
+    g.chain(
+        "ordered_decode",
+        "uint8",
+        [record(flip(classic(infos[r]), [5, 61, 150]), meta=seq[r]) for r in range(3)],
+        [stage("ViterbiDecode", "decoder", **classic_settings())],
+        "uint8",
+        [
+            record(infos[r], meta={"seq": U32(r), "corrected_errors": U32(3)})
+            for r in range(3)
+        ],
+    )
+    good = rng.bits(50)
+    g.chain(
+        "refused_encode",
+        "uint8",
+        [record([]), record(good)],
+        [stage("ConvEncode", "coder", **classic_settings())],
+        "uint8",
+        [record(classic(good))],
+    )
+    info = rng.bits(20)
+    coded = classic(info)
+    g.chain(
+        "refused_hard",
+        "uint8",
+        [record(coded[:-1]), record([0] * 12), record(coded)],
+        [stage("ViterbiDecode", "decoder", **classic_settings())],
+        "uint8",
+        [record(info)],
+    )
+    info = rng.bits(20)
+    soft = as_soft(classic(info))
+    g.chain(
+        "refused_soft",
+        "float32",
+        [record(soft[:-1], soft=True), record(soft, soft=True)],
+        [stage("ViterbiDecodeSoft", "decoder", **classic_settings())],
+        "uint8",
+        [record(info)],
+    )
+    g.chain(
+        "refused_step",
+        "uint8",
+        [record(coded[:2])],
+        [stage("ViterbiDecode", "decoder", **classic_settings())],
+        "uint8",
+        [],
+    )
+    return g
+
+
+def conv_settings():
+    return settings_graph(
+        "conv-settings.yaml",
+        """
+One chain per convolutional block, each with settings the block accepts and no record to process: the classic
+K = 7 code for the encoder and both decoders, and the 'ccsds' convention for a second encoder. The run passes as
+written. A case that changes a setting through SET checks that the block accepts the change or refuses it, and the
+refusal ends the run with the block's reason.
+Written by generate_graphs.py with no seed and no oracle: the convolutional chains hold no record.
+""",
+        [
+            ("encoder", "uint8", "ConvEncode", "uint8", classic_settings()),
+            ("decoder", "uint8", "ViterbiDecode", "uint8", classic_settings()),
+            (
+                "soft_decoder",
+                "float32",
+                "ViterbiDecodeSoft",
+                "uint8",
+                classic_settings(),
+            ),
+            ("ccsds_encoder", "uint8", "ConvEncode", "uint8", {"code": "ccsds"}),
+        ],
+    )
+
+
 GRAPHS = [
     fec_round_trip,
     fec_anchors,
@@ -890,6 +1194,10 @@ GRAPHS = [
     rs_round_trip,
     rs_errors,
     fec_settings,
+    conv_encode_graph,
+    conv_decode_graph,
+    conv_records_graph,
+    conv_settings,
 ]
 
 
