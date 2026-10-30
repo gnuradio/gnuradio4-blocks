@@ -1,0 +1,15 @@
+# A DataSetSource whose `records` has a key that is not a record index. The run must end at the start with an error
+# naming the key, and with a nonzero exit status. The tests registering this graph also set the source's records to
+# each other malformed entry the source refuses. The sink receives no record.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: source
+      records:
+        x: {}
+  - id: gr::blocks::basic::DataSetSink<uint8>
+    parameters:
+      name: sink
+      signal_name: records
+connections:
+  - [source, out, sink, in]
