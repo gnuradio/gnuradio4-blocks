@@ -14,6 +14,7 @@ test:
 - the drawn information, for a round trip
 - the published codewords and the pinned Reed-Solomon parity
 - a convolutional encoder written from the generator polynomials
+- the puncture masks, and the channel noise drawn from its seed
 
 The other lists are a block's own output, captured by running the block through rungraph
 with the build tree's plugins (capture()). They are the binary and Reed-Solomon codewords a
@@ -37,6 +38,7 @@ shows that the sink checks the list it holds.
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -1186,6 +1188,309 @@ Written by generate_graphs.py with no seed and no oracle: the convolutional chai
     )
 
 
+# Puncturing.
+
+PUNCTURE_SEED = 0xD1B54A32D192ED03
+
+
+def punctured(coded, mask):
+    return [c for i, c in enumerate(coded) if mask[i % len(mask)] == "1"]
+
+
+def depunctured(kept, mask):
+    ones = mask.count("1")
+    assert len(kept) % ones == 0
+    out, it = [], iter(kept)
+    for i in range(len(kept) // ones * len(mask)):
+        out.append(next(it) if mask[i % len(mask)] == "1" else 0.0)
+    return out
+
+
+def erased_ones(coded, mask):
+    return sum(1 for i, c in enumerate(coded) if mask[i % len(mask)] == "0" and c & 1)
+
+
+class Awgn:
+    """A xorshift and Box-Muller source, which keeps the second deviate of each
+    pair."""
+
+    def __init__(self, seed):
+        self.state = (seed | 1) & M64
+        self.spare = None
+
+    def uniform(self):
+        self.state ^= (self.state << 13) & M64
+        self.state ^= self.state >> 7
+        self.state ^= (self.state << 17) & M64
+        return ((self.state >> 11) + 1) * 2.0**-53
+
+    def normal(self):
+        if self.spare is not None:
+            value, self.spare = self.spare, None
+            return value
+        radius = math.sqrt(-2.0 * math.log(self.uniform()))
+        angle = 2.0 * math.pi * self.uniform()
+        self.spare = radius * math.sin(angle)
+        return radius * math.cos(angle)
+
+
+def channel(bits, index, sigma):
+    """The soft values of `bits` for record `index` with seeded noise added, and the
+    count of values whose sign the noise changed."""
+    noise = Awgn((0x2545F4914F6CDD1D + index * 0x9E3779B97F4A7C15) & M64)
+    values, flips = [], 0
+    for clean in as_soft(bits):
+        value = f32(clean + noise.normal() * sigma)
+        flips += (clean > 0.0) != (value > 0.0)
+        values.append(value)
+    return values, flips
+
+
+def puncture_patterns_graph():
+    g = Graph(
+        "puncture-patterns.yaml",
+        """
+Puncture and Depuncture against positions counted by hand. The rate 2/3 chain encodes two seeded bits under the
+K = 3 code (7, 5 octal) into eight coded bits. Its first sink expects those bits, and its second the bits at 0, 1,
+2, 4, 5 and 6 that '1110' keeps. The rate 3/4 chain encodes four bits into twelve, and '111001' keeps 0, 1, 2, 5,
+6, 7, 8 and 11. The phase chain punctures two identical records of ten bits, and both records keep 0, 1, 2, 4, 5,
+6, 8 and 9: the pattern starts over at every record. The erasure chain depunctures the six kept soft values of the
+rate 2/3 chain, and the sink expects them back in place with 0.0 at 3 and 7.
+Written by generate_graphs.py from seed 0xD1B54A32D192ED03. Oracle: the positions counted by hand and the
+generator's convolutional encoder.
+""",
+    )
+    rng = Lcg(PUNCTURE_SEED)
+    for name, mask, count, kept in (
+        ("two_thirds", "1110", 2, [0, 1, 2, 4, 5, 6]),
+        ("three_quarters", "111001", 4, [0, 1, 2, 5, 6, 7, 8, 11]),
+    ):
+        info = rng.bits(count)
+        coded = conv_encode(info, *SHORTEST)
+        assert punctured(coded, mask) == [coded[p] for p in kept]
+        src = g.source(name + "_source", "uint8", [record(info)])
+        coder = g.block(FEC + "ConvEncode", name + "_coder", shortest_settings())
+        puncture = g.block(FEC + "Puncture", name + "_puncture", {"pattern": mask})
+        g.connect(src, coder)
+        g.connect(coder, g.sink(name + "_coded", "uint8", [record(coded)]))
+        g.connect(coder, puncture)
+        kept_bits = [record([coded[p] for p in kept])]
+        g.connect(puncture, g.sink(name + "_sink", "uint8", kept_bits))
+        if name == "two_thirds":
+            erasure_in = as_soft([coded[p] for p in kept])
+            erasure_out = [
+                0.0 if i % 4 == 3 else v for i, v in enumerate(as_soft(coded))
+            ]
+            assert depunctured(erasure_in, mask) == erasure_out
+    bits = rng.bits(10)
+    phase = record([bits[p] for p in (0, 1, 2, 4, 5, 6, 8, 9)])
+    g.chain(
+        "phase",
+        "uint8",
+        [record(bits), record(bits)],
+        [stage("Puncture", "puncture", pattern="1110")],
+        "uint8",
+        [phase, phase],
+    )
+    g.chain(
+        "erasure",
+        "float32",
+        [record(erasure_in, soft=True)],
+        [stage("Depuncture", "depuncture", pattern="1110")],
+        "float32",
+        [record(erasure_out, soft=True)],
+    )
+    return g
+
+
+def puncture_chain_graph():
+    g = Graph(
+        "puncture-chain.yaml",
+        """
+The punctured chain under the classic K = 7 code, at both published rates. Three frames of 30 seeded bits carry a
+`seq` key, and each terminates into 72 coded bits, a whole number of periods of both patterns. The encode chains
+run ConvEncode into Puncture, and the sinks expect the bits the pattern keeps. The decode chains start from those
+bits as soft values, a one at +1.0 and a zero at -1.0, and run Depuncture into ViterbiDecodeSoft. The sinks expect
+each frame's information back in order. The corrected count equals the deleted positions that carried a one, since
+an erasure decides to zero. The noisy chain's source holds two rate 2/3 frames, each the punctured coding of 96
+seeded bits, as soft values with seeded Gaussian noise of standard deviation 0.4 added. Its sink expects the
+information back, and a corrected count of those deleted ones plus the values whose sign the noise changed.
+Written by generate_graphs.py from seed 0xD1B54A32D192ED03 ^ 0x1, and ^ 0x3 for the noisy chain's information. The
+noise of frame i has the seed 0x2545F4914F6CDD1D plus i times 0x9E3779B97F4A7C15. Oracle: the generator's
+convolutional encoder.
+""",
+    )
+    rng = Lcg(PUNCTURE_SEED ^ 0x1)
+    for name, mask in (("two_thirds", "1110"), ("three_quarters", "111001")):
+        infos = [rng.bits(30) for _ in range(3)]
+        coded = [classic(i) for i in infos]
+        kept = [punctured(c, mask) for c in coded]
+        assert all(len(c) % 12 == 0 and erased_ones(c, mask) > 0 for c in coded)
+        seq = [{"seq": U32(f)} for f in range(3)]
+        g.chain(
+            name + "_encode",
+            "uint8",
+            [record(infos[f], meta=seq[f]) for f in range(3)],
+            [
+                stage("ConvEncode", "coder", **classic_settings()),
+                stage("Puncture", "puncture", pattern=mask),
+            ],
+            "uint8",
+            [record(kept[f], meta=seq[f]) for f in range(3)],
+        )
+        g.chain(
+            name + "_decode",
+            "float32",
+            [record(as_soft(kept[f]), soft=True, meta=seq[f]) for f in range(3)],
+            [
+                stage("Depuncture", "depuncture", pattern=mask),
+                stage("ViterbiDecodeSoft", "decoder", **classic_settings()),
+            ],
+            "uint8",
+            [
+                record(
+                    infos[f],
+                    meta={
+                        "seq": U32(f),
+                        "corrected_errors": U32(erased_ones(coded[f], mask)),
+                    },
+                )
+                for f in range(3)
+            ],
+        )
+    rng = Lcg(PUNCTURE_SEED ^ 0x3)
+    infos = [rng.bits(96) for _ in range(2)]
+    inputs, expected, flips = [], [], 0
+    for f, info in enumerate(infos):
+        coded = classic(info)
+        values, moved = channel(punctured(coded, "1110"), f, 0.4)
+        flips += moved
+        corrected = U32(erased_ones(coded, "1110") + moved)
+        inputs.append(record(values, soft=True, meta={"seq": U32(f)}))
+        expected.append(
+            record(info, meta={"seq": U32(f), "corrected_errors": corrected})
+        )
+    assert flips > 0
+    g.chain(
+        "noisy",
+        "float32",
+        inputs,
+        [
+            stage("Depuncture", "depuncture", pattern="1110"),
+            stage("ViterbiDecodeSoft", "decoder", **classic_settings()),
+        ],
+        "uint8",
+        expected,
+    )
+    return g
+
+
+def puncture_records_graph():
+    g = Graph(
+        "puncture-records.yaml",
+        """
+Puncture and Depuncture with a record's metadata and with the records they refuse. The carried chains run a
+record with three meta keys through each block, and the sinks expect exactly those keys and the signal name. The
+bare chain punctures a record without a metadata map, and the sink expects one empty map. The refused puncture chain
+gives Puncture an empty record and a record of eight bits. The short chain encodes three bits into ten coded bits,
+which '1110' punctures to eight. The refused depuncture chain gives Depuncture those eight bits as soft values,
+which are not a whole number of the pattern's three kept positions, an empty record and six values of +1.0. Each
+sink expects the good record alone, and the block's line at stop counts the records refused.
+Written by generate_graphs.py from seed 0xD1B54A32D192ED03 ^ 0x2. Oracle: the drawn information and the pattern's
+kept positions.
+""",
+    )
+    rng = Lcg(PUNCTURE_SEED ^ 0x2)
+    meta = {
+        "corrected_errors": U32(3),
+        "provenance": "earlier stage",
+        "sample_start": U64(4096),
+    }
+    bits = rng.bits(8)
+    g.chain(
+        "carried_puncture",
+        "uint8",
+        [record(bits, names=["fec"], meta=meta)],
+        [stage("Puncture", "puncture", pattern="1110")],
+        "uint8",
+        [record(punctured(bits, "1110"), names=["fec"], meta=meta)],
+        meta_exact=True,
+    )
+    soft = as_soft(punctured(bits, "1110"))
+    g.chain(
+        "carried_depuncture",
+        "float32",
+        [record(soft, soft=True, names=["fec"], meta=meta)],
+        [stage("Depuncture", "depuncture", pattern="1110")],
+        "float32",
+        [record(depunctured(soft, "1110"), soft=True, names=["fec"], meta=meta)],
+        meta_exact=True,
+    )
+    bits = rng.bits(8)
+    g.chain(
+        "bare",
+        "uint8",
+        [record(bits)],
+        [stage("Puncture", "puncture", pattern="1110")],
+        "uint8",
+        [record(meta={})],
+        meta_exact=True,
+    )
+    good = rng.bits(8)
+    g.chain(
+        "refused_puncture",
+        "uint8",
+        [record([]), record(good)],
+        [stage("Puncture", "puncture", pattern="1110")],
+        "uint8",
+        [record(punctured(good, "1110"))],
+    )
+    info = rng.bits(3)
+    short = conv_encode(info, *SHORTEST)
+    assert len(short) == 10 and len(punctured(short, "1110")) == 8
+    g.chain(
+        "short",
+        "uint8",
+        [record(info)],
+        [
+            stage("ConvEncode", "coder", **shortest_settings()),
+            stage("Puncture", "puncture", pattern="1110"),
+        ],
+        "uint8",
+        [record(punctured(short, "1110"), extents=[8])],
+    )
+    whole = [1.0] * 6
+    g.chain(
+        "refused_depuncture",
+        "float32",
+        [
+            record(as_soft(punctured(short, "1110")), soft=True),
+            record([], soft=True),
+            record(whole, soft=True),
+        ],
+        [stage("Depuncture", "depuncture", pattern="1110")],
+        "float32",
+        [record(depunctured(whole, "1110"), soft=True)],
+    )
+    return g
+
+
+def puncture_settings():
+    return settings_graph(
+        "puncture-settings.yaml",
+        """
+Puncture under the rate 2/3 pattern '1110' and Depuncture under the rate 3/4 pattern '111001', each with no record
+to process. The run passes as written. A case that changes a pattern through SET checks that the block refuses it,
+and the refusal ends the run with the block's reason.
+Written by generate_graphs.py with no seed and no oracle: the puncture chains hold no record.
+""",
+        [
+            ("puncture", "uint8", "Puncture", "uint8", {"pattern": "1110"}),
+            ("depuncture", "float32", "Depuncture", "float32", {"pattern": "111001"}),
+        ],
+    )
+
+
 GRAPHS = [
     fec_round_trip,
     fec_anchors,
@@ -1198,6 +1503,10 @@ GRAPHS = [
     conv_decode_graph,
     conv_records_graph,
     conv_settings,
+    puncture_patterns_graph,
+    puncture_chain_graph,
+    puncture_records_graph,
+    puncture_settings,
 ]
 
 

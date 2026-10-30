@@ -1,0 +1,112 @@
+# Puncture and Depuncture against positions counted by hand. The rate 2/3 chain encodes two seeded bits under the
+# K = 3 code (7, 5 octal) into eight coded bits. Its first sink expects those bits, and its second the bits at 0, 1,
+# 2, 4, 5 and 6 that '1110' keeps. The rate 3/4 chain encodes four bits into twelve, and '111001' keeps 0, 1, 2, 5,
+# 6, 7, 8 and 11. The phase chain punctures two identical records of ten bits, and both records keep 0, 1, 2, 4, 5,
+# 6, 8 and 9: the pattern starts over at every record. The erasure chain depunctures the six kept soft values of the
+# rate 2/3 chain, and the sink expects them back in place with 0.0 at 3 and 7.
+# Written by generate_graphs.py from seed 0xD1B54A32D192ED03. Oracle: the positions counted by hand and the
+# generator's convolutional encoder.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: two_thirds_source
+      records:
+        0:
+          signal_values: [1, 0]
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: two_thirds_coder
+      constraint_length: !!uint32 3
+      polynomials: !!uint32 [7, 5]
+  - id: gr::blocks::fec::Puncture
+    parameters:
+      name: two_thirds_puncture
+      pattern: "1110"
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: two_thirds_coded
+      records:
+        0:
+          signal_values: [1, 1, 1, 0, 1, 1, 0, 0]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: two_thirds_sink
+      records:
+        0:
+          signal_values: [1, 1, 1, 1, 1, 0]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: three_quarters_source
+      records:
+        0:
+          signal_values: [1, 0, 1, 1]
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: three_quarters_coder
+      constraint_length: !!uint32 3
+      polynomials: !!uint32 [7, 5]
+  - id: gr::blocks::fec::Puncture
+    parameters:
+      name: three_quarters_puncture
+      pattern: "111001"
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: three_quarters_coded
+      records:
+        0:
+          signal_values: [1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: three_quarters_sink
+      records:
+        0:
+          signal_values: [1, 1, 1, 0, 0, 1, 0, 1]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: phase_source
+      records:
+        0:
+          signal_values: [0, 1, 1, 0, 0, 1, 1, 0, 1, 0]
+        1:
+          signal_values: [0, 1, 1, 0, 0, 1, 1, 0, 1, 0]
+  - id: gr::blocks::fec::Puncture
+    parameters:
+      name: phase_puncture
+      pattern: "1110"
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: phase_sink
+      records:
+        0:
+          signal_values: [0, 1, 1, 0, 1, 1, 1, 0]
+        1:
+          signal_values: [0, 1, 1, 0, 1, 1, 1, 0]
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: erasure_source
+      records:
+        0:
+          signal_values: !!float32 [1.0, 1.0, 1.0, 1.0, 1.0, -1.0]
+  - id: gr::blocks::fec::Depuncture
+    parameters:
+      name: erasure_depuncture
+      pattern: "1110"
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: erasure_sink
+      records:
+        0:
+          signal_values: !!float32 [1.0, 1.0, 1.0, 0.0, 1.0, 1.0, -1.0, 0.0]
+connections:
+  - [two_thirds_source, out, two_thirds_coder, in]
+  - [two_thirds_coder, out, two_thirds_coded, in]
+  - [two_thirds_coder, out, two_thirds_puncture, in]
+  - [two_thirds_puncture, out, two_thirds_sink, in]
+  - [three_quarters_source, out, three_quarters_coder, in]
+  - [three_quarters_coder, out, three_quarters_coded, in]
+  - [three_quarters_coder, out, three_quarters_puncture, in]
+  - [three_quarters_puncture, out, three_quarters_sink, in]
+  - [phase_source, out, phase_puncture, in]
+  - [phase_puncture, out, phase_sink, in]
+  - [erasure_source, out, erasure_depuncture, in]
+  - [erasure_depuncture, out, erasure_sink, in]

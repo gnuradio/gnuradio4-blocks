@@ -121,7 +121,7 @@ receiving counterpart.
     detail::PuncturePattern _pattern{};
     bool                    _configured = false;
 
-    // Plain members, read by the owning thread and by QA, and reported once at stop().
+    // Puncture's counters are plain members, read by the owning thread and reported once at stop().
     std::uint64_t nRecords        = 0ULL; ///< records published on `out`
     std::uint64_t nBits           = 0ULL; ///< coded bits those records kept
     std::uint64_t nRecordsRefused = 0ULL; ///< records this pattern could not puncture
@@ -213,7 +213,7 @@ decoder's `corrected_errors` reports what the channel and the puncturing togethe
     detail::PuncturePattern _pattern{};
     bool                    _configured = false;
 
-    // Plain members, read by the owning thread and by QA, and reported once at stop().
+    // Depuncture's counters are plain members, read by the owning thread and reported once at stop().
     std::uint64_t nRecords        = 0ULL; ///< records published on `out`
     std::uint64_t nBits           = 0ULL; ///< coded positions those records carry, erasures included
     std::uint64_t nRecordsRefused = 0ULL; ///< records whose length was inconsistent with this pattern

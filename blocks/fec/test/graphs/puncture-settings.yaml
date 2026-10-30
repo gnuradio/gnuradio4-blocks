@@ -1,0 +1,34 @@
+# Puncture under the rate 2/3 pattern '1110' and Depuncture under the rate 3/4 pattern '111001', each with no record
+# to process. The run passes as written. A case that changes a pattern through SET checks that the block refuses it,
+# and the refusal ends the run with the block's reason.
+# Written by generate_graphs.py with no seed and no oracle: the puncture chains hold no record.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: puncture_source
+      records: {}
+  - id: gr::blocks::fec::Puncture
+    parameters:
+      name: puncture_block
+      pattern: "1110"
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: puncture_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: depuncture_source
+      records: {}
+  - id: gr::blocks::fec::Depuncture
+    parameters:
+      name: depuncture_block
+      pattern: "111001"
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: depuncture_sink
+      records: {}
+connections:
+  - [puncture_source, out, puncture_block, in]
+  - [puncture_block, out, puncture_sink, in]
+  - [depuncture_source, out, depuncture_block, in]
+  - [depuncture_block, out, depuncture_sink, in]

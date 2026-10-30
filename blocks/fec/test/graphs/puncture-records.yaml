@@ -1,0 +1,155 @@
+# Puncture and Depuncture with a record's metadata and with the records they refuse. The carried chains run a
+# record with three meta keys through each block, and the sinks expect exactly those keys and the signal name. The
+# bare chain punctures a record without a metadata map, and the sink expects one empty map. The refused puncture chain
+# gives Puncture an empty record and a record of eight bits. The short chain encodes three bits into ten coded bits,
+# which '1110' punctures to eight. The refused depuncture chain gives Depuncture those eight bits as soft values,
+# which are not a whole number of the pattern's three kept positions, an empty record and six values of +1.0. Each
+# sink expects the good record alone, and the block's line at stop counts the records refused.
+# Written by generate_graphs.py from seed 0xD1B54A32D192ED03 ^ 0x2. Oracle: the drawn information and the pattern's
+# kept positions.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: carried_puncture_source
+      records:
+        0:
+          signal_values: [1, 0, 0, 1, 0, 0, 0, 0]
+          signal_names: [fec]
+          meta_information:
+            corrected_errors: !!uint32 3
+            provenance: earlier stage
+            sample_start: !!uint64 4096
+  - id: gr::blocks::fec::Puncture
+    parameters:
+      name: carried_puncture_puncture
+      pattern: "1110"
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: carried_puncture_sink
+      meta_exact: true
+      records:
+        0:
+          signal_values: [1, 0, 0, 0, 0, 0]
+          signal_names: [fec]
+          meta_information:
+            corrected_errors: !!uint32 3
+            provenance: earlier stage
+            sample_start: !!uint64 4096
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: carried_depuncture_source
+      records:
+        0:
+          signal_values: !!float32 [1.0, -1.0, -1.0, -1.0, -1.0, -1.0]
+          signal_names: [fec]
+          meta_information:
+            corrected_errors: !!uint32 3
+            provenance: earlier stage
+            sample_start: !!uint64 4096
+  - id: gr::blocks::fec::Depuncture
+    parameters:
+      name: carried_depuncture_depuncture
+      pattern: "1110"
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: carried_depuncture_sink
+      meta_exact: true
+      records:
+        0:
+          signal_values: !!float32 [1.0, -1.0, -1.0, 0.0, -1.0, -1.0, -1.0, 0.0]
+          signal_names: [fec]
+          meta_information:
+            corrected_errors: !!uint32 3
+            provenance: earlier stage
+            sample_start: !!uint64 4096
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: bare_source
+      records:
+        0:
+          signal_values: [0, 1, 1, 0, 1, 1, 1, 1]
+  - id: gr::blocks::fec::Puncture
+    parameters:
+      name: bare_puncture
+      pattern: "1110"
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bare_sink
+      meta_exact: true
+      records:
+        0:
+          meta_information: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: refused_puncture_source
+      records:
+        0:
+          signal_values: []
+        1:
+          signal_values: [1, 1, 1, 0, 1, 1, 0, 0]
+  - id: gr::blocks::fec::Puncture
+    parameters:
+      name: refused_puncture_puncture
+      pattern: "1110"
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: refused_puncture_sink
+      records:
+        0:
+          signal_values: [1, 1, 1, 1, 1, 0]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: short_source
+      records:
+        0:
+          signal_values: [0, 1, 1]
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: short_coder
+      constraint_length: !!uint32 3
+      polynomials: !!uint32 [7, 5]
+  - id: gr::blocks::fec::Puncture
+    parameters:
+      name: short_puncture
+      pattern: "1110"
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: short_sink
+      records:
+        0:
+          signal_values: [0, 0, 1, 0, 1, 0, 1, 1]
+          extents: [8]
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: refused_depuncture_source
+      records:
+        0:
+          signal_values: !!float32 [-1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0]
+        1:
+          signal_values: !!float32 []
+        2:
+          signal_values: !!float32 [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  - id: gr::blocks::fec::Depuncture
+    parameters:
+      name: refused_depuncture_depuncture
+      pattern: "1110"
+  - id: gr::blocks::testing::ExpectDataSetSink<float32>
+    parameters:
+      name: refused_depuncture_sink
+      records:
+        0:
+          signal_values: !!float32 [1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0]
+connections:
+  - [carried_puncture_source, out, carried_puncture_puncture, in]
+  - [carried_puncture_puncture, out, carried_puncture_sink, in]
+  - [carried_depuncture_source, out, carried_depuncture_depuncture, in]
+  - [carried_depuncture_depuncture, out, carried_depuncture_sink, in]
+  - [bare_source, out, bare_puncture, in]
+  - [bare_puncture, out, bare_sink, in]
+  - [refused_puncture_source, out, refused_puncture_puncture, in]
+  - [refused_puncture_puncture, out, refused_puncture_sink, in]
+  - [short_source, out, short_coder, in]
+  - [short_coder, out, short_puncture, in]
+  - [short_puncture, out, short_sink, in]
+  - [refused_depuncture_source, out, refused_depuncture_depuncture, in]
+  - [refused_depuncture_depuncture, out, refused_depuncture_sink, in]
