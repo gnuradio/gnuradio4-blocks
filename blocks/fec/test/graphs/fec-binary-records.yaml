@@ -1,0 +1,245 @@
+# FecEncode and FecDecode with a record's metadata and with the records they refuse. The carried chain
+# decodes two golay24 codewords with one flipped bit each. The record already counts 3 corrected errors, so the sink
+# expects 5, and the other keys and the signal name unchanged. The bare chain decodes a record without a metadata map,
+# and the sink expects one map holding the two counts. The ordered chains carry three records with a `seq` key. The
+# encoder emits them in order, and the decoder, given each codeword record with bits 1 and 26 flipped, returns each
+# record's information with 2 corrected errors. The misaligned chains give each encoder a record that is not a whole
+# number of information words, a good record and an empty record. The truncated chain gives the decoder a codeword
+# record one bit short, then the whole record. Each sink expects the good record alone, and the block's line at stop
+# counts the records refused.
+# Written by generate_graphs.py from seed 0x9E3779B97F4A7C15 ^ 0x2. Oracle: the drawn information and the counts the
+# text gives.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: carried_source
+      records:
+        0:
+          signal_values: [
+            0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0,
+            0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1
+          ]
+          signal_names: [fec]
+          meta_information:
+            corrected_errors: !!uint32 3
+            provenance: earlier stage
+            sample_start: !!uint64 4096
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: carried_decoder
+      code: golay24
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: carried_sink
+      meta_exact: true
+      records:
+        0:
+          signal_values: [
+            0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0
+          ]
+          signal_names: [fec]
+          meta_information:
+            corrected_errors: !!uint32 5
+            uncorrectable_errors: !!uint32 0
+            provenance: earlier stage
+            sample_start: !!uint64 4096
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: bare_source
+      records:
+        0:
+          signal_values: [0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0]
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: bare_decoder
+      code: hamming15
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bare_sink
+      meta_exact: true
+      records:
+        0:
+          signal_values: [0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ordered_encode_source
+      records:
+        0:
+          signal_values: [
+            0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1
+          ]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          signal_values: [
+            0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1
+          ]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          signal_values: [
+            1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0
+          ]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: ordered_encode_coder
+      code: golay24
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ordered_encode_sink
+      records:
+        0:
+          extents: [48]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          extents: [48]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          extents: [48]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ordered_decode_source
+      records:
+        0:
+          signal_values: [
+            0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1,
+            1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1
+          ]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          signal_values: [
+            0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1,
+            1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0
+          ]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          signal_values: [
+            1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0,
+            0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1
+          ]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: ordered_decode_decoder
+      code: golay24
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ordered_decode_sink
+      records:
+        0:
+          signal_values: [
+            0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1
+          ]
+          meta_information:
+            corrected_errors: !!uint32 2
+            uncorrectable_errors: !!uint32 0
+            seq: !!uint32 0
+        1:
+          signal_values: [
+            0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1
+          ]
+          meta_information:
+            corrected_errors: !!uint32 2
+            uncorrectable_errors: !!uint32 0
+            seq: !!uint32 1
+        2:
+          signal_values: [
+            1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0
+          ]
+          meta_information:
+            corrected_errors: !!uint32 2
+            uncorrectable_errors: !!uint32 0
+            seq: !!uint32 2
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: misaligned_golay24_source
+      records:
+        0:
+          signal_values: [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0]
+        1:
+          signal_values: [
+            1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0
+          ]
+        2:
+          signal_values: []
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: misaligned_golay24_coder
+      code: golay24
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: misaligned_golay24_sink
+      records:
+        0:
+          extents: [48]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: misaligned_bch15_11_source
+      records:
+        0:
+          signal_values: [1, 0, 1, 0]
+        1:
+          signal_values: [
+            0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0
+          ]
+        2:
+          signal_values: []
+  - id: gr::blocks::fec::FecEncode
+    parameters:
+      name: misaligned_bch15_11_coder
+      code: bch15_11
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: misaligned_bch15_11_sink
+      records:
+        0:
+          extents: [30]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: truncated_source
+      records:
+        0:
+          signal_values: [
+            0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
+          ]
+        1:
+          signal_values: [
+            0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0
+          ]
+  - id: gr::blocks::fec::FecDecode
+    parameters:
+      name: truncated_decoder
+      code: golay24
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: truncated_sink
+      records:
+        0:
+          signal_values: [0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1]
+connections:
+  - [carried_source, out, carried_decoder, in]
+  - [carried_decoder, out, carried_sink, in]
+  - [bare_source, out, bare_decoder, in]
+  - [bare_decoder, out, bare_sink, in]
+  - [ordered_encode_source, out, ordered_encode_coder, in]
+  - [ordered_encode_coder, out, ordered_encode_sink, in]
+  - [ordered_decode_source, out, ordered_decode_decoder, in]
+  - [ordered_decode_decoder, out, ordered_decode_sink, in]
+  - [misaligned_golay24_source, out, misaligned_golay24_coder, in]
+  - [misaligned_golay24_coder, out, misaligned_golay24_sink, in]
+  - [misaligned_bch15_11_source, out, misaligned_bch15_11_coder, in]
+  - [misaligned_bch15_11_coder, out, misaligned_bch15_11_sink, in]
+  - [truncated_source, out, truncated_decoder, in]
+  - [truncated_decoder, out, truncated_sink, in]

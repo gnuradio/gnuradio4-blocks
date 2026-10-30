@@ -1,0 +1,544 @@
+# RsEncode into RsDecode. The gf64 chains carry two information words of seeded symbols under each root count, then
+# at a shortening of 39, 39 and 27 symbols. The first sink of each checks the encoder's record length, the second the
+# symbols back with nothing corrected. The decoder's line at stop of a shortened chain names no pad corruption. The
+# ccsds chains do the same under each CCSDS profile: the long code in both bases, at depths 4 and 1 and at a
+# shortening of 200 or none, and the short code at depth 2. The parity chain encodes twelve symbols under 12 roots and
+# a shortening of 39. Its sink expects the information unchanged, then the parity the kernel's test pins. The depth
+# chains encode the same symbols without an interleave setting and at depth 1, and both sinks expect the record the
+# encoder emits without the setting. The basis chain encodes in the dual basis and decodes in the conventional basis,
+# and its sink expects the codeword counted uncorrectable.
+# Written by generate_graphs.py from seed 0x9E3779B97F4A7C15 ^ 0x3. Oracle: the drawn symbols and the pinned parity.
+# The depth sinks hold RsEncode's output without the interleave setting, captured by the generator.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: gf64_8_0_source
+      records:
+        0:
+          signal_values: [
+            46, 21, 38, 59, 26, 41, 39, 35, 56, 38, 33, 42, 7, 44, 31, 26, 16, 42, 47, 3, 38, 52, 58, 37, 8, 1, 46,
+            61, 36, 4, 23, 42, 55, 37, 14, 60, 17, 29, 8, 25, 53, 44, 16, 12, 28, 55, 16, 44, 26, 2, 9, 37, 25, 7,
+            35, 38, 2, 49, 31, 39, 59, 57, 41, 21, 11, 27, 10, 28, 25, 53, 59, 17, 20, 60, 20, 58, 45, 27, 35, 60,
+            63, 42, 26, 32, 16, 8, 32, 2, 48, 22, 8, 22, 63, 16, 31, 24, 11, 10, 32, 15, 24, 4, 3, 62, 58, 42, 51,
+            40, 28, 43
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: gf64_8_0_coder
+      roots: !!uint32 8
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: gf64_8_0_decoder
+      roots: !!uint32 8
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_8_0_coded
+      records:
+        0:
+          extents: [126]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_8_0_sink
+      records:
+        0:
+          signal_values: [
+            46, 21, 38, 59, 26, 41, 39, 35, 56, 38, 33, 42, 7, 44, 31, 26, 16, 42, 47, 3, 38, 52, 58, 37, 8, 1, 46,
+            61, 36, 4, 23, 42, 55, 37, 14, 60, 17, 29, 8, 25, 53, 44, 16, 12, 28, 55, 16, 44, 26, 2, 9, 37, 25, 7,
+            35, 38, 2, 49, 31, 39, 59, 57, 41, 21, 11, 27, 10, 28, 25, 53, 59, 17, 20, 60, 20, 58, 45, 27, 35, 60,
+            63, 42, 26, 32, 16, 8, 32, 2, 48, 22, 8, 22, 63, 16, 31, 24, 11, 10, 32, 15, 24, 4, 3, 62, 58, 42, 51,
+            40, 28, 43
+          ]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: gf64_12_0_source
+      records:
+        0:
+          signal_values: [
+            29, 63, 36, 52, 37, 40, 47, 10, 52, 45, 54, 2, 45, 0, 19, 30, 62, 39, 30, 5, 18, 10, 49, 30, 36, 21, 10,
+            10, 47, 11, 15, 60, 1, 40, 45, 54, 47, 50, 26, 34, 35, 28, 57, 10, 17, 24, 29, 54, 8, 56, 38, 33, 37,
+            63, 7, 24, 34, 10, 41, 47, 12, 21, 41, 32, 19, 44, 61, 2, 60, 48, 53, 35, 50, 3, 29, 3, 57, 18, 0, 45,
+            3, 61, 7, 51, 29, 36, 0, 5, 2, 16, 58, 47, 16, 60, 14, 46, 24, 63, 57, 45, 16, 24
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: gf64_12_0_coder
+      roots: !!uint32 12
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: gf64_12_0_decoder
+      roots: !!uint32 12
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_12_0_coded
+      records:
+        0:
+          extents: [126]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_12_0_sink
+      records:
+        0:
+          signal_values: [
+            29, 63, 36, 52, 37, 40, 47, 10, 52, 45, 54, 2, 45, 0, 19, 30, 62, 39, 30, 5, 18, 10, 49, 30, 36, 21, 10,
+            10, 47, 11, 15, 60, 1, 40, 45, 54, 47, 50, 26, 34, 35, 28, 57, 10, 17, 24, 29, 54, 8, 56, 38, 33, 37,
+            63, 7, 24, 34, 10, 41, 47, 12, 21, 41, 32, 19, 44, 61, 2, 60, 48, 53, 35, 50, 3, 29, 3, 57, 18, 0, 45,
+            3, 61, 7, 51, 29, 36, 0, 5, 2, 16, 58, 47, 16, 60, 14, 46, 24, 63, 57, 45, 16, 24
+          ]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: gf64_16_0_source
+      records:
+        0:
+          signal_values: [
+            36, 33, 35, 22, 5, 63, 41, 34, 31, 22, 50, 42, 38, 13, 61, 44, 62, 58, 7, 28, 34, 28, 61, 51, 33, 55,
+            19, 21, 4, 12, 46, 29, 11, 49, 60, 8, 22, 19, 37, 60, 32, 5, 26, 53, 38, 4, 10, 11, 39, 10, 53, 33, 5,
+            12, 25, 46, 8, 18, 8, 33, 2, 49, 27, 51, 14, 39, 1, 14, 51, 19, 49, 21, 38, 15, 62, 15, 44, 44, 9, 53,
+            30, 10, 16, 21, 6, 17, 37, 33, 38, 16, 59, 23, 25, 49
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: gf64_16_0_coder
+      roots: !!uint32 16
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: gf64_16_0_decoder
+      roots: !!uint32 16
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_16_0_coded
+      records:
+        0:
+          extents: [126]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_16_0_sink
+      records:
+        0:
+          signal_values: [
+            36, 33, 35, 22, 5, 63, 41, 34, 31, 22, 50, 42, 38, 13, 61, 44, 62, 58, 7, 28, 34, 28, 61, 51, 33, 55,
+            19, 21, 4, 12, 46, 29, 11, 49, 60, 8, 22, 19, 37, 60, 32, 5, 26, 53, 38, 4, 10, 11, 39, 10, 53, 33, 5,
+            12, 25, 46, 8, 18, 8, 33, 2, 49, 27, 51, 14, 39, 1, 14, 51, 19, 49, 21, 38, 15, 62, 15, 44, 44, 9, 53,
+            30, 10, 16, 21, 6, 17, 37, 33, 38, 16, 59, 23, 25, 49
+          ]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: gf64_8_39_source
+      records:
+        0:
+          signal_values: [
+            27, 14, 18, 21, 52, 28, 1, 18, 16, 31, 21, 7, 34, 47, 28, 25, 59, 30, 7, 13, 29, 42, 9, 1, 40, 0, 31, 7,
+            49, 45, 43, 32
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: gf64_8_39_coder
+      roots: !!uint32 8
+      pad: !!uint32 39
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: gf64_8_39_decoder
+      roots: !!uint32 8
+      pad: !!uint32 39
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_8_39_coded
+      records:
+        0:
+          extents: [48]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_8_39_sink
+      records:
+        0:
+          signal_values: [
+            27, 14, 18, 21, 52, 28, 1, 18, 16, 31, 21, 7, 34, 47, 28, 25, 59, 30, 7, 13, 29, 42, 9, 1, 40, 0, 31, 7,
+            49, 45, 43, 32
+          ]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: gf64_12_39_source
+      records:
+        0:
+          signal_values: [
+            50, 35, 57, 18, 27, 37, 35, 38, 7, 16, 17, 2, 10, 7, 25, 31, 39, 59, 5, 39, 31, 20, 51, 46
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: gf64_12_39_coder
+      roots: !!uint32 12
+      pad: !!uint32 39
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: gf64_12_39_decoder
+      roots: !!uint32 12
+      pad: !!uint32 39
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_12_39_coded
+      records:
+        0:
+          extents: [48]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_12_39_sink
+      records:
+        0:
+          signal_values: [
+            50, 35, 57, 18, 27, 37, 35, 38, 7, 16, 17, 2, 10, 7, 25, 31, 39, 59, 5, 39, 31, 20, 51, 46
+          ]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: gf64_16_27_source
+      records:
+        0:
+          signal_values: [
+            37, 63, 23, 10, 45, 21, 28, 17, 35, 36, 40, 47, 57, 30, 62, 34, 26, 27, 62, 19, 59, 12, 8, 18, 16, 62,
+            62, 45, 26, 8, 40, 45, 31, 19, 50, 46, 51, 4, 17, 26
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: gf64_16_27_coder
+      roots: !!uint32 16
+      pad: !!uint32 27
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: gf64_16_27_decoder
+      roots: !!uint32 16
+      pad: !!uint32 27
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_16_27_coded
+      records:
+        0:
+          extents: [72]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: gf64_16_27_sink
+      records:
+        0:
+          signal_values: [
+            37, 63, 23, 10, 45, 21, 28, 17, 35, 36, 40, 47, 57, 30, 62, 34, 26, 27, 62, 19, 59, 12, 8, 18, 16, 62,
+            62, 45, 26, 8, 40, 45, 31, 19, 50, 46, 51, 4, 17, 26
+          ]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ccsds_255_223_conventional_4_200_source
+      records:
+        0:
+          signal_values: [
+            244, 135, 195, 194, 147, 58, 117, 153, 204, 180, 128, 78, 56, 114, 140, 69, 57, 221, 149, 50, 147, 250,
+            203, 210, 27, 174, 148, 70, 136, 173, 173, 14, 103, 255, 111, 158, 44, 46, 45, 161, 99, 16, 187, 200, 5,
+            44, 9, 78, 231, 203, 238, 10, 77, 158, 1, 49, 157, 6, 161, 167, 47, 5, 21, 0, 65, 192, 206, 24, 8, 174,
+            202, 76, 225, 97, 19, 84, 166, 239, 101, 191, 30, 252, 237, 10, 140, 103, 45, 94, 104, 142, 253, 228
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: ccsds_255_223_conventional_4_200_coder
+      code: ccsds_255_223
+      basis: conventional
+      interleave: !!uint32 4
+      pad: !!uint32 200
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: ccsds_255_223_conventional_4_200_decoder
+      code: ccsds_255_223
+      basis: conventional
+      interleave: !!uint32 4
+      pad: !!uint32 200
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ccsds_255_223_conventional_4_200_coded
+      records:
+        0:
+          extents: [220]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ccsds_255_223_conventional_4_200_sink
+      records:
+        0:
+          signal_values: [
+            244, 135, 195, 194, 147, 58, 117, 153, 204, 180, 128, 78, 56, 114, 140, 69, 57, 221, 149, 50, 147, 250,
+            203, 210, 27, 174, 148, 70, 136, 173, 173, 14, 103, 255, 111, 158, 44, 46, 45, 161, 99, 16, 187, 200, 5,
+            44, 9, 78, 231, 203, 238, 10, 77, 158, 1, 49, 157, 6, 161, 167, 47, 5, 21, 0, 65, 192, 206, 24, 8, 174,
+            202, 76, 225, 97, 19, 84, 166, 239, 101, 191, 30, 252, 237, 10, 140, 103, 45, 94, 104, 142, 253, 228
+          ]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ccsds_255_223_dual_1_0_source
+      records:
+        0:
+          signal_values: [
+            44, 64, 172, 197, 69, 62, 70, 195, 43, 110, 239, 111, 139, 157, 108, 7, 160, 238, 193, 238, 161, 229,
+            246, 198, 85, 10, 244, 44, 194, 59, 140, 17, 3, 145, 151, 178, 57, 238, 57, 52, 153, 33, 64, 223, 165,
+            182, 170, 244, 118, 95, 67, 45, 53, 248, 109, 209, 170, 58, 249, 113, 237, 255, 50, 67, 57, 45, 250, 25,
+            223, 66, 13, 254, 87, 124, 98, 110, 114, 162, 177, 48, 172, 115, 15, 209, 159, 171, 182, 191, 145, 172,
+            225, 255, 46, 207, 211, 141, 81, 72, 248, 79, 252, 176, 36, 181, 104, 50, 249, 241, 56, 84, 101, 205,
+            199, 97, 73, 46, 160, 112, 53, 36, 14, 20, 79, 172, 201, 160, 83, 3, 207, 21, 182, 168, 84, 171, 228,
+            238, 209, 248, 168, 59, 57, 193, 170, 226, 74, 91, 19, 152, 255, 189, 78, 149, 35, 37, 232, 74, 1, 101,
+            150, 186, 56, 201, 87, 120, 171, 166, 175, 60, 149, 130, 19, 34, 186, 219, 100, 128, 185, 150, 148, 99,
+            127, 5, 101, 166, 214, 148, 79, 174, 27, 18, 129, 198, 14, 152, 255, 19, 196, 24, 235, 52, 184, 131,
+            224, 121, 254, 152, 120, 189, 152, 69, 238, 227, 227, 188, 222, 234, 42, 21, 41, 172, 91, 155, 246
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: ccsds_255_223_dual_1_0_coder
+      code: ccsds_255_223
+      basis: dual
+      interleave: !!uint32 1
+      pad: !!uint32 0
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: ccsds_255_223_dual_1_0_decoder
+      code: ccsds_255_223
+      basis: dual
+      interleave: !!uint32 1
+      pad: !!uint32 0
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ccsds_255_223_dual_1_0_coded
+      records:
+        0:
+          extents: [255]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ccsds_255_223_dual_1_0_sink
+      records:
+        0:
+          signal_values: [
+            44, 64, 172, 197, 69, 62, 70, 195, 43, 110, 239, 111, 139, 157, 108, 7, 160, 238, 193, 238, 161, 229,
+            246, 198, 85, 10, 244, 44, 194, 59, 140, 17, 3, 145, 151, 178, 57, 238, 57, 52, 153, 33, 64, 223, 165,
+            182, 170, 244, 118, 95, 67, 45, 53, 248, 109, 209, 170, 58, 249, 113, 237, 255, 50, 67, 57, 45, 250, 25,
+            223, 66, 13, 254, 87, 124, 98, 110, 114, 162, 177, 48, 172, 115, 15, 209, 159, 171, 182, 191, 145, 172,
+            225, 255, 46, 207, 211, 141, 81, 72, 248, 79, 252, 176, 36, 181, 104, 50, 249, 241, 56, 84, 101, 205,
+            199, 97, 73, 46, 160, 112, 53, 36, 14, 20, 79, 172, 201, 160, 83, 3, 207, 21, 182, 168, 84, 171, 228,
+            238, 209, 248, 168, 59, 57, 193, 170, 226, 74, 91, 19, 152, 255, 189, 78, 149, 35, 37, 232, 74, 1, 101,
+            150, 186, 56, 201, 87, 120, 171, 166, 175, 60, 149, 130, 19, 34, 186, 219, 100, 128, 185, 150, 148, 99,
+            127, 5, 101, 166, 214, 148, 79, 174, 27, 18, 129, 198, 14, 152, 255, 19, 196, 24, 235, 52, 184, 131,
+            224, 121, 254, 152, 120, 189, 152, 69, 238, 227, 227, 188, 222, 234, 42, 21, 41, 172, 91, 155, 246
+          ]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ccsds_255_239_conventional_2_200_source
+      records:
+        0:
+          signal_values: [
+            58, 216, 181, 211, 205, 100, 114, 250, 105, 62, 176, 176, 20, 75, 234, 200, 173, 108, 157, 69, 107, 240,
+            87, 29, 245, 35, 92, 25, 25, 5, 244, 218, 42, 23, 85, 247, 249, 79, 41, 66, 111, 43, 189, 41, 198, 227,
+            199, 57, 99, 184, 210, 190, 81, 106, 72, 134, 91, 198, 28, 196, 198, 93, 18, 18, 170, 81, 172, 142, 237,
+            73, 178, 38, 219, 132, 94, 239, 100, 11
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: ccsds_255_239_conventional_2_200_coder
+      code: ccsds_255_239
+      basis: conventional
+      interleave: !!uint32 2
+      pad: !!uint32 200
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: ccsds_255_239_conventional_2_200_decoder
+      code: ccsds_255_239
+      basis: conventional
+      interleave: !!uint32 2
+      pad: !!uint32 200
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ccsds_255_239_conventional_2_200_coded
+      records:
+        0:
+          extents: [110]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ccsds_255_239_conventional_2_200_sink
+      records:
+        0:
+          signal_values: [
+            58, 216, 181, 211, 205, 100, 114, 250, 105, 62, 176, 176, 20, 75, 234, 200, 173, 108, 157, 69, 107, 240,
+            87, 29, 245, 35, 92, 25, 25, 5, 244, 218, 42, 23, 85, 247, 249, 79, 41, 66, 111, 43, 189, 41, 198, 227,
+            199, 57, 99, 184, 210, 190, 81, 106, 72, 134, 91, 198, 28, 196, 198, 93, 18, 18, 170, 81, 172, 142, 237,
+            73, 178, 38, 219, 132, 94, 239, 100, 11
+          ]
+          meta_information:
+            corrected_errors: !!uint32 0
+            uncorrectable_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: parity_source
+      records:
+        0:
+          signal_values: [5, 12, 19, 26, 33, 40, 47, 54, 61, 4, 11, 18]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: parity_coder
+      roots: !!uint32 12
+      pad: !!uint32 39
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: parity_sink
+      records:
+        0:
+          signal_values: [
+            5, 12, 19, 26, 33, 40, 47, 54, 61, 4, 11, 18, 26, 63, 58, 58, 13, 3, 5, 33, 31, 29, 23, 25
+          ]
+          extents: [24]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: depth_absent_source
+      records:
+        0:
+          signal_values: [
+            34, 48, 51, 0, 24, 61, 39, 20, 5, 61, 49, 22, 9, 14, 10, 38, 39, 0, 15, 8, 45, 61, 59, 21, 0, 10, 0, 12,
+            6, 37, 3, 7, 47, 15, 50, 9, 34, 37, 3, 52, 1, 39, 11, 23, 25, 26, 56, 38, 41, 9, 45, 3, 13, 39, 57, 56,
+            7, 17, 51, 8, 41, 48, 53, 27, 35, 59, 51, 22, 36, 26, 55, 12, 48, 38, 60, 14, 62, 13, 36, 30, 11, 18,
+            23, 3, 63, 49, 57, 54, 59, 33, 7, 58, 61, 52, 15, 10, 48, 25, 10, 43, 20, 1, 24, 33, 6, 31, 24, 62, 44,
+            10
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: depth_absent_coder
+      roots: !!uint32 8
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: depth_absent_sink
+      records:
+        0:
+          signal_values: [
+            34, 48, 51, 0, 24, 61, 39, 20, 5, 61, 49, 22, 9, 14, 10, 38, 39, 0, 15, 8, 45, 61, 59, 21, 0, 10, 0, 12,
+            6, 37, 3, 7, 47, 15, 50, 9, 34, 37, 3, 52, 1, 39, 11, 23, 25, 26, 56, 38, 41, 9, 45, 3, 13, 39, 57, 59,
+            60, 56, 32, 7, 38, 40, 32, 56, 7, 17, 51, 8, 41, 48, 53, 27, 35, 59, 51, 22, 36, 26, 55, 12, 48, 38, 60,
+            14, 62, 13, 36, 30, 11, 18, 23, 3, 63, 49, 57, 54, 59, 33, 7, 58, 61, 52, 15, 10, 48, 25, 10, 43, 20, 1,
+            24, 33, 6, 31, 24, 62, 44, 10, 13, 55, 63, 37, 50, 63, 19, 20
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: depth_1_source
+      records:
+        0:
+          signal_values: [
+            34, 48, 51, 0, 24, 61, 39, 20, 5, 61, 49, 22, 9, 14, 10, 38, 39, 0, 15, 8, 45, 61, 59, 21, 0, 10, 0, 12,
+            6, 37, 3, 7, 47, 15, 50, 9, 34, 37, 3, 52, 1, 39, 11, 23, 25, 26, 56, 38, 41, 9, 45, 3, 13, 39, 57, 56,
+            7, 17, 51, 8, 41, 48, 53, 27, 35, 59, 51, 22, 36, 26, 55, 12, 48, 38, 60, 14, 62, 13, 36, 30, 11, 18,
+            23, 3, 63, 49, 57, 54, 59, 33, 7, 58, 61, 52, 15, 10, 48, 25, 10, 43, 20, 1, 24, 33, 6, 31, 24, 62, 44,
+            10
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: depth_1_coder
+      roots: !!uint32 8
+      interleave: !!uint32 1
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: depth_1_sink
+      records:
+        0:
+          signal_values: [
+            34, 48, 51, 0, 24, 61, 39, 20, 5, 61, 49, 22, 9, 14, 10, 38, 39, 0, 15, 8, 45, 61, 59, 21, 0, 10, 0, 12,
+            6, 37, 3, 7, 47, 15, 50, 9, 34, 37, 3, 52, 1, 39, 11, 23, 25, 26, 56, 38, 41, 9, 45, 3, 13, 39, 57, 59,
+            60, 56, 32, 7, 38, 40, 32, 56, 7, 17, 51, 8, 41, 48, 53, 27, 35, 59, 51, 22, 36, 26, 55, 12, 48, 38, 60,
+            14, 62, 13, 36, 30, 11, 18, 23, 3, 63, 49, 57, 54, 59, 33, 7, 58, 61, 52, 15, 10, 48, 25, 10, 43, 20, 1,
+            24, 33, 6, 31, 24, 62, 44, 10, 13, 55, 63, 37, 50, 63, 19, 20
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: basis_source
+      records:
+        0:
+          signal_values: [
+            161, 213, 65, 253, 225, 78, 57, 63, 16, 19, 16, 157, 17, 104, 180, 211, 165, 153, 140, 139, 76, 76, 228,
+            254, 187, 247, 247, 183, 244, 107, 153, 117, 5, 142, 127, 48, 95, 39, 44, 51, 210, 211, 122, 105, 35,
+            22, 194, 180, 75, 140, 169, 119, 77, 62, 137, 52, 178, 17, 120, 80, 163, 89, 247, 243, 162, 140, 57, 13,
+            231, 18, 15, 116, 83, 57, 110, 41, 20, 70, 157, 185, 213, 167, 253, 191, 159, 68, 118, 136, 82, 244,
+            123, 207, 185, 13, 186, 168, 78, 20, 100, 122, 138, 148, 20, 36, 231, 10, 94, 65, 117, 254, 247, 134,
+            23, 45, 123, 73, 89, 226, 224, 29, 238, 100, 118, 153, 203, 138, 152, 55, 219, 106, 243, 89, 94, 48,
+            112, 103, 226, 10, 192, 21, 220, 65, 132, 192, 228, 99, 24, 247, 140, 157, 251, 24, 220, 37, 220, 16,
+            108, 212, 67, 69, 30, 210, 217, 144, 118, 106, 86, 98, 152, 253, 7, 8, 221, 19, 250, 11, 18, 142, 198,
+            175, 78, 248, 250, 156, 111, 251, 33, 154, 49, 240, 111, 117, 235, 143, 12, 1, 231, 198, 252, 57, 92,
+            167, 167, 129, 11, 121, 11, 10, 115, 239, 123, 84, 178, 119, 18, 206, 250, 169, 185, 153, 173, 224, 210
+          ]
+  - id: gr::blocks::fec::RsEncode
+    parameters:
+      name: basis_coder
+      code: ccsds_255_223
+      basis: dual
+  - id: gr::blocks::fec::RsDecode
+    parameters:
+      name: basis_decoder
+      code: ccsds_255_223
+      basis: conventional
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: basis_sink
+      records:
+        0:
+          meta_information:
+            uncorrectable_errors: !!uint32 1
+connections:
+  - [gf64_8_0_source, out, gf64_8_0_coder, in]
+  - [gf64_8_0_coder, out, gf64_8_0_coded, in]
+  - [gf64_8_0_coder, out, gf64_8_0_decoder, in]
+  - [gf64_8_0_decoder, out, gf64_8_0_sink, in]
+  - [gf64_12_0_source, out, gf64_12_0_coder, in]
+  - [gf64_12_0_coder, out, gf64_12_0_coded, in]
+  - [gf64_12_0_coder, out, gf64_12_0_decoder, in]
+  - [gf64_12_0_decoder, out, gf64_12_0_sink, in]
+  - [gf64_16_0_source, out, gf64_16_0_coder, in]
+  - [gf64_16_0_coder, out, gf64_16_0_coded, in]
+  - [gf64_16_0_coder, out, gf64_16_0_decoder, in]
+  - [gf64_16_0_decoder, out, gf64_16_0_sink, in]
+  - [gf64_8_39_source, out, gf64_8_39_coder, in]
+  - [gf64_8_39_coder, out, gf64_8_39_coded, in]
+  - [gf64_8_39_coder, out, gf64_8_39_decoder, in]
+  - [gf64_8_39_decoder, out, gf64_8_39_sink, in]
+  - [gf64_12_39_source, out, gf64_12_39_coder, in]
+  - [gf64_12_39_coder, out, gf64_12_39_coded, in]
+  - [gf64_12_39_coder, out, gf64_12_39_decoder, in]
+  - [gf64_12_39_decoder, out, gf64_12_39_sink, in]
+  - [gf64_16_27_source, out, gf64_16_27_coder, in]
+  - [gf64_16_27_coder, out, gf64_16_27_coded, in]
+  - [gf64_16_27_coder, out, gf64_16_27_decoder, in]
+  - [gf64_16_27_decoder, out, gf64_16_27_sink, in]
+  - [ccsds_255_223_conventional_4_200_source, out, ccsds_255_223_conventional_4_200_coder, in]
+  - [ccsds_255_223_conventional_4_200_coder, out, ccsds_255_223_conventional_4_200_coded, in]
+  - [ccsds_255_223_conventional_4_200_coder, out, ccsds_255_223_conventional_4_200_decoder, in]
+  - [ccsds_255_223_conventional_4_200_decoder, out, ccsds_255_223_conventional_4_200_sink, in]
+  - [ccsds_255_223_dual_1_0_source, out, ccsds_255_223_dual_1_0_coder, in]
+  - [ccsds_255_223_dual_1_0_coder, out, ccsds_255_223_dual_1_0_coded, in]
+  - [ccsds_255_223_dual_1_0_coder, out, ccsds_255_223_dual_1_0_decoder, in]
+  - [ccsds_255_223_dual_1_0_decoder, out, ccsds_255_223_dual_1_0_sink, in]
+  - [ccsds_255_239_conventional_2_200_source, out, ccsds_255_239_conventional_2_200_coder, in]
+  - [ccsds_255_239_conventional_2_200_coder, out, ccsds_255_239_conventional_2_200_coded, in]
+  - [ccsds_255_239_conventional_2_200_coder, out, ccsds_255_239_conventional_2_200_decoder, in]
+  - [ccsds_255_239_conventional_2_200_decoder, out, ccsds_255_239_conventional_2_200_sink, in]
+  - [parity_source, out, parity_coder, in]
+  - [parity_coder, out, parity_sink, in]
+  - [depth_absent_source, out, depth_absent_coder, in]
+  - [depth_absent_coder, out, depth_absent_sink, in]
+  - [depth_1_source, out, depth_1_coder, in]
+  - [depth_1_coder, out, depth_1_sink, in]
+  - [basis_source, out, basis_coder, in]
+  - [basis_coder, out, basis_decoder, in]
+  - [basis_decoder, out, basis_sink, in]

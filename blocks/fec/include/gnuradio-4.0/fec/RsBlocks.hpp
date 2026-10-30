@@ -204,7 +204,7 @@ and the record that follows is processed normally, so a misaligned record costs 
     std::vector<std::uint8_t> _infoWords{}; //!< the same symbols gathered codeword by codeword
     std::vector<std::uint8_t> _wireWords{}; //!< the encoded codewords, before interleaving back out
 
-    // Plain members, read by the owning thread and by QA, and reported once at stop().
+    // RsEncode's counters are plain members, read by the owning thread and reported once at stop().
     std::uint64_t nRecords        = 0ULL; ///< records published on `out`
     std::uint64_t nCodewords      = 0ULL; ///< codewords those records carry
     std::uint64_t nRecordsRefused = 0ULL; ///< records whose length was not a multiple of the information length
@@ -352,7 +352,7 @@ separate counter keeps the distinction visible. Information symbols are emitted 
     std::vector<std::uint8_t> _codewords{}; //!< the same symbols gathered codeword by codeword
     std::vector<std::uint8_t> _infoWords{}; //!< the corrected information regions, codeword by codeword
 
-    // Plain members, read by the owning thread and by QA, and reported once at stop().
+    // RsDecode's counters are plain members, read by the owning thread and reported once at stop().
     std::uint64_t nRecords                = 0ULL; ///< records published on `out`
     std::uint64_t nCodewords              = 0ULL; ///< codewords those records carried
     std::uint64_t nRecordsRefused         = 0ULL; ///< records whose length was not a multiple of the wire length
