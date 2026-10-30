@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cmath>
 #include <complex>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <format>
@@ -14,16 +15,219 @@
 #include <string_view>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
+#include <gnuradio-4.0/DataSet.hpp>
 #include <gnuradio-4.0/PmtTypeHelpers.hpp>
 #include <gnuradio-4.0/Tag.hpp>
+#include <gnuradio-4.0/algorithm/dataset/DataSetRecords.hpp>
 #include <gnuradio-4.0/formatter/ValueFormatter.hpp>
 #include <gnuradio-4.0/meta/formatter.hpp>
 
 namespace gr::blocks::testing {
+
+namespace detail {
+
+/// Returns whether the distance between the samples is at most `tolerance + relativeTolerance * |reference|`.
+/// With finite tolerances, the comparison runs at a quarter of the scale when the distance or the bound exceeds
+/// the largest double. At that scale the distance between two finite samples, real or complex, stays finite.
+/// A bound that still exceeds the largest double then exceeds every such distance.
+/// With a non-finite tolerance, the comparison runs at full scale. A quarter of a subnormal expected sample can
+/// round to zero, and an infinite relative tolerance times zero is NaN.
+template<typename Sample>
+[[nodiscard]] bool withinDistance(const Sample& value, const Sample& reference, double tolerance, double relativeTolerance) {
+    const double distance = std::abs(value - reference);
+    const double bound    = tolerance + relativeTolerance * std::abs(reference);
+    if (!std::isfinite(tolerance) || !std::isfinite(relativeTolerance)) {
+        return distance <= bound;
+    }
+    if (std::isfinite(distance) && std::isfinite(bound)) {
+        return distance <= bound;
+    }
+    constexpr double scale = 0.25;
+    return std::abs(value * scale - reference * scale) <= tolerance * scale + relativeTolerance * std::abs(reference * scale);
+}
+
+/// A NaN matches a NaN. An infinity, or a complex value with an infinite part, matches only an equal value. Any other
+/// value matches within the tolerances.
+template<typename T>
+[[nodiscard]] bool withinTolerance(const T& value, const T& reference, double tolerance, double relativeTolerance) {
+    if constexpr (meta::complex_like<T>) {
+        const bool valueNan     = std::isnan(value.real()) || std::isnan(value.imag());
+        const bool referenceNan = std::isnan(reference.real()) || std::isnan(reference.imag());
+        if (valueNan || referenceNan) {
+            return valueNan && referenceNan;
+        }
+        const bool valueInf     = std::isinf(value.real()) || std::isinf(value.imag());
+        const bool referenceInf = std::isinf(reference.real()) || std::isinf(reference.imag());
+        if (valueInf || referenceInf) {
+            return value == reference;
+        }
+        return withinDistance(std::complex<double>(value), std::complex<double>(reference), tolerance, relativeTolerance);
+    } else {
+        if constexpr (std::floating_point<T>) {
+            if (std::isnan(value) || std::isnan(reference)) {
+                return std::isnan(value) && std::isnan(reference);
+            }
+            if (std::isinf(value) || std::isinf(reference)) {
+                return value == reference;
+            }
+        }
+        if constexpr (std::same_as<T, double>) {
+            return withinDistance(value, reference, tolerance, relativeTolerance);
+        } else {
+            return withinDistance(static_cast<double>(value), static_cast<double>(reference), tolerance, relativeTolerance);
+        }
+    }
+}
+
+/// Calls `fn` with the identity of the numeric type `type` names. Returns false for a type that is not numeric.
+template<typename Fn>
+[[nodiscard]] bool withNumericType(pmt::Value::ValueType type, Fn&& fn) {
+    using enum pmt::Value::ValueType;
+    switch (type) {
+    case Int8: return fn(std::type_identity<std::int8_t>{});
+    case Int16: return fn(std::type_identity<std::int16_t>{});
+    case Int32: return fn(std::type_identity<std::int32_t>{});
+    case Int64: return fn(std::type_identity<std::int64_t>{});
+    case UInt8: return fn(std::type_identity<std::uint8_t>{});
+    case UInt16: return fn(std::type_identity<std::uint16_t>{});
+    case UInt32: return fn(std::type_identity<std::uint32_t>{});
+    case UInt64: return fn(std::type_identity<std::uint64_t>{});
+    case Float32: return fn(std::type_identity<float>{});
+    case Float64: return fn(std::type_identity<double>{});
+    default: return false;
+    }
+}
+
+/// Converts `value` to `U` and compares it with `reference`. The converted value must convert back to `value`.
+template<typename U>
+[[nodiscard]] bool equalAs(const pmt::Value& value, const pmt::Value& reference) {
+    const std::expected<U, std::string> converted = pmt::convert_numerically<U>(value);
+    const U*                            wanted    = reference.get_if<U>();
+    if (!converted.has_value() || wanted == nullptr || *converted != *wanted) {
+        return false;
+    }
+    return withNumericType(value.value_type(), [&]<typename V>(std::type_identity<V>) {
+        const std::expected<V, std::string> back     = pmt::convert_numerically<V>(pmt::Value(*converted));
+        const V*                            received = value.get_if<V>();
+        return back.has_value() && received != nullptr && *back == *received;
+    });
+}
+
+/// Compares a numeric expected value in its own type and any other value by type and content.
+[[nodiscard]] inline bool valueMatches(const pmt::Value& value, const pmt::Value& reference) {
+    if (!reference.is_integral() && !reference.is_floating_point()) {
+        return value == reference;
+    }
+    return withNumericType(reference.value_type(), [&]<typename U>(std::type_identity<U>) { return equalAs<U>(value, reference); });
+}
+
+/// Formats a value. A floating-point value takes the shortest text that reads back to the same value.
+[[nodiscard]] inline std::string describe(const pmt::Value& value) {
+    if (const float* single = value.get_if<float>(); single != nullptr) {
+        return std::format("{}", *single);
+    }
+    if (const double* wide = value.get_if<double>(); wide != nullptr) {
+        return std::format("{}", *wide);
+    }
+    return std::format("{}", value);
+}
+
+/// Formats a received and an expected value as "<received>, expected <expected>". Each value carries its type
+/// when the types differ.
+[[nodiscard]] inline std::string describeMismatch(const pmt::Value& value, const pmt::Value& reference) {
+    if (value.value_type() == reference.value_type() && value.container_type() == reference.container_type()) {
+        return std::format("{}, expected {}", describe(value), describe(reference));
+    }
+    return std::format("{} ({}), expected {} ({})", describe(value), pmt::detail::type_name(value), describe(reference), pmt::detail::type_name(reference));
+}
+
+/// Returns the first difference between a received map and an expected one. Each listed key must arrive with a
+/// matching value, and a key listed with a null value must be missing. With `exact`, an unlisted key is a difference.
+[[nodiscard]] inline std::optional<std::string> mapMismatch(const property_map& value, const property_map& reference, bool exact) {
+    for (const auto& [key, wanted] : reference) {
+        const auto found = value.find(key);
+        if (wanted.is_monostate()) {
+            if (found != value.end()) {
+                return std::format("key '{}' is {}, expected no such key", std::string_view(key), describe(found->second));
+            }
+            continue;
+        }
+        if (found == value.end()) {
+            return std::format("key '{}' is missing, expected {}", std::string_view(key), describe(wanted));
+        }
+        if (!valueMatches(found->second, wanted)) {
+            return std::format("key '{}' is {}", std::string_view(key), describeMismatch(found->second, wanted));
+        }
+    }
+    if (exact) {
+        for (const auto& [key, received] : value) {
+            if (!reference.contains(key)) {
+                return std::format("key '{}' is {}, expected no such key", std::string_view(key), describe(received));
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+/// Returns whether two sets of timing events hold equal indices in the same order, their maps compared by
+/// `mapMismatch`.
+[[nodiscard]] inline bool eventsMatch(const gr::dataset::TimingEvents& value, const gr::dataset::TimingEvents& reference, bool exact) {
+    if (value.size() != reference.size()) {
+        return false;
+    }
+    for (std::size_t list = 0UZ; list < value.size(); ++list) {
+        if (value[list].size() != reference[list].size()) {
+            return false;
+        }
+        for (std::size_t event = 0UZ; event < value[list].size(); ++event) {
+            if (value[list][event].first != reference[list][event].first || mapMismatch(value[list][event].second, reference[list][event].second, exact).has_value()) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/// One record of ExpectDataSetSink's `records`: the DataSet fields it lists, and the keys of `meta_absent` and
+/// `meta_present`.
+template<typename T>
+struct ExpectedRecord {
+    gr::dataset::DataSetRecord<T> fields{};
+    std::vector<std::string>      metaAbsent{};
+    std::vector<std::string>      metaPresent{};
+};
+
+/// Reads record `index`: `meta_absent` and `meta_present` here, the other fields as `gr::dataset::readDataSetRecord`.
+template<typename T>
+[[nodiscard]] std::expected<ExpectedRecord<T>, std::string> readExpectedRecord(std::size_t index, const property_map& fields) {
+    ExpectedRecord<T> result;
+    property_map      dataSetFields;
+    for (const auto& [key, value] : fields) {
+        const std::string_view field(key);
+        if (field != "meta_absent" && field != "meta_present") {
+            dataSetFields.emplace(key, value);
+            continue;
+        }
+        std::expected<std::vector<std::string>, std::string> keys = gr::dataset::readStrings(value);
+        if (!keys.has_value()) {
+            return std::unexpected(std::format("record {} field '{}' {}", index, field, keys.error()));
+        }
+        (field == "meta_absent" ? result.metaAbsent : result.metaPresent) = std::move(*keys);
+    }
+    std::expected<gr::dataset::DataSetRecord<T>, std::string> record = gr::dataset::readDataSetRecord<T>(index, dataSetFields);
+    if (!record.has_value()) {
+        return std::unexpected(record.error());
+    }
+    result.fields = std::move(*record);
+    return result;
+}
+
+} // namespace detail
 
 GR_REGISTER_BLOCK(gr::blocks::testing::ExpectSink, [T], [ uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double, std::complex<float>, std::complex<double> ])
 
@@ -147,7 +351,7 @@ Two spellings of one index that list the same tag key end the run with an error 
                 received = static_cast<gr::Size_t>(index);
                 return fail("processBulk", std::format("sample {} is {}, beyond the {} expected samples", index, input[i], expected->size()));
             }
-            if (!matches(input[i], expected.value[index])) {
+            if (!detail::withinTolerance(input[i], expected.value[index], tolerance.value, relative_tolerance.value)) {
                 received = static_cast<gr::Size_t>(index);
                 return fail("processBulk", std::format("sample {} is {}, expected {}", index, input[i], expected.value[index]));
             }
@@ -187,7 +391,7 @@ Two spellings of one index that list the same tag key end the run with an error 
         if (missing == _expectedTags.end()) {
             return std::nullopt;
         }
-        return std::format("tag '{}' at sample {} is missing, expected {}", missing->key, missing->index, describe(missing->value));
+        return std::format("tag '{}' at sample {} is missing, expected {}", missing->key, missing->index, detail::describe(missing->value));
     }
 
     [[nodiscard]] bool checksTags() const { return !_expectedTags.empty() || tags_exact.value; }
@@ -218,72 +422,16 @@ Two spellings of one index that list the same tag key end the run with an error 
             const auto             listed = std::ranges::find_if(_expectedTags, [index, key](const ExpectedTag& tag) { return tag.index == index && key == tag.key; });
             if (listed == _expectedTags.end()) {
                 if (tags_exact.value && key != tag::END_OF_STREAM.key()) {
-                    return std::format("tag '{}' at sample {} is {}, expected no such tag", key, index, describe(value));
+                    return std::format("tag '{}' at sample {} is {}, expected no such tag", key, index, detail::describe(value));
                 }
                 continue;
             }
-            if (!tagValueMatches(value, listed->value)) {
-                if (value.value_type() == listed->value.value_type() && value.container_type() == listed->value.container_type()) {
-                    return std::format("tag '{}' at sample {} is {}, expected {}", listed->key, index, describe(value), describe(listed->value));
-                }
-                return std::format("tag '{}' at sample {} is {} ({}), expected {} ({})", listed->key, index, describe(value), pmt::detail::type_name(value), describe(listed->value), pmt::detail::type_name(listed->value));
+            if (!detail::valueMatches(value, listed->value)) {
+                return std::format("tag '{}' at sample {} is {}", listed->key, index, detail::describeMismatch(value, listed->value));
             }
             listed->seen = true;
         }
         return std::nullopt;
-    }
-
-    /// Compares a numeric expected value in its own type and any other value by type and content.
-    [[nodiscard]] static bool tagValueMatches(const pmt::Value& value, const pmt::Value& reference) {
-        if (!reference.is_integral() && !reference.is_floating_point()) {
-            return value == reference;
-        }
-        return withNumericType(reference.value_type(), [&]<typename U>(std::type_identity<U>) { return equalAs<U>(value, reference); });
-    }
-
-    /// Calls `fn` with the identity of the numeric type `type` names. Returns false for a type that is not numeric.
-    template<typename Fn>
-    [[nodiscard]] static bool withNumericType(pmt::Value::ValueType type, Fn&& fn) {
-        using enum pmt::Value::ValueType;
-        switch (type) {
-        case Int8: return fn(std::type_identity<std::int8_t>{});
-        case Int16: return fn(std::type_identity<std::int16_t>{});
-        case Int32: return fn(std::type_identity<std::int32_t>{});
-        case Int64: return fn(std::type_identity<std::int64_t>{});
-        case UInt8: return fn(std::type_identity<std::uint8_t>{});
-        case UInt16: return fn(std::type_identity<std::uint16_t>{});
-        case UInt32: return fn(std::type_identity<std::uint32_t>{});
-        case UInt64: return fn(std::type_identity<std::uint64_t>{});
-        case Float32: return fn(std::type_identity<float>{});
-        case Float64: return fn(std::type_identity<double>{});
-        default: return false;
-        }
-    }
-
-    /// Formats a value. A floating-point value takes the shortest text that reads back to the same value.
-    [[nodiscard]] static std::string describe(const pmt::Value& value) {
-        if (const float* single = value.get_if<float>(); single != nullptr) {
-            return std::format("{}", *single);
-        }
-        if (const double* wide = value.get_if<double>(); wide != nullptr) {
-            return std::format("{}", *wide);
-        }
-        return std::format("{}", value);
-    }
-
-    /// Converts `value` to `U` and compares it with `reference`. The converted value must convert back to `value`.
-    template<typename U>
-    [[nodiscard]] static bool equalAs(const pmt::Value& value, const pmt::Value& reference) {
-        const std::expected<U, std::string> converted = pmt::convert_numerically<U>(value);
-        const U*                            wanted    = reference.get_if<U>();
-        if (!converted.has_value() || wanted == nullptr || *converted != *wanted) {
-            return false;
-        }
-        return withNumericType(value.value_type(), [&]<typename V>(std::type_identity<V>) {
-            const std::expected<V, std::string> back     = pmt::convert_numerically<V>(pmt::Value(*converted));
-            const V*                            received = value.get_if<V>();
-            return back.has_value() && received != nullptr && *back == *received;
-        });
     }
 
     void failAtStart(const std::string& message) {
@@ -296,59 +444,174 @@ Two spellings of one index that list the same tag key end the run with an error 
         this->emitErrorMessage(endpoint, message);
         return work::Status::ERROR;
     }
+};
 
-    [[nodiscard]] bool matches(const T& value, const T& reference) const {
-        if constexpr (meta::complex_like<T>) {
-            const bool valueNan     = std::isnan(value.real()) || std::isnan(value.imag());
-            const bool referenceNan = std::isnan(reference.real()) || std::isnan(reference.imag());
-            if (valueNan || referenceNan) {
-                return valueNan && referenceNan;
+GR_REGISTER_BLOCK(gr::blocks::testing::ExpectDataSetSink, [T], [ uint8_t, float ])
+
+template<typename T>
+struct ExpectDataSetSink : Block<ExpectDataSetSink<T>> {
+    using Description = Doc<R""(@brief Compares each input DataSet with the record of `records` at its index and reports the first difference as an error.
+
+`records` takes the form of the `records` setting of `basic::DataSetSource`, and a record checks only the fields it
+lists. An empty record accepts any DataSet.
+`signal_values` must hold as many values as the record lists. A value matches when its distance from the expected
+value is at most `tolerance + relative_tolerance * |expected|`. A NaN matches a NaN, and an infinity matches the
+same infinity. `signal_names`, `signal_quantities`, `signal_units`, `axis_names`, `extents` and `timestamp` must be
+equal.
+`meta_information` must hold as many maps as the record lists. Each key of a listed map must arrive in the map at
+the same position. A numeric expected value is compared in its own type: the received value must convert to that
+type and back without loss and be equal. Any other value must have the same type and be equal. A key listed with a
+null value must be missing. `meta_absent` lists keys that every map of the DataSet must lack. `meta_present` lists
+keys that every map of the DataSet must carry, with any value, and a DataSet without a meta map lacks them.
+With `meta_exact`, a key that a listed meta map or event map does not list ends the run with an error. A record
+without `meta_information` accepts any meta map.
+`timing_events` must hold as many lists as the record lists, each with the listed events in order. Two events match
+when their indices are equal and their maps match as the meta maps do.
+The block reads `records` when it starts and refuses a malformed record as `basic::DataSetSource` does.
+A DataSet that does not match ends the run with an error that names the record index, the field, the received value
+and the expected value. A DataSet past the last record ends the run with an error that names its index. A stream
+that ends with fewer DataSets than `records` lists ends with an error that names both counts.
+)"">;
+
+    PortIn<DataSet<T>, Async> in;
+
+    Annotated<property_map, "records", Doc<"expected DataSets, keyed by record index">>                  records{};
+    Annotated<double, "tolerance", Doc<"absolute deviation accepted per value">>                         tolerance          = 0.0;
+    Annotated<double, "relative_tolerance", Doc<"deviation accepted per value, relative to |expected|">> relative_tolerance = 0.0;
+    Annotated<bool, "meta_exact", Doc<"refuse meta and event keys unlisted in the record">>              meta_exact         = false;
+    Annotated<gr::Size_t, "received", Doc<"DataSets received and matched">>                              received           = 0U;
+
+    GR_MAKE_REFLECTABLE(ExpectDataSetSink, in, records, tolerance, relative_tolerance, meta_exact, received);
+
+    std::vector<detail::ExpectedRecord<T>> _expected{};
+    bool                                   _failed = false;
+
+    void start() {
+        received = 0U;
+        _failed  = false;
+        _expected.clear();
+        std::expected<std::vector<property_map>, std::string> maps = gr::dataset::readRecordMaps(records.value);
+        if (!maps.has_value()) {
+            failAtStart(maps.error());
+            return;
+        }
+        _expected.reserve(maps->size());
+        for (std::size_t i = 0UZ; i < maps->size(); ++i) {
+            std::expected<detail::ExpectedRecord<T>, std::string> record = detail::readExpectedRecord<T>(i, (*maps)[i]);
+            if (!record.has_value()) {
+                failAtStart(record.error());
+                return;
             }
-            const bool valueInf     = std::isinf(value.real()) || std::isinf(value.imag());
-            const bool referenceInf = std::isinf(reference.real()) || std::isinf(reference.imag());
-            if (valueInf || referenceInf) {
-                return value == reference;
-            }
-            return within(std::complex<double>(value), std::complex<double>(reference));
-        } else {
-            if constexpr (std::floating_point<T>) {
-                if (std::isnan(value) || std::isnan(reference)) {
-                    return std::isnan(value) && std::isnan(reference);
-                }
-                if (std::isinf(value) || std::isinf(reference)) {
-                    return value == reference;
-                }
-            }
-            return within(asDouble(value), asDouble(reference));
+            _expected.push_back(std::move(*record));
         }
     }
 
-    [[nodiscard]] static double asDouble(const T& sample) {
-        if constexpr (std::same_as<T, double>) {
-            return sample;
-        } else {
-            return static_cast<double>(sample);
+    void stop() {
+        if (!_failed && static_cast<std::size_t>(received.value) != _expected.size()) {
+            _failed = true;
+            this->emitErrorMessage("stop", std::format("the stream ended after {} DataSets, expected {}", received.value, _expected.size()));
         }
     }
 
-    /// Returns whether the distance between the samples is at most `tolerance + relative_tolerance * |reference|`.
-    /// With finite tolerances, the sink compares at a quarter of the scale when the distance or the bound exceeds
-    /// the largest double. At that scale the distance between two finite samples, real or complex, stays finite.
-    /// A bound that still exceeds the largest double then exceeds every such distance.
-    /// With a non-finite tolerance, the sink compares at full scale. A quarter of a subnormal expected sample can
-    /// round to zero, and an infinite relative tolerance times zero is NaN.
-    template<typename Sample>
-    [[nodiscard]] bool within(const Sample& value, const Sample& reference) const {
-        const double distance = std::abs(value - reference);
-        const double bound    = tolerance.value + relative_tolerance.value * std::abs(reference);
-        if (!std::isfinite(tolerance.value) || !std::isfinite(relative_tolerance.value)) {
-            return distance <= bound;
+    [[nodiscard]] work::Status processBulk(InputSpanLike auto& input) {
+        if (_failed) {
+            return work::Status::ERROR;
         }
-        if (std::isfinite(distance) && std::isfinite(bound)) {
-            return distance <= bound;
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            const std::size_t index = static_cast<std::size_t>(received.value);
+            if (index >= _expected.size()) {
+                return fail(std::format("record {} is beyond the {} expected records", index, _expected.size()));
+            }
+            if (std::optional<std::string> error = mismatch(index, input[i], _expected[index])) {
+                return fail(*error);
+            }
+            received = static_cast<gr::Size_t>(index + 1UZ);
         }
-        constexpr double scale = 0.25;
-        return std::abs(value * scale - reference * scale) <= tolerance.value * scale + relative_tolerance.value * std::abs(reference * scale);
+        std::ignore = input.consume(input.size());
+        return work::Status::OK;
+    }
+
+    /// Returns the first difference between DataSet `index` and its record, in the order of the Description.
+    [[nodiscard]] std::optional<std::string> mismatch(std::size_t index, const DataSet<T>& value, const detail::ExpectedRecord<T>& expectedRecord) const {
+        const gr::dataset::DataSetRecord<T>& record    = expectedRecord.fields;
+        const DataSet<T>&                    reference = record.dataSet;
+        const auto                           differs   = [index, &record]<typename Field>(std::string_view field, const Field& actual, const Field& wanted) -> std::optional<std::string> {
+            if (!record.lists(field) || actual == wanted) {
+                return std::nullopt;
+            }
+            return std::format("record {} field '{}' is {}, expected {}", index, field, actual, wanted);
+        };
+        if (record.lists("signal_values")) {
+            if (value.signal_values.size() != reference.signal_values.size()) {
+                return std::format("record {} field 'signal_values' holds {} values, expected {}", index, value.signal_values.size(), reference.signal_values.size());
+            }
+            for (std::size_t v = 0UZ; v < value.signal_values.size(); ++v) {
+                if (!detail::withinTolerance(value.signal_values[v], reference.signal_values[v], tolerance.value, relative_tolerance.value)) {
+                    return std::format("record {} field 'signal_values' value {} is {}, expected {}", index, v, value.signal_values[v], reference.signal_values[v]);
+                }
+            }
+        }
+        if (auto error = differs("signal_names", value.signal_names, reference.signal_names)) {
+            return error;
+        }
+        if (auto error = differs("signal_quantities", value.signal_quantities, reference.signal_quantities)) {
+            return error;
+        }
+        if (auto error = differs("signal_units", value.signal_units, reference.signal_units)) {
+            return error;
+        }
+        if (auto error = differs("axis_names", value.axis_names, reference.axis_names)) {
+            return error;
+        }
+        if (auto error = differs("extents", value.extents, reference.extents)) {
+            return error;
+        }
+        if (auto error = differs("timestamp", value.timestamp, reference.timestamp)) {
+            return error;
+        }
+        if (record.lists("meta_information")) {
+            if (value.meta_information.size() != reference.meta_information.size()) {
+                return std::format("record {} field 'meta_information' holds {} maps, expected {}", index, value.meta_information.size(), reference.meta_information.size());
+            }
+            for (std::size_t m = 0UZ; m < value.meta_information.size(); ++m) {
+                if (std::optional<std::string> error = detail::mapMismatch(value.meta_information[m], reference.meta_information[m], meta_exact.value)) {
+                    const std::string position = value.meta_information.size() > 1UZ ? std::format("map {} ", m) : std::string{};
+                    return std::format("record {} field 'meta_information' {}{}", index, position, *error);
+                }
+            }
+        }
+        for (const property_map& map : value.meta_information) {
+            for (const std::string& key : expectedRecord.metaAbsent) {
+                if (const auto found = map.find(key); found != map.end()) {
+                    return std::format("record {} field 'meta_absent' key '{}' is {}, expected no such key", index, key, detail::describe(found->second));
+                }
+            }
+        }
+        for (const std::string& key : expectedRecord.metaPresent) {
+            if (value.meta_information.empty()) {
+                return std::format("record {} field 'meta_present' key '{}' is missing, the DataSet has no meta map", index, key);
+            }
+            for (const property_map& map : value.meta_information) {
+                if (!map.contains(key)) {
+                    return std::format("record {} field 'meta_present' key '{}' is missing", index, key);
+                }
+            }
+        }
+        if (record.lists("timing_events") && !detail::eventsMatch(value.timing_events, reference.timing_events, meta_exact.value)) {
+            return std::format("record {} field 'timing_events' is {}, expected {}", index, value.timing_events, reference.timing_events);
+        }
+        return std::nullopt;
+    }
+
+    void failAtStart(const std::string& message) {
+        _failed = true;
+        this->emitErrorMessage("start", message);
+    }
+
+    [[nodiscard]] work::Status fail(const std::string& message) {
+        _failed = true;
+        this->emitErrorMessage("processBulk", message);
+        return work::Status::ERROR;
     }
 };
 
