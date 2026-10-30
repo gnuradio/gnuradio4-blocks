@@ -190,9 +190,7 @@ inserted between them: the gap is reported through `discontinuity` and `n_droppe
 
     void rebuild() {
         if (!std::isfinite(axis_rate_tolerance.value) || axis_rate_tolerance.value <= 0.f) {
-            const float rejected      = axis_rate_tolerance.value;
-            axis_rate_tolerance.value = _tolerance; // the block keeps working at the tolerance it already had
-            throw gr::exception(std::format("axis_rate_tolerance is {}; it must be finite and greater than zero", rejected));
+            throw gr::exception(std::format("axis_rate_tolerance is {}; it must be finite and greater than zero", axis_rate_tolerance.value));
         }
         _tolerance = axis_rate_tolerance.value;
     }

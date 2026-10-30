@@ -86,18 +86,6 @@ template<typename TBlock, typename TMoved>
     return next;
 }
 
-/// @brief Writes @p accepted back into the settings of @p block.
-template<typename TBlock>
-void restoreChannelizerSettings(TBlock& block, const ChannelizerSettings& accepted) {
-    block.n_channels.value     = static_cast<gr::Size_t>(accepted.channels);
-    block.taps.value           = accepted.taps;
-    block.attenuation_db.value = accepted.attenuationDb;
-    block.transition.value     = accepted.transition;
-    block.prototype.value      = accepted.prototype;
-    block.span.value           = static_cast<gr::Size_t>(accepted.span);
-    block.oversample.value     = static_cast<gr::Size_t>(accepted.oversample);
-}
-
 /**
  * @brief Designs the prototype @p settings name, or measures the supplied one, with its stopband and ripple.
  *
@@ -170,7 +158,7 @@ block transform. `span` applies to `root_nyquist` alone and `attenuation_db` to 
 `root_nyquist` with `oversample` 2 does both.
 
 A change to any of these settings designs the prototype again, rebuilds the bank and clears its history. A refused
-change leaves every setting and the bank as they were.
+change leaves the bank as it was.
 
 `designed_taps` holds the prototype that runs, zero-padded to a whole number of branches. `stopband_db` is the
 prototype's worst level from the alias edge to Nyquist. That band folds into each channel when the bank decimates.
@@ -237,19 +225,14 @@ the samples short of a whole step are dropped, and their tags land on channel ze
     explicit PolyphaseChannelizer(property_map init = {}) : Block<PolyphaseChannelizer<F>, NoTagPropagation, Resampling<1UZ, 1UZ, false>>(std::move(init)) { install(detail::channelizerSettingsAfter(*this, {}, detail::kEverySetting)); }
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
-        try {
-            detail::ChannelizerSettings next = detail::channelizerSettingsAfter(*this, _accepted, [&newSettings](std::string_view key) { return newSettings.contains(key); });
-            if (next == _accepted) {
-                return;
-            }
-            if (next.channels != _accepted.channels && std::ranges::any_of(out, detail::kIsConnected)) {
-                throw gr::exception(std::format("n_channels is {}; the channel count cannot change once a port is connected", next.channels));
-            }
-            install(std::move(next));
-        } catch (...) {
-            detail::restoreChannelizerSettings(*this, _accepted);
-            throw;
+        detail::ChannelizerSettings next = detail::channelizerSettingsAfter(*this, _accepted, [&newSettings](std::string_view key) { return newSettings.contains(key); });
+        if (next == _accepted) {
+            return;
         }
+        if (next.channels != _accepted.channels && std::ranges::any_of(out, detail::kIsConnected)) {
+            throw gr::exception(std::format("n_channels is {}; the channel count cannot change once a port is connected", next.channels));
+        }
+        install(std::move(next));
     }
 
     void start() { _bank.reset(); }
@@ -396,19 +379,14 @@ Tags on the channel inputs are dropped, and the output carries no `sample_rate`.
     explicit PolyphaseSynthesizer(property_map init = {}) : Block<PolyphaseSynthesizer<F>, NoTagPropagation, Resampling<1UZ, 1UZ, false>>(std::move(init)) { install(detail::channelizerSettingsAfter(*this, {}, detail::kEverySetting)); }
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
-        try {
-            detail::ChannelizerSettings next = detail::channelizerSettingsAfter(*this, _accepted, [&newSettings](std::string_view key) { return newSettings.contains(key); });
-            if (next == _accepted) {
-                return;
-            }
-            if (next.channels != _accepted.channels && std::ranges::any_of(in, detail::kIsConnected)) {
-                throw gr::exception(std::format("n_channels is {}; the channel count cannot change once a port is connected", next.channels));
-            }
-            install(std::move(next));
-        } catch (...) {
-            detail::restoreChannelizerSettings(*this, _accepted);
-            throw;
+        detail::ChannelizerSettings next = detail::channelizerSettingsAfter(*this, _accepted, [&newSettings](std::string_view key) { return newSettings.contains(key); });
+        if (next == _accepted) {
+            return;
         }
+        if (next.channels != _accepted.channels && std::ranges::any_of(in, detail::kIsConnected)) {
+            throw gr::exception(std::format("n_channels is {}; the channel count cannot change once a port is connected", next.channels));
+        }
+        install(std::move(next));
     }
 
     void start() { _bank.reset(); }
