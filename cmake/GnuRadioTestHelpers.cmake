@@ -85,7 +85,23 @@ function(setup_test_no_asan TEST_NAME)
             gnuradio-blocklib-core
             ut
             ${GR_TEST_HELPER_LIBRARIES})
-  add_test(NAME ${TEST_NAME} COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME})
+  if(MSVC)
+    # boost.ut nests a lambda per test inside the suite lambda, and /Od gives every local its own slot, so the frames
+    # get large. Windows reserves 1 MiB by default where Linux gives 8 MiB -- match Linux.
+    target_link_options(${TEST_NAME} PRIVATE /STACK:8388608)
+  endif()
+  # the target file, not a path built from the binary directory: a multi-config generator puts the executable in a
+  # per-configuration subdirectory
+  add_test(NAME ${TEST_NAME} COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} $<TARGET_FILE:${TEST_NAME}>)
+  if(WIN32)
+    # Windows has no RPATH: the loader finds the DLLs a test links -- core's and this tree's own -- through PATH only.
+    # The directories are evaluated at generation time, so links a test adds after this call are covered too.
+    set_property(
+      TEST ${TEST_NAME}
+      APPEND
+      PROPERTY ENVIRONMENT_MODIFICATION
+               "$<LIST:TRANSFORM,$<TARGET_RUNTIME_DLL_DIRS:${TEST_NAME}>,PREPEND,PATH=path_list_prepend:>")
+  endif()
 endfunction()
 
 function(setup_test TEST_NAME)
@@ -119,8 +135,11 @@ function(add_ut_test TEST_NAME)
       PROPERTY GR_QA_PCH_CANDIDATES ${TEST_NAME})
   endif()
   setup_test(${TEST_NAME})
-  set_property(TEST ${TEST_NAME} PROPERTY ENVIRONMENT_MODIFICATION
-                                          "GNURADIO4_PLUGIN_DIRECTORIES=set:${CMAKE_CURRENT_BINARY_DIR}/plugins")
+  # appended, so the PATH entries setup_test made for Windows survive
+  set_property(
+    TEST ${TEST_NAME}
+    APPEND
+    PROPERTY ENVIRONMENT_MODIFICATION "GNURADIO4_PLUGIN_DIRECTORIES=set:${CMAKE_CURRENT_BINARY_DIR}/plugins")
   target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_FUNCTION_LIST_DIR})
 endfunction()
 
