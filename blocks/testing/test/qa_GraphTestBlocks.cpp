@@ -197,10 +197,13 @@ const boost::ut::suite<"ExpectSink expected_tags"> expectedTagsTests = [] {
         expect(error.contains(" at sample 3 is ") && error.contains("expected no such tag")) << error;
     };
 
-    "two spellings of one index listing the same key fail"_test = [&] {
-        const std::string error = runIntoSink<float, VectorSource>(source, //
+    "two spellings of one index fail whatever their entries hold"_test = [&] {
+        const std::string sameKey = runIntoSink<float, VectorSource>(source, //
             property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", frameTag}, {"01", property_map{{"mark", std::string("frame")}}}}}});
-        expect(error.contains("expected_tags keys '") && error.contains("both list tag 'mark' at sample 1") && error.contains("'01'")) << error;
+        expect(sameKey.contains("expected_tags keys '01' and '1' both name sample 1")) << sameKey;
+        const std::string otherKeys = runIntoSink<float, VectorSource>(source, //
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", property_map{{"mark", std::string("frame")}}}, {"01", property_map{{"level", std::int64_t(3)}}}}}});
+        expect(otherKeys.contains("expected_tags keys '01' and '1' both name sample 1")) << otherKeys;
     };
 
     "unlisted tags pass without tags_exact"_test = [&] {
@@ -213,6 +216,56 @@ const boost::ut::suite<"ExpectSink expected_tags"> expectedTagsTests = [] {
         const std::string error = runIntoSink<float, VectorSource>(source, //
             property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"one", frameTag}}}});
         expect(error.contains("expected_tags key 'one' is not a sample index")) << error;
+    };
+
+    "a list tells two tags at one index from one tag with both keys"_test = [&] {
+        const property_map level{{"level", std::int64_t(3)}};
+        const property_map gate{{"gate", std::string("open")}};
+        const property_map joined{{"level", std::int64_t(3)}, {"gate", std::string("open")}};
+        const auto         run = [&](gr::pmt::Value published, gr::pmt::Value wanted, bool exact = true) {
+            return runIntoSink<float, VectorSource>(property_map{{"values", oneToFour}, {"tags", property_map{{"1", published}}}}, //
+                        property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", wanted}}}, {"tags_exact", exact}});
+        };
+        const std::string split = run(listOf({level, gate}), listOf({level, gate}));
+        expect(split.empty()) << split;
+        const std::string together = run(gr::pmt::Value(joined), listOf({joined}));
+        expect(together.empty()) << together;
+        const std::string keysOnly = run(listOf({level, gate}), gr::pmt::Value(joined));
+        expect(keysOnly.empty()) << keysOnly;
+        const std::string tooFew = run(gr::pmt::Value(joined), listOf({level, gate}), false);
+        expect(tooFew.contains("sample 1 carries 1 tags, expected 2")) << tooFew;
+        const std::string spread = run(listOf({level, gate}), listOf({joined}));
+        expect(spread.contains("tag 0 at sample 1 lacks key 'gate', expected \"open\"")) << spread;
+        const std::string swapped = run(listOf({gate, level}), listOf({level, gate}));
+        expect(swapped.contains("tag 0 at sample 1 lacks key 'level', expected 3")) << swapped;
+        const std::string unlisted = run(listOf({joined, gate}), listOf({level, gate}));
+        expect(unlisted.contains("tag 0 at sample 1 key 'gate' is \"open\", expected no such key")) << unlisted;
+    };
+
+    "a list counts the tags at the end-of-stream index"_test = [&] {
+        const property_map mark{{"mark", std::string("end")}};
+        const std::string  error = runIntoSink<float, VectorSource>(property_map{{"values", oneToFour}, {"tags", property_map{{"4", listOf({mark, mark})}}}}, //
+             property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"4", listOf({mark, mark})}}}, {"tags_exact", true}});
+        expect(error.empty()) << error;
+        const std::string beyond = runIntoSink<float, VectorSource>(property_map{{"values", oneToFour}, {"tags", property_map{{"4", listOf({mark, mark})}}}}, //
+            property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"4", listOf({mark})}}}});
+        expect(beyond.contains("tag 1 at sample 4 is ") && beyond.contains("beyond the 1 tags expected there")) << beyond;
+    };
+
+    "a list matches a tag key only as spelled"_test = [&] {
+        const property_map prefixed{{"gr:mark", std::string("x")}};
+        const property_map bare{{"mark", std::string("x")}};
+        const property_map both{{"gr:mark", std::string("x")}, {"mark", std::string("x")}};
+        const auto         run = [&](const property_map& published, const property_map& wanted) {
+            return runIntoSink<float, VectorSource>(property_map{{"values", oneToFour}, {"tags", property_map{{"1", listOf({published})}}}}, //
+                        property_map{{"expected", oneToFour}, {"expected_tags", property_map{{"1", listOf({wanted})}}}, {"tags_exact", true}});
+        };
+        const std::string spelled = run(prefixed, prefixed);
+        expect(spelled.empty()) << spelled;
+        const std::string unprefixed = run(prefixed, bare);
+        expect(unprefixed.contains("tag 0 at sample 1 lacks key 'mark', expected \"x\"")) << unprefixed;
+        const std::string unlisted = run(both, bare);
+        expect(unlisted.contains("tag 0 at sample 1 key 'gr:mark' is \"x\", expected no such key")) << unlisted;
     };
 };
 

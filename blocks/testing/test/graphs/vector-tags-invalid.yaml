@@ -1,0 +1,19 @@
+# A basic::VectorSource whose `tags` names sample 5 of a stream of 4 samples, one past the end-of-stream index. The
+# run must end at the start with an error naming the index and the sample count, and with a nonzero exit status. The
+# tests registering this graph also set the source's `tags` to a key that is not a sample index, to an entry that is
+# not a map, and to a list holding a value that is not a map. They set the sink's `expected_tags` to a list holding a
+# value that is not a map, to two spellings of one index with one holding a list, and to two spellings that both hold
+# maps. The sink expects no sample, so that the source's error alone ends the run.
+blocks:
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: source
+      values: [1.0, 2.0, 3.0, 4.0]
+      tags:
+        "5":
+          mark: end
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink
+connections:
+  - [source, out, sink, in]
