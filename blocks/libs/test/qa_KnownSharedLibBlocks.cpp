@@ -82,13 +82,13 @@ const boost::ut::suite TagTests = [] {
         }
     };
 
-    "the basic plugin registers VectorSource, the testing plugin does not"_test = [] {
+    "the basic plugin registers VectorSource and VectorSink, the testing plugin does not"_test = [] {
         gr::BlockRegistry basicOnly;
         gr::BlockRegistry testingOnly;
         expect(gt(gr::blocklib::initGrBasicBlocks(basicOnly), 0UZ));
         expect(gt(gr::blocklib::initGrTestingBlocks(testingOnly), 0UZ));
         std::string misplaced;
-        for (const std::string_view block : {"VectorSource"sv}) {
+        for (const std::string_view block : {"VectorSource"sv, "VectorSink"sv}) {
             for (const std::string_view type : {"uint8"sv, "int16"sv, "uint16"sv, "int32"sv, "uint32"sv, "float32"sv, "float64"sv, "complex<float32>"sv, "complex<float64>"sv}) {
                 const std::string basicKey   = std::format("gr::blocks::basic::{}<{}>", block, type);
                 const std::string testingKey = std::format("gr::blocks::testing::{}<{}>", block, type);
