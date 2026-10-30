@@ -526,7 +526,9 @@ private:
     void fillAxisValues(DataSet<T>& ds, int start, std::size_t nSamples) {
         ds.axis_values[0].reserve(ds.axis_values[0].size() + nSamples);
         for (int j = 0; j < static_cast<int>(nSamples); j++) {
-            ds.axis_values[0].emplace_back(static_cast<float>(start + j) / sample_rate);
+            // the axis has the sample type, so for an integral T the time in seconds is truncated; the conversion is
+            // spelled out rather than left implicit until DataSet can carry an axis type of its own
+            ds.axis_values[0].emplace_back(static_cast<T>(static_cast<float>(start + j) / sample_rate));
         }
     }
 
