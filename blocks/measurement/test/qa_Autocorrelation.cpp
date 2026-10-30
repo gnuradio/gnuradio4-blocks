@@ -652,7 +652,7 @@ const suite<"autocorrelation record and settings"> _acfRecord = [] {
         }
     };
 
-    "a refused setting changes nothing the block computes, later changes apply, and start() builds from the accepted values"_test = [] {
+    "a refused setting is written back and changes nothing the block computes, later changes apply, and start() builds from the accepted values"_test = [] {
         constexpr std::size_t     length  = 1024UZ;
         const std::vector<CF>     input   = complexNoise(6UZ * length, 0x2D2DULL);
         const std::span<const CF> samples = std::span<const CF>(input);
@@ -672,10 +672,10 @@ const suite<"autocorrelation record and settings"> _acfRecord = [] {
         } catch (const std::exception& error) {
             expect(std::string_view(error.what()).find("window") != std::string_view::npos) << std::format("the refusal names the key: {}", error.what());
         }
-        expect(refused->window.value == std::string("Hann")) << "the refused value stays in its member";
+        expect(refused->window.value == std::string("Rectangular")) << "the accepted value is written back to its member";
         const auto              stored = refused->settings().get(std::string("window"));
         const std::pmr::string* text   = stored.has_value() ? stored->get_if<std::pmr::string>() : nullptr;
-        expect(text != nullptr && *text == "Hann") << "and settings().get() returns it";
+        expect(text != nullptr && *text == "Rectangular") << "and settings().get() returns it";
 
         for (Autocorrelation<CF>* block : {refused.get(), reference.get()}) {
             expect(nothrow([&] { applyByName(*block, {{"n_averages", gr::Size_t(4)}}); })) << "a live change after the refusal applies";
@@ -706,14 +706,13 @@ const suite<"autocorrelation record and settings"> _acfRecord = [] {
         expect(metaText(restarted, "window") == std::string("Rectangular")) << "start() builds from the accepted values";
         expect(restarted.signal_values == restart(*reference).signal_values) << "and computes what the reference computes";
 
-        // the same value sent again alone moves nothing, and a stopped block takes the key once an application moves it again
-        expect(nothrow([&] { applyByName(*refused, {{"window", std::string("Hann")}}); })) << "the value sent again passes with no refusal";
+        // the same value sent again to the running block is refused again, and a stopped block takes it
+        expect(throws([&] { applyByName(*refused, {{"window", std::string("Hann")}}); })) << "the value sent again to a running block is refused again";
         expect(metaText(restart(*refused), "window") == std::string("Rectangular")) << "and changes nothing";
         refused->stop();
-        expect(nothrow([&] { applyByName(*refused, {{"window", std::string("Rectangular")}}); }));
         expect(nothrow([&] { applyByName(*refused, {{"window", std::string("Hann")}}); }));
         const gr::DataSet<float> hannRecord = restart(*refused);
-        expect(metaText(hannRecord, "window") == std::string("Hann")) << "a stopped block takes the key once it moves again";
+        expect(metaText(hannRecord, "window") == std::string("Hann")) << "a stopped block takes the key";
 
         gr::property_map hann = geometry;
         hann.insert_or_assign(std::pmr::string("window"), std::string("Hann"));

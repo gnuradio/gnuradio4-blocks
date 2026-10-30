@@ -1166,7 +1166,7 @@ const boost::ut::suite<"PolarizationCombiner"> polarizationCombinerTests = [] {
     // A candidate refuses a batch after 1500 samples, in the middle of window 1, and then takes a correction. A
     // reference takes only the values the correction changes. Both blocks change the window to 512 at sample 3000, and
     // every output, record and counter of the two stays equal.
-    "a refused batch leaves its values out of the next accepted application"_test = [] {
+    "a refused batch is written back and leaves its values out of the next accepted application"_test = [] {
         constexpr std::size_t kWindow = 1024UZ;
         constexpr std::size_t kAt     = 1500UZ;
         constexpr std::size_t kLater  = 3000UZ;
@@ -1180,12 +1180,13 @@ const boost::ut::suite<"PolarizationCombiner"> polarizationCombinerTests = [] {
             gr::property_map correction;
             gr::property_map inForce; ///< what the correction changes in force
             std::string_view what;
-            std::uint64_t    resets; ///< the reference's discards
+            std::uint64_t    resets;      ///< the reference's discards
+            double           windowAfter; ///< the window the reference closes after the correction
         };
         const std::vector<Arm> arms{
-            {{{"window", gr::Size_t{256U}}, {"mode", std::string("diversity")}}, {{"mode", std::string("selection")}}, {{"mode", std::string("selection")}}, "the corrected setting alone", 2ULL},
-            {{{"window", gr::Size_t{256U}}, {"mode", std::string("diversity")}}, {{"window", gr::Size_t{256U}}, {"mode", std::string("selection")}}, {{"mode", std::string("selection")}}, "the whole batch again", 2ULL},
-            {{{"weight_smoothing", 1.0}}, {{"mode", std::string("selection")}}, {{"mode", std::string("selection")}}, "another setting", 2ULL},
+            {{{"window", gr::Size_t{256U}}, {"mode", std::string("diversity")}}, {{"mode", std::string("selection")}}, {{"mode", std::string("selection")}}, "the corrected setting alone", 2ULL, static_cast<double>(kWindow)},
+            {{{"window", gr::Size_t{256U}}, {"mode", std::string("diversity")}}, {{"window", gr::Size_t{256U}}, {"mode", std::string("selection")}}, {{"window", gr::Size_t{256U}}, {"mode", std::string("selection")}}, "the whole batch again", 2ULL, 256.},
+            {{{"weight_smoothing", 1.0}}, {{"mode", std::string("selection")}}, {{"mode", std::string("selection")}}, "another setting", 2ULL, static_cast<double>(kWindow)},
         };
         for (const Arm& arm : arms) {
             PolarizationCombiner reference(settings);
@@ -1214,7 +1215,7 @@ const boost::ut::suite<"PolarizationCombiner"> polarizationCombinerTests = [] {
             expect(eq(reference.nWindowResets(), arm.resets)) << arm.what << "the reference discards where its accepted values change";
             expect(ge(expected.records.size(), 3UZ)) << arm.what;
             if (expected.records.size() >= 3UZ) {
-                expect(eq(metaNumber(expected.records[1UZ], "window"), static_cast<double>(kWindow)) && eq(metaNumber(expected.records.back(), "window"), 512.)) << arm.what << "the reference closes windows of 1024 and then of 512";
+                expect(eq(metaNumber(expected.records[1UZ], "window"), arm.windowAfter) && eq(metaNumber(expected.records.back(), "window"), 512.)) << arm.what << "the reference closes windows of the size in force after the correction, then of 512";
             }
             expect(std::ranges::equal(driven.out, expected.out) && std::ranges::equal(driven.ortho, expected.ortho)) << arm.what << "leaves the outputs";
             expect(eq(driven.records.size(), expected.records.size())) << arm.what << "leaves the record count";

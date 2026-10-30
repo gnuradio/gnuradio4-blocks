@@ -1180,15 +1180,15 @@ const boost::ut::suite<"DataSink registry entries"> DataSinkRegistryEntryTests =
         expect(globalDataSinkRegistry().getDataSetPoller<float>(DataSinkQuery::signalName("unrun data set")) != nullptr) << "the second sink is found";
     };
 
-    "a DataSink refused a new signal name and destroyed frees the name it held"_test = [] {
+    "a DataSink refused a new signal name keeps the name it held, and destroyed frees it"_test = [] {
         {
             gr::Graph graph;
             auto&     owner   = graph.emplaceBlock<DataSink<float>>({{"name", "owner_sink"}, {"signal_name", "owned signal"}});
             auto&     renamed = graph.emplaceBlock<DataSink<float>>({{"name", "renamed_sink"}, {"signal_name", "held signal"}});
             expect(owner._registered && renamed._registered) << "both sinks register when their settings apply" << fatal;
 
-            // The registry refuses the taken name. The sink's entry stays under the held name, and its signal_name reads the
-            // refused one.
+            // The registry refuses the taken name. The sink's entry stays under the held name, and its signal_name reads it.
+            const std::string held = renamed.signal_name.value;
             expect(renamed.settings().setStaged({{"signal_name", "owned signal"s}}).empty());
             const bool refused = [&renamed] {
                 try {
@@ -1199,7 +1199,9 @@ const boost::ut::suite<"DataSink registry entries"> DataSinkRegistryEntryTests =
                 return false;
             }();
             expect(refused) << "the registry refuses the taken name" << fatal;
-            expect(eq(renamed.signal_name.value, "owned signal"s)) << "signal_name reads the refused name while the entry stays under the held name";
+            const std::optional<gr::pmt::Value> reported = renamed.settings().get("signal_name");
+            const std::pmr::string*             text     = reported.has_value() ? reported->get_if<std::pmr::string>() : nullptr;
+            expect(eq(renamed.signal_name.value, held) && text != nullptr && *text == held) << "the held name is written back to signal_name and settings().get()";
         }
         gr::Graph graph;
         auto&     heldAgain  = graph.emplaceBlock<DataSink<float>>({{"name", "held_sink_again"}, {"signal_name", "held signal"}});

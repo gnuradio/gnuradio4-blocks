@@ -319,7 +319,7 @@ const boost::ut::suite<"DesignedFilter"> designedFilterTests = [] {
         expect(peak == 73UZ || peak == 75UZ) << "the largest outputs flank the tag";
     };
 
-    "refusals fire by name and leave the previous design running"_test = [] {
+    "refusals fire by name, are written back, and leave the previous design running"_test = [] {
         expect(throws([] { std::ignore = make<float, float>({{"profile", std::string("no_such_profile")}, {"sample_rate", 96000.f}, {"cutoff", 1000.0}, {"transition_width", 100.0}}); }));
         expect(throws([] { std::ignore = make<float, float>({{"profile", std::string("complex_bandpass")}, {"sample_rate", 96000.f}, {"cutoff", 300.0}, {"high_cutoff", 3000.0}, {"transition_width", 100.0}}); })) << "a complex profile refuses the real tap type";
         expect(throws([] { std::ignore = make<CF, CF>({{"profile", std::string("lowpass")}, {"sample_rate", 96000.f}, {"cutoff", 1000.0}, {"transition_width", 100.0}}); })) << "a real profile refuses the complex tap type";
@@ -331,11 +331,11 @@ const boost::ut::suite<"DesignedFilter"> designedFilterTests = [] {
         const gr::Size_t designed = block.designed_taps;
         expect(throws([&block] { apply(block, {{"profile", std::string("no_such_profile")}}); })) << "a live refusal throws";
         expect(eq(block.designed_taps.value, designed)) << "and the previous design keeps running";
-        // The refused value is what the member holds, so stating it again moves nothing and is not a second
-        // request. The refusal is not absorbed either: the design is stale until one succeeds, and a start refuses it.
-        expect(nothrow([&block] { apply(block, {{"profile", std::string("no_such_profile")}}); })) << "re-stating the value in force is not a new request";
+        expect(eq(block.profile.value, std::string("lowpass"))) << "the accepted profile is written back to its member";
+        expect(throws([&block] { apply(block, {{"profile", std::string("no_such_profile")}}); })) << "the refused value stated again is refused again";
         expect(eq(block.designed_taps.value, designed)) << "and the previous design is still the one running";
-        expect(throws([&block] { block.start(); })) << "the stale design is refused at the next start";
+        expect(nothrow([&block] { block.start(); })) << "the next start designs from the accepted values";
+        expect(eq(block.designed_taps.value, designed)) << "and builds the previous design";
     };
 };
 

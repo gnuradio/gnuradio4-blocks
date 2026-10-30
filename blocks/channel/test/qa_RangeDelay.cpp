@@ -1256,8 +1256,8 @@ int main() {
         expect(std::ranges::equal(after.samples, std::span<const C>(expected.samples).subspan(n))) << "on the clock of the accepted rate";
     };
 
-    // A refused value stays in its member. Staging it again beside the change that makes it valid takes the value
-    "a refused rate staged again beside the change that makes it valid reaches the samples"_test = [] {
+    // A refused rate staged again beside the change that makes it valid is taken
+    "a refused rate is written back, and staged again beside the change that makes it valid reaches the samples"_test = [] {
         const gr::property_map settings{{"schedule_times_ns", std::vector<std::int64_t>{0LL, 100'000'000'000LL}}, {"schedule_delays_s", std::vector<double>{0.01, 0.01}}, {"sample_rate", 1'000.f}, {"order", 1}, {"bank_size", gr::Size_t{32U}}};
         std::vector<float>     impulse(256UZ, 0.f);
         impulse[100UZ] = 1.f;
@@ -1265,7 +1265,8 @@ int main() {
         // The first change holds a rate and a direction the block refuses. The second holds the same rate and a good direction.
         auto block = configured<RangeDelay<float>>(settings);
         expect(refusedLive(*block, {{"sample_rate", 500.f}, {"direction", std::string("undo")}}));
-        expect(!refusedLive(*block, {{"sample_rate", 500.f}, {"direction", std::string("apply")}})) << "core drops the staged rate, which equals its member";
+        expect(that % (block->sample_rate.value == 1'000.f)) << "the accepted rate is written back to its member";
+        expect(!refusedLive(*block, {{"sample_rate", 500.f}, {"direction", std::string("apply")}})) << "the same rate beside a valid direction is taken";
         expect(that % (block->sample_rate.value == 500.f));
         std::vector<float> out(impulse.size());
         std::ignore = block->processBulk(std::span<const float>(impulse), std::span<float>(out));
@@ -1278,20 +1279,17 @@ int main() {
         expect(that % (block->currentDelaySamples() == direct->currentDelaySamples())) << "and the reported delay is that of 500 Hz";
     };
 
-    // While a member holds a refused direction, a change of the bias alone is refused with it
-    "a held refused direction refuses an unrelated change until a valid direction replaces it"_test = [] {
+    // A refused direction is written back, and a later change of the bias alone is checked against the accepted direction
+    "a refused direction is written back, and a later change of another setting is taken"_test = [] {
         auto              block    = configured<RangeDelay<float>>({{"schedule_times_ns", std::vector<std::int64_t>{0LL, 100'000'000'000LL}}, {"schedule_delays_s", std::vector<double>{0.01, 0.01}}, {"sample_rate", 1'000.f}, {"order", 1}, {"bank_size", gr::Size_t{32U}}});
-        const double      accepted = block->biasSeconds();
-        const std::string held     = refusalLive(*block, {{"direction", std::string("undo")}});
-        expect(fatal(held.contains("'direction'"))) << held;
+        const std::string accepted = block->direction.value;
+        const std::string refusal  = refusalLive(*block, {{"direction", std::string("undo")}});
+        expect(fatal(refusal.contains("'direction'"))) << refusal;
+        expect(that % (block->direction.value == accepted)) << "the accepted direction is written back to its member";
 
         const std::string unrelated = refusalLive(*block, {{"bias_s", 0.001}});
-        expect(unrelated == held) << std::format("a new bias is refused with the held direction's message: {}", unrelated);
-        expect(that % (block->bias_s.value == 0.001)) << "the member holds the new bias";
-        expect(that % (block->biasSeconds() == accepted)) << "and the block keeps the accepted bias";
-
-        expect(refusalLive(*block, {{"direction", std::string("apply")}}).empty()) << "a valid direction is taken";
-        expect(that % (block->biasSeconds() == 0.001)) << "and the bias staged beside the held direction with it";
+        expect(unrelated.empty()) << std::format("a new bias is taken; the refusal: {}", unrelated);
+        expect(that % (block->bias_s.value == 0.001 && block->biasSeconds() == 0.001)) << "the member and the block take the new bias";
     };
 
     // A change that arms the anchor starts the line on silence, as a tag that arms it does

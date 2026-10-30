@@ -129,8 +129,7 @@ const boost::ut::suite<"AwgnChannel"> awgnTests = [] {
         expect(lt(std::abs(meanPower(out) / (1.0 + power) - 1.0), 0.02)) << std::format("measured {:g}, expected {:g}", meanPower(out), 1.0 + power);
     };
 
-    // separate blocks deliberately: a staged key that throws on apply stays staged, so reusing the block
-    // would re-apply the refused seed and mask what the second case is asking
+    // separate blocks keep the two cases independent
     "a mid-stream reseed is refused"_test = [] {
         auto block = makeChannel<C>(1.0, 4ULL);
         block.start();
