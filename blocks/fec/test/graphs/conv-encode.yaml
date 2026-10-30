@@ -1,0 +1,159 @@
+# ConvEncode's output order. The impulse chains encode a one followed by K - 1 zeros under the classic K = 7 code
+# (171, 133 octal) and the K = 3 code (7, 5 octal). The sinks expect each generator polynomial, least significant bit
+# first, interleaved one bit per polynomial per step, then zeros once the impulse has left the register. The
+# convention chains encode seeded bits under 'ccsds_uninverted' and 'ccsds', the polynomials 117 and 155 octal. The
+# 'ccsds' sink expects the 'ccsds_uninverted' bits with every second coded bit complemented. The inverted chain sets
+# invert_outputs to 1 under the classic code. Its first sink expects the classic encoding with every first coded bit
+# complemented, and its second sink expects the information back from ViterbiDecode under the same setting, with
+# nothing corrected.
+# Written by generate_graphs.py from seed 0x9E3779B97F4A7C15 ^ 0x5. Oracle: the generator's convolutional encoder.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: impulse_k7_source
+      records:
+        0:
+          signal_values: [1, 0, 0, 0, 0, 0, 0]
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: impulse_k7_coder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: impulse_k7_sink
+      records:
+        0:
+          signal_values: [
+            1, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: impulse_k3_source
+      records:
+        0:
+          signal_values: [1, 0, 0]
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: impulse_k3_coder
+      constraint_length: !!uint32 3
+      polynomials: !!uint32 [7, 5]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: impulse_k3_sink
+      records:
+        0:
+          signal_values: [1, 1, 1, 0, 1, 1, 0, 0, 0, 0]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ccsds_uninverted_source
+      records:
+        0:
+          signal_values: [
+            1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1,
+            1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1,
+            1, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1
+          ]
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: ccsds_uninverted_coder
+      code: ccsds_uninverted
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ccsds_uninverted_sink
+      records:
+        0:
+          signal_values: [
+            1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0,
+            1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0,
+            1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0,
+            1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0,
+            1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 1,
+            1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ccsds_source
+      records:
+        0:
+          signal_values: [
+            1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1,
+            1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1,
+            1, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1
+          ]
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: ccsds_coder
+      code: ccsds
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ccsds_sink
+      records:
+        0:
+          signal_values: [
+            1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0,
+            0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1,
+            1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0,
+            0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1,
+            1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1,
+            0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: inverted_source
+      records:
+        0:
+          signal_values: [
+            0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0,
+            1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1,
+            1, 1, 0, 1, 1, 0, 1, 1, 0, 1
+          ]
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: inverted_coder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+      invert_outputs: !!uint32 1
+  - id: gr::blocks::fec::ViterbiDecode
+    parameters:
+      name: inverted_decoder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+      invert_outputs: !!uint32 1
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: inverted_coded
+      records:
+        0:
+          signal_values: [
+            1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0,
+            0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0,
+            1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 1,
+            0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1,
+            0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1
+          ]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: inverted_sink
+      records:
+        0:
+          signal_values: [
+            0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0,
+            1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1,
+            1, 1, 0, 1, 1, 0, 1, 1, 0, 1
+          ]
+          meta_information:
+            corrected_errors: !!uint32 0
+connections:
+  - [impulse_k7_source, out, impulse_k7_coder, in]
+  - [impulse_k7_coder, out, impulse_k7_sink, in]
+  - [impulse_k3_source, out, impulse_k3_coder, in]
+  - [impulse_k3_coder, out, impulse_k3_sink, in]
+  - [ccsds_uninverted_source, out, ccsds_uninverted_coder, in]
+  - [ccsds_uninverted_coder, out, ccsds_uninverted_sink, in]
+  - [ccsds_source, out, ccsds_coder, in]
+  - [ccsds_coder, out, ccsds_sink, in]
+  - [inverted_source, out, inverted_coder, in]
+  - [inverted_coder, out, inverted_coded, in]
+  - [inverted_coder, out, inverted_decoder, in]
+  - [inverted_decoder, out, inverted_sink, in]

@@ -1,0 +1,66 @@
+# One chain per convolutional block, each with settings the block accepts and no record to process: the classic
+# K = 7 code for the encoder and both decoders, and the 'ccsds' convention for a second encoder. The run passes as
+# written. A case that changes a setting through SET checks that the block accepts the change or refuses it, and the
+# refusal ends the run with the block's reason.
+# Written by generate_graphs.py with no seed and no oracle: the convolutional chains hold no record.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: encoder_source
+      records: {}
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: encoder_block
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: encoder_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: decoder_source
+      records: {}
+  - id: gr::blocks::fec::ViterbiDecode
+    parameters:
+      name: decoder_block
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: decoder_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: soft_decoder_source
+      records: {}
+  - id: gr::blocks::fec::ViterbiDecodeSoft
+    parameters:
+      name: soft_decoder_block
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: soft_decoder_sink
+      records: {}
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ccsds_encoder_source
+      records: {}
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: ccsds_encoder_block
+      code: ccsds
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ccsds_encoder_sink
+      records: {}
+connections:
+  - [encoder_source, out, encoder_block, in]
+  - [encoder_block, out, encoder_sink, in]
+  - [decoder_source, out, decoder_block, in]
+  - [decoder_block, out, decoder_sink, in]
+  - [soft_decoder_source, out, soft_decoder_block, in]
+  - [soft_decoder_block, out, soft_decoder_sink, in]
+  - [ccsds_encoder_source, out, ccsds_encoder_block, in]
+  - [ccsds_encoder_block, out, ccsds_encoder_sink, in]

@@ -1,0 +1,319 @@
+# ConvEncode, ViterbiDecode and ViterbiDecodeSoft with a record's metadata and with the records they refuse, under the
+# classic K = 7 code. The carried chain decodes a frame of 100 seeded bits with coded bits 9 and 120 flipped. The
+# record already counts 3 corrected errors, so the sink expects 5, and the other keys and the signal name unchanged.
+# The bare chain decodes a frame without a metadata map, and the sink expects one map holding the count. The ordered
+# chains carry three frames with a `seq` key. The encoder emits them in order, and the decoder, given each coded frame
+# with bits 5, 61 and 150 flipped, returns each frame's information with 3 corrected errors. The refused chains give
+# the encoder an empty record, the hard decoder a coded frame one bit short, the 12 zero bits of a tail alone and the
+# whole frame, the soft decoder a soft frame one value short and the whole frame, and the terminated decoder one step.
+# Each sink expects the whole frame alone, and the block's line at stop counts the records refused.
+# Written by generate_graphs.py from seed 0x9E3779B97F4A7C15 ^ 0x7. Oracle: the drawn information and the generator's
+# convolutional encoder.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: carried_source
+      records:
+        0:
+          signal_values: [
+            1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0,
+            0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1,
+            1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0,
+            1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1,
+            1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1,
+            0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1,
+            0, 0
+          ]
+          signal_names: [fec]
+          meta_information:
+            corrected_errors: !!uint32 3
+            provenance: earlier stage
+            sample_start: !!uint64 4096
+  - id: gr::blocks::fec::ViterbiDecode
+    parameters:
+      name: carried_decoder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: carried_sink
+      meta_exact: true
+      records:
+        0:
+          signal_values: [
+            1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0,
+            0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1,
+            0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0
+          ]
+          signal_names: [fec]
+          meta_information:
+            corrected_errors: !!uint32 5
+            provenance: earlier stage
+            sample_start: !!uint64 4096
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: bare_source
+      records:
+        0:
+          signal_values: [
+            1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0,
+            0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1
+          ]
+  - id: gr::blocks::fec::ViterbiDecode
+    parameters:
+      name: bare_decoder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: bare_sink
+      meta_exact: true
+      records:
+        0:
+          signal_values: [
+            1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1
+          ]
+          meta_information:
+            corrected_errors: !!uint32 0
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ordered_encode_source
+      records:
+        0:
+          signal_values: [
+            0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0,
+            0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1,
+            1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0
+          ]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          signal_values: [
+            1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1,
+            0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+            0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0
+          ]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          signal_values: [
+            0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1,
+            1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1,
+            1, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0
+          ]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: ordered_encode_coder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ordered_encode_sink
+      records:
+        0:
+          extents: [212]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          extents: [212]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          extents: [212]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: ordered_decode_source
+      records:
+        0:
+          signal_values: [
+            0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1,
+            1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1,
+            0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0,
+            1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0,
+            1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+            0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0,
+            0, 0
+          ]
+          meta_information:
+            seq: !!uint32 0
+        1:
+          signal_values: [
+            1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1,
+            0, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+            1, 0, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1,
+            1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0,
+            0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0,
+            0, 0
+          ]
+          meta_information:
+            seq: !!uint32 1
+        2:
+          signal_values: [
+            0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1,
+            0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 1, 0, 0,
+            1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1,
+            1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1,
+            1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+            1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 1,
+            0, 0
+          ]
+          meta_information:
+            seq: !!uint32 2
+  - id: gr::blocks::fec::ViterbiDecode
+    parameters:
+      name: ordered_decode_decoder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: ordered_decode_sink
+      records:
+        0:
+          signal_values: [
+            0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0,
+            0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1,
+            1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0
+          ]
+          meta_information:
+            seq: !!uint32 0
+            corrected_errors: !!uint32 3
+        1:
+          signal_values: [
+            1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1,
+            0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+            0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0
+          ]
+          meta_information:
+            seq: !!uint32 1
+            corrected_errors: !!uint32 3
+        2:
+          signal_values: [
+            0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1,
+            1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1,
+            1, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0
+          ]
+          meta_information:
+            seq: !!uint32 2
+            corrected_errors: !!uint32 3
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: refused_encode_source
+      records:
+        0:
+          signal_values: []
+        1:
+          signal_values: [
+            1, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0,
+            0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0
+          ]
+  - id: gr::blocks::fec::ConvEncode
+    parameters:
+      name: refused_encode_coder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: refused_encode_sink
+      records:
+        0:
+          signal_values: [
+            1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0,
+            0, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1,
+            0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: refused_hard_source
+      records:
+        0:
+          signal_values: [
+            0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0,
+            1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1
+          ]
+        1:
+          signal_values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        2:
+          signal_values: [
+            0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0,
+            1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1
+          ]
+  - id: gr::blocks::fec::ViterbiDecode
+    parameters:
+      name: refused_hard_decoder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: refused_hard_sink
+      records:
+        0:
+          signal_values: [
+            0, 0, 1, 0, 0, 1, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1
+          ]
+  - id: gr::blocks::basic::DataSetSource<float32>
+    parameters:
+      name: refused_soft_source
+      records:
+        0:
+          signal_values: !!float32 [
+            1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0,
+            1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0
+          ]
+        1:
+          signal_values: !!float32 [
+            1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0,
+            1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0
+          ]
+  - id: gr::blocks::fec::ViterbiDecodeSoft
+    parameters:
+      name: refused_soft_decoder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: refused_soft_sink
+      records:
+        0:
+          signal_values: [
+            1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0
+          ]
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: refused_step_source
+      records:
+        0:
+          signal_values: [0, 0]
+  - id: gr::blocks::fec::ViterbiDecode
+    parameters:
+      name: refused_step_decoder
+      constraint_length: !!uint32 7
+      polynomials: !!uint32 [121, 91]
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: refused_step_sink
+      records: {}
+connections:
+  - [carried_source, out, carried_decoder, in]
+  - [carried_decoder, out, carried_sink, in]
+  - [bare_source, out, bare_decoder, in]
+  - [bare_decoder, out, bare_sink, in]
+  - [ordered_encode_source, out, ordered_encode_coder, in]
+  - [ordered_encode_coder, out, ordered_encode_sink, in]
+  - [ordered_decode_source, out, ordered_decode_decoder, in]
+  - [ordered_decode_decoder, out, ordered_decode_sink, in]
+  - [refused_encode_source, out, refused_encode_coder, in]
+  - [refused_encode_coder, out, refused_encode_sink, in]
+  - [refused_hard_source, out, refused_hard_decoder, in]
+  - [refused_hard_decoder, out, refused_hard_sink, in]
+  - [refused_soft_source, out, refused_soft_decoder, in]
+  - [refused_soft_decoder, out, refused_soft_sink, in]
+  - [refused_step_source, out, refused_step_decoder, in]
+  - [refused_step_decoder, out, refused_step_sink, in]
