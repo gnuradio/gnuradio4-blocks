@@ -3,7 +3,7 @@
 #   float64, n = -2: -2 4 0.5            -> 0.25 0.0625 4
 #   complex, n = 3:  (0,1) (1,1) (-2,0)  -> (0,-1) (-2,2) (-8,0), since j^3 = -j and (1+j)^3 = 2j(1+j)
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source_f32
       values: !!float32 [-2.0, 0.0, 1.5, 0.5]
@@ -15,7 +15,7 @@ blocks:
     parameters:
       name: sink_f32
       expected: !!float32 [-8.0, 0.0, 3.375, 0.125]
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
       values: !!float64 [-2.0, 4.0, 0.5]
@@ -27,7 +27,7 @@ blocks:
     parameters:
       name: sink_f64
       expected: !!float64 [0.25, 0.0625, 4.0]
-  - id: gr::blocks::testing::VectorSource<complex<float32>>
+  - id: gr::blocks::basic::VectorSource<complex<float32>>
     parameters:
       name: source_c32
       values: !!complex32

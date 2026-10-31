@@ -1,6 +1,7 @@
 set(GrBasicBlocks_HDRS
     include/gnuradio-4.0/basic/ClockSource.hpp
     include/gnuradio-4.0/basic/ConverterBlocks.hpp
+    include/gnuradio-4.0/basic/DataSetSource.hpp
     include/gnuradio-4.0/basic/DataSetToPacket.hpp
     include/gnuradio-4.0/basic/DataSetToStream.hpp
     include/gnuradio-4.0/basic/DataSink.hpp
@@ -17,7 +18,9 @@ set(GrBasicBlocks_HDRS
     include/gnuradio-4.0/basic/SyncBlock.hpp
     include/gnuradio-4.0/basic/TagDebug.hpp
     include/gnuradio-4.0/basic/Throttle.hpp
-    include/gnuradio-4.0/basic/Trigger.hpp)
+    include/gnuradio-4.0/basic/Trigger.hpp
+    include/gnuradio-4.0/basic/VectorSink.hpp
+    include/gnuradio-4.0/basic/VectorSource.hpp)
 
 set(GrBasicBlocks_LIBS gnuradio4::gr-basic)
 

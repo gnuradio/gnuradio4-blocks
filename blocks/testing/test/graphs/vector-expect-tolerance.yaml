@@ -5,7 +5,7 @@
 # below it. The second float64 sink accepts 1.0 against the smallest subnormal double with an infinite
 # relative tolerance. The run passes when every sink accepts every sample.
 blocks:
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
       values: [1.0, 2.0]
@@ -14,7 +14,7 @@ blocks:
       name: sink_f64
       expected: [1.1, 1.9]
       tolerance: 0.15
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64_inf
       values: [1.0]
@@ -23,7 +23,7 @@ blocks:
       name: sink_f64_inf
       expected: [5.0e-324]
       relative_tolerance: .inf
-  - id: gr::blocks::testing::VectorSource<complex<float32>>
+  - id: gr::blocks::basic::VectorSource<complex<float32>>
     parameters:
       name: source_c32
       values: !!complex32

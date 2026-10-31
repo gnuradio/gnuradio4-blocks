@@ -4,7 +4,7 @@
 # registering this graph pass on the text of that error and on the exit status, at this scale and with
 # the samples set to -1.0 and 1.0.
 blocks:
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source
       values: [-1.7e308]

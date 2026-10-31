@@ -147,7 +147,8 @@ function(gr_pin_test_optimization TEST_NAME LEVEL)
   set_target_properties(${TEST_NAME} PROPERTIES GR_QA_REDUCED_OPTIMIZATION OFF)
 endfunction()
 
-# gr_add_graph_test(<name> <graph> [PASS_REGULAR_EXPRESSION <regex>|WILL_FAIL] [PLUGIN_DIRS <dir>...] [SET <entry>...])
+# gr_add_graph_test(<name> <graph> [PASS_REGULAR_EXPRESSION <regex>|WILL_FAIL] [PLUGIN_DIRS <dir>...] [SET <entry>...]
+# [TIMEOUT <seconds>])
 #
 # Registers a ctest case that runs the graph file through the rungraph of the core installation. The function looks for
 # rungraph in the bin subdirectory of each of the four directories above gnuradio4_DIR, then in the bin directory of
@@ -158,18 +159,19 @@ endfunction()
 # keyword. The function refuses both keywords in one case. The plugin directories are this build's testing and basic
 # plugins and each PLUGIN_DIRS entry, handed over in GNURADIO4_PLUGIN_DIRECTORIES. Each SET entry, in the form
 # block.key=value, becomes one --set argument. A relative graph path is read from the calling directory. The case
-# carries the label `graph`. Without rungraph, as with an Emscripten build of core, the function registers no case, and
-# the configure prints the directories it searched, once. The installed rungraph carries no run path. The case puts the
-# installation's library directory, two levels above gnuradio4_DIR, first in the loader's search path: DYLD_LIBRARY_PATH
-# on macOS, LD_LIBRARY_PATH on other Unix systems. On Windows, core installs its libraries in the bin directory beside
-# rungraph, where the loader looks first.
+# carries the label `graph`. ctest stops the case after TIMEOUT seconds, 60 without the keyword. Without rungraph, as
+# with an Emscripten build of core, the function registers no case, and the configure prints the directories it
+# searched, once. The installed rungraph carries no run path. The case puts the installation's library directory, two
+# levels above gnuradio4_DIR, first in the loader's search path: DYLD_LIBRARY_PATH on macOS, LD_LIBRARY_PATH on other
+# Unix systems. On Windows, core installs its libraries in the bin directory beside rungraph, where the loader looks
+# first.
 function(gr_add_graph_test TEST_NAME GRAPH)
   cmake_parse_arguments(
     PARSE_ARGV
     2
     _graphTest
     "WILL_FAIL"
-    "PASS_REGULAR_EXPRESSION"
+    "PASS_REGULAR_EXPRESSION;TIMEOUT"
     "PLUGIN_DIRS;SET")
   if(_graphTest_WILL_FAIL AND DEFINED _graphTest_PASS_REGULAR_EXPRESSION)
     message(FATAL_ERROR "gr_add_graph_test(${TEST_NAME}): WILL_FAIL and PASS_REGULAR_EXPRESSION do not combine")
@@ -236,17 +238,47 @@ function(gr_add_graph_test TEST_NAME GRAPH)
       list(APPEND _environment "LD_LIBRARY_PATH=path_list_prepend:${_libraryDir}")
     endif()
   endif()
+  set(_timeout 60)
+  if(DEFINED _graphTest_TIMEOUT)
+    set(_timeout "${_graphTest_TIMEOUT}")
+  endif()
   add_test(NAME ${TEST_NAME} COMMAND "${_rungraph}" ${_arguments})
   set_tests_properties(
     ${TEST_NAME}
     PROPERTIES ENVIRONMENT_MODIFICATION
                "${_environment}"
                LABELS
-               graph)
+               graph
+               TIMEOUT
+               "${_timeout}")
   if(DEFINED _graphTest_PASS_REGULAR_EXPRESSION)
     set_tests_properties(${TEST_NAME} PROPERTIES PASS_REGULAR_EXPRESSION "${_graphTest_PASS_REGULAR_EXPRESSION}")
   endif()
   if(_graphTest_WILL_FAIL)
     set_tests_properties(${TEST_NAME} PROPERTIES WILL_FAIL TRUE)
   endif()
+endfunction()
+
+# gr_add_failing_graph_test(<name> <graph> <regex> [PLUGIN_DIRS <dir>...] [SET <entry>...] [TIMEOUT <seconds>])
+#
+# Registers a graph that must end with an error as two gr_add_graph_test cases: <name> passes when the output matches
+# the expression, and <name>_exit passes when rungraph exits with a nonzero status. The arguments after the expression
+# go to both cases. An argument after the expression must not hold an unbalanced `[`. CMake joins the arguments after it
+# into one list item. A `;` splits the expression into two, and output that matches either passes.
+function(
+  gr_add_failing_graph_test
+  TEST_NAME
+  GRAPH
+  REGEX)
+  gr_add_graph_test(
+    ${TEST_NAME}
+    ${GRAPH}
+    PASS_REGULAR_EXPRESSION
+    "${REGEX}"
+    ${ARGN})
+  gr_add_graph_test(
+    ${TEST_NAME}_exit
+    ${GRAPH}
+    WILL_FAIL
+    ${ARGN})
 endfunction()

@@ -3,7 +3,7 @@
 #   source, 16 samples         tags 1, 14
 #   sync, 16 samples           tags 14, 16 (14 + 13 is past the last output: the end-of-stream index, 16)
 blocks:
-  - id: gr::blocks::testing::VectorSource<complex<float32>>
+  - id: gr::blocks::basic::VectorSource<complex<float32>>
     parameters:
       name: source
       values: !!complex32
@@ -23,9 +23,11 @@ blocks:
         - (0.0, 0.0)
         - (0.0, 0.0)
         - (0.0, 0.0)
-      tag_indices: !!uint32 [1, 14]
-      tag_map:
-        trigger_name: mark
+      tags:
+        "1":
+          trigger_name: mark
+        "14":
+          trigger_name: mark
   - id: gr::blocks::ofdm::SchmidlCoxSync
     parameters:
       name: sync

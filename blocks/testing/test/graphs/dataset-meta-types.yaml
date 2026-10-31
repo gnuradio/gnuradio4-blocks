@@ -1,0 +1,25 @@
+# A DataSetSource emitting one uint8 record whose meta map holds a uint32, a uint64, a string and a bool, each read
+# through the graph file's type tags. The sink expects the integer 4 for the uint32 key. The run must end with an
+# error naming the received value with its type, uint32, and with a nonzero exit status. The tests registering this
+# graph also set the sink to expect an integer for the uint64, the string and the bool key, and pass on the type
+# each error names.
+blocks:
+  - id: gr::blocks::basic::DataSetSource<uint8>
+    parameters:
+      name: source
+      records:
+        0:
+          meta_information:
+            count: !!uint32 3
+            big: !!uint64 1099511627776
+            who: src
+            flag: true
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: sink
+      records:
+        0:
+          meta_information:
+            count: 4
+connections:
+  - [source, out, sink, in]
