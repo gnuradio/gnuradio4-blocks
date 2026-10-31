@@ -493,7 +493,7 @@ const boost::ut::suite<"VectorSource"> vectorSourceTests = [] {
         // each chunk and holds the others until its next call.
         constexpr std::size_t kBuffer  = 4096UZ;
         const std::size_t     nSamples = 4UZ * kChunk;
-        const Delivery        delivery = deliver<ChunkSink<gr::FilteredTagPropagation>>({{"values", std::vector<float>(nSamples, 1.f)}, {"tags", denseTags(0UZ, nSamples, 1UZ, 0U)}}, kBuffer);
+        const Delivery        delivery = deliver<ChunkSink<gr::NoTagPropagation>>({{"values", std::vector<float>(nSamples, 1.f)}, {"tags", denseTags(0UZ, nSamples, 1UZ, 0U)}}, kBuffer);
         expect(delivery.error.empty()) << delivery.error;
         expect(delivery.ended) << "the run ends by itself, which needs the end-of-stream tag at the sink";
         expect(eq(delivery.endOfStreamLost, 0UZ));
