@@ -1,14 +1,14 @@
 # The sink expects `level` 4 on the tag at sample 1. The source publishes 3. The run must end with an
 # error naming the index, the key and both values, and with a nonzero exit status.
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source
       values: [1.0, 2.0, 3.0, 4.0]
-      tag_indices: !!uint32 [1]
-      tag_map:
-        mark: frame
-        level: 3
+      tags:
+        "1":
+          mark: frame
+          level: 3
   - id: gr::blocks::testing::ExpectSink<float32>
     parameters:
       name: sink

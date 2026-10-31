@@ -1,7 +1,7 @@
 # Sign: -1, 0 or +1 by the sign of the sample; NaN stays NaN.
 #   -3.5 0 0.25 7 NaN -> -1 0 1 1 NaN
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source_f32
       values: !!float32 [-3.5, 0.0, 0.25, 7.0, .nan]
@@ -12,7 +12,7 @@ blocks:
     parameters:
       name: sink_f32
       expected: !!float32 [-1.0, 0.0, 1.0, 1.0, .nan]
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
       values: !!float64 [-3.5, 0.0, 0.25, 7.0, .nan]

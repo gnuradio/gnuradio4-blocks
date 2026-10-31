@@ -1,7 +1,7 @@
 # Exp: out = e^in.
 #   0 1 -1 2 -> 1 2.718281828459045 0.36787944117144233 7.38905609893065
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source_f32
       values: !!float32 [0.0, 1.0, -1.0, 2.0]
@@ -18,7 +18,7 @@ blocks:
         - 7.38905609893065
       relative_tolerance: 1e-6
       tolerance: 1e-6
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
       values: !!float64 [0.0, 1.0, -1.0, 2.0]

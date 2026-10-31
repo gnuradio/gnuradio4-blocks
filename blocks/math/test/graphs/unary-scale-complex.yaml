@@ -3,7 +3,7 @@
 #   -(3-4j) * j = (-3+4j) * j = -4-3j
 # Each product of small integers is exact in float32. The sink takes no tolerance.
 blocks:
-  - id: gr::blocks::testing::VectorSource<complex<float32>>
+  - id: gr::blocks::basic::VectorSource<complex<float32>>
     parameters:
       name: source
       values: !!complex32

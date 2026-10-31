@@ -6,7 +6,7 @@
 #     scale 2, offset 10:          -> 90 * 2 + 10 = 190, -180 * 2 + 10 = -350
 #   DegreeToRadians: 90 -180       -> pi/2 -pi
 blocks:
-  - id: gr::blocks::testing::VectorSource<complex<float32>>
+  - id: gr::blocks::basic::VectorSource<complex<float32>>
     parameters:
       name: complex_source
       values: !!complex32
@@ -42,7 +42,7 @@ blocks:
       name: arg_sink
       expected: !!float32 [0.9272952180016122, -1.5707963267948966]
       tolerance: 1e-6
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: radians_source
       values: !!float32 [1.5707963267948966, -3.141592653589793]
@@ -64,7 +64,7 @@ blocks:
       name: degree_affine_sink
       expected: !!float32 [190.0, -350.0]
       tolerance: 1e-4
-  - id: gr::blocks::testing::VectorSource<uint8>
+  - id: gr::blocks::basic::VectorSource<uint8>
     parameters:
       name: uint8_source
       values: [0, 127, 128, 200, 255]
@@ -75,7 +75,7 @@ blocks:
     parameters:
       name: abs_u8_sink
       expected: [0, 127, 128, 200, 255]
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: degree_source
       values: !!float32 [90.0, -180.0]

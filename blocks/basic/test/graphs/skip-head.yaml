@@ -1,7 +1,7 @@
 # VectorSource into SkipHead into ExpectSink: the block drops the first three of eight values, and the sink expects
 # the last five. The run passes when the sink receives exactly those samples.
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source
       values: !!float32 [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]

@@ -1,7 +1,7 @@
 # Real: out = re(in), complex in, float32 out.
 #   (1,-2) (0,0) (-3.5,4) -> 1 0 -3.5
 blocks:
-  - id: gr::blocks::testing::VectorSource<complex<float32>>
+  - id: gr::blocks::basic::VectorSource<complex<float32>>
     parameters:
       name: source_c32
       values: !!complex32

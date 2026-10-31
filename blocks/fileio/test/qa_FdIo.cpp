@@ -3,6 +3,7 @@
 #include <gnuradio-4.0/fileio/FdIo.hpp>
 
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/basic/VectorSource.hpp>
 #include <gnuradio-4.0/testing/GraphTestBlocks.hpp>
 
 #include <algorithm>
@@ -227,7 +228,7 @@ struct SinkRun {
 template<typename T>
 SinkRun runSink(int fd, const std::vector<T>& samples, bool closeOnStop = false) {
     gr::Graph graph;
-    auto&     source = graph.emplaceBlock<gr::blocks::testing::VectorSource<T>>({{"values", samples}});
+    auto&     source = graph.emplaceBlock<gr::blocks::basic::VectorSource<T>>({{"values", samples}});
     auto&     sink   = graph.emplaceBlock<gr::blocks::fileio::FdSink<T>>({{"fd", fd}, {"close_on_stop", closeOnStop}});
     boost::ut::expect(graph.connect<"out", "in">(source, sink).has_value());
 

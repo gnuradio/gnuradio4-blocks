@@ -2,13 +2,15 @@
 # key `mark` at 1 and 4. The second expects no tag of key `absent`, which the source never publishes. The
 # third checks no tags. The run passes when every sink receives its samples and tags.
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source
       values: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-      tag_indices: !!uint32 [4, 1]
-      tag_map:
-        mark: frame
+      tags:
+        "1":
+          mark: frame
+        "4":
+          mark: frame
   - id: gr::blocks::testing::ExpectSink<float32>
     parameters:
       name: marked

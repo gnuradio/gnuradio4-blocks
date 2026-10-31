@@ -1,7 +1,7 @@
 # DegToRad: out = (in / 180) * pi.
 #   0 90 -180 360 -> 0 pi/2 -pi 2pi
 blocks:
-  - id: gr::blocks::testing::VectorSource<float32>
+  - id: gr::blocks::basic::VectorSource<float32>
     parameters:
       name: source_f32
       values: !!float32 [0.0, 90.0, -180.0, 360.0]
@@ -18,7 +18,7 @@ blocks:
         - 6.283185307179586
       relative_tolerance: 1e-6
       tolerance: 1e-6
-  - id: gr::blocks::testing::VectorSource<float64>
+  - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
       values: !!float64 [0.0, 90.0, -180.0, 360.0]
