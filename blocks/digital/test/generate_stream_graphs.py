@@ -1423,6 +1423,468 @@ accepts or ends with the block's reason for refusing them.
     return g
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# the access code oracle
+#
+# The rule the block documents: at item i, once (n-1)*s + 1 items have arrived, the n items i-1-(n-1)*s, ..., i-1 at
+# stride s are compared with the code's n symbols of bits_per_item bits each, first item against the code's first
+# symbol. A symbol is wrong when any of its bits is, and a distance of at most max_errors tags item i, or under
+# code_start emits the code's first item there behind a lag of (n-1)*s + 1 zeros. A byte item at one bit per item is
+# one iff non-zero, a soft item one iff it is at least zero, and a byte item of wider symbols carries its low bits.
+
+LABEL = "access_code"
+INTEROP = 0xACDDA4E2F28C20FC
+
+
+def code_string(word, bits):
+    return format(word, "0%db" % bits)
+
+
+def items_of(bits):
+    return [1 if c == "1" else 0 for c in bits]
+
+
+def plant(word, bits, at, total):
+    stream = [0] * total
+    stream[at : at + bits] = items_of(code_string(word, bits))
+    return stream
+
+
+def plant_strided(word, n, spacing, at, total):
+    stream = [0] * total
+    for i, c in enumerate(code_string(word, n)):
+        stream[at + i * spacing] = int(c)
+    return stream
+
+
+def symbol_of(item, width):
+    if isinstance(item, float):
+        return 1 if item >= 0.0 else 0
+    if width == 1:
+        return 1 if item != 0 else 0
+    return item & ((1 << width) - 1)
+
+
+def correlate(stream, code, max_errors=0, width=1, stride=1):
+    """The tags the block emits over stream: (index, symbols wrong), in order."""
+    symbols = [int(code[k : k + width], 2) for k in range(0, len(code), width)]
+    n = len(symbols)
+    first = (n - 1) * stride + 1
+    found = []
+    for i in range(first, len(stream)):
+        window = [stream[i - 1 - (n - 1 - k) * stride] for k in range(n)]
+        wrong = sum(symbol_of(v, width) != s for v, s in zip(window, symbols))
+        if wrong <= max_errors:
+            found.append((i, wrong))
+    return found
+
+
+def detection(errors, length, label=LABEL):
+    return {
+        "gr:trigger_name": label,
+        "gr:trigger_offset": F32(0.0),
+        "gr:trigger_meta_info": {
+            "sync_errors": u32(errors),
+            "code_length": u32(length),
+        },
+    }
+
+
+def correlator(g, name, kind, stream, settings, tags=None, expected=None, **sink):
+    """A source of stream, the correlator and a sink of its output, which is the stream unless expected says."""
+    src = g.vector_source(name + "_source", kind, stream, tags)
+    blk = g.block(DIG + f"AccessCodeCorrelator<{kind}>", name + "_correlator", settings)
+    out = stream if expected is None else expected
+    g.chain(src, blk, g.expect_sink(name + "_sink", kind, out, **sink))
+    return blk
+
+
+def indices(found):
+    return U32s(i for i, _ in found)
+
+
+def access_code_detection():
+    g = Graph(
+        "access-code-detection.yaml",
+        """
+AccessCodeCorrelator over byte bits, each stream passing through unchanged. The code 1011 in 1011110110 tags items 4 and
+9, the item after each match, and in 10110110 tags items 4 and 7, the two matches sharing an item. The stream with the
+64-bit interoperability code at item 20 passes through. With the code 1111, the byte 0x02 is a one at one bit per item,
+and four of them tag item 16. Each sink expects the stream and the indices of the gr:trigger_name tags.
+""",
+    )
+    for name, stream, code, want in (
+        ("worked", items_of("1011110110"), "1011", [4, 9]),
+        ("overlapping", items_of("10110110"), "1011", [4, 7]),
+        ("sliced", [0] * 12 + [2] * 4 + [0] * 8, "1111", [16]),
+    ):
+        found = correlate(stream, code)
+        assert indices(found) == want, name
+        correlator(
+            g,
+            name,
+            "uint8",
+            stream,
+            {"access_code": code},
+            tag_key="gr:trigger_name",
+            tag_indices=indices(found),
+        )
+    correlator(
+        g, "passthrough", "uint8", plant(INTEROP, 64, 20, 100), {"access_code": "1011"}
+    )
+    return g
+
+
+P25_SYNC = code_string(0x5575F5FF77FF, 48)
+
+
+def dibits(bits):
+    return [int(bits[k : k + 2], 2) for k in range(0, len(bits), 2)]
+
+
+def access_code_errors():
+    g = Graph(
+        "access-code-errors.yaml",
+        """
+AccessCodeCorrelator distances. A 32-bit code with as many bit errors as max_errors, for each bound from 0 to 4, is
+tagged at item 72 with the distance as sync_errors in gr:trigger_meta_info, and one error more is not tagged. P25's
+48-bit frame sync as 24 dibits at bits_per_item 2 is tagged at item 44; with one dibit wrong in both bits it is not
+tagged exactly and is tagged at a bound of one symbol. A 66-bit code at bits_per_item 3, whose first symbol straddles
+the two 64-bit limbs, is tagged at item 42; with that symbol wrong in its middle bit or in all three it is not tagged
+exactly and is tagged at a bound of one, at a distance of one. Each sink expects the stream and its tags.
+""",
+    )
+    rng = Rng()
+    code = rng.next() & 0xFFFFFFFF
+    assert bin(code).count("1") > 8
+    word = code_string(code, 32)
+    for bound in range(5):
+        for flips in (bound, bound + 1):
+            corrupted = code
+            for k in range(flips):
+                corrupted ^= 1 << (2 * k)
+            stream = plant(corrupted, 32, 40, 80)
+            found = correlate(stream, word, bound)
+            name = f"bound_{bound}_errors_{flips}"
+            settings = {"access_code": word, "max_errors": u32(bound)}
+            if flips == bound:
+                assert found == [(72, bound)]
+                tags = tags_at([(72, detection(bound, 32))])
+                correlator(
+                    g,
+                    name,
+                    "uint8",
+                    stream,
+                    settings,
+                    expected_tags=tags,
+                    tags_exact=True,
+                )
+            else:
+                assert found == []
+                correlator(
+                    g, name, "uint8", stream, settings, tag_key="gr:trigger_name"
+                )
+
+    stream = [0] * 20 + dibits(P25_SYNC) + [0] * 20
+    damaged = list(stream)
+    damaged[27] ^= 3
+    for name, values, bound, want in (
+        ("dibit_exact", stream, 0, [(44, 0)]),
+        ("dibit_strict", damaged, 0, []),
+        ("dibit_lenient", damaged, 1, [(44, 1)]),
+    ):
+        found = correlate(values, P25_SYNC, bound, width=2)
+        assert found == want, name
+        settings = {
+            "access_code": P25_SYNC,
+            "bits_per_item": u32(2),
+            "max_errors": u32(bound),
+        }
+        tags = tags_at([(i, detection(e, 48)) for i, e in found])
+        correlator(
+            g, name, "uint8", values, settings, expected_tags=tags, tags_exact=True
+        )
+
+    code66 = "".join("101" if i % 2 == 0 else "010" for i in range(22))
+    stream = [0] * 20 + [5 if i % 2 == 0 else 2 for i in range(22)] + [0] * 18
+    rows = [("limbs_exact", stream, 0, [(42, 0)])]
+    for label, item in (("middle", 5 ^ 2), ("whole", 5 ^ 7)):
+        damaged = list(stream)
+        damaged[20] = item
+        rows += [
+            (f"limbs_{label}_strict", damaged, 0, []),
+            (f"limbs_{label}_lenient", damaged, 1, [(42, 1)]),
+        ]
+    for name, values, bound, want in rows:
+        found = correlate(values, code66, bound, width=3)
+        assert found == want, name
+        settings = {
+            "access_code": code66,
+            "bits_per_item": u32(3),
+            "max_errors": u32(bound),
+        }
+        tags = tags_at([(i, detection(e, 66)) for i, e in found])
+        correlator(
+            g, name, "uint8", values, settings, expected_tags=tags, tags_exact=True
+        )
+    return g
+
+
+def access_code_warmup():
+    g = Graph(
+        "access-code-warmup.yaml",
+        """
+AccessCodeCorrelator before its register holds a whole code. A code of zeros of length 1, 4, 17, 64, 65 and 128 over
+zeros is first tagged at the item equal to its length and then at every item after it. Over soft items, +0.0 and -0.0
+slice to one as 1.0 does, so a code of eight ones is tagged from item 8 on over each, and a NaN slices to zero as -1.0
+does, so a code of eight zeros is tagged from item 8 on over each. Each sink expects the stream and the indices of the
+gr:trigger_name tags.
+""",
+    )
+    for length in (1, 4, 17, 64, 65, 128):
+        stream = [0] * (length + 8)
+        found = correlate(stream, "0" * length)
+        assert indices(found) == list(range(length, length + 8))
+        correlator(
+            g,
+            f"zeros_{length}",
+            "uint8",
+            stream,
+            {"access_code": "0" * length},
+            tag_key="gr:trigger_name",
+            tag_indices=indices(found),
+        )
+    for name, value, code in (
+        ("plus_zero", 0.0, "1" * 8),
+        ("minus_zero", -0.0, "1" * 8),
+        ("plus_one", 1.0, "1" * 8),
+        ("nan", math.nan, "0" * 8),
+        ("minus_one", -1.0, "0" * 8),
+    ):
+        stream = [value] * 16
+        found = correlate(stream, code)
+        assert indices(found) == list(range(8, 16)), name
+        correlator(
+            g,
+            name,
+            "float32",
+            stream,
+            {"access_code": code},
+            tag_key="gr:trigger_name",
+            tag_indices=indices(found),
+        )
+    return g
+
+
+def access_code_tags():
+    g = Graph(
+        "access-code-tags.yaml",
+        """
+AccessCodeCorrelator with the 64-bit interoperability code planted at item 30, which it tags at item 94. A private_key
+tag at items 11 and 110 reaches the sink at both items beside the detection. An upstream gr:trigger_name tag labeled
+preamble at item 11 reaches the sink unchanged, and the detection carries the trigger_label access_code. Each sink
+expects the stream and every tag.
+""",
+    )
+    stream = plant(INTEROP, 64, 30, 120)
+    word = code_string(INTEROP, 64)
+    assert correlate(stream, word) == [(94, 0)]
+    private = [(11, {"private_key": "carried"}), (110, {"private_key": "carried"})]
+    correlator(
+        g,
+        "private",
+        "uint8",
+        stream,
+        {"access_code": word},
+        tags=tags_at(private),
+        expected_tags=tags_at(private + [(94, detection(0, 64))]),
+        tags_exact=True,
+    )
+    upstream = [(11, {"gr:trigger_name": "preamble"})]
+    correlator(
+        g,
+        "upstream",
+        "uint8",
+        stream,
+        {"access_code": word, "trigger_label": LABEL},
+        tags=tags_at(upstream),
+        expected_tags=tags_at(upstream + [(94, detection(0, 64))]),
+        tags_exact=True,
+    )
+    return g
+
+
+FRAMING_PAYLOAD = 16
+
+
+def access_code_framing():
+    g = Graph(
+        "access-code-framing.yaml",
+        f"""
+AccessCodeCorrelator into StreamToDataSet, a fixed-length framing chain. The 64-bit interoperability code is planted
+at items 20, 120 and 220 of zero bits, each followed by {FRAMING_PAYLOAD} random bits. StreamToDataSet, filtering on
+the access_code label with no item before the trigger and {FRAMING_PAYLOAD} after it, cuts one record per code. The
+sink expects each record to hold the payload that followed its code.
+""",
+    )
+    word = code_string(INTEROP, 64)
+    stream = [0] * 330
+    payload = random_items(3 * FRAMING_PAYLOAD, 2)
+    starts = []
+    for k, at in enumerate((20, 120, 220)):
+        stream[at : at + 64] = items_of(word)
+        start = at + 64
+        stream[start : start + FRAMING_PAYLOAD] = payload[
+            k * FRAMING_PAYLOAD : (k + 1) * FRAMING_PAYLOAD
+        ]
+        starts.append(start)
+    assert indices(correlate(stream, word)) == starts
+    src = g.vector_source("framing_source", "uint8", stream)
+    blk = g.block(
+        DIG + "AccessCodeCorrelator<uint8>", "framing_correlator", {"access_code": word}
+    )
+    cutter = g.block(
+        BASIC + "StreamToDataSet<uint8>",
+        "framing_cutter",
+        {"filter": f"[{LABEL}]", "n_pre": u32(0), "n_post": u32(FRAMING_PAYLOAD)},
+    )
+    records = [{"signal_values": stream[s : s + FRAMING_PAYLOAD]} for s in starts]
+    g.chain(src, blk, cutter, g.records_sink("framing_sink", "uint8", records))
+    return g
+
+
+# the AO-40 geometries: a code of n items at stride s is one row of an s by n block interleaver
+AO40 = [("ao40_long", 65, 80), ("ao40_short", 52, 51)]
+
+
+def access_code_strided():
+    g = Graph(
+        "access-code-strided.yaml",
+        """
+AccessCodeCorrelator with a code spread over a stride. The AO-40 long form, 65 items at stride 80, and short form, 52
+at stride 51, planted at item 11 are each tagged at the item after the code's last. Codes of 4 items at stride 3 and 8
+at stride 5, planted at item 7, are tagged at the item after the code's last, and the block
+states one detection when it stops; under tag_at code_start the tag index is the same and the output lags the input
+by (n-1)*s + 1 items, zeros first. A 32-item code at stride 17 with max_errors 5 is tagged with 0, 1, 3 and 5 items
+wrong, at that distance, and not with 6. With max_errors at the code's length of 8, a stream is tagged at every item
+from (n-1)*s + 1 on, for strides 1, 3, 5 and 40. Each sink expects its stream and its tags.
+""",
+    )
+    for name, n, spacing in AO40:
+        rng = Rng()
+        word = "".join("1" if rng.next() & 1 else "0" for _ in range(n))
+        lag = (n - 1) * spacing + 1
+        at = 11
+        stream = [0] * (at + lag + 32)
+        for i, c in enumerate(word):
+            stream[at + i * spacing] = int(c)
+        found = correlate(stream, word, stride=spacing)
+        assert indices(found) == [at + lag], name
+        correlator(
+            g,
+            name,
+            "uint8",
+            stream,
+            {"access_code": word, "stride": u32(spacing)},
+            tag_key="gr:trigger_name",
+            tag_indices=indices(found),
+        )
+
+    for n, spacing, word in ((4, 3, 0b1011), (8, 5, 0b10110100)):
+        lag = (n - 1) * spacing + 1
+        at = 7
+        stream = plant_strided(word, n, spacing, at, at + lag + 40)
+        code = code_string(word, n)
+        found = correlate(stream, code, stride=spacing)
+        assert indices(found) == [at + lag]
+        settings = {"access_code": code, "stride": u32(spacing)}
+        name = f"strided_{n}_{spacing}"
+        correlator(
+            g,
+            name,
+            "uint8",
+            stream,
+            settings,
+            tag_key="gr:trigger_name",
+            tag_indices=indices(found),
+        )
+        delayed = [0] * lag + stream[:-lag]
+        assert delayed[at + lag] == stream[at]
+        correlator(
+            g,
+            f"delayed_{n}_{spacing}",
+            "uint8",
+            stream,
+            {**settings, "tag_at": "code_start"},
+            expected=delayed,
+            tag_key="gr:trigger_name",
+            tag_indices=indices(found),
+        )
+
+    items, spacing, word, tolerated = 32, 17, 0xB4D1CE73, 5
+    lag = (items - 1) * spacing + 1
+    code = code_string(word, items)
+    for wrong in (0, 1, 3, tolerated, tolerated + 1):
+        stream = plant_strided(word, items, spacing, 3, 3 + lag + 8)
+        for k in range(wrong):
+            stream[3 + (2 + 5 * k) * spacing] ^= 1
+        found = correlate(stream, code, tolerated, stride=spacing)
+        settings = {
+            "access_code": code,
+            "stride": u32(spacing),
+            "max_errors": u32(tolerated),
+        }
+        name = f"survives_{wrong}"
+        if wrong <= tolerated:
+            assert found == [(3 + lag, wrong)]
+            tags = tags_at([(3 + lag, detection(wrong, items))])
+            correlator(
+                g, name, "uint8", stream, settings, expected_tags=tags, tags_exact=True
+            )
+        else:
+            assert found == []
+            correlator(g, name, "uint8", stream, settings, tag_key="gr:trigger_name")
+
+    code = code_string(0xA5, 8)
+    for spacing in (1, 3, 5, 40):
+        lag = 7 * spacing + 1
+        rng = Rng()
+        stream = [rng.next() & 1 for _ in range(lag + 30)]
+        found = correlate(stream, code, 8, stride=spacing)
+        assert indices(found) == list(range(lag, lag + 30))
+        settings = {"access_code": code, "stride": u32(spacing), "max_errors": u32(8)}
+        correlator(
+            g,
+            f"warm_{spacing}",
+            "uint8",
+            stream,
+            settings,
+            tag_key="gr:trigger_name",
+            tag_indices=indices(found),
+        )
+    return g
+
+
+def access_code_settings():
+    g = Graph(
+        "access-code-settings.yaml",
+        """
+AccessCodeCorrelator over bytes and over soft items, each with the code 10110100 and no item to process. The run
+passes as written. A case that changes settings through SET either runs to the end with settings the block accepts
+or ends with the block's reason for refusing them.
+""",
+    )
+    for name, kind in (("byte", "uint8"), ("soft", "float32")):
+        src = g.vector_source(name + "_source", kind, [])
+        blk = g.block(
+            DIG + f"AccessCodeCorrelator<{kind}>",
+            name + "_correlator",
+            {"access_code": "10110100"},
+        )
+        g.chain(src, blk, g.expect_sink(name + "_sink", kind, []))
+    return g
+
+
 GRAPHS = [
     differential_round_trip,
     differential_wide,
@@ -1442,6 +1904,13 @@ GRAPHS = [
     scrambler_forced,
     scrambler_records,
     scrambler_settings,
+    access_code_detection,
+    access_code_errors,
+    access_code_warmup,
+    access_code_tags,
+    access_code_framing,
+    access_code_strided,
+    access_code_settings,
 ]
 
 

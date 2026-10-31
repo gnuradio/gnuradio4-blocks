@@ -1,0 +1,44 @@
+# AccessCodeCorrelator into StreamToDataSet, a fixed-length framing chain. The 64-bit interoperability code is planted
+# at items 20, 120 and 220 of zero bits, each followed by 16 random bits. StreamToDataSet, filtering on the
+# access_code label with no item before the trigger and 16 after it, cuts one record per code. The sink expects each
+# record to hold the payload that followed its code. generate_stream_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: framing_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1,
+        1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0,
+        0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0,
+        1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1,
+        1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0,
+        1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: framing_correlator
+      access_code: "1010110011011101101001001110001011110010100011000010000011111100"
+  - id: gr::blocks::basic::StreamToDataSet<uint8>
+    parameters:
+      name: framing_cutter
+      filter: "[access_code]"
+      n_pre: !!uint32 0
+      n_post: !!uint32 16
+  - id: gr::blocks::testing::ExpectDataSetSink<uint8>
+    parameters:
+      name: framing_sink
+      records:
+        0:
+          signal_values: [0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1]
+        1:
+          signal_values: [1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1]
+        2:
+          signal_values: [0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1]
+connections:
+  - [framing_source, out, framing_correlator, in]
+  - [framing_correlator, out, framing_cutter, in]
+  - [framing_cutter, out, framing_sink, in]

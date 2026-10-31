@@ -1,5 +1,5 @@
 add_ut_test(qa_AccessCodeCorrelator)
-target_link_libraries(qa_AccessCodeCorrelator PRIVATE gr-digital gr-basic gr-testing)
+target_link_libraries(qa_AccessCodeCorrelator PRIVATE gr-digital gr-testing)
 
 add_ut_test(qa_BitPacking)
 target_link_libraries(qa_BitPacking PRIVATE gr-digital gr-testing)
@@ -1164,3 +1164,172 @@ gr_digital_graph_test(
   graphs/scrambler-forced.yaml
   PASS_REGULAR_EXPRESSION
   "gr::blocks::digital::MultiplicativeDescrambler 'running_descrambler': the forcing term fired 5 time.s.")
+
+# The graph cases of AccessCodeCorrelator.
+gr_digital_graph_test(graph_digital_access_code_detection graphs/access-code-detection.yaml)
+gr_digital_graph_test(graph_digital_access_code_errors graphs/access-code-errors.yaml)
+gr_digital_graph_test(graph_digital_access_code_warmup graphs/access-code-warmup.yaml)
+gr_digital_graph_test(graph_digital_access_code_tags graphs/access-code-tags.yaml)
+gr_digital_graph_test(graph_digital_access_code_framing graphs/access-code-framing.yaml)
+gr_digital_graph_test(graph_digital_access_code_strided graphs/access-code-strided.yaml)
+gr_digital_graph_test(graph_digital_access_code_settings graphs/access-code-settings.yaml)
+gr_digital_graph_test(
+  graph_digital_accepted_access_code_one_limb
+  graphs/access-code-settings.yaml
+  SET
+  "byte_correlator.access_code=\"1111111111111111111111111111111111111111111111111111111111111111\""
+  "byte_correlator.max_errors=!!uint32 64")
+gr_digital_graph_test(
+  graph_digital_accepted_access_code_two_limbs
+  graphs/access-code-settings.yaml
+  SET
+  "byte_correlator.access_code=\"11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111\""
+  "byte_correlator.max_errors=!!uint32 128")
+gr_digital_graph_test(
+  graph_digital_accepted_access_code_stride_cap
+  graphs/access-code-settings.yaml
+  SET
+  "byte_correlator.stride=!!uint32 4096")
+gr_digital_graph_test(
+  graph_digital_accepted_access_code_strided_limbs
+  graphs/access-code-settings.yaml
+  SET
+  "byte_correlator.access_code=\"11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111\""
+  "byte_correlator.stride=!!uint32 80")
+gr_digital_graph_test(
+  graph_digital_accepted_access_code_soft_strided
+  graphs/access-code-settings.yaml
+  SET
+  "soft_correlator.stride=!!uint32 80"
+  "soft_correlator.tag_at=code_start")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_empty
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: access_code is 0 bits. it must be between 1 and 128, and there is no default sync word"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.access_code=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_long
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: access_code is 129 bits. it must be between 1 and 128"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.access_code=\"111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111\""
+)
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_bound
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: max_errors 5 exceeds the 4 symbols of the access code, which would match everything"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.access_code=\"1011\""
+  "byte_correlator.max_errors=!!uint32 5")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_space
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: access_code must be '0' and '1' characters only, got ' ' in \\\"10 11\\\""
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.access_code=\"10 11\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_digit
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: access_code must be '0' and '1' characters only, got '2' in \\\"1012\\\""
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.access_code=\"1012\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_width_zero
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: bits_per_item must be between 1 and 8, got 0"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.access_code=\"1010\""
+  "byte_correlator.bits_per_item=!!uint32 0")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_width_nine
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: bits_per_item must be between 1 and 8, got 9"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.access_code=\"111111111111111111\""
+  "byte_correlator.bits_per_item=!!uint32 9")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_whole_symbols
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: access_code is 5 bits, not a whole number of 2-bit symbols"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.access_code=\"10101\""
+  "byte_correlator.bits_per_item=!!uint32 2")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_symbol_bound
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: max_errors 3 exceeds the 2 symbols of the access code"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.access_code=\"1010\""
+  "byte_correlator.bits_per_item=!!uint32 2"
+  "byte_correlator.max_errors=!!uint32 3")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_soft_width
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<float32>[^\n]* throws: a soft stream carries one bit per item. bits_per_item above 1 needs byte items"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "soft_correlator.access_code=\"1010\""
+  "soft_correlator.bits_per_item=!!uint32 2")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_stride_zero
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: stride is the item spacing of a distributed sync word and must be in .1, 4096., got 0"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.stride=!!uint32 0")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_stride_above
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: stride is the item spacing of a distributed sync word and must be in .1, 4096., got 4097"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.stride=!!uint32 4097")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_tag_at
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: tag_at must be 'payload_start' or 'code_start', got 'frame_start'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.tag_at=frame_start")
+gr_add_failing_graph_test(
+  graph_digital_refused_access_code_strided_long
+  graphs/access-code-settings.yaml
+  "AccessCodeCorrelator<uint8>[^\n]* throws: access_code is 129 bits"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "byte_correlator.access_code=\"111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111\""
+  "byte_correlator.stride=!!uint32 80")
+gr_digital_graph_test(
+  graph_digital_counters_access_code_strided_4_3
+  graphs/access-code-strided.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::AccessCodeCorrelator 'strided_4_3_correlator': 1 detection.s.")
+gr_digital_graph_test(
+  graph_digital_counters_access_code_strided_8_5
+  graphs/access-code-strided.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::AccessCodeCorrelator 'strided_8_5_correlator': 1 detection.s.")

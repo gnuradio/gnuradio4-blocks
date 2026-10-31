@@ -1,0 +1,77 @@
+# AccessCodeCorrelator over byte bits, each stream passing through unchanged. The code 1011 in 1011110110 tags items 4
+# and 9, the item after each match, and in 10110110 tags items 4 and 7, the two matches sharing an item. The stream
+# with the 64-bit interoperability code at item 20 passes through. With the code 1111, the byte 0x02 is a one at one
+# bit per item, and four of them tag item 16. Each sink expects the stream and the indices of the gr:trigger_name
+# tags. generate_stream_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: worked_source
+      values: [1, 0, 1, 1, 1, 1, 0, 1, 1, 0]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: worked_correlator
+      access_code: "1011"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: worked_sink
+      expected: [1, 0, 1, 1, 1, 1, 0, 1, 1, 0]
+      tag_key: "gr:trigger_name"
+      tag_indices: !!uint32 [4, 9]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: overlapping_source
+      values: [1, 0, 1, 1, 0, 1, 1, 0]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: overlapping_correlator
+      access_code: "1011"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: overlapping_sink
+      expected: [1, 0, 1, 1, 0, 1, 1, 0]
+      tag_key: "gr:trigger_name"
+      tag_indices: !!uint32 [4, 7]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: sliced_source
+      values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: sliced_correlator
+      access_code: "1111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: sliced_sink
+      expected: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0]
+      tag_key: "gr:trigger_name"
+      tag_indices: !!uint32 [16]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: passthrough_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1,
+        1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0,
+        0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: passthrough_correlator
+      access_code: "1011"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: passthrough_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1,
+        1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0,
+        0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+connections:
+  - [worked_source, out, worked_correlator, in]
+  - [worked_correlator, out, worked_sink, in]
+  - [overlapping_source, out, overlapping_correlator, in]
+  - [overlapping_correlator, out, overlapping_sink, in]
+  - [sliced_source, out, sliced_correlator, in]
+  - [sliced_correlator, out, sliced_sink, in]
+  - [passthrough_source, out, passthrough_correlator, in]
+  - [passthrough_correlator, out, passthrough_sink, in]
