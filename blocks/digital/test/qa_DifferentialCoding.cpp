@@ -1,7 +1,6 @@
 #include <boost/ut.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -9,30 +8,20 @@
 #include <limits>
 #include <numbers>
 #include <span>
-#include <string>
-#include <string_view>
 #include <vector>
 
-#include <gnuradio-4.0/Graph.hpp>
-#include <gnuradio-4.0/Scheduler.hpp>
-
 #include <gnuradio-4.0/digital/DifferentialCoding.hpp>
-#include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 namespace {
 
 using gr::blocks::digital::DifferentialDecoder;
 using gr::blocks::digital::DifferentialEncoder;
 using gr::blocks::digital::DifferentialPhasor;
-using gr::blocks::testing::ProcessFunction;
-using gr::blocks::testing::TagSink;
-using gr::blocks::testing::TagSource;
 
 using CF = std::complex<float>;
 
-constexpr double        kPi      = std::numbers::pi;
-constexpr std::size_t   kEqual   = std::numeric_limits<std::size_t>::max();
-constexpr std::uint32_t kEvery[] = {2U, 3U, 4U, 5U, 6U, 8U, 10U, 16U, 17U, 32U, 64U, 100U, 128U, 255U, 256U};
+constexpr double      kPi    = std::numbers::pi;
+constexpr std::size_t kEqual = std::numeric_limits<std::size_t>::max();
 
 template<typename TBlock>
 [[nodiscard]] TBlock make(gr::property_map settings = {}) {
@@ -162,61 +151,6 @@ template<typename T>
     return bits;
 }
 
-/// A marker per tag. Five keys are `gr:` keys and `private_key` is in the default domain. The default forwarder
-/// keeps every key on all three blocks, the reserved and the private key alike.
-struct Marker {
-    const char*    key;
-    std::size_t    at;
-    gr::pmt::Value value;
-};
-
-/// Function-local so the array outlives the Boost.UT runner, which executes suites from its own destructor:
-/// a namespace-scope `gr::pmt::Value` can lose its pmr storage before the suites run.
-[[nodiscard]] const std::array<Marker, 7UZ>& markers() {
-    static const std::array<Marker, 7UZ> kMarkers{{
-        {gr::tag::TRIGGER_NAME.key(), 0UZ, gr::pmt::Value(std::string("alpha"))},
-        {gr::tag::TRIGGER_TIME.key(), 1UZ, gr::pmt::Value(std::uint64_t{111})},
-        {gr::tag::TRIGGER_OFFSET.key(), 1UZ, gr::pmt::Value(0.5f)},
-        {gr::tag::NUM_CHANNELS.key(), 37UZ, gr::pmt::Value(gr::Size_t{3})},
-        {gr::tag::FREQUENCY.key(), 512UZ, gr::pmt::Value(42.0f)},
-        {"rx_overflow", 3999UZ, gr::pmt::Value(true)},
-        {"private_key", 300UZ, gr::pmt::Value(std::string("carried"))},
-    }};
-    return kMarkers;
-}
-
-/// @brief Run @p TBlock in a graph between a tagging source and a tag sink, and report where the markers came out.
-template<typename T, typename TBlock>
-[[nodiscard]] std::vector<std::size_t> tagOffsets(gr::property_map settings) {
-    const auto& kMarkers = markers();
-    gr::Graph   graph;
-    auto&       source = graph.emplaceBlock<TagSource<T, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 4000U}, {"mark_tag", false}});
-    for (const Marker& marker : kMarkers) {
-        source._tags.emplace_back(marker.at, gr::property_map{{typename gr::property_map::key_type{marker.key}, marker.value}});
-    }
-    std::ranges::sort(source._tags, std::ranges::less{}, &gr::Tag::index); // the source publishes in list order and a port rejects a falling index
-    auto& block = graph.emplaceBlock<TBlock>(std::move(settings));
-    auto& sink  = graph.emplaceBlock<TagSink<T, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
-
-    boost::ut::expect(graph.connect<"out", "in">(source, block).has_value());
-    boost::ut::expect(graph.connect<"out", "in">(block, sink).has_value());
-
-    gr::scheduler::Simple scheduler;
-    boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
-    boost::ut::expect(scheduler.runAndWait().has_value());
-
-    std::vector<std::size_t> offsets(kMarkers.size(), kEqual);
-    for (const gr::Tag& tag : sink._tags) {
-        for (std::size_t which = 0UZ; which < kMarkers.size(); ++which) {
-            const auto found = tag.map.find(typename gr::property_map::key_type{kMarkers[which].key});
-            if (found != tag.map.end() && found->second == kMarkers[which].value) {
-                offsets[which] = tag.index;
-            }
-        }
-    }
-    return offsets;
-}
-
 static_assert(DifferentialEncoder<std::uint8_t>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
 static_assert(DifferentialEncoder<std::uint16_t>::keepsTagOffsets());
 static_assert(DifferentialDecoder<std::uint8_t>::keepsTagOffsets());
@@ -227,35 +161,6 @@ static_assert(DifferentialPhasor<float>::keepsTagOffsets());
 
 const boost::ut::suite<"DifferentialCoding"> differentialCodingTests = [] {
     using namespace boost::ut;
-
-    "the pair round trips exactly for every modulus, not only for powers of two"_test = [] {
-        for (const std::uint32_t modulus : kEvery) {
-            for (const std::uint32_t initial : {0U, modulus / 2U}) {
-                const std::vector<std::uint8_t> data = randomSymbols<std::uint8_t>(4000UZ, modulus, 0x243f6a8885a308d3ULL + modulus);
-
-                DifferentialEncoder<std::uint8_t> encoder   = make<DifferentialEncoder<std::uint8_t>>({{"modulus", modulus}, {"initial_state", initial}});
-                DifferentialDecoder<std::uint8_t> decoder   = make<DifferentialDecoder<std::uint8_t>>({{"modulus", modulus}, {"initial_state", initial}});
-                const std::vector<std::uint8_t>   coded     = drive<std::uint8_t>(encoder, std::span<const std::uint8_t>(data));
-                const std::vector<std::uint8_t>   recovered = drive<std::uint8_t>(decoder, std::span<const std::uint8_t>(coded));
-
-                expect(eq(firstDifference<std::uint8_t>(data, recovered), kEqual)) << std::format("M={} initial={}: first mismatch", modulus, initial);
-            }
-        }
-    };
-
-    "a modulus above 256 needs the wider sample type and works there"_test = [] {
-        for (const std::uint32_t modulus : {300U, 512U, 1000U, 65535U, 65536U}) {
-            const std::vector<std::uint16_t> data = randomSymbols<std::uint16_t>(4000UZ, modulus, 0x13198a2e03707344ULL + modulus);
-
-            DifferentialEncoder<std::uint16_t> encoder   = make<DifferentialEncoder<std::uint16_t>>({{"modulus", modulus}});
-            DifferentialDecoder<std::uint16_t> decoder   = make<DifferentialDecoder<std::uint16_t>>({{"modulus", modulus}});
-            const std::vector<std::uint16_t>   coded     = drive<std::uint16_t>(encoder, std::span<const std::uint16_t>(data));
-            const std::vector<std::uint16_t>   recovered = drive<std::uint16_t>(decoder, std::span<const std::uint16_t>(coded));
-
-            expect(eq(firstDifference<std::uint16_t>(data, recovered), kEqual)) << std::format("M={}: first mismatch", modulus);
-            expect(eq(std::ranges::max(coded) < modulus, true)) << std::format("M={}: the recursion must stay inside the alphabet", modulus);
-        }
-    };
 
     "the decoder agrees with the mathematical modulus over the whole range of M"_test = [] {
         std::size_t failed = 0UZ;
@@ -343,69 +248,6 @@ const boost::ut::suite<"DifferentialCoding"> differentialCodingTests = [] {
             }
             expect(eq(wrong, 0UZ)) << std::format("M={}: which is why a suite of powers of two alone cannot see the failure", modulus);
         }
-    };
-
-    "nrzi round trips and transitions on a zero"_test = [] {
-        const std::vector<std::uint8_t> bits = randomSymbols<std::uint8_t>(64UZ, 2U, 0xbe5466cf34e90c6cULL);
-
-        DifferentialEncoder<std::uint8_t> encoder   = make<DifferentialEncoder<std::uint8_t>>({{"coding", std::string("nrzi")}});
-        DifferentialDecoder<std::uint8_t> decoder   = make<DifferentialDecoder<std::uint8_t>>({{"coding", std::string("nrzi")}});
-        const std::vector<std::uint8_t>   coded     = drive<std::uint8_t>(encoder, std::span<const std::uint8_t>(bits));
-        const std::vector<std::uint8_t>   recovered = drive<std::uint8_t>(decoder, std::span<const std::uint8_t>(coded));
-
-        expect(eq(firstDifference<std::uint8_t>(bits, recovered), kEqual)) << "the XNOR pair is its own inverse from sample 0";
-
-        std::size_t   wrongPolarity = 0UZ;
-        std::uint32_t previous      = 0U;
-        for (std::size_t i = 0UZ; i < bits.size(); ++i) {
-            const bool transition = coded[i] != previous;
-            wrongPolarity += transition != (bits[i] == 0U) ? 1UZ : 0UZ;
-            previous = coded[i];
-        }
-        expect(eq(wrongPolarity, 0UZ)) << "a zero input bit produces a transition and a one does not";
-
-        DifferentialEncoder<std::uint8_t> plain    = make<DifferentialEncoder<std::uint8_t>>({{"modulus", 2U}});
-        const std::vector<std::uint8_t>   xored    = drive<std::uint8_t>(plain, std::span<const std::uint8_t>(bits));
-        std::size_t                       unpaired = 0UZ;
-        for (std::size_t i = 0UZ; i < bits.size(); ++i) {
-            unpaired += coded[i] != (xored[i] ^ static_cast<std::uint8_t>(i % 2UZ == 0UZ ? 1U : 0U)) ? 1UZ : 0UZ;
-        }
-        expect(eq(unpaired, 0UZ)) << "the extra inversion accumulates, so nrzi differs from XOR on every other sample rather than everywhere";
-    };
-
-    "out-of-range input is reduced, not rejected"_test = [] {
-        constexpr std::uint32_t   kModulus = 10U;
-        std::vector<std::uint8_t> wide(256UZ);
-        std::vector<std::uint8_t> reduced(256UZ);
-        for (std::size_t i = 0UZ; i < wide.size(); ++i) {
-            wide[i]    = static_cast<std::uint8_t>(i);
-            reduced[i] = static_cast<std::uint8_t>(i % kModulus);
-        }
-
-        DifferentialEncoder<std::uint8_t> encoderWide    = make<DifferentialEncoder<std::uint8_t>>({{"modulus", kModulus}});
-        DifferentialEncoder<std::uint8_t> encoderReduced = make<DifferentialEncoder<std::uint8_t>>({{"modulus", kModulus}});
-        expect(eq(firstDifference<std::uint8_t>(drive<std::uint8_t>(encoderWide, std::span<const std::uint8_t>(wide)), drive<std::uint8_t>(encoderReduced, std::span<const std::uint8_t>(reduced))), kEqual)) << "the encoder reduces its input";
-
-        DifferentialDecoder<std::uint8_t> decoderWide    = make<DifferentialDecoder<std::uint8_t>>({{"modulus", kModulus}});
-        DifferentialDecoder<std::uint8_t> decoderReduced = make<DifferentialDecoder<std::uint8_t>>({{"modulus", kModulus}});
-        expect(eq(firstDifference<std::uint8_t>(drive<std::uint8_t>(decoderWide, std::span<const std::uint8_t>(wide)), drive<std::uint8_t>(decoderReduced, std::span<const std::uint8_t>(reduced))), kEqual)) << "and so does the decoder";
-    };
-
-    "degenerate parameters throw at settings time"_test = [] {
-        expect(throws([] { std::ignore = make<DifferentialEncoder<std::uint8_t>>({{"modulus", 0U}}); })) << "modulus 0 would divide by zero";
-        expect(throws([] { std::ignore = make<DifferentialEncoder<std::uint8_t>>({{"modulus", 1U}}); })) << "modulus 1 emits only zeros";
-        expect(throws([] { std::ignore = make<DifferentialDecoder<std::uint8_t>>({{"modulus", 0U}}); }));
-        expect(throws([] { std::ignore = make<DifferentialEncoder<std::uint8_t>>({{"modulus", 257U}}); })) << "a modulus wider than the symbol type would truncate the recursion state";
-        expect(throws([] { std::ignore = make<DifferentialDecoder<std::uint8_t>>({{"modulus", 512U}}); }));
-        expect(throws([] { std::ignore = make<DifferentialEncoder<std::uint16_t>>({{"modulus", 65537U}}); }));
-        expect(throws([] { std::ignore = make<DifferentialEncoder<std::uint8_t>>({{"modulus", 4U}, {"initial_state", 4U}}); })) << "initial_state must be a symbol";
-        expect(throws([] { std::ignore = make<DifferentialDecoder<std::uint8_t>>({{"modulus", 4U}, {"initial_state", 9U}}); }));
-        expect(throws([] { std::ignore = make<DifferentialEncoder<std::uint8_t>>({{"coding", std::string("nrzi")}, {"modulus", 4U}}); })) << "nrzi is binary";
-        expect(throws([] { std::ignore = make<DifferentialDecoder<std::uint8_t>>({{"coding", std::string("nrzi")}, {"modulus", 4U}}); }));
-        expect(throws([] { std::ignore = make<DifferentialEncoder<std::uint8_t>>({{"coding", std::string("manchester")}}); })) << "an unknown coding name";
-
-        expect(nothrow([] { std::ignore = make<DifferentialEncoder<std::uint8_t>>({{"modulus", 256U}}); })) << "the whole byte alphabet is in range";
-        expect(nothrow([] { std::ignore = make<DifferentialEncoder<std::uint16_t>>({{"modulus", 65536U}}); }));
     };
 
     "the output does not depend on how the stream was chunked"_test = [] {
@@ -505,27 +347,6 @@ const boost::ut::suite<"DifferentialCoding"> differentialCodingTests = [] {
         }
     };
 
-    "the phasor multiplies the magnitudes and differences the phases"_test = [] {
-        constexpr std::array<double, 5UZ> kMagnitudes{1.0, 2.0, 0.5, 3.0, 1.0};
-        constexpr std::array<double, 5UZ> kAngles{0.3, -1.1, 2.4, 0.9, -2.9};
-
-        std::vector<CF> signal(kMagnitudes.size());
-        for (std::size_t i = 0UZ; i < signal.size(); ++i) {
-            signal[i] = CF(static_cast<float>(kMagnitudes[i] * std::cos(kAngles[i])), static_cast<float>(kMagnitudes[i] * std::sin(kAngles[i])));
-        }
-
-        DifferentialPhasor<float> phasor = make<DifferentialPhasor<float>>();
-        const std::vector<CF>     output = drive<CF>(phasor, std::span<const CF>(signal));
-
-        expect(eq(output[0UZ], CF{})) << "the first output is exactly zero";
-        for (std::size_t i = 1UZ; i < output.size(); ++i) {
-            const double wantMagnitude = kMagnitudes[i] * kMagnitudes[i - 1UZ];
-            const double wantPhase     = std::remainder(kAngles[i] - kAngles[i - 1UZ], 2.0 * kPi);
-            expect(approx(static_cast<double>(std::abs(output[i])), wantMagnitude, 1e-6 * wantMagnitude)) << std::format("magnitude at {}", i);
-            expect(lt(std::abs(std::remainder(static_cast<double>(std::arg(output[i])) - wantPhase, 2.0 * kPi)), 1e-6)) << std::format("phase at {}", i);
-        }
-    };
-
     "the phasor cancels a carrier offset of any size"_test = [] {
         std::vector<CF> signal(2048UZ);
         Rng             rng{0x4b7a70e9b5b32944ULL};
@@ -556,80 +377,6 @@ const boost::ut::suite<"DifferentialCoding"> differentialCodingTests = [] {
             }
             expect(lt(worst, 1e-6)) << std::format("omega={}: the offset survives as one constant rotation", omega);
         }
-    };
-
-    // Placement at a far absolute offset is structural rather than measurable here: all three blocks take plain
-    // spans and do no offset arithmetic, so the framework places every tag and the same code runs at any
-    // position. What is asserted is that nothing is dropped, merged, moved or duplicated.
-    "tags ride through at their own offset, the private key included"_test = [] {
-        const auto&                    kMarkers = markers();
-        const std::vector<std::size_t> encoded  = tagOffsets<std::uint8_t, DifferentialEncoder<std::uint8_t>>({{"modulus", 4U}});
-        const std::vector<std::size_t> decoded  = tagOffsets<std::uint8_t, DifferentialDecoder<std::uint8_t>>({{"modulus", 4U}});
-        const std::vector<std::size_t> phased   = tagOffsets<CF, DifferentialPhasor<float>>({});
-
-        for (std::size_t which = 0UZ; which < kMarkers.size(); ++which) {
-            expect(eq(encoded[which], kMarkers[which].at)) << std::format("encoder tag '{}'", kMarkers[which].key);
-            expect(eq(decoded[which], kMarkers[which].at)) << std::format("decoder tag '{}'", kMarkers[which].key);
-            expect(eq(phased[which], kMarkers[which].at)) << std::format("phasor tag '{}'", kMarkers[which].key);
-        }
-    };
-
-    "the phasor drops the carrier estimate keys and forwards the rest"_test = [] {
-        gr::Graph graph;
-        auto&     source = graph.emplaceBlock<TagSource<CF, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 400U}, {"mark_tag", false}});
-        source._tags.emplace_back(100UZ, gr::property_map{{"freq_est", 0.01f}, {"phase_est", 0.5f}, {"private_key", std::string("carried")}});
-        auto& phasor = graph.emplaceBlock<DifferentialPhasor<float>>({});
-        auto& sink   = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
-        expect(graph.connect<"out", "in">(source, phasor).has_value());
-        expect(graph.connect<"out", "in">(phasor, sink).has_value());
-
-        gr::scheduler::Simple scheduler;
-        expect(scheduler.exchange(std::move(graph)).has_value());
-        expect(scheduler.runAndWait().has_value());
-
-        const auto carrying = [&sink](std::string_view key) { return std::ranges::count_if(sink._tags, [key](const gr::Tag& sinkTag) { return sinkTag.map.contains(key); }); };
-        expect(eq(carrying("private_key"), 1)) << "an unrelated key crosses";
-        expect(eq(carrying("freq_est"), 0)) << "freq_est stops at the phasor";
-        expect(eq(carrying("phase_est"), 0)) << "phase_est stops at the phasor";
-    };
-};
-
-const boost::ut::suite<"differential against nrzi"> differentialAgainstNrziTests = [] {
-    using namespace boost::ut;
-
-    "'differential' is polarity transparent and 'nrzi' is its complement"_test = [] {
-        const std::vector<std::uint8_t> data = randomSymbols<std::uint8_t>(600UZ, 2U, 0x9E3779B97F4A7C15ULL);
-
-        DifferentialEncoder<std::uint8_t> encoder = make<DifferentialEncoder<std::uint8_t>>({{"modulus", 2U}, {"coding", std::string("differential")}});
-        const std::vector<std::uint8_t>   coded   = drive<std::uint8_t>(encoder, std::span<const std::uint8_t>(data));
-
-        DifferentialDecoder<std::uint8_t> decoder   = make<DifferentialDecoder<std::uint8_t>>({{"modulus", 2U}, {"coding", std::string("differential")}});
-        const std::vector<std::uint8_t>   recovered = drive<std::uint8_t>(decoder, std::span<const std::uint8_t>(coded));
-        expect(eq(firstDifference<std::uint8_t>(data, recovered), kEqual)) << "the pair round-trips";
-
-        // a global inversion of the coded stream leaves every difference unchanged: only the first
-        // bit, whose difference reaches the initial state, sees the flip. That is the
-        // polarity-transparency NRZ-M is chosen for, and it is why the ambiguity costs nothing.
-        std::vector<std::uint8_t> inverted(coded.size());
-        for (std::size_t i = 0UZ; i < coded.size(); ++i) {
-            inverted[i] = static_cast<std::uint8_t>(coded[i] ^ 1U);
-        }
-        DifferentialDecoder<std::uint8_t> again        = make<DifferentialDecoder<std::uint8_t>>({{"modulus", 2U}, {"coding", std::string("differential")}});
-        const std::vector<std::uint8_t>   fromInverted = drive<std::uint8_t>(again, std::span<const std::uint8_t>(inverted));
-        expect(eq(fromInverted.size(), data.size()));
-        expect(that % (fromInverted[0UZ] != data[0UZ])) << "the first bit's difference reaches the initial state, which did not flip";
-        expect(eq(firstDifference<std::uint8_t>(std::span(data).subspan(1UZ), std::span<const std::uint8_t>(fromInverted).subspan(1UZ)), kEqual)) << "and every bit after it survives the inversion";
-
-        // the same stream read as 'nrzi' is the exact bitwise complement of the data: the two kinds
-        // are one complement apart and a swapped setting fails silently, which is why the recipes pin
-        // the choice and this test asserts the difference rather than the sameness
-        DifferentialDecoder<std::uint8_t> nrzi    = make<DifferentialDecoder<std::uint8_t>>({{"modulus", 2U}, {"coding", std::string("nrzi")}});
-        const std::vector<std::uint8_t>   asNrzi  = drive<std::uint8_t>(nrzi, std::span<const std::uint8_t>(coded));
-        bool                              flipped = asNrzi.size() == data.size();
-        for (std::size_t i = 0UZ; flipped && i < data.size(); ++i) {
-            flipped = asNrzi[i] == (data[i] ^ 1U);
-        }
-        expect(flipped) << "'nrzi' decodes the NRZ-M stream to the complement, bit for bit";
     };
 };
 

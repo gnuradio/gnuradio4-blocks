@@ -1,0 +1,48 @@
+# DifferentialEncoder and DifferentialDecoder over bytes at modulus 4, and DifferentialEncoder over uint16 symbols at
+# modulus 300, each with no symbol to process. The run passes as written. A case that changes settings through SET
+# either runs to the end with settings the block accepts or ends with the block's reason for refusing them.
+# generate_stream_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: encoder_source
+      values: []
+  - id: gr::blocks::digital::DifferentialEncoder<uint8>
+    parameters:
+      name: encoder_block
+      modulus: !!uint32 4
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: encoder_sink
+      expected: []
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: decoder_source
+      values: []
+  - id: gr::blocks::digital::DifferentialDecoder<uint8>
+    parameters:
+      name: decoder_block
+      modulus: !!uint32 4
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: decoder_sink
+      expected: []
+  - id: gr::blocks::basic::VectorSource<uint16>
+    parameters:
+      name: wide_encoder_source
+      values: !!uint16 []
+  - id: gr::blocks::digital::DifferentialEncoder<uint16>
+    parameters:
+      name: wide_encoder_block
+      modulus: !!uint32 300
+  - id: gr::blocks::testing::ExpectSink<uint16>
+    parameters:
+      name: wide_encoder_sink
+      expected: !!uint16 []
+connections:
+  - [encoder_source, out, encoder_block, in]
+  - [encoder_block, out, encoder_sink, in]
+  - [decoder_source, out, decoder_block, in]
+  - [decoder_block, out, decoder_sink, in]
+  - [wide_encoder_source, out, wide_encoder_block, in]
+  - [wide_encoder_block, out, wide_encoder_sink, in]
