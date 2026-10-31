@@ -89,7 +89,6 @@ applies from the next call.
             }
             property_map map = tag.map;
             map.erase(std::pmr::string(gr::tag::END_OF_STREAM.key()));
-            map.erase(std::pmr::string(gr::tag::END_OF_STREAM.shortKey()));
             if (!map.empty()) {
                 gr::dataset::appendIndexedMap<std::uint64_t>(_tags, _data.size() + (tag.index - end), std::move(map));
             }
