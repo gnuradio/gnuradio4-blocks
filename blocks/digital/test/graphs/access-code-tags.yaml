@@ -1,0 +1,85 @@
+# AccessCodeCorrelator with the 64-bit interoperability code planted at item 30, which it tags at item 94. A
+# private_key tag at items 11 and 110 reaches the sink at both items beside the detection. An upstream gr:trigger_name
+# tag labeled preamble at item 11 reaches the sink unchanged, and the detection carries the trigger_label access_code.
+# Each sink expects the stream and every tag. generate_stream_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: private_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1,
+        0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0,
+        0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      tags:
+        "11":
+          private_key: carried
+        "110":
+          private_key: carried
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: private_correlator
+      access_code: "1010110011011101101001001110001011110010100011000010000011111100"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: private_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1,
+        0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0,
+        0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "11":
+          private_key: carried
+        "94":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 0
+            code_length: !!uint32 64
+        "110":
+          private_key: carried
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: upstream_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1,
+        0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0,
+        0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      tags:
+        "11":
+          "gr:trigger_name": preamble
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: upstream_correlator
+      access_code: "1010110011011101101001001110001011110010100011000010000011111100"
+      trigger_label: access_code
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: upstream_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1,
+        0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0,
+        0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "11":
+          "gr:trigger_name": preamble
+        "94":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 0
+            code_length: !!uint32 64
+      tags_exact: true
+connections:
+  - [private_source, out, private_correlator, in]
+  - [private_correlator, out, private_sink, in]
+  - [upstream_source, out, upstream_correlator, in]
+  - [upstream_correlator, out, upstream_sink, in]

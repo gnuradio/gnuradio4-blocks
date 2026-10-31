@@ -1,0 +1,506 @@
+# AccessCodeCorrelator distances. A 32-bit code with as many bit errors as max_errors, for each bound from 0 to 4, is
+# tagged at item 72 with the distance as sync_errors in gr:trigger_meta_info, and one error more is not tagged. P25's
+# 48-bit frame sync as 24 dibits at bits_per_item 2 is tagged at item 44; with one dibit wrong in both bits it is not
+# tagged exactly and is tagged at a bound of one symbol. A 66-bit code at bits_per_item 3, whose first symbol
+# straddles the two 64-bit limbs, is tagged at item 42; with that symbol wrong in its middle bit or in all three it is
+# not tagged exactly and is tagged at a bound of one, at a distance of one. Each sink expects the stream and its tags.
+# generate_stream_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: bound_0_errors_0_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: bound_0_errors_0_correlator
+      access_code: "00001011111100110100110110101101"
+      max_errors: !!uint32 0
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: bound_0_errors_0_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "72":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 0
+            code_length: !!uint32 32
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: bound_0_errors_1_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: bound_0_errors_1_correlator
+      access_code: "00001011111100110100110110101101"
+      max_errors: !!uint32 0
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: bound_0_errors_1_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      tag_key: "gr:trigger_name"
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: bound_1_errors_1_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: bound_1_errors_1_correlator
+      access_code: "00001011111100110100110110101101"
+      max_errors: !!uint32 1
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: bound_1_errors_1_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "72":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 1
+            code_length: !!uint32 32
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: bound_1_errors_2_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: bound_1_errors_2_correlator
+      access_code: "00001011111100110100110110101101"
+      max_errors: !!uint32 1
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: bound_1_errors_2_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      tag_key: "gr:trigger_name"
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: bound_2_errors_2_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: bound_2_errors_2_correlator
+      access_code: "00001011111100110100110110101101"
+      max_errors: !!uint32 2
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: bound_2_errors_2_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "72":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 2
+            code_length: !!uint32 32
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: bound_2_errors_3_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: bound_2_errors_3_correlator
+      access_code: "00001011111100110100110110101101"
+      max_errors: !!uint32 2
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: bound_2_errors_3_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      tag_key: "gr:trigger_name"
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: bound_3_errors_3_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: bound_3_errors_3_correlator
+      access_code: "00001011111100110100110110101101"
+      max_errors: !!uint32 3
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: bound_3_errors_3_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "72":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 3
+            code_length: !!uint32 32
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: bound_3_errors_4_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: bound_3_errors_4_correlator
+      access_code: "00001011111100110100110110101101"
+      max_errors: !!uint32 3
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: bound_3_errors_4_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      tag_key: "gr:trigger_name"
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: bound_4_errors_4_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: bound_4_errors_4_correlator
+      access_code: "00001011111100110100110110101101"
+      max_errors: !!uint32 4
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: bound_4_errors_4_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "72":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 4
+            code_length: !!uint32 32
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: bound_4_errors_5_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: bound_4_errors_5_correlator
+      access_code: "00001011111100110100110110101101"
+      max_errors: !!uint32 4
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: bound_4_errors_5_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      tag_key: "gr:trigger_name"
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: dibit_exact_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 1, 1, 3, 3, 1, 1, 3, 3, 3, 3,
+        1, 3, 1, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: dibit_exact_correlator
+      access_code: "010101010111010111110101111111110111011111111111"
+      bits_per_item: !!uint32 2
+      max_errors: !!uint32 0
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: dibit_exact_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 1, 1, 3, 3, 1, 1, 3, 3, 3, 3,
+        1, 3, 1, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "44":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 0
+            code_length: !!uint32 48
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: dibit_strict_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 1, 2, 3, 3, 1, 1, 3, 3, 3, 3,
+        1, 3, 1, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: dibit_strict_correlator
+      access_code: "010101010111010111110101111111110111011111111111"
+      bits_per_item: !!uint32 2
+      max_errors: !!uint32 0
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: dibit_strict_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 1, 2, 3, 3, 1, 1, 3, 3, 3, 3,
+        1, 3, 1, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags: {}
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: dibit_lenient_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 1, 2, 3, 3, 1, 1, 3, 3, 3, 3,
+        1, 3, 1, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: dibit_lenient_correlator
+      access_code: "010101010111010111110101111111110111011111111111"
+      bits_per_item: !!uint32 2
+      max_errors: !!uint32 1
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: dibit_lenient_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 1, 2, 3, 3, 1, 1, 3, 3, 3, 3,
+        1, 3, 1, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "44":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 1
+            code_length: !!uint32 48
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: limbs_exact_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2,
+        5, 2, 5, 2, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: limbs_exact_correlator
+      access_code: "101010101010101010101010101010101010101010101010101010101010101010"
+      bits_per_item: !!uint32 3
+      max_errors: !!uint32 0
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: limbs_exact_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2,
+        5, 2, 5, 2, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "42":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 0
+            code_length: !!uint32 66
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: limbs_middle_strict_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2,
+        5, 2, 5, 2, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: limbs_middle_strict_correlator
+      access_code: "101010101010101010101010101010101010101010101010101010101010101010"
+      bits_per_item: !!uint32 3
+      max_errors: !!uint32 0
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: limbs_middle_strict_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2,
+        5, 2, 5, 2, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags: {}
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: limbs_middle_lenient_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2,
+        5, 2, 5, 2, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: limbs_middle_lenient_correlator
+      access_code: "101010101010101010101010101010101010101010101010101010101010101010"
+      bits_per_item: !!uint32 3
+      max_errors: !!uint32 1
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: limbs_middle_lenient_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2,
+        5, 2, 5, 2, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "42":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 1
+            code_length: !!uint32 66
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: limbs_whole_strict_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2,
+        5, 2, 5, 2, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: limbs_whole_strict_correlator
+      access_code: "101010101010101010101010101010101010101010101010101010101010101010"
+      bits_per_item: !!uint32 3
+      max_errors: !!uint32 0
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: limbs_whole_strict_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2,
+        5, 2, 5, 2, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags: {}
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: limbs_whole_lenient_source
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2,
+        5, 2, 5, 2, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: limbs_whole_lenient_correlator
+      access_code: "101010101010101010101010101010101010101010101010101010101010101010"
+      bits_per_item: !!uint32 3
+      max_errors: !!uint32 1
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: limbs_whole_lenient_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2, 5, 2,
+        5, 2, 5, 2, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]
+      expected_tags:
+        "42":
+          "gr:trigger_name": access_code
+          "gr:trigger_offset": !!float32 0.0
+          "gr:trigger_meta_info":
+            sync_errors: !!uint32 1
+            code_length: !!uint32 66
+      tags_exact: true
+connections:
+  - [bound_0_errors_0_source, out, bound_0_errors_0_correlator, in]
+  - [bound_0_errors_0_correlator, out, bound_0_errors_0_sink, in]
+  - [bound_0_errors_1_source, out, bound_0_errors_1_correlator, in]
+  - [bound_0_errors_1_correlator, out, bound_0_errors_1_sink, in]
+  - [bound_1_errors_1_source, out, bound_1_errors_1_correlator, in]
+  - [bound_1_errors_1_correlator, out, bound_1_errors_1_sink, in]
+  - [bound_1_errors_2_source, out, bound_1_errors_2_correlator, in]
+  - [bound_1_errors_2_correlator, out, bound_1_errors_2_sink, in]
+  - [bound_2_errors_2_source, out, bound_2_errors_2_correlator, in]
+  - [bound_2_errors_2_correlator, out, bound_2_errors_2_sink, in]
+  - [bound_2_errors_3_source, out, bound_2_errors_3_correlator, in]
+  - [bound_2_errors_3_correlator, out, bound_2_errors_3_sink, in]
+  - [bound_3_errors_3_source, out, bound_3_errors_3_correlator, in]
+  - [bound_3_errors_3_correlator, out, bound_3_errors_3_sink, in]
+  - [bound_3_errors_4_source, out, bound_3_errors_4_correlator, in]
+  - [bound_3_errors_4_correlator, out, bound_3_errors_4_sink, in]
+  - [bound_4_errors_4_source, out, bound_4_errors_4_correlator, in]
+  - [bound_4_errors_4_correlator, out, bound_4_errors_4_sink, in]
+  - [bound_4_errors_5_source, out, bound_4_errors_5_correlator, in]
+  - [bound_4_errors_5_correlator, out, bound_4_errors_5_sink, in]
+  - [dibit_exact_source, out, dibit_exact_correlator, in]
+  - [dibit_exact_correlator, out, dibit_exact_sink, in]
+  - [dibit_strict_source, out, dibit_strict_correlator, in]
+  - [dibit_strict_correlator, out, dibit_strict_sink, in]
+  - [dibit_lenient_source, out, dibit_lenient_correlator, in]
+  - [dibit_lenient_correlator, out, dibit_lenient_sink, in]
+  - [limbs_exact_source, out, limbs_exact_correlator, in]
+  - [limbs_exact_correlator, out, limbs_exact_sink, in]
+  - [limbs_middle_strict_source, out, limbs_middle_strict_correlator, in]
+  - [limbs_middle_strict_correlator, out, limbs_middle_strict_sink, in]
+  - [limbs_middle_lenient_source, out, limbs_middle_lenient_correlator, in]
+  - [limbs_middle_lenient_correlator, out, limbs_middle_lenient_sink, in]
+  - [limbs_whole_strict_source, out, limbs_whole_strict_correlator, in]
+  - [limbs_whole_strict_correlator, out, limbs_whole_strict_sink, in]
+  - [limbs_whole_lenient_source, out, limbs_whole_lenient_correlator, in]
+  - [limbs_whole_lenient_correlator, out, limbs_whole_lenient_sink, in]

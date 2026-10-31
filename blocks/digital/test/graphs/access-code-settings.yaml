@@ -1,0 +1,33 @@
+# AccessCodeCorrelator over bytes and over soft items, each with the code 10110100 and no item to process. The run
+# passes as written. A case that changes settings through SET either runs to the end with settings the block accepts
+# or ends with the block's reason for refusing them. generate_stream_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: byte_source
+      values: []
+  - id: gr::blocks::digital::AccessCodeCorrelator<uint8>
+    parameters:
+      name: byte_correlator
+      access_code: "10110100"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: byte_sink
+      expected: []
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: soft_source
+      values: !!float32 []
+  - id: gr::blocks::digital::AccessCodeCorrelator<float32>
+    parameters:
+      name: soft_correlator
+      access_code: "10110100"
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: soft_sink
+      expected: !!float32 []
+connections:
+  - [byte_source, out, byte_correlator, in]
+  - [byte_correlator, out, byte_sink, in]
+  - [soft_source, out, soft_correlator, in]
+  - [soft_correlator, out, soft_sink, in]
