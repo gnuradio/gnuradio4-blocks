@@ -1,0 +1,30 @@
+# DifferentialPhasor over five samples of magnitudes 1, 2, 0.5, 3 and 1 at angles 0.3, -1.1, 2.4, 0.9 and -2.9. The
+# first output is exactly zero, and each later one is x[n] * conj(x[n-1]): the magnitudes multiplied and the angles
+# differenced. The sink accepts a deviation of one part in a million of each value. generate_stream_graphs.py writes
+# this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<complex<float32>>
+    parameters:
+      name: phasor_source
+      values: !!complex32
+        - (0.9553365, 0.29552022)
+        - (0.90719223, -1.7824147)
+        - (-0.36869687, 0.3377316)
+        - (1.8648299, 2.3499808)
+        - (-0.9709582, -0.23924933)
+  - id: gr::blocks::digital::DifferentialPhasor<float32>
+    parameters:
+      name: phasor
+  - id: gr::blocks::testing::ExpectSink<complex<float32>>
+    parameters:
+      name: phasor_sink
+      expected: !!complex32
+        - (0.0, 0.0)
+        - (0.3399343, -1.9708995)
+        - (-0.9364567, -0.35078323)
+        - (0.10610584, -1.4962425)
+        - (-2.372903, 1.8355738)
+      relative_tolerance: !!float32 1e-06
+connections:
+  - [phasor_source, out, phasor, in]
+  - [phasor, out, phasor_sink, in]
