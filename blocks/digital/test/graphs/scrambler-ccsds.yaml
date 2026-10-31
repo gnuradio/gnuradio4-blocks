@@ -1,0 +1,66 @@
+# AdditiveScrambler with CCSDS 131.0-B's taps 1,3,5,8 and seed 11111111. Eight zero bytes come out as the sequence, FF
+# 48 0E C0 9A 0D 70 BC, whose first 40 bits the standard publishes. The worked example scrambles to its published
+# bytes and back again, XOR being its own inverse. The reciprocal delay set 3,5,7,8 gives FF 1A AF 66 52 23 1E 10,
+# which is a different sequence. Each sink expects its bytes. generate_stream_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: zeros_source
+      values: [0, 0, 0, 0, 0, 0, 0, 0]
+  - id: gr::blocks::digital::AdditiveScrambler<uint8>
+    parameters:
+      name: zeros_scrambler
+      taps: "1,3,5,8"
+      seed: "11111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: zeros_sink
+      expected: [255, 72, 14, 192, 154, 13, 112, 188]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: plain_source
+      values: [71, 83, 79, 67, 33, 33, 33, 33]
+  - id: gr::blocks::digital::AdditiveScrambler<uint8>
+    parameters:
+      name: plain_scrambler
+      taps: "1,3,5,8"
+      seed: "11111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: plain_sink
+      expected: [184, 27, 65, 131, 187, 44, 81, 157]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: scrambled_source
+      values: [184, 27, 65, 131, 187, 44, 81, 157]
+  - id: gr::blocks::digital::AdditiveScrambler<uint8>
+    parameters:
+      name: scrambled_scrambler
+      taps: "1,3,5,8"
+      seed: "11111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: scrambled_sink
+      expected: [71, 83, 79, 67, 33, 33, 33, 33]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: reciprocal_source
+      values: [0, 0, 0, 0, 0, 0, 0, 0]
+  - id: gr::blocks::digital::AdditiveScrambler<uint8>
+    parameters:
+      name: reciprocal_scrambler
+      taps: "3,5,7,8"
+      seed: "11111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: reciprocal_sink
+      expected: [255, 26, 175, 102, 82, 35, 30, 16]
+connections:
+  - [zeros_source, out, zeros_scrambler, in]
+  - [zeros_scrambler, out, zeros_sink, in]
+  - [plain_source, out, plain_scrambler, in]
+  - [plain_scrambler, out, plain_sink, in]
+  - [scrambled_source, out, scrambled_scrambler, in]
+  - [scrambled_scrambler, out, scrambled_sink, in]
+  - [reciprocal_source, out, reciprocal_scrambler, in]
+  - [reciprocal_scrambler, out, reciprocal_sink, in]

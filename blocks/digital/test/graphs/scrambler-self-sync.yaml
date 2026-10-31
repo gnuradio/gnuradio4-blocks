@@ -1,0 +1,988 @@
+# MultiplicativeScrambler into MultiplicativeDescrambler under the five delay sets the standards name for a self-
+# synchronizing scrambler: V-series forms A and B, V.22, 802.11 DSSS and 802.3 64B/66B, each with a seed of ones. The
+# pair restores bytes and single bits from item 0. A descrambler with a wrong seed restores every bit from item degree
+# on, and one joined 61 bits into the stream with a zero seed restores every bit from degree bits after the join; a
+# SkipHead in front of each sink drops the bits before that. Under form A with reset_period 40 at both ends the pair
+# restores the stream, and a descrambler that never resets gets the first 23 bits of each later epoch wrong and the
+# rest right. Each sink expects its bits. generate_stream_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: itu_a_bytes_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: itu_a_bytes_scrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: itu_a_bytes_descrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: itu_a_bytes_sink
+      expected: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: itu_a_bits_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: itu_a_bits_scrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: itu_a_bits_descrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: itu_a_bits_sink
+      expected: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: itu_b_bytes_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: itu_b_bytes_scrambler
+      taps: "5,23"
+      seed: "11111111111111111111111"
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: itu_b_bytes_descrambler
+      taps: "5,23"
+      seed: "11111111111111111111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: itu_b_bytes_sink
+      expected: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: itu_b_bits_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: itu_b_bits_scrambler
+      taps: "5,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: itu_b_bits_descrambler
+      taps: "5,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: itu_b_bits_sink
+      expected: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: v22_bytes_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: v22_bytes_scrambler
+      taps: "14,17"
+      seed: "11111111111111111"
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: v22_bytes_descrambler
+      taps: "14,17"
+      seed: "11111111111111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: v22_bytes_sink
+      expected: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: v22_bits_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: v22_bits_scrambler
+      taps: "14,17"
+      seed: "11111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: v22_bits_descrambler
+      taps: "14,17"
+      seed: "11111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: v22_bits_sink
+      expected: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: dsss_bytes_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: dsss_bytes_scrambler
+      taps: "4,7"
+      seed: "1111111"
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: dsss_bytes_descrambler
+      taps: "4,7"
+      seed: "1111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: dsss_bytes_sink
+      expected: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: dsss_bits_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: dsss_bits_scrambler
+      taps: "4,7"
+      seed: "1111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: dsss_bits_descrambler
+      taps: "4,7"
+      seed: "1111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: dsss_bits_sink
+      expected: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: x64b66b_bytes_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: x64b66b_bytes_scrambler
+      taps: "39,58"
+      seed: "1111111111111111111111111111111111111111111111111111111111"
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: x64b66b_bytes_descrambler
+      taps: "39,58"
+      seed: "1111111111111111111111111111111111111111111111111111111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: x64b66b_bytes_sink
+      expected: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: x64b66b_bits_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: x64b66b_bits_scrambler
+      taps: "39,58"
+      seed: "1111111111111111111111111111111111111111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: x64b66b_bits_descrambler
+      taps: "39,58"
+      seed: "1111111111111111111111111111111111111111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: x64b66b_bits_sink
+      expected: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: itu_a_wrong_0_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: itu_a_wrong_0_scrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: itu_a_wrong_0_descrambler
+      taps: "18,23"
+      seed: "01001011110101110001000"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: itu_a_wrong_0_skip
+      n_skip: !!uint32 23
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: itu_a_wrong_0_sink
+      expected: [
+        1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0,
+        0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,
+        1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: itu_a_wrong_1_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: itu_a_wrong_1_scrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: itu_a_wrong_1_descrambler
+      taps: "18,23"
+      seed: "00101011010001100101010"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: itu_a_wrong_1_skip
+      n_skip: !!uint32 23
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: itu_a_wrong_1_sink
+      expected: [
+        1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0,
+        0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,
+        1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: itu_b_wrong_0_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: itu_b_wrong_0_scrambler
+      taps: "5,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: itu_b_wrong_0_descrambler
+      taps: "5,23"
+      seed: "00111111000000001110100"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: itu_b_wrong_0_skip
+      n_skip: !!uint32 23
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: itu_b_wrong_0_sink
+      expected: [
+        1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0,
+        0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,
+        1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: itu_b_wrong_1_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: itu_b_wrong_1_scrambler
+      taps: "5,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: itu_b_wrong_1_descrambler
+      taps: "5,23"
+      seed: "10101010011001100101110"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: itu_b_wrong_1_skip
+      n_skip: !!uint32 23
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: itu_b_wrong_1_sink
+      expected: [
+        1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0,
+        0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,
+        1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: v22_wrong_0_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: v22_wrong_0_scrambler
+      taps: "14,17"
+      seed: "11111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: v22_wrong_0_descrambler
+      taps: "14,17"
+      seed: "00101101000100001"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: v22_wrong_0_skip
+      n_skip: !!uint32 17
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: v22_wrong_0_sink
+      expected: [
+        0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0,
+        1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1,
+        0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0,
+        0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: v22_wrong_1_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: v22_wrong_1_scrambler
+      taps: "14,17"
+      seed: "11111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: v22_wrong_1_descrambler
+      taps: "14,17"
+      seed: "00011011101111101"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: v22_wrong_1_skip
+      n_skip: !!uint32 17
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: v22_wrong_1_sink
+      expected: [
+        0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0,
+        1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1,
+        0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0,
+        0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: dsss_wrong_0_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: dsss_wrong_0_scrambler
+      taps: "4,7"
+      seed: "1111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: dsss_wrong_0_descrambler
+      taps: "4,7"
+      seed: "1000100"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: dsss_wrong_0_skip
+      n_skip: !!uint32 7
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: dsss_wrong_0_sink
+      expected: [
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1,
+        1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1,
+        1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0,
+        1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: dsss_wrong_1_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: dsss_wrong_1_scrambler
+      taps: "4,7"
+      seed: "1111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: dsss_wrong_1_descrambler
+      taps: "4,7"
+      seed: "0010111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: dsss_wrong_1_skip
+      n_skip: !!uint32 7
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: dsss_wrong_1_sink
+      expected: [
+        0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1,
+        1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1,
+        1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0,
+        1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: x64b66b_wrong_0_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: x64b66b_wrong_0_scrambler
+      taps: "39,58"
+      seed: "1111111111111111111111111111111111111111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: x64b66b_wrong_0_descrambler
+      taps: "39,58"
+      seed: "1001101101011010100110011000110010111100011001110000110111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: x64b66b_wrong_0_skip
+      n_skip: !!uint32 58
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: x64b66b_wrong_0_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0,
+        1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: x64b66b_wrong_1_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: x64b66b_wrong_1_scrambler
+      taps: "39,58"
+      seed: "1111111111111111111111111111111111111111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: x64b66b_wrong_1_descrambler
+      taps: "39,58"
+      seed: "0000001010011001101110000000011000110110010001001111010010"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: x64b66b_wrong_1_skip
+      n_skip: !!uint32 58
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: x64b66b_wrong_1_sink
+      expected: [
+        0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0,
+        1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: itu_a_join_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: itu_a_join_scrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: itu_a_join_late
+      n_skip: !!uint32 61
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: itu_a_join_descrambler
+      taps: "18,23"
+      seed: "00000000000000000000000"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: itu_a_join_skip
+      n_skip: !!uint32 23
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: itu_a_join_sink
+      expected: [
+        0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1,
+        1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1,
+        0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1,
+        0, 0, 0, 0, 1, 0, 0, 1
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: itu_b_join_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: itu_b_join_scrambler
+      taps: "5,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: itu_b_join_late
+      n_skip: !!uint32 61
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: itu_b_join_descrambler
+      taps: "5,23"
+      seed: "00000000000000000000000"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: itu_b_join_skip
+      n_skip: !!uint32 23
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: itu_b_join_sink
+      expected: [
+        0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1,
+        1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1,
+        0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1,
+        0, 0, 0, 0, 1, 0, 0, 1
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: v22_join_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: v22_join_scrambler
+      taps: "14,17"
+      seed: "11111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: v22_join_late
+      n_skip: !!uint32 61
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: v22_join_descrambler
+      taps: "14,17"
+      seed: "00000000000000000"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: v22_join_skip
+      n_skip: !!uint32 17
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: v22_join_sink
+      expected: [
+        1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1,
+        0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0,
+        0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: dsss_join_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: dsss_join_scrambler
+      taps: "4,7"
+      seed: "1111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: dsss_join_late
+      n_skip: !!uint32 61
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: dsss_join_descrambler
+      taps: "4,7"
+      seed: "0000000"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: dsss_join_skip
+      n_skip: !!uint32 7
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: dsss_join_sink
+      expected: [
+        0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1,
+        1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0,
+        0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: x64b66b_join_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: x64b66b_join_scrambler
+      taps: "39,58"
+      seed: "1111111111111111111111111111111111111111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: x64b66b_join_late
+      n_skip: !!uint32 61
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: x64b66b_join_descrambler
+      taps: "39,58"
+      seed: "0000000000000000000000000000000000000000000000000000000000"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::basic::SkipHead<uint8>
+    parameters:
+      name: x64b66b_join_skip
+      n_skip: !!uint32 58
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: x64b66b_join_sink
+      expected: [
+        1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1,
+        1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 0, 1
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: framed_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: framed_scrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+      reset_period: !!uint32 40
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: framed_descrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+      reset_period: !!uint32 40
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: framed_sink
+      expected: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: unframed_source
+      values: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: unframed_scrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+      reset_period: !!uint32 40
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: unframed_descrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+      bits_per_item: !!uint32 1
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: unframed_sink
+      expected: [
+        0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1,
+        1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1,
+        1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1, 0,
+        1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0
+      ]
+connections:
+  - [itu_a_bytes_source, out, itu_a_bytes_scrambler, in]
+  - [itu_a_bytes_scrambler, out, itu_a_bytes_descrambler, in]
+  - [itu_a_bytes_descrambler, out, itu_a_bytes_sink, in]
+  - [itu_a_bits_source, out, itu_a_bits_scrambler, in]
+  - [itu_a_bits_scrambler, out, itu_a_bits_descrambler, in]
+  - [itu_a_bits_descrambler, out, itu_a_bits_sink, in]
+  - [itu_b_bytes_source, out, itu_b_bytes_scrambler, in]
+  - [itu_b_bytes_scrambler, out, itu_b_bytes_descrambler, in]
+  - [itu_b_bytes_descrambler, out, itu_b_bytes_sink, in]
+  - [itu_b_bits_source, out, itu_b_bits_scrambler, in]
+  - [itu_b_bits_scrambler, out, itu_b_bits_descrambler, in]
+  - [itu_b_bits_descrambler, out, itu_b_bits_sink, in]
+  - [v22_bytes_source, out, v22_bytes_scrambler, in]
+  - [v22_bytes_scrambler, out, v22_bytes_descrambler, in]
+  - [v22_bytes_descrambler, out, v22_bytes_sink, in]
+  - [v22_bits_source, out, v22_bits_scrambler, in]
+  - [v22_bits_scrambler, out, v22_bits_descrambler, in]
+  - [v22_bits_descrambler, out, v22_bits_sink, in]
+  - [dsss_bytes_source, out, dsss_bytes_scrambler, in]
+  - [dsss_bytes_scrambler, out, dsss_bytes_descrambler, in]
+  - [dsss_bytes_descrambler, out, dsss_bytes_sink, in]
+  - [dsss_bits_source, out, dsss_bits_scrambler, in]
+  - [dsss_bits_scrambler, out, dsss_bits_descrambler, in]
+  - [dsss_bits_descrambler, out, dsss_bits_sink, in]
+  - [x64b66b_bytes_source, out, x64b66b_bytes_scrambler, in]
+  - [x64b66b_bytes_scrambler, out, x64b66b_bytes_descrambler, in]
+  - [x64b66b_bytes_descrambler, out, x64b66b_bytes_sink, in]
+  - [x64b66b_bits_source, out, x64b66b_bits_scrambler, in]
+  - [x64b66b_bits_scrambler, out, x64b66b_bits_descrambler, in]
+  - [x64b66b_bits_descrambler, out, x64b66b_bits_sink, in]
+  - [itu_a_wrong_0_source, out, itu_a_wrong_0_scrambler, in]
+  - [itu_a_wrong_0_scrambler, out, itu_a_wrong_0_descrambler, in]
+  - [itu_a_wrong_0_descrambler, out, itu_a_wrong_0_skip, in]
+  - [itu_a_wrong_0_skip, out, itu_a_wrong_0_sink, in]
+  - [itu_a_wrong_1_source, out, itu_a_wrong_1_scrambler, in]
+  - [itu_a_wrong_1_scrambler, out, itu_a_wrong_1_descrambler, in]
+  - [itu_a_wrong_1_descrambler, out, itu_a_wrong_1_skip, in]
+  - [itu_a_wrong_1_skip, out, itu_a_wrong_1_sink, in]
+  - [itu_b_wrong_0_source, out, itu_b_wrong_0_scrambler, in]
+  - [itu_b_wrong_0_scrambler, out, itu_b_wrong_0_descrambler, in]
+  - [itu_b_wrong_0_descrambler, out, itu_b_wrong_0_skip, in]
+  - [itu_b_wrong_0_skip, out, itu_b_wrong_0_sink, in]
+  - [itu_b_wrong_1_source, out, itu_b_wrong_1_scrambler, in]
+  - [itu_b_wrong_1_scrambler, out, itu_b_wrong_1_descrambler, in]
+  - [itu_b_wrong_1_descrambler, out, itu_b_wrong_1_skip, in]
+  - [itu_b_wrong_1_skip, out, itu_b_wrong_1_sink, in]
+  - [v22_wrong_0_source, out, v22_wrong_0_scrambler, in]
+  - [v22_wrong_0_scrambler, out, v22_wrong_0_descrambler, in]
+  - [v22_wrong_0_descrambler, out, v22_wrong_0_skip, in]
+  - [v22_wrong_0_skip, out, v22_wrong_0_sink, in]
+  - [v22_wrong_1_source, out, v22_wrong_1_scrambler, in]
+  - [v22_wrong_1_scrambler, out, v22_wrong_1_descrambler, in]
+  - [v22_wrong_1_descrambler, out, v22_wrong_1_skip, in]
+  - [v22_wrong_1_skip, out, v22_wrong_1_sink, in]
+  - [dsss_wrong_0_source, out, dsss_wrong_0_scrambler, in]
+  - [dsss_wrong_0_scrambler, out, dsss_wrong_0_descrambler, in]
+  - [dsss_wrong_0_descrambler, out, dsss_wrong_0_skip, in]
+  - [dsss_wrong_0_skip, out, dsss_wrong_0_sink, in]
+  - [dsss_wrong_1_source, out, dsss_wrong_1_scrambler, in]
+  - [dsss_wrong_1_scrambler, out, dsss_wrong_1_descrambler, in]
+  - [dsss_wrong_1_descrambler, out, dsss_wrong_1_skip, in]
+  - [dsss_wrong_1_skip, out, dsss_wrong_1_sink, in]
+  - [x64b66b_wrong_0_source, out, x64b66b_wrong_0_scrambler, in]
+  - [x64b66b_wrong_0_scrambler, out, x64b66b_wrong_0_descrambler, in]
+  - [x64b66b_wrong_0_descrambler, out, x64b66b_wrong_0_skip, in]
+  - [x64b66b_wrong_0_skip, out, x64b66b_wrong_0_sink, in]
+  - [x64b66b_wrong_1_source, out, x64b66b_wrong_1_scrambler, in]
+  - [x64b66b_wrong_1_scrambler, out, x64b66b_wrong_1_descrambler, in]
+  - [x64b66b_wrong_1_descrambler, out, x64b66b_wrong_1_skip, in]
+  - [x64b66b_wrong_1_skip, out, x64b66b_wrong_1_sink, in]
+  - [itu_a_join_source, out, itu_a_join_scrambler, in]
+  - [itu_a_join_scrambler, out, itu_a_join_late, in]
+  - [itu_a_join_late, out, itu_a_join_descrambler, in]
+  - [itu_a_join_descrambler, out, itu_a_join_skip, in]
+  - [itu_a_join_skip, out, itu_a_join_sink, in]
+  - [itu_b_join_source, out, itu_b_join_scrambler, in]
+  - [itu_b_join_scrambler, out, itu_b_join_late, in]
+  - [itu_b_join_late, out, itu_b_join_descrambler, in]
+  - [itu_b_join_descrambler, out, itu_b_join_skip, in]
+  - [itu_b_join_skip, out, itu_b_join_sink, in]
+  - [v22_join_source, out, v22_join_scrambler, in]
+  - [v22_join_scrambler, out, v22_join_late, in]
+  - [v22_join_late, out, v22_join_descrambler, in]
+  - [v22_join_descrambler, out, v22_join_skip, in]
+  - [v22_join_skip, out, v22_join_sink, in]
+  - [dsss_join_source, out, dsss_join_scrambler, in]
+  - [dsss_join_scrambler, out, dsss_join_late, in]
+  - [dsss_join_late, out, dsss_join_descrambler, in]
+  - [dsss_join_descrambler, out, dsss_join_skip, in]
+  - [dsss_join_skip, out, dsss_join_sink, in]
+  - [x64b66b_join_source, out, x64b66b_join_scrambler, in]
+  - [x64b66b_join_scrambler, out, x64b66b_join_late, in]
+  - [x64b66b_join_late, out, x64b66b_join_descrambler, in]
+  - [x64b66b_join_descrambler, out, x64b66b_join_skip, in]
+  - [x64b66b_join_skip, out, x64b66b_join_sink, in]
+  - [framed_source, out, framed_scrambler, in]
+  - [framed_scrambler, out, framed_descrambler, in]
+  - [framed_descrambler, out, framed_sink, in]
+  - [unframed_source, out, unframed_scrambler, in]
+  - [unframed_scrambler, out, unframed_descrambler, in]
+  - [unframed_descrambler, out, unframed_sink, in]
