@@ -1,0 +1,94 @@
+# MultiplicativeDescrambler with taps 18,23 and a seed of 23 ones and its epoch boundaries. A gr:trigger_name tag at
+# item 37 opens a run seeded as a fresh block is. Under a period of 16, a tag at item 40 re-anchors the period and a
+# tag at item 32 is one reset. Each sink expects the epochs the boundaries name. generate_stream_graphs.py writes this
+# file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: reset_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+      tags:
+        "37":
+          "gr:trigger_name": frame
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: reset_descrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: reset_sink
+      expected: [
+        2, 182, 109, 181, 155, 238, 62, 184, 232, 251, 97, 32, 217, 123, 81, 37, 53, 133, 81, 196, 15, 114, 194, 56,
+        8, 27, 13, 203, 211, 56, 232, 111, 143, 73, 70, 25, 20, 160, 19, 66, 255, 7, 174, 245, 227, 26, 83, 191,
+        100, 80, 55, 249, 39, 245, 254, 164, 249, 248, 46, 0, 141, 237, 191, 92
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: off_grid_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54, 234, 225, 240, 193, 192, 159,
+        4, 220, 99, 189, 192, 185, 128, 87, 107, 209, 10, 164, 161, 8, 98, 156, 215, 248, 185, 254, 213, 208, 139,
+        142, 113, 147
+      ]
+      tags:
+        "40":
+          "gr:trigger_name": frame
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: off_grid_descrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+      reset_period: !!uint32 16
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: off_grid_sink
+      expected: [
+        2, 182, 109, 181, 155, 238, 62, 184, 232, 251, 97, 32, 217, 123, 81, 37, 231, 250, 49, 196, 15, 114, 194,
+        56, 8, 27, 13, 203, 211, 56, 232, 111, 234, 65, 2, 25, 20, 121, 221, 18, 187, 244, 122, 245, 227, 26, 83,
+        191, 100, 80, 55, 249, 39, 245, 254, 164, 189, 50, 76, 0, 141, 237, 191, 92, 73, 116, 39, 172, 127, 78, 247,
+        122, 99, 189, 230, 145, 139, 248, 120, 196, 126, 135, 65, 180, 3, 156, 223, 154, 185, 254, 196, 220, 195,
+        81, 242, 103
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: on_grid_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54, 234, 225, 240, 193, 192, 159,
+        4, 220, 99, 189, 192, 185, 128, 87, 107, 209, 10, 164, 161, 8, 98, 156, 215, 248, 185, 254, 213, 208, 139,
+        142, 113, 147
+      ]
+      tags:
+        "32":
+          "gr:trigger_name": frame
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: on_grid_descrambler
+      taps: "18,23"
+      seed: "11111111111111111111111"
+      reset_period: !!uint32 16
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: on_grid_sink
+      expected: [
+        2, 182, 109, 181, 155, 238, 62, 184, 232, 251, 97, 32, 217, 123, 81, 37, 231, 250, 49, 196, 15, 114, 194,
+        56, 8, 27, 13, 203, 211, 56, 232, 111, 234, 65, 2, 25, 20, 121, 221, 18, 255, 7, 174, 245, 227, 26, 83, 191,
+        152, 245, 251, 249, 39, 245, 254, 164, 249, 248, 46, 0, 141, 237, 191, 92, 234, 225, 245, 172, 127, 78, 247,
+        122, 156, 131, 96, 145, 139, 248, 120, 196, 10, 164, 157, 180, 3, 156, 223, 154, 181, 175, 10, 220, 195, 81,
+        242, 103
+      ]
+connections:
+  - [reset_source, out, reset_descrambler, in]
+  - [reset_descrambler, out, reset_sink, in]
+  - [off_grid_source, out, off_grid_descrambler, in]
+  - [off_grid_descrambler, out, off_grid_sink, in]
+  - [on_grid_source, out, on_grid_descrambler, in]
+  - [on_grid_descrambler, out, on_grid_sink, in]

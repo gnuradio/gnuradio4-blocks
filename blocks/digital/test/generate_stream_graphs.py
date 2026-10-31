@@ -594,6 +594,835 @@ either runs to the end with settings the block accepts or ends with the block's 
     return g
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# the scrambler oracle
+#
+# The rule the blocks document: the feedback at bit k of a stream b is the XOR over the tap delays j of b[k - j]. The
+# additive generator runs s[k] = f(s, k) from the seed's bits as s[0 .. degree-1] and emits in[k] XOR s[k]. The
+# multiplicative scrambler emits y[k] = in[k] XOR f(y, k) and the descrambler in[k] XOR f(in, k), the seed's bits being
+# the degree bits before the stream, oldest first. An item carries bits_per_item bits in its low positions, the first
+# in time at the top under MsbFirst and at the bottom under LsbFirst. The forced-transition group emits
+# y[k] = v XOR x[k] XOR f(y, k) XOR F[k], with F[k] one where the counter reads N - 1, then compares y[k-p] and y[k-q]
+# over the bits transmitted in the epoch and sets the counter to zero if they differ and to (c + 1) mod N otherwise.
+
+BASIC = "gr::blocks::basic::"
+
+PROFILES = {
+    "ccsds131": ("additive", "1,3,5,8", "11111111", 8, "MsbFirst"),
+    "ccsds131_17": ("additive", "3,17", "00011100011100011", 8, "MsbFirst"),
+    "pn9": ("additive", "4,9", "111111111", 8, "LsbFirst"),
+    "si4463": ("additive", "4,9", "111100001", 8, "LsbFirst"),
+    "g3ruh": ("multiplicative", "12,17", "", 8, "MsbFirst"),
+}
+
+
+def hex_bits(text):
+    digits = text.replace(" ", "")
+    bits = []
+    for i in range(0, len(digits), 2):
+        byte = int(digits[i : i + 2], 16)
+        bits += [(byte >> (7 - b)) & 1 for b in range(8)]
+    return bits
+
+
+class Scrambler:
+    """One scrambler block's settings, and its output over a stream with epoch boundaries."""
+
+    def __init__(
+        self,
+        mode,
+        taps="",
+        seed="",
+        bits=8,
+        order="MsbFirst",
+        profile="",
+        sequence="",
+        repeat=True,
+        invert=False,
+        force=0,
+        monitor="",
+        period=0,
+    ):
+        if profile:
+            family, taps, seed, bits, order = PROFILES[profile]
+            assert (family == "additive") == (mode == "additive"), profile
+        self.mode = mode
+        self.bits = bits
+        self.order = order
+        self.period = period
+        self.sequence = hex_bits(sequence) if sequence else None
+        self.repeat = repeat
+        self.taps = [int(t) for t in taps.split(",")] if taps else []
+        self.degree = max(self.taps) if self.taps else 0
+        self.seed = [int(c) for c in seed] if seed else [0] * self.degree
+        assert len(self.seed) == self.degree or self.sequence
+        self.invert = 1 if invert else 0
+        self.force = force
+        self.monitor = sorted(int(t) for t in monitor.split(",")) if monitor else []
+        self.unscrambled = 0
+        self.fired = 0
+        self.reset()
+
+    def reset(self):
+        self.k = 0
+        self.history = list(self.seed)
+        self.sent = []
+        self.counter = 0
+
+    def feedback(self, stream):
+        n = len(stream)
+        return sum(stream[n - j] for j in self.taps) & 1
+
+    def bit(self, x):
+        if self.mode == "additive":
+            if self.sequence is not None:
+                s = len(self.sequence)
+                mask = self.sequence[self.k % s] if self.repeat or self.k < s else 0
+            else:
+                if self.k >= len(self.history):
+                    self.history.append(self.feedback(self.history))
+                mask = self.history[self.k]
+            self.k += 1
+            return x ^ mask
+        f = self.feedback(self.history)
+        force = 1 if self.force and self.counter == self.force - 1 else 0
+        self.fired += force
+        result = self.invert ^ x ^ f ^ force
+        sent = result if self.mode == "scramble" else x
+        if self.force:
+            p, q = self.monitor
+            n = len(self.sent)
+            a = self.sent[n - p] if n >= p else 0
+            b = self.sent[n - q] if n >= q else 0
+            self.counter = 0 if a ^ b else (self.counter + 1) % self.force
+        self.sent.append(sent)
+        self.history.append(sent)
+        return result
+
+    def item(self, value):
+        w = self.bits
+        if self.sequence is not None and not self.repeat:
+            if self.k >= len(self.sequence):
+                self.unscrambled += 1
+        positions = range(w - 1, -1, -1) if self.order == "MsbFirst" else range(w)
+        out = 0
+        for pos in positions:
+            out |= self.bit((value >> pos) & 1) << pos
+        return out
+
+    def run(self, items, resets=()):
+        """The output over items, with the tags at the indices in resets marking an epoch boundary."""
+        resets = set(resets)
+        since = 0
+        out = []
+        for i, value in enumerate(items):
+            if i in resets or (self.period and since >= self.period):
+                self.reset()
+                since = 0
+            out.append(self.item(value))
+            since += 1
+        return out
+
+
+def scramble(items, resets=(), **settings):
+    return Scrambler("additive", **settings).run(items, resets)
+
+
+def mscramble(items, resets=(), **settings):
+    return Scrambler("scramble", **settings).run(items, resets)
+
+
+def descramble(items, resets=(), **settings):
+    return Scrambler("descramble", **settings).run(items, resets)
+
+
+def epochs(fn, items, lengths, **settings):
+    out, at = [], 0
+    for length in lengths:
+        out += fn(items[at : at + length], **settings)
+        at += length
+    assert at >= len(items)
+    return out
+
+
+CCSDS = {"taps": "1,3,5,8", "seed": "11111111"}
+ITU_A = {"taps": "18,23", "seed": "1" * 23}
+# the self-synchronizing delay sets the standards name, with the degree beside each
+SELF_SYNC = [
+    ("itu_a", "18,23", 23),
+    ("itu_b", "5,23", 23),
+    ("v22", "14,17", 17),
+    ("dsss", "4,7", 7),
+    ("x64b66b", "39,58", 58),
+]
+
+CCSDS_ZEROS = [0xFF, 0x48, 0x0E, 0xC0, 0x9A, 0x0D, 0x70, 0xBC]
+CCSDS_RECIPROCAL = [0xFF, 0x1A, 0xAF, 0x66, 0x52, 0x23, 0x1E, 0x10]
+PLAIN = [0x47, 0x53, 0x4F, 0x43, 0x21, 0x21, 0x21, 0x21]
+SCRAMBLED = [0xB8, 0x1B, 0x41, 0x83, 0xBB, 0x2C, 0x51, 0x9D]
+PN9 = [0xFF, 0xE1, 0x1D, 0x9A, 0xED, 0x85, 0x33, 0x24]
+PN9 += [0xEA, 0x7A, 0xD2, 0x39, 0x70, 0x97, 0x57, 0x0A]
+
+# the published openings the oracle reproduces before a file is written: CCSDS 131.0-B's first 40 bits, the reciprocal
+# reading the kernel records beside it, the CCSDS worked example, the CC11xx / SX12xx whitening sequence, and the
+# V-series form B and V.22 openings from an all-ones register
+assert scramble([0] * 8, **CCSDS) == CCSDS_ZEROS
+assert scramble([0] * 8, taps="3,5,7,8", seed="11111111") == CCSDS_RECIPROCAL
+assert scramble(PLAIN, **CCSDS) == SCRAMBLED
+assert scramble([0] * 16, profile="pn9") == PN9
+assert scramble([0] * 8, taps="5,23", seed="1" * 23) == [
+    0xFF,
+    0xFF,
+    0xFE,
+    0x0F,
+    0x83,
+    0xE3,
+    0x07,
+    0x3E,
+]
+assert scramble([0] * 8, taps="14,17", seed="1" * 17) == [
+    0xFF,
+    0xFF,
+    0x80,
+    0x01,
+    0xC0,
+    0x07,
+    0xE0,
+    0x1C,
+]
+
+
+def tag_frame(label="frame"):
+    return {"gr:trigger_name": label}
+
+
+def scrambler_ccsds():
+    g = Graph(
+        "scrambler-ccsds.yaml",
+        """
+AdditiveScrambler with CCSDS 131.0-B's taps 1,3,5,8 and seed 11111111. Eight zero bytes come out as the sequence, FF
+48 0E C0 9A 0D 70 BC, whose first 40 bits the standard publishes. The worked example scrambles to its published
+bytes and back again, XOR being its own inverse. The reciprocal delay set 3,5,7,8 gives FF 1A AF 66 52 23 1E 10,
+which is a different sequence. Each sink expects its bytes.
+""",
+    )
+    for name, values, settings, expected in (
+        ("zeros", [0] * 8, CCSDS, CCSDS_ZEROS),
+        ("plain", PLAIN, CCSDS, SCRAMBLED),
+        ("scrambled", SCRAMBLED, CCSDS, PLAIN),
+        ("reciprocal", [0] * 8, {**CCSDS, "taps": "3,5,7,8"}, CCSDS_RECIPROCAL),
+    ):
+        src = g.vector_source(name + "_source", "uint8", values)
+        blk = g.block(DIG + "AdditiveScrambler<uint8>", name + "_scrambler", settings)
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", expected))
+    return g
+
+
+def scrambler_additive_resets():
+    g = Graph(
+        "scrambler-additive-resets.yaml",
+        """
+AdditiveScrambler with the CCSDS settings and its epoch boundaries. A gr:trigger_name tag at item 37 makes that item the
+first of a new epoch. Under reset_tag_value frame a tag labeled frame resets and one labeled preamble does not, and
+neither does a tag whose value is a uint32; with reset_tag_value empty the uint32 tag resets, and with reset_tag_key
+empty a frame tag does not. A reset_period of 23 over zeros repeats the first 23 bytes of the sequence. Under a period
+of 16, a tag at item 40 moves the next boundary to item 56, and a tag at item 32, on a boundary, is one reset. Each sink
+expects the epochs the boundaries name.
+""",
+    )
+    data = random_items(64, 256)
+    resets = [37]
+    rows = [
+        ("reset", CCSDS, (37, tag_frame()), resets),
+    ]
+    narrowed = {**CCSDS, "reset_tag_value": "frame"}
+    rows += [
+        ("matching", narrowed, (40, tag_frame()), [40]),
+        ("other", narrowed, (40, tag_frame("preamble")), []),
+        ("typed", narrowed, (40, {"gr:trigger_name": u32(7)}), []),
+        ("typed_unnarrowed", CCSDS, (40, {"gr:trigger_name": u32(7)}), [40]),
+        ("deaf", {**CCSDS, "reset_tag_key": ""}, (40, tag_frame()), []),
+    ]
+    for name, settings, tag, boundaries in rows:
+        src = g.vector_source(name + "_source", "uint8", data, tags_at([tag]))
+        blk = g.block(DIG + "AdditiveScrambler<uint8>", name + "_scrambler", settings)
+        expected = epochs(scramble, data, cut(boundaries, len(data)), **CCSDS)
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", expected))
+    assert epochs(scramble, data, [37, 27], **CCSDS) != scramble(data, **CCSDS)
+
+    zeros = [0] * (23 * 3)
+    src = g.vector_source("periodic_source", "uint8", zeros)
+    blk = g.block(
+        DIG + "AdditiveScrambler<uint8>",
+        "periodic_scrambler",
+        {**CCSDS, "reset_period": u32(23)},
+    )
+    expected = scramble([0] * 23, **CCSDS) * 3
+    assert expected[0] != expected[22]
+    g.chain(src, blk, g.expect_sink("periodic_sink", "uint8", expected))
+
+    data = random_items(96, 256)
+    for name, at, lengths in (
+        ("off_grid", 40, [16, 16, 8, 16, 16, 16, 8]),
+        ("on_grid", 32, [16] * 6),
+    ):
+        src = g.vector_source(
+            name + "_source", "uint8", data, tags_at([(at, tag_frame())])
+        )
+        blk = g.block(
+            DIG + "AdditiveScrambler<uint8>",
+            name + "_scrambler",
+            {**CCSDS, "reset_period": u32(16)},
+        )
+        expected = epochs(scramble, data, lengths, **CCSDS)
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", expected))
+    assert epochs(scramble, data, [16, 16, 8, 16, 16, 16, 8], **CCSDS) != epochs(
+        scramble, data, [16, 16, 8, 8, 16, 16, 16], **CCSDS
+    )
+    return g
+
+
+def cut(boundaries, total):
+    """The epoch lengths that boundaries at the given indices cut a stream of total items into."""
+    points = [0] + sorted(boundaries) + [total]
+    return [b - a for a, b in zip(points, points[1:]) if b > a]
+
+
+# items in the streams that run past the additive kernel's 256-item sequence tile
+LONG_ITEMS = 600
+
+
+def scrambler_additive_stream():
+    g = Graph(
+        "scrambler-additive-stream.yaml",
+        """
+AdditiveScrambler with the CCSDS settings over a stream. At bits_per_item 3, an input of 0xFF and one of 0x07 give the
+same output, every item below 8. Two scramblers in series restore the input, and the private_key tag at item 11 and the
+gr:trigger_name tag at item 40 reach the sink at their own items. A gr:sample_rate tag at item 50 of 600 items leaves
+with the value it arrived with. Each sink expects its items and its tags.
+""",
+    )
+    expected = scramble([7] * 64, bits=3, **CCSDS)
+    assert all(v < 8 for v in expected)
+    for name, value in (("high", 0xFF), ("low", 0x07)):
+        src = g.vector_source(name + "_source", "uint8", [value] * 64)
+        blk = g.block(
+            DIG + "AdditiveScrambler<uint8>",
+            name + "_scrambler",
+            {**CCSDS, "bits_per_item": u32(3)},
+        )
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", expected))
+
+    stream = random_items(64, 256)
+    tags = tags_at([(11, {"private_key": "carried"}), (40, tag_frame())])
+    src = g.vector_source("series_source", "uint8", stream, tags)
+    first = g.block(DIG + "AdditiveScrambler<uint8>", "series_first", CCSDS)
+    second = g.block(DIG + "AdditiveScrambler<uint8>", "series_second", CCSDS)
+    sink = g.expect_sink(
+        "series_sink", "uint8", stream, expected_tags=tags, tags_exact=True
+    )
+    g.chain(src, first, second, sink)
+
+    long_stream = random_items(LONG_ITEMS, 256)
+    rate = tags_at([(50, {"gr:sample_rate": F32(12345.0)})])
+    src = g.vector_source("rate_source", "uint8", long_stream, rate)
+    blk = g.block(DIG + "AdditiveScrambler<uint8>", "rate_scrambler", CCSDS)
+    sink = g.expect_sink(
+        "rate_sink",
+        "uint8",
+        scramble(long_stream, **CCSDS),
+        expected_tags=rate,
+        tags_exact=True,
+    )
+    g.chain(src, blk, sink)
+    return g
+
+
+def scrambler_multiplicative():
+    g = Graph(
+        "scrambler-multiplicative.yaml",
+        """
+MultiplicativeScrambler with ITU-T V-series form A, taps 18,23 and a seed of 23 ones. Over 600 items its output differs
+from AdditiveScrambler's with the same settings, the feedback reading its own output. An empty seed gives what 23 zeros
+give, and an empty seed over zeros emits zeros. A gr:trigger_name tag at item 37 opens a run seeded as a fresh block is.
+Under a period of 16, a tag at item 40 re-anchors the period and a tag at item 32 is one reset. The private_key tag at
+item 11 and the gr:trigger_name tag at item 40 reach the sink at their own items. Each sink expects its items and its
+tags.
+""",
+    )
+    long_data = random_items(LONG_ITEMS, 256)
+    for name, block, expected in (
+        ("feedback", "MultiplicativeScrambler", mscramble(long_data, **ITU_A)),
+        ("additive", "AdditiveScrambler<uint8>", scramble(long_data, **ITU_A)),
+    ):
+        src = g.vector_source(name + "_source", "uint8", long_data)
+        blk = g.block(DIG + block, name + "_scrambler", ITU_A)
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", expected))
+    assert mscramble(long_data, **ITU_A) != scramble(long_data, **ITU_A)
+
+    data = random_items(64, 256)
+
+    expected = mscramble(data, taps="18,23", seed="0" * 23)
+    assert expected == mscramble(data, taps="18,23")
+    for name, settings in (
+        ("empty_seed", {"taps": "18,23"}),
+        ("zero_seed", {"taps": "18,23", "seed": "0" * 23}),
+    ):
+        src = g.vector_source(name + "_source", "uint8", data)
+        blk = g.block(DIG + "MultiplicativeScrambler", name + "_scrambler", settings)
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", expected))
+
+    src = g.vector_source("dead_source", "uint8", [0] * 64)
+    blk = g.block(DIG + "MultiplicativeScrambler", "dead_scrambler", {"taps": "18,23"})
+    g.chain(src, blk, g.expect_sink("dead_sink", "uint8", [0] * 64))
+
+    src = g.vector_source("reset_source", "uint8", data, tags_at([(37, tag_frame())]))
+    blk = g.block(DIG + "MultiplicativeScrambler", "reset_scrambler", ITU_A)
+    expected = epochs(mscramble, data, [37, 27], **ITU_A)
+    assert expected != mscramble(data, **ITU_A)
+    g.chain(src, blk, g.expect_sink("reset_sink", "uint8", expected))
+
+    data96 = random_items(96, 256)
+    for name, at, lengths in (
+        ("off_grid", 40, [16, 16, 8, 16, 16, 16, 8]),
+        ("on_grid", 32, [16] * 6),
+    ):
+        src = g.vector_source(
+            name + "_source", "uint8", data96, tags_at([(at, tag_frame())])
+        )
+        blk = g.block(
+            DIG + "MultiplicativeScrambler",
+            name + "_scrambler",
+            {**ITU_A, "reset_period": u32(16)},
+        )
+        expected = epochs(mscramble, data96, lengths, **ITU_A)
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", expected))
+
+    tags = tags_at([(11, {"private_key": "carried"}), (40, tag_frame())])
+    src = g.vector_source("tags_source", "uint8", data, tags)
+    blk = g.block(DIG + "MultiplicativeScrambler", "tags_scrambler", ITU_A)
+    expected = epochs(mscramble, data, [40, 24], **ITU_A)
+    sink = g.expect_sink(
+        "tags_sink", "uint8", expected, expected_tags=tags, tags_exact=True
+    )
+    g.chain(src, blk, sink)
+    return g
+
+
+def self_sync_settings(taps, degree, **more):
+    return {"taps": taps, "seed": "1" * degree, **more}
+
+
+def scrambler_self_sync():
+    g = Graph(
+        "scrambler-self-sync.yaml",
+        """
+MultiplicativeScrambler into MultiplicativeDescrambler under the five delay sets the standards name for a
+self-synchronizing scrambler: V-series forms A and B, V.22, 802.11 DSSS and 802.3 64B/66B, each with a seed of ones.
+The pair restores bytes and single bits from item 0. A descrambler with a wrong seed restores every bit from item
+degree on, and one joined 61 bits into the stream with a zero seed restores every bit from degree bits after the
+join; a SkipHead in front of each sink drops the bits before that. Under form A with reset_period 40 at both ends
+the pair restores the stream, and a descrambler that never resets gets the first 23 bits of each later epoch wrong
+and the rest right. Each sink expects its bits.
+""",
+    )
+    data = random_items(64, 256)
+    bits = random_items(128, 2)
+    for label, taps, degree in SELF_SYNC:
+        for kind, values, more in (
+            ("bytes", data, {}),
+            ("bits", bits, {"bits_per_item": u32(1)}),
+        ):
+            name = f"{label}_{kind}"
+            settings = self_sync_settings(taps, degree, **more)
+            src = g.vector_source(name + "_source", "uint8", values)
+            tx = g.block(DIG + "MultiplicativeScrambler", name + "_scrambler", settings)
+            rx = g.block(
+                DIG + "MultiplicativeDescrambler", name + "_descrambler", settings
+            )
+            g.chain(src, tx, rx, g.expect_sink(name + "_sink", "uint8", values))
+
+    rng = Rng(0x13198A2E03707344)
+    for label, taps, degree in SELF_SYNC:
+        sent = self_sync_settings(taps, degree, bits_per_item=u32(1))
+        channel = mscramble(bits, taps=taps, seed="1" * degree, bits=1)
+        for trial in range(2):
+            wrong = "".join("1" if rng.next() & 1 else "0" for _ in range(degree))
+            assert wrong != "1" * degree
+            seen = descramble(channel, taps=taps, seed=wrong, bits=1)
+            assert seen[degree:] == bits[degree:]
+            name = f"{label}_wrong_{trial}"
+            src = g.vector_source(name + "_source", "uint8", bits)
+            tx = g.block(DIG + "MultiplicativeScrambler", name + "_scrambler", sent)
+            rx = g.block(
+                DIG + "MultiplicativeDescrambler",
+                name + "_descrambler",
+                {**sent, "seed": wrong},
+            )
+            skip = g.block(
+                BASIC + "SkipHead<uint8>", name + "_skip", {"n_skip": u32(degree)}
+            )
+            g.chain(
+                src, tx, rx, skip, g.expect_sink(name + "_sink", "uint8", bits[degree:])
+            )
+
+    join = 61
+    joined = random_items(200, 2)
+    for label, taps, degree in SELF_SYNC:
+        sent = self_sync_settings(taps, degree, bits_per_item=u32(1))
+        name = f"{label}_join"
+        src = g.vector_source(name + "_source", "uint8", joined)
+        tx = g.block(DIG + "MultiplicativeScrambler", name + "_scrambler", sent)
+        late = g.block(BASIC + "SkipHead<uint8>", name + "_late", {"n_skip": u32(join)})
+        rx = g.block(
+            DIG + "MultiplicativeDescrambler",
+            name + "_descrambler",
+            {**sent, "seed": "0" * degree},
+        )
+        skip = g.block(
+            BASIC + "SkipHead<uint8>", name + "_skip", {"n_skip": u32(degree)}
+        )
+        sink = g.expect_sink(name + "_sink", "uint8", joined[join + degree :])
+        g.chain(src, tx, late, rx, skip, sink)
+
+    period, degree = 40, 23
+    framed_bits = random_items(period * 4, 2)
+    per_bit = {**ITU_A, "bits_per_item": u32(1)}
+    framed = {**per_bit, "reset_period": u32(period)}
+    channel = mscramble(framed_bits, period=period, bits=1, **ITU_A)
+    damaged = descramble(channel, bits=1, **ITU_A)
+    wrong = [i for i in range(len(framed_bits)) if damaged[i] != framed_bits[i]]
+    assert wrong and all(i % period < degree for i in wrong)
+    for name, rx_settings, expected in (
+        ("framed", framed, framed_bits),
+        ("unframed", per_bit, damaged),
+    ):
+        src = g.vector_source(name + "_source", "uint8", framed_bits)
+        tx = g.block(DIG + "MultiplicativeScrambler", name + "_scrambler", framed)
+        rx = g.block(
+            DIG + "MultiplicativeDescrambler", name + "_descrambler", rx_settings
+        )
+        g.chain(src, tx, rx, g.expect_sink(name + "_sink", "uint8", expected))
+    return g
+
+
+def scrambler_descrambler_resets():
+    g = Graph(
+        "scrambler-descrambler-resets.yaml",
+        """
+MultiplicativeDescrambler with taps 18,23 and a seed of 23 ones and its epoch boundaries. A gr:trigger_name tag at item
+37 opens a run seeded as a fresh block is. Under a period of 16, a tag at item 40 re-anchors the period and a tag at
+item 32 is one reset. Each sink expects the epochs the boundaries name.
+""",
+    )
+    data = random_items(64, 256)
+    src = g.vector_source("reset_source", "uint8", data, tags_at([(37, tag_frame())]))
+    blk = g.block(DIG + "MultiplicativeDescrambler", "reset_descrambler", ITU_A)
+    expected = epochs(descramble, data, [37, 27], **ITU_A)
+    assert expected != descramble(data, **ITU_A)
+    g.chain(src, blk, g.expect_sink("reset_sink", "uint8", expected))
+
+    data96 = random_items(96, 256)
+    for name, at, lengths in (
+        ("off_grid", 40, [16, 16, 8, 16, 16, 16, 8]),
+        ("on_grid", 32, [16] * 6),
+    ):
+        src = g.vector_source(
+            name + "_source", "uint8", data96, tags_at([(at, tag_frame())])
+        )
+        blk = g.block(
+            DIG + "MultiplicativeDescrambler",
+            name + "_descrambler",
+            {**ITU_A, "reset_period": u32(16)},
+        )
+        expected = epochs(descramble, data96, lengths, **ITU_A)
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", expected))
+    return g
+
+
+def scrambler_family():
+    g = Graph(
+        "scrambler-family.yaml",
+        """
+The three scramblers in chains. MultiplicativeScrambler into MultiplicativeDescrambler under form A restores the stream,
+and the private_key tag at item 11 and the gr:trigger_name tag at item 40 reach the sink at their own items.
+AdditiveScrambler under the CCSDS settings, then the multiplicative pair, carry a gr:sample_rate tag at item 50 with the
+value it arrived with. Each sink expects its items and its tags.
+""",
+    )
+    stream = random_items(64, 256)
+    tags = tags_at([(11, {"private_key": "carried"}), (40, tag_frame())])
+    src = g.vector_source("pair_source", "uint8", stream, tags)
+    tx = g.block(DIG + "MultiplicativeScrambler", "pair_scrambler", ITU_A)
+    rx = g.block(DIG + "MultiplicativeDescrambler", "pair_descrambler", ITU_A)
+    sink = g.expect_sink(
+        "pair_sink", "uint8", stream, expected_tags=tags, tags_exact=True
+    )
+    g.chain(src, tx, rx, sink)
+
+    rate = tags_at([(50, {"gr:sample_rate": F32(12345.0)})])
+    src = g.vector_source("rate_source", "uint8", stream, rate)
+    additive = g.block(DIG + "AdditiveScrambler<uint8>", "rate_additive", CCSDS)
+    tx = g.block(DIG + "MultiplicativeScrambler", "rate_scrambler", ITU_A)
+    rx = g.block(DIG + "MultiplicativeDescrambler", "rate_descrambler", ITU_A)
+    sink = g.expect_sink(
+        "rate_sink",
+        "uint8",
+        scramble(stream, **CCSDS),
+        expected_tags=rate,
+        tags_exact=True,
+    )
+    g.chain(src, additive, tx, rx, sink)
+    return g
+
+
+def scrambler_profiles():
+    g = Graph(
+        "scrambler-profiles.yaml",
+        """
+The named profiles. ccsds131 over zeros gives the CCSDS sequence, as the taps and seed spelled out do. pn9 over zeros
+gives the CC11xx and SX12xx whitening sequence FF E1 1D 9A ED 85 33 24, read least significant bit first, and does so
+with bits_per_item 8 and bit_order MsbFirst staged beside it. The g3ruh pair restores its input, and the g3ruh
+scrambler gives what taps 12,17 and a seed of 17 zeros give. Each sink expects its bytes.
+""",
+    )
+    rows = [
+        (
+            "ccsds",
+            "AdditiveScrambler<uint8>",
+            {"profile": "ccsds131"},
+            [0] * 8,
+            CCSDS_ZEROS,
+        ),
+        ("spelled", "AdditiveScrambler<uint8>", CCSDS, [0] * 8, CCSDS_ZEROS),
+        ("pn9", "AdditiveScrambler<uint8>", {"profile": "pn9"}, [0] * 16, PN9),
+        (
+            "pn9_staged",
+            "AdditiveScrambler<uint8>",
+            {"profile": "pn9", "bits_per_item": u32(8), "bit_order": "MsbFirst"},
+            [0] * 16,
+            PN9,
+        ),
+    ]
+    data = random_items(64, 256)
+    g3ruh = mscramble(data, profile="g3ruh")
+    assert g3ruh == mscramble(data, taps="12,17", seed="0" * 17)
+    rows += [
+        ("g3ruh", "MultiplicativeScrambler", {"profile": "g3ruh"}, data, g3ruh),
+        (
+            "g3ruh_spelled",
+            "MultiplicativeScrambler",
+            {"taps": "12,17", "seed": "0" * 17},
+            data,
+            g3ruh,
+        ),
+    ]
+    for name, block, settings, values, expected in rows:
+        src = g.vector_source(name + "_source", "uint8", values)
+        blk = g.block(DIG + block, name + "_scrambler", settings)
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", expected))
+
+    src = g.vector_source("pair_source", "uint8", data)
+    tx = g.block(
+        DIG + "MultiplicativeScrambler", "pair_scrambler", {"profile": "g3ruh"}
+    )
+    rx = g.block(
+        DIG + "MultiplicativeDescrambler", "pair_descrambler", {"profile": "g3ruh"}
+    )
+    g.chain(src, tx, rx, g.expect_sink("pair_sink", "uint8", data))
+    return g
+
+
+MASK = "FF E1 1D 9A"
+
+
+def scrambler_sequence():
+    g = Graph(
+        "scrambler-sequence.yaml",
+        """
+AdditiveScrambler with the mask FF E1 1D 9A given as a sequence. Repeating, it XORs the mask into 41 bytes, tiling it,
+and the spelling ffe11d9a gives the same bytes. Not repeating, it XORs the mask into the first four of eleven bytes,
+leaves the other seven as they came and counts them, which the block states when it stops. Each sink expects its
+bytes.
+""",
+    )
+    mask = [0xFF, 0xE1, 0x1D, 0x9A]
+    data = random_items(41, 256)
+    expected = [v ^ mask[i % 4] for i, v in enumerate(data)]
+    assert scramble(data, sequence=MASK) == expected
+    for name, spelling in (("tiled", MASK), ("spelled", "ffe11d9a")):
+        src = g.vector_source(name + "_source", "uint8", data)
+        blk = g.block(
+            DIG + "AdditiveScrambler<uint8>",
+            name + "_scrambler",
+            {"sequence": spelling},
+        )
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", expected))
+
+    data = random_items(11, 256)
+    expected = [v ^ mask[i] if i < 4 else v for i, v in enumerate(data)]
+    once = Scrambler("additive", sequence=MASK, repeat=False)
+    assert once.run(data) == expected and once.unscrambled == 7
+    src = g.vector_source("once_source", "uint8", data)
+    blk = g.block(
+        DIG + "AdditiveScrambler<uint8>",
+        "once_scrambler",
+        {"sequence": MASK, "sequence_repeat": False},
+    )
+    g.chain(src, blk, g.expect_sink("once_sink", "uint8", expected))
+    return g
+
+
+def forced(after):
+    return {
+        "taps": "3,20",
+        "seed": "1" * 20,
+        "invert_output": True,
+        "force_transition_after": u32(after),
+        "monitor_delays": "1,2",
+    }
+
+
+def forced_model(after):
+    return dict(taps="3,20", seed="1" * 20, invert=True, force=after, monitor="1,2")
+
+
+STRAIGHT = {"taps": "3,20", "seed": "1" * 20}
+
+# the firings of the forced-transition pair at N = 8 over FORCED_ITEMS bytes, which the two blocks state when they stop
+FORCED_ITEMS = 128
+
+
+def forced_firings():
+    data = random_items(FORCED_ITEMS, 256)
+    tx = Scrambler("scramble", **forced_model(8))
+    channel = tx.run(data)
+    rx = Scrambler("descramble", **forced_model(8))
+    assert rx.run(channel) == data
+    assert tx.fired == rx.fired and tx.fired > 0
+    return tx.fired
+
+
+def scrambler_forced():
+    g = Graph(
+        "scrambler-forced.yaml",
+        f"""
+The forced-transition group of the multiplicative pair: taps 3,20, a seed of 20 ones, the output inverted, and a
+complement forced at the Nth item over which the transmitted bits one and two items back stay equal. At N = 8 the
+pair restores {FORCED_ITEMS} bytes and the channel carries the scrambled bytes, and the two blocks state the same
+count of firings when they stop. With force_transition_after 0 the scrambler gives what the plain recursion gives. At
+N = 32 the pair restores its input, the scrambler's output differs from the plain one's, and a descrambler without
+the inversion and the rule recovers something else. Each sink expects its bytes.
+""",
+    )
+    data = random_items(FORCED_ITEMS, 256)
+    channel = mscramble(data, **forced_model(8))
+    assert channel != data
+    assert forced_firings() == 5
+    src = g.vector_source("running_source", "uint8", data)
+    tx = g.block(DIG + "MultiplicativeScrambler", "running_scrambler", forced(8))
+    rx = g.block(DIG + "MultiplicativeDescrambler", "running_descrambler", forced(8))
+    g.chain(src, tx, rx, g.expect_sink("running_sink", "uint8", data))
+    g.connect(tx, g.expect_sink("running_channel", "uint8", channel))
+
+    data = random_items(64, 256)
+    plain = mscramble(data, **{"taps": "3,20", "seed": "1" * 20})
+    for name, settings in (
+        ("off", {**STRAIGHT, "force_transition_after": u32(0)}),
+        ("plain", STRAIGHT),
+    ):
+        src = g.vector_source(name + "_source", "uint8", data)
+        blk = g.block(DIG + "MultiplicativeScrambler", name + "_scrambler", settings)
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", plain))
+
+    inverted = mscramble(data, **forced_model(32))
+    assert inverted != plain
+    other = descramble(inverted, taps="3,20", seed="1" * 20)
+    assert other != data
+    src = g.vector_source("inverted_source", "uint8", data)
+    tx = g.block(DIG + "MultiplicativeScrambler", "inverted_scrambler", forced(32))
+    rx = g.block(DIG + "MultiplicativeDescrambler", "inverted_descrambler", forced(32))
+    straight = g.block(
+        DIG + "MultiplicativeDescrambler", "straight_descrambler", STRAIGHT
+    )
+    g.chain(src, tx, rx, g.expect_sink("inverted_sink", "uint8", data))
+    g.connect(tx, g.expect_sink("inverted_channel", "uint8", inverted))
+    g.chain(tx, straight, g.expect_sink("straight_sink", "uint8", other))
+    return g
+
+
+def scrambler_records():
+    g = Graph(
+        "scrambler-records.yaml",
+        """
+AdditiveScrambler on DataSet records, where one record is one epoch. Two records of the same 64 bits, at
+bits_per_item 1 under the CCSDS settings, each come out as the stream scrambler's fresh epoch, with the origin meta
+key and the signal name crossing. ccsds131 over a record of five zeros gives FF 48 0E C0 9A. reset_period and
+reset_tag_key change nothing on a record. Each sink expects its records.
+""",
+    )
+    bits = random_items(64, 2)
+    stream = scramble(bits, bits=1, **CCSDS)
+
+    def rec(values):
+        return {
+            "signal_values": values,
+            "signal_names": ["digital"],
+            "meta_information": {"origin": "qa"},
+        }
+
+    per_bit = {**CCSDS, "bits_per_item": u32(1)}
+    rows = [
+        ("carrier", per_bit, [rec(bits), rec(bits)], [rec(stream), rec(stream)]),
+        (
+            "opening",
+            {"profile": "ccsds131"},
+            [rec([0] * 5)],
+            [rec(CCSDS_ZEROS[:5])],
+        ),
+        ("quiet", per_bit, [rec(bits)], [rec(stream)]),
+        (
+            "decoyed",
+            {**per_bit, "reset_period": u32(3), "reset_tag_key": "some_key"},
+            [rec(bits)],
+            [rec(stream)],
+        ),
+    ]
+    for name, settings, records, expected in rows:
+        src = g.records_source(name + "_source", "uint8", records)
+        blk = g.block(
+            DIG + "AdditiveScrambler<gr::DataSet<uint8>>", name + "_scrambler", settings
+        )
+        g.chain(src, blk, g.records_sink(name + "_sink", "uint8", expected))
+    return g
+
+
+def scrambler_settings():
+    g = Graph(
+        "scrambler-settings.yaml",
+        """
+The scramblers with no item to process: AdditiveScrambler under the CCSDS settings and under the mask FF E1 1D 9A
+without repeating, and MultiplicativeScrambler and MultiplicativeDescrambler under taps 3,20 and a seed of 20 ones.
+The run passes as written. A case that changes settings through SET either runs to the end with settings the block
+accepts or ends with the block's reason for refusing them.
+""",
+    )
+    for name, block, settings in (
+        ("additive", "AdditiveScrambler<uint8>", CCSDS),
+        (
+            "sequence",
+            "AdditiveScrambler<uint8>",
+            {"sequence": MASK, "sequence_repeat": False},
+        ),
+        ("scrambler", "MultiplicativeScrambler", STRAIGHT),
+        ("descrambler", "MultiplicativeDescrambler", STRAIGHT),
+    ):
+        src = g.vector_source(name + "_source", "uint8", [])
+        blk = g.block(DIG + block, name + "_block", settings)
+        g.chain(src, blk, g.expect_sink(name + "_sink", "uint8", []))
+    return g
+
+
 GRAPHS = [
     differential_round_trip,
     differential_wide,
@@ -601,6 +1430,18 @@ GRAPHS = [
     differential_phasor,
     differential_tags,
     differential_settings,
+    scrambler_ccsds,
+    scrambler_additive_resets,
+    scrambler_additive_stream,
+    scrambler_multiplicative,
+    scrambler_self_sync,
+    scrambler_descrambler_resets,
+    scrambler_family,
+    scrambler_profiles,
+    scrambler_sequence,
+    scrambler_forced,
+    scrambler_records,
+    scrambler_settings,
 ]
 
 

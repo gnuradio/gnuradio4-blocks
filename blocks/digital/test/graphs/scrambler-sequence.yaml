@@ -1,0 +1,61 @@
+# AdditiveScrambler with the mask FF E1 1D 9A given as a sequence. Repeating, it XORs the mask into 41 bytes, tiling
+# it, and the spelling ffe11d9a gives the same bytes. Not repeating, it XORs the mask into the first four of eleven
+# bytes, leaves the other seven as they came and counts them, which the block states when it stops. Each sink expects
+# its bytes. generate_stream_graphs.py writes this file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: tiled_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187
+      ]
+  - id: gr::blocks::digital::AdditiveScrambler<uint8>
+    parameters:
+      name: tiled_scrambler
+      sequence: "FF E1 1D 9A"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: tiled_sink
+      expected: [
+        253, 87, 78, 135, 156, 110, 65, 6, 222, 132, 76, 161, 184, 118, 235, 213, 24, 27, 42, 111, 137, 1, 104, 247,
+        42, 75, 190, 144, 209, 93, 106, 7, 21, 160, 26, 199, 40, 65, 14, 207, 68
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: spelled_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187
+      ]
+  - id: gr::blocks::digital::AdditiveScrambler<uint8>
+    parameters:
+      name: spelled_scrambler
+      sequence: ffe11d9a
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: spelled_sink
+      expected: [
+        253, 87, 78, 135, 156, 110, 65, 6, 222, 132, 76, 161, 184, 118, 235, 213, 24, 27, 42, 111, 137, 1, 104, 247,
+        42, 75, 190, 144, 209, 93, 106, 7, 21, 160, 26, 199, 40, 65, 14, 207, 68
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: once_source
+      values: [2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81]
+  - id: gr::blocks::digital::AdditiveScrambler<uint8>
+    parameters:
+      name: once_scrambler
+      sequence: "FF E1 1D 9A"
+      sequence_repeat: false
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: once_sink
+      expected: [253, 87, 78, 135, 99, 143, 92, 156, 33, 101, 81]
+connections:
+  - [tiled_source, out, tiled_scrambler, in]
+  - [tiled_scrambler, out, tiled_sink, in]
+  - [spelled_source, out, spelled_scrambler, in]
+  - [spelled_scrambler, out, spelled_sink, in]
+  - [once_source, out, once_scrambler, in]
+  - [once_scrambler, out, once_sink, in]

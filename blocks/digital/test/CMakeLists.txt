@@ -846,3 +846,321 @@ gr_add_failing_graph_test(
   $<TARGET_FILE_DIR:GrDigitalBlocksShared>
   SET
   "encoder_block.coding=manchester")
+
+# The graph cases of the scramblers.
+gr_digital_graph_test(graph_digital_scrambler_ccsds graphs/scrambler-ccsds.yaml)
+gr_digital_graph_test(graph_digital_scrambler_additive_resets graphs/scrambler-additive-resets.yaml)
+gr_digital_graph_test(graph_digital_scrambler_additive_stream graphs/scrambler-additive-stream.yaml)
+gr_digital_graph_test(graph_digital_scrambler_multiplicative graphs/scrambler-multiplicative.yaml)
+gr_digital_graph_test(graph_digital_scrambler_self_sync graphs/scrambler-self-sync.yaml)
+gr_digital_graph_test(graph_digital_scrambler_descrambler_resets graphs/scrambler-descrambler-resets.yaml)
+gr_digital_graph_test(graph_digital_scrambler_family graphs/scrambler-family.yaml)
+gr_digital_graph_test(graph_digital_scrambler_profiles graphs/scrambler-profiles.yaml)
+gr_digital_graph_test(graph_digital_scrambler_sequence graphs/scrambler-sequence.yaml)
+gr_digital_graph_test(graph_digital_scrambler_forced graphs/scrambler-forced.yaml)
+gr_digital_graph_test(graph_digital_scrambler_records graphs/scrambler-records.yaml)
+gr_digital_graph_test(graph_digital_scrambler_settings graphs/scrambler-settings.yaml)
+gr_digital_graph_test(
+  graph_digital_accepted_scrambler_bits_one_lsb_first
+  graphs/scrambler-settings.yaml
+  SET
+  "additive_block.bits_per_item=!!uint32 1"
+  "additive_block.bit_order=LsbFirst")
+gr_digital_graph_test(
+  graph_digital_accepted_scrambler_profile_si4463
+  graphs/scrambler-settings.yaml
+  SET
+  "additive_block.profile=si4463"
+  "additive_block.taps=\"\""
+  "additive_block.seed=\"\"")
+gr_digital_graph_test(
+  graph_digital_accepted_scrambler_sequence_covered
+  graphs/scrambler-settings.yaml
+  SET
+  "sequence_block.reset_period=!!uint32 4")
+gr_digital_graph_test(
+  graph_digital_accepted_scrambler_sequence_repeated
+  graphs/scrambler-settings.yaml
+  SET
+  "sequence_block.reset_period=!!uint32 8"
+  "sequence_block.sequence_repeat=true")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_no_generator
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: taps names the feedback delays as a decimal list such as \\\"1,3,5,8\\\" and has no default"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.taps=\"\""
+  "additive_block.seed=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_no_seed
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: seed is the first 8 bits of the sequence and has no default"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.seed=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_taps_zero
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: setting taps: gr::digital::tapsFromDelayList: a delay of zero, got '1,0,5'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.taps=\"1,0,5\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_taps_above
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: setting taps: gr::digital::tapsFromDelayList: a delay above 64, got '1,65'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.taps=\"1,65\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_taps_repeated
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: setting taps: gr::digital::tapsFromDelayList: a repeated delay, got '3,3'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.taps=\"3,3\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_taps_stray
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: setting taps: gr::digital::tapsFromDelayList: a character that is neither a digit, a comma nor a space, got '1,3:5'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.taps=\"1,3:5\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_seed_short
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: setting seed: gr::digital::seedFromBitString: the seed must be exactly 8 bits, got '1111'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.seed=\"1111\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_seed_digit
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: setting seed: gr::digital::seedFromBitString: the seed must be '0' and '1' characters, got '11112111'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.seed=\"11112111\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_seed_zeros
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: seed \\\"00000000\\\" is all zeros, which is a dead generator"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.seed=\"00000000\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_bits_zero
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: bits_per_item is the significant bits of an item and must be in .1, 8., got 0"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.bits_per_item=!!uint32 0")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_bits_nine
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: bits_per_item is the significant bits of an item and must be in .1, 8., got 9"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.bits_per_item=!!uint32 9")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_profile_taps
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: profile \\\"ccsds131\\\" names the generator, so taps \\\"4,7\\\" cannot be staged beside it"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.profile=ccsds131"
+  "additive_block.taps=\"4,7\""
+  "additive_block.seed=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_profile_seed
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: profile \\\"ccsds131\\\" names the generator, so seed \\\"00001111\\\" cannot be staged beside it"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.profile=ccsds131"
+  "additive_block.taps=\"\""
+  "additive_block.seed=\"00001111\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_profile_sequence
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: profile \\\"ccsds131\\\" names the generator, so sequence \\\"FF E1\\\" cannot be staged beside it"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.profile=ccsds131"
+  "additive_block.taps=\"\""
+  "additive_block.seed=\"\""
+  "additive_block.sequence=\"FF E1\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_taps_sequence
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: taps \\\"1,3,5,8\\\" walks a recursion and sequence \\\"FF E1\\\" supplies the mask outright"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.sequence=\"FF E1\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_profile_unknown
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: setting profile: gr::digital::profileByName: unknown profile 'ccsds132', the names are ccsds131, ccsds131_17, pn9, si4463, g3ruh"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.profile=ccsds132"
+  "additive_block.taps=\"\""
+  "additive_block.seed=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_additive_g3ruh
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: setting profile: gr::digital::applyProfile: profile 'g3ruh' is multiplicative .self-synchronizing. and cannot be used additive"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "additive_block.profile=g3ruh"
+  "additive_block.taps=\"\""
+  "additive_block.seed=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_multiplicative_ccsds131
+  graphs/scrambler-settings.yaml
+  "MultiplicativeScrambler[^\n]* throws: setting profile: gr::digital::applyProfile: profile 'ccsds131' is additive and cannot be used multiplicative"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "scrambler_block.profile=ccsds131"
+  "scrambler_block.taps=\"\""
+  "scrambler_block.seed=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_multiplicative_pn9
+  graphs/scrambler-settings.yaml
+  "MultiplicativeScrambler[^\n]* throws: setting profile: gr::digital::applyProfile: profile 'pn9' is additive and cannot be used multiplicative"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "scrambler_block.profile=pn9"
+  "scrambler_block.taps=\"\""
+  "scrambler_block.seed=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_descrambler_ccsds131
+  graphs/scrambler-settings.yaml
+  "MultiplicativeDescrambler[^\n]* throws: setting profile: gr::digital::applyProfile: profile 'ccsds131' is additive and cannot be used multiplicative"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "descrambler_block.profile=ccsds131"
+  "descrambler_block.taps=\"\""
+  "descrambler_block.seed=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_descrambler_pn9
+  graphs/scrambler-settings.yaml
+  "MultiplicativeDescrambler[^\n]* throws: setting profile: gr::digital::applyProfile: profile 'pn9' is additive and cannot be used multiplicative"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "descrambler_block.profile=pn9"
+  "descrambler_block.taps=\"\""
+  "descrambler_block.seed=\"\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_multiplicative_seed
+  graphs/scrambler-settings.yaml
+  "MultiplicativeScrambler[^\n]* throws: setting seed: gr::digital::seedFromBitString: the seed must be exactly 23 bits, got '101'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "scrambler_block.taps=\"18,23\""
+  "scrambler_block.seed=\"101\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_sequence_overrun
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: sequence holds 32 bits and sequence_repeat is false, so a reset_period of 8 items at 8 bits each leaves the last 32 bits of every epoch unscrambled"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "sequence_block.reset_period=!!uint32 8")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_sequence_odd
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: setting sequence: gr::digital::sequenceFromHex: an odd number of hexadecimal digits, got 'FF E'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "sequence_block.sequence=\"FF E\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_sequence_digit
+  graphs/scrambler-settings.yaml
+  "AdditiveScrambler<uint8>[^\n]* throws: setting sequence: gr::digital::sequenceFromHex: a character that is neither a hexadecimal digit nor a space, got 'FF G1'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "sequence_block.sequence=\"FF G1\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_monitor_disabled
+  graphs/scrambler-settings.yaml
+  "MultiplicativeScrambler[^\n]* throws: setting the forced-transition group: gr::digital::configureMonitor: monitorDelays describes a disabled mechanism when forceAfter is zero, got '1,2'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "scrambler_block.monitor_delays=\"1,2\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_monitor_missing
+  graphs/scrambler-settings.yaml
+  "MultiplicativeScrambler[^\n]* throws: setting the forced-transition group: gr::digital::tapsFromDelayList: the list must name at least one decimal delay, got ''"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "scrambler_block.force_transition_after=!!uint32 8")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_force_one
+  graphs/scrambler-settings.yaml
+  "MultiplicativeScrambler[^\n]* throws: setting the forced-transition group: gr::digital::configureMonitor: forceAfter must be zero or in .2, 4096., got 1"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "scrambler_block.force_transition_after=!!uint32 1"
+  "scrambler_block.monitor_delays=\"1,2\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_monitor_three
+  graphs/scrambler-settings.yaml
+  "MultiplicativeScrambler[^\n]* throws: setting the forced-transition group: gr::digital::configureMonitor: monitorDelays must name exactly two distinct delays, got '1,2,3'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "scrambler_block.force_transition_after=!!uint32 8"
+  "scrambler_block.monitor_delays=\"1,2,3\"")
+gr_add_failing_graph_test(
+  graph_digital_refused_scrambler_monitor_one
+  graphs/scrambler-settings.yaml
+  "MultiplicativeScrambler[^\n]* throws: setting the forced-transition group: gr::digital::configureMonitor: monitorDelays must name exactly two distinct delays, got '2'"
+  PLUGIN_DIRS
+  $<TARGET_FILE_DIR:GrDigitalBlocksShared>
+  SET
+  "scrambler_block.force_transition_after=!!uint32 8"
+  "scrambler_block.monitor_delays=\"2\"")
+gr_digital_graph_test(
+  graph_digital_counters_scrambler_unscrambled
+  graphs/scrambler-sequence.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::AdditiveScrambler 'once_scrambler': 7 item.s. past the end of the explicit sequence left unscrambled"
+)
+gr_digital_graph_test(
+  graph_digital_counters_scrambler_fired_scrambler
+  graphs/scrambler-forced.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::MultiplicativeScrambler 'running_scrambler': the forcing term fired 5 time.s.")
+gr_digital_graph_test(
+  graph_digital_counters_scrambler_fired_descrambler
+  graphs/scrambler-forced.yaml
+  PASS_REGULAR_EXPRESSION
+  "gr::blocks::digital::MultiplicativeDescrambler 'running_descrambler': the forcing term fired 5 time.s.")

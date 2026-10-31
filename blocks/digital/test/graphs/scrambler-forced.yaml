@@ -1,0 +1,168 @@
+# The forced-transition group of the multiplicative pair: taps 3,20, a seed of 20 ones, the output inverted, and a
+# complement forced at the Nth item over which the transmitted bits one and two items back stay equal. At N = 8 the
+# pair restores 128 bytes and the channel carries the scrambled bytes, and the two blocks state the same count of
+# firings when they stop. With force_transition_after 0 the scrambler gives what the plain recursion gives. At N = 32
+# the pair restores its input, the scrambler's output differs from the plain one's, and a descrambler without the
+# inversion and the rule recovers something else. Each sink expects its bytes. generate_stream_graphs.py writes this
+# file.
+blocks:
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: running_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54, 234, 225, 240, 193, 192, 159,
+        4, 220, 99, 189, 192, 185, 128, 87, 107, 209, 10, 164, 161, 8, 98, 156, 215, 248, 185, 254, 213, 208, 139,
+        142, 113, 147, 34, 184, 135, 72, 86, 34, 216, 95, 239, 224, 79, 93, 137, 100, 106, 18, 178, 161, 234, 241,
+        232, 87, 3, 9, 45, 41, 53, 171, 30, 180, 195, 140
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: running_scrambler
+      taps: "3,20"
+      seed: "11111111111111111111"
+      invert_output: true
+      force_transition_after: !!uint32 8
+      monitor_delays: "1,2"
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: running_descrambler
+      taps: "3,20"
+      seed: "11111111111111111111"
+      invert_output: true
+      force_transition_after: !!uint32 8
+      monitor_delays: "1,2"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: running_sink
+      expected: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54, 234, 225, 240, 193, 192, 159,
+        4, 220, 99, 189, 192, 185, 128, 87, 107, 209, 10, 164, 161, 8, 98, 156, 215, 248, 185, 254, 213, 208, 139,
+        142, 113, 147, 34, 184, 135, 72, 86, 34, 216, 95, 239, 224, 79, 93, 137, 100, 106, 18, 178, 161, 234, 241,
+        232, 87, 3, 9, 45, 41, 53, 171, 30, 180, 195, 140
+      ]
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: running_channel
+      expected: [
+        253, 20, 202, 124, 91, 163, 6, 26, 185, 195, 104, 82, 212, 97, 4, 121, 45, 253, 230, 23, 163, 29, 91, 216,
+        227, 155, 166, 13, 209, 3, 51, 16, 34, 213, 80, 156, 225, 121, 2, 225, 233, 5, 47, 237, 31, 230, 149, 118,
+        212, 197, 201, 107, 120, 251, 91, 226, 163, 17, 190, 63, 116, 223, 178, 223, 15, 202, 170, 144, 133, 101,
+        88, 122, 154, 151, 121, 213, 191, 222, 14, 17, 51, 194, 12, 67, 197, 7, 233, 120, 63, 121, 154, 137, 215,
+        62, 202, 85, 129, 217, 0, 244, 172, 89, 69, 222, 77, 253, 233, 87, 64, 29, 72, 242, 193, 236, 172, 128, 197,
+        219, 128, 188, 244, 87, 248, 19, 226, 153, 38, 139
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: off_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: off_scrambler
+      taps: "3,20"
+      seed: "11111111111111111111"
+      force_transition_after: !!uint32 0
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: off_sink
+      expected: [
+        30, 154, 253, 95, 41, 116, 43, 103, 145, 238, 246, 250, 246, 63, 172, 187, 115, 90, 219, 182, 24, 81, 50,
+        191, 34, 218, 19, 78, 71, 100, 17, 209, 152, 86, 198, 27, 195, 183, 71, 157, 99, 243, 197, 255, 215, 187,
+        233, 144, 34, 41, 219, 163, 65, 21, 242, 170, 180, 137, 206, 171, 144, 166, 51, 86
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: plain_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: plain_scrambler
+      taps: "3,20"
+      seed: "11111111111111111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: plain_sink
+      expected: [
+        30, 154, 253, 95, 41, 116, 43, 103, 145, 238, 246, 250, 246, 63, 172, 187, 115, 90, 219, 182, 24, 81, 50,
+        191, 34, 218, 19, 78, 71, 100, 17, 209, 152, 86, 198, 27, 195, 183, 71, 157, 99, 243, 197, 255, 215, 187,
+        233, 144, 34, 41, 219, 163, 65, 21, 242, 170, 180, 137, 206, 171, 144, 166, 51, 86
+      ]
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: inverted_source
+      values: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::digital::MultiplicativeScrambler
+    parameters:
+      name: inverted_scrambler
+      taps: "3,20"
+      seed: "11111111111111111111"
+      invert_output: true
+      force_transition_after: !!uint32 32
+      monitor_delays: "1,2"
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: inverted_descrambler
+      taps: "3,20"
+      seed: "11111111111111111111"
+      invert_output: true
+      force_transition_after: !!uint32 32
+      monitor_delays: "1,2"
+  - id: gr::blocks::digital::MultiplicativeDescrambler
+    parameters:
+      name: straight_descrambler
+      taps: "3,20"
+      seed: "11111111111111111111"
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: inverted_sink
+      expected: [
+        2, 182, 83, 29, 99, 143, 92, 156, 33, 101, 81, 59, 71, 151, 246, 79, 231, 250, 55, 245, 118, 224, 117, 109,
+        213, 170, 163, 10, 46, 188, 119, 157, 234, 65, 7, 93, 215, 160, 19, 85, 187, 244, 107, 127, 17, 19, 105,
+        217, 152, 245, 226, 245, 180, 141, 120, 238, 189, 50, 92, 54, 126, 88, 76, 54
+      ]
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: inverted_channel
+      expected: [
+        253, 20, 202, 124, 91, 163, 6, 26, 185, 195, 104, 82, 212, 97, 4, 121, 45, 253, 230, 23, 163, 29, 91, 216,
+        227, 155, 166, 13, 209, 3, 51, 16, 34, 213, 80, 156, 225, 121, 2, 225, 233, 5, 47, 237, 31, 239, 177, 228,
+        31, 233, 114, 160, 196, 192, 152, 87, 188, 210, 137, 32, 190, 232, 173, 149
+      ]
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: straight_sink
+      expected: [
+        253, 73, 172, 226, 156, 112, 163, 99, 222, 154, 174, 196, 184, 104, 9, 176, 24, 5, 200, 10, 137, 31, 138,
+        146, 42, 85, 92, 245, 209, 67, 136, 98, 21, 190, 248, 162, 40, 95, 236, 170, 68, 11, 148, 128, 238, 236,
+        150, 38, 103, 10, 29, 10, 75, 114, 135, 17, 66, 205, 163, 201, 129, 167, 179, 201
+      ]
+connections:
+  - [running_source, out, running_scrambler, in]
+  - [running_scrambler, out, running_descrambler, in]
+  - [running_descrambler, out, running_sink, in]
+  - [running_scrambler, out, running_channel, in]
+  - [off_source, out, off_scrambler, in]
+  - [off_scrambler, out, off_sink, in]
+  - [plain_source, out, plain_scrambler, in]
+  - [plain_scrambler, out, plain_sink, in]
+  - [inverted_source, out, inverted_scrambler, in]
+  - [inverted_scrambler, out, inverted_descrambler, in]
+  - [inverted_descrambler, out, inverted_sink, in]
+  - [inverted_scrambler, out, inverted_channel, in]
+  - [inverted_scrambler, out, straight_descrambler, in]
+  - [straight_descrambler, out, straight_sink, in]
