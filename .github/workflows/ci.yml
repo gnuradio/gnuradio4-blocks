@@ -72,6 +72,8 @@ jobs:
       cancel-in-progress: true
     container:
       image: ghcr.io/${{ github.repository_owner }}/gnuradio4-core-sdk:${{ matrix.core_sdk_tag }}
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 3
     strategy:
       fail-fast: false
       matrix:
