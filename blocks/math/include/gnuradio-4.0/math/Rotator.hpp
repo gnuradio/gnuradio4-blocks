@@ -75,19 +75,34 @@ is attached to.
     // same amount in the opposite direction: what sits at the output's zero frequency arrived at -'frequency_shift'.
     template<typename TInputSpans, typename TOutputSpans>
     void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t /*processedIn*/) {
+        const auto forward = [this, &outputSpans](const property_map& map, std::size_t offset) {
+            property_map forwarded = this->filterAndSubstituteTag(map);
+            forwarded.erase(static_cast<std::pmr::string>(gr::tag::END_OF_STREAM));
+            if (forwarded.empty()) {
+                return;
+            }
+            retuneCenterFrequency(forwarded);
+            gr::for_each_writer_span([&forwarded, offset](auto& outSpan) { outSpan.publishTag(forwarded, offset); }, outputSpans);
+        };
         gr::for_each_reader_span(
-            [&](auto& inSpan) {
+            [&forward](auto& inSpan) {
                 if (!inSpan.isSync || !inSpan.isConnected) {
                     return;
                 }
-                for (const auto& [relIndex, tagMapRef] : inSpan.tags(1UZ)) {
-                    property_map forwarded = this->filterAndSubstituteTag(tagMapRef.get());
-                    if (forwarded.empty()) {
-                        continue;
+                if (inSpan.size() == 0UZ) {
+                    // the end of the stream: every tag from the read position on leaves at the end-of-stream index
+                    for (const auto& [relIndex, tagMapRef] : inSpan.tags()) {
+                        if (relIndex >= 0) {
+                            forward(tagMapRef.get(), 0UZ);
+                        }
                     }
-                    retuneCenterFrequency(forwarded);
-                    const std::size_t offset = static_cast<std::size_t>(std::max(std::ptrdiff_t(0), relIndex));
-                    gr::for_each_writer_span([&forwarded, offset](auto& outSpan) { outSpan.publishTag(forwarded, offset); }, outputSpans);
+                    return;
+                }
+                // a tag behind the read position left with the previous chunk
+                for (const auto& [relIndex, tagMapRef] : inSpan.tags(inSpan.size())) {
+                    if (relIndex >= 0) {
+                        forward(tagMapRef.get(), static_cast<std::size_t>(relIndex));
+                    }
                 }
             },
             inputSpans);

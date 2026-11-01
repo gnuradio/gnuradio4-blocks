@@ -2,8 +2,11 @@
 #include <boost/ut.hpp>
 #include <cmath>
 #include <complex>
+#include <format>
 #include <numbers>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include <gnuradio-4.0/math/Rotator.hpp>
@@ -12,9 +15,63 @@
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/algorithm/ImChart.hpp>
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
+#include <gnuradio-4.0/testing/GraphTestBlocks.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
 namespace {
+
+constexpr float       kTagRate    = 1.0e6f;
+constexpr float       kTagShift   = 12.5e3f;
+constexpr gr::Size_t  kTagSamples = 64U;
+constexpr std::size_t kHeldChunk  = 16UZ;
+
+struct CenterAt {
+    std::size_t index  = 0UZ;
+    double      center = 0.;
+};
+
+// the frequency tags that reach a sink from a TagSource through a Rotator shifting by kTagShift, its input held to
+// chunks of kHeldChunk samples; the sink records every tag Rotator publishes, two at one sample included
+std::vector<CenterAt> centersThroughHeldRotator(const std::vector<CenterAt>& tagged) {
+    using namespace boost::ut;
+    using namespace gr::blocks::testing;
+    using T = std::complex<float>;
+
+    gr::Graph flow;
+    auto&     source = flow.emplaceBlock<TagSource<T, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kTagSamples}, {"sample_rate", kTagRate}, {"mark_tag", false}});
+    for (const CenterAt& tag : tagged) {
+        source._tags.push_back(gr::Tag{tag.index, {{gr::tag::FREQUENCY.key(), tag.center}}});
+    }
+    auto& rotator          = flow.emplaceBlock<gr::blocks::math::Rotator<T>>({{"sample_rate", kTagRate}, {"frequency_shift", kTagShift}});
+    rotator.in.min_samples = kHeldChunk;
+    rotator.in.max_samples = kHeldChunk;
+    auto& sink             = flow.emplaceBlock<TagSink<T, ProcessFunction::USE_PROCESS_BULK>>();
+    expect(flow.connect<"out", "in">(source, rotator).has_value()) << fatal;
+    expect(flow.connect<"out", "in">(rotator, sink).has_value()) << fatal;
+
+    gr::scheduler::Simple sched;
+    expect(sched.exchange(std::move(flow)).has_value()) << fatal;
+    expect(sched.runAndWait().has_value()) << "the run ends without an error";
+    expect(eq(sink._samples.size(), static_cast<std::size_t>(kTagSamples))) << "every sample leaves";
+
+    std::vector<CenterAt> centers;
+    for (const gr::Tag& sinkTag : sink._tags) {
+        if (const auto it = sinkTag.map.find(gr::tag::FREQUENCY.key()); it != sinkTag.map.end()) {
+            centers.push_back({sinkTag.index, it->second.value_or<double>(0.)});
+        }
+    }
+    return centers;
+}
+
+// each tag of tagged must leave once, at its own sample, with its center moved down by kTagShift
+void expectEachRetunedAtItsSample(const std::vector<CenterAt>& tagged, const std::vector<CenterAt>& centers) {
+    using namespace boost::ut;
+    expect(eq(centers.size(), tagged.size())) << "each frequency tag leaves once";
+    for (std::size_t i = 0UZ; i < std::min(tagged.size(), centers.size()); ++i) {
+        expect(eq(centers[i].index, tagged[i].index)) << std::format("the tag at input sample {} leaves on that sample", tagged[i].index);
+        expect(approx(centers[i].center, tagged[i].center - static_cast<double>(kTagShift), 1e-3)) << std::format("the tag at input sample {} leaves retuned by the shift", tagged[i].index);
+    }
+}
 
 struct RotationError {
     double phase     = 0.;
@@ -165,6 +222,88 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         expect(eq(centers.size(), 1UZ)) << "the center frequency must reach the sink exactly once";
         if (centers.size() == 1UZ) {
             expect(approx(centers.front(), kCenter - static_cast<double>(kShift), 1e-3)) << "rotating the spectrum up moves the announced center down by the same amount";
+        }
+    };
+
+    // An input minimum keeps the scheduler from ending a chunk at a tag. The tags of these cases arrive inside a chunk.
+    "Rotator - a frequency tag inside a held chunk leaves retuned at its own sample"_test = [] {
+        constexpr std::size_t kTagged = 10UZ;
+        static_assert(kTagged > 0UZ && kTagged < kHeldChunk);
+        const std::vector<CenterAt> tagged{{kTagged, 100.0e6}};
+        expectEachRetunedAtItsSample(tagged, centersThroughHeldRotator(tagged));
+    };
+
+    "Rotator - several frequency tags of one held chunk each leave retuned at their own samples"_test = [] {
+        constexpr std::size_t kChunkHead = 2UZ * kHeldChunk;
+        static_assert(kChunkHead + kHeldChunk < kTagSamples);
+        const std::vector<CenterAt> tagged{{kChunkHead + 3UZ, 100.0e6}, {kChunkHead + 8UZ, 101.0e6}, {kChunkHead + 12UZ, 102.0e6}};
+        expectEachRetunedAtItsSample(tagged, centersThroughHeldRotator(tagged));
+    };
+
+    // The first tag is still in the input when the next chunk starts, behind its first sample.
+    "Rotator - a tag on a held chunk's first sample leaves once beside the previous chunk's tag"_test = [] {
+        const std::vector<CenterAt> tagged{{10UZ, 100.0e6}, {kHeldChunk, 101.0e6}};
+        expectEachRetunedAtItsSample(tagged, centersThroughHeldRotator(tagged));
+    };
+
+    // TagSink records a tag only on a sample it receives. ExpectSink also reads the tags at the end-of-stream index, and
+    // it checks this case.
+    "Rotator - a frequency tag past the last held chunk leaves retuned at the end of the stream"_test = [] {
+        using namespace gr::blocks::testing;
+        using T = std::complex<float>;
+
+        constexpr std::size_t kChunk  = 40UZ;
+        constexpr std::size_t kTagged = kChunk + 10UZ;
+        constexpr double      kCenter = 100.0e6;
+        static_assert(kTagged < kTagSamples && kTagSamples < 2UZ * kChunk);
+
+        gr::Graph flow;
+        auto&     source       = flow.emplaceBlock<TagSource<T, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kTagSamples}, {"sample_rate", kTagRate}});
+        source._tags           = {gr::Tag{kTagged, {{gr::tag::FREQUENCY.key(), kCenter}}}};
+        auto& rotator          = flow.emplaceBlock<Rotator<T>>({{"sample_rate", kTagRate}, {"frequency_shift", kTagShift}});
+        rotator.in.min_samples = kChunk;
+        rotator.in.max_samples = kChunk;
+        // the source marks only the tagged sample, which lies past the last whole chunk
+        const std::vector<T>   firstChunk(kChunk, T{});
+        const std::string      endIndex = std::to_string(kChunk);
+        const gr::property_map expectedTags{{"0", gr::property_map{{gr::tag::SAMPLE_RATE.key(), kTagRate}}}, //
+            {gr::property_map::key_type(std::string_view(endIndex)), gr::property_map{{gr::tag::FREQUENCY.key(), kCenter - static_cast<double>(kTagShift)}}}};
+        auto&                  sink = flow.emplaceBlock<ExpectSink<T>>({{"expected", firstChunk}, {"expected_tags", expectedTags}, {"tags_exact", true}});
+        expect(flow.connect<"out", "in">(source, rotator).has_value()) << fatal;
+        expect(flow.connect<"out", "in">(rotator, sink).has_value()) << fatal;
+
+        gr::scheduler::Simple sched;
+        expect(sched.exchange(std::move(flow)).has_value()) << fatal;
+        const auto result = sched.runAndWait();
+        expect(result.has_value()) << (result.has_value() ? std::string() : std::string(result.error().message));
+    };
+
+    "Rotator - a finite stream leaves one end-of-stream tag"_test = [] {
+        using namespace gr::blocks::testing;
+        using T = std::complex<float>;
+
+        for (const bool held : {false, true}) {
+            gr::Graph flow;
+            auto&     source  = flow.emplaceBlock<TagSource<T, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", kTagSamples}, {"sample_rate", kTagRate}, {"disconnect_on_done", false}});
+            auto&     rotator = flow.emplaceBlock<Rotator<T>>({{"sample_rate", kTagRate}, {"frequency_shift", kTagShift}, {"disconnect_on_done", false}});
+            if (held) {
+                rotator.in.min_samples = kHeldChunk;
+                rotator.in.max_samples = kHeldChunk;
+            }
+            auto& sink = flow.emplaceBlock<TagSink<T, ProcessFunction::USE_PROCESS_ONE>>({{"disconnect_on_done", false}});
+            expect(flow.connect<"out", "in">(source, rotator).has_value()) << fatal;
+            expect(flow.connect<"out", "in">(rotator, sink).has_value()) << fatal;
+
+            gr::scheduler::Simple sched;
+            expect(sched.exchange(std::move(flow)).has_value()) << fatal;
+            expect(sched.runAndWait().has_value()) << "the run ends without an error";
+
+            // the end-of-stream tag sits past the last sample, and the sink leaves it on its input
+            auto&                  reader = sink.in.tagReader();
+            const auto             left   = reader.get(reader.available());
+            const std::pmr::string endOfStream{gr::tag::END_OF_STREAM.key()};
+            const auto             nEnds = std::ranges::count_if(left, [&endOfStream](const gr::Tag& leftTag) { return leftTag.map.contains(endOfStream); });
+            expect(eq(nEnds, std::ptrdiff_t{1})) << std::format("one stream ends in one end-of-stream tag, input held: {}", held);
         }
     };
 
