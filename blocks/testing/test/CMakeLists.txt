@@ -17,6 +17,9 @@ target_link_libraries(qa_UI_Integration PRIVATE gr-testing gr-basic gnuradio-alg
 add_ut_test(qa_GraphTestBlocks)
 target_link_libraries(qa_GraphTestBlocks PRIVATE gr-basic gr-testing)
 
+add_ut_test(qa_VectorSink)
+target_link_libraries(qa_VectorSink PRIVATE gr-testing)
+
 gr_add_graph_test(graph_testing_vector_expect graphs/vector-expect.yaml)
 gr_add_graph_test(
   graph_testing_vector_expect_mismatch
