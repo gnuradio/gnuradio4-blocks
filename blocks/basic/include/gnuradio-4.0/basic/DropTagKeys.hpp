@@ -28,8 +28,11 @@ struct DropTagKeys : Block<DropTagKeys<T>> {
 A graph places the block where a key should stop. Each sample leaves as it arrived. Each tag leaves at the sample it
 arrived on, with every key that `keys` lists removed. A tag left with no key is not published. A key is matched whole,
 domain included: `gr:sample_rate` removes the rate. Keys inside a `gr:trigger_meta_info` map stay. A change of `keys`
-applies to every tag the block forwards after it. A change of `keys` that a tag past the first sample of a chunk brings
-applies from the next chunk on. The input's `min_samples` can keep a chunk from ending at such a tag.
+applies to every tag the block forwards after it. When the input's `min_samples` keeps a chunk from ending at a tag
+that changes `keys`, the change applies from the next chunk on. The block filters the tags after that tag in the same
+chunk by the earlier list. Under an input `min_samples`, the last samples of the stream, fewer than `min_samples`, do
+not leave. Their tags leave at the end of the stream. A change that a tag past the first sample of the last chunk
+brings does not reach those tags.
 )"">;
 
     PortIn<T>  in;
@@ -64,7 +67,6 @@ applies from the next chunk on. The input's `min_samples` can keep a chunk from 
                     }
                     return;
                 }
-                // each tag of the chunk leaves at its own sample
                 // a tag behind the read position left with the previous chunk
                 for (const auto& [relIndex, tagMapRef] : inSpan.tags(inSpan.size())) {
                     if (relIndex >= 0) {
