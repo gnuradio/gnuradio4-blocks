@@ -1,5 +1,6 @@
 # Floor: the largest integer value not above the sample.
 #   -1.5 0 2.5 2.7 -0.2 -> -2 0 2 2 -1
+# Error bound: 0; the result is an integer value the type represents exactly, so every call gives it exactly.
 blocks:
   - id: gr::blocks::basic::VectorSource<float32>
     parameters:
@@ -12,6 +13,8 @@ blocks:
     parameters:
       name: sink_f32
       expected: !!float32 [-2.0, 0.0, 2.0, 2.0, -1.0]
+      tolerance: 0.0
+      relative_tolerance: 0.0
   - id: gr::blocks::basic::VectorSource<float64>
     parameters:
       name: source_f64
@@ -23,6 +26,8 @@ blocks:
     parameters:
       name: sink_f64
       expected: !!float64 [-2.0, 0.0, 2.0, 2.0, -1.0]
+      tolerance: 0.0
+      relative_tolerance: 0.0
 connections:
   - [source_f32, out, floor_f32, in]
   - [floor_f32, out, sink_f32, in]
