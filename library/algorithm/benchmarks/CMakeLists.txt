@@ -22,9 +22,11 @@ function(add_gr_benchmark BM_NAME)
     endif()
   elseif(CMAKE_CROSSCOMPILING)
     target_compile_options(${BM_NAME} PRIVATE -O2)
-  else()
+  elseif(NOT MSVC)
     target_compile_options(${BM_NAME} PRIVATE -O2 -march=native)
   endif()
+  # MSVC has no -march=native, and forcing /O2 collides with the Debug config's /RTC1 (D8016), so
+  # optimisation is left to CMAKE_BUILD_TYPE there -- build benchmarks in Release for real numbers.
 endfunction()
 
 add_gr_benchmark(bm_fft)

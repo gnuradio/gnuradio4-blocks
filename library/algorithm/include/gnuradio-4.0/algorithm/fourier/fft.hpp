@@ -793,20 +793,21 @@ private:
         const auto minus2Pi = ValueType(kInverse ? 2 : -2) * std::numbers::pi_v<ValueType>;
         for (std::size_t size = 2UZ; size <= fftSize; size *= 2UZ) {
             const std::size_t    m{size / 2};
-            const TOutput        w{std::exp(TOutput(0., minus2Pi / static_cast<ValueType>(size)))};
+            const TOutput        w{std::exp(TOutput(ValueType(0), minus2Pi / static_cast<ValueType>(size)))};
             std::vector<TOutput> twiddles;
             if (size == 2) {
-                twiddles.push_back(TOutput{1.0, 0.0});
+                twiddles.push_back(TOutput{ValueType(1), ValueType(0)});
             } else if (size == 8) {
-                twiddles.emplace_back(1.0, 0.0);                         // W_8^0
-                twiddles.emplace_back(std::sqrt(0.5), -std::sqrt(0.5));  // W_8^1
-                twiddles.emplace_back(0.0, -1.0);                        // W_8^2
-                twiddles.emplace_back(-std::sqrt(0.5), -std::sqrt(0.5)); // W_8^3
+                constexpr ValueType kInvSqrt2 = std::numbers::sqrt2_v<ValueType> / ValueType(2);
+                twiddles.emplace_back(ValueType(1), ValueType(0));   // W_8^0
+                twiddles.emplace_back(kInvSqrt2, -kInvSqrt2);        // W_8^1
+                twiddles.emplace_back(ValueType(0), ValueType(-1));  // W_8^2
+                twiddles.emplace_back(-kInvSqrt2, -kInvSqrt2);       // W_8^3
                 if constexpr (kInverse) {
                     std::ranges::transform(twiddles, twiddles.begin(), [](const TOutput& t) { return std::conj(t); });
                 }
             } else {
-                TOutput wk{1., 0.};
+                TOutput wk{ValueType(1), ValueType(0)};
                 for (std::size_t j = 0UZ; j < m; ++j) {
                     twiddles.push_back(wk);
                     wk *= w;

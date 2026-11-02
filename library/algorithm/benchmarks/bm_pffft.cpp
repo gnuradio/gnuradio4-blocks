@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <bit>
 #include <math.h>
+#include <numbers>
 #include <print>
 #include <stdio.h>
 #include <stdlib.h>
@@ -217,7 +218,7 @@ void benchmark_ffts(std::size_t N, int /*withFFTWfullMeas*/, double iterCal, dou
             t1 = uclock_sec();
         } while (t1 < tstop);
 
-        flops                             = static_cast<double>(max_iter * 2) * ((isComplex ? 5 : 2.5) * static_cast<double>(N) * log(static_cast<double>(N)) / M_LN2); /* see http://www.fftw.org/speed/method.html */
+        flops                             = static_cast<double>(max_iter * 2) * ((isComplex ? 5 : 2.5) * static_cast<double>(N) * log(static_cast<double>(N)) / std::numbers::ln2); /* see http://www.fftw.org/speed/method.html */
         tmeas[TYPE_ITER][ALGO_PFFFT_U]    = static_cast<double>(max_iter);
         tmeas[TYPE_MFLOPS][ALGO_PFFFT_U]  = flops / 1e6 / (t1 - t0 + 1e-16);
         tmeas[TYPE_DUR_TOT][ALGO_PFFFT_U] = t1 - t0;
@@ -243,7 +244,7 @@ void benchmark_ffts(std::size_t N, int /*withFFTWfullMeas*/, double iterCal, dou
             t1 = uclock_sec();
         } while (t1 < tstop);
 
-        flops                             = static_cast<double>(max_iter * 2) * ((isComplex ? 5 : 2.5) * static_cast<double>(N) * log(static_cast<double>(N)) / M_LN2); /* see http://www.fftw.org/speed/method.html */
+        flops                             = static_cast<double>(max_iter * 2) * ((isComplex ? 5 : 2.5) * static_cast<double>(N) * log(static_cast<double>(N)) / std::numbers::ln2); /* see http://www.fftw.org/speed/method.html */
         tmeas[TYPE_ITER][ALGO_PFFFT_O]    = static_cast<double>(max_iter);
         tmeas[TYPE_MFLOPS][ALGO_PFFFT_O]  = flops / 1e6 / (t1 - t0 + 1e-16);
         tmeas[TYPE_DUR_TOT][ALGO_PFFFT_O] = t1 - t0;
@@ -344,7 +345,7 @@ constexpr std::size_t NUMNONPOW2LENS = 23UZ;
     int haveAlgo[NUM_FFT_ALGOS];
 
     for (std::size_t k = 1; k <= NUMPOW2FFTLENS; ++k) {
-        Npow2[k - 1] = (k == NUMPOW2FFTLENS) ? gr::meta::invalid_index : (1 << k);
+        Npow2[k - 1] = (k == NUMPOW2FFTLENS) ? gr::meta::invalid_index : (1UZ << k);
     }
     Nvalues = Npow2; /* set default .. for comparisons .. */
 
@@ -353,8 +354,8 @@ constexpr std::size_t NUMNONPOW2LENS = 23UZ;
     }
 
     using T = float;
-    printf("SimdFFT min real fft:    %lu\n", SimdFFT<T, Transform::Real>::minSize());
-    printf("SimdFFT min complex fft: %lu\n", SimdFFT<T, Transform::Complex>::minSize());
+    printf("SimdFFT min real fft:    %zu\n", SimdFFT<T, Transform::Real>::minSize());
+    printf("SimdFFT min complex fft: %zu\n", SimdFFT<T, Transform::Complex>::minSize());
     printf("\n");
 
     clock();

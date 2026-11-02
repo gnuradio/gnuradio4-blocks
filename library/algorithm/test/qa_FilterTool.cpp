@@ -837,7 +837,7 @@ const boost::ut::suite<"FIR FilterTool"> firFilterToolTests = [] {
         using enum gr::filter::Type;
 
         "IIR digital filter"_test = [&filterDesign](Type filterType) {
-            constexpr auto kFilterParams = FilterParameters{.order = 4UZ, .fLow = 1.0, .fHigh = 10.0, .attenuationDb = 60, .fs = 1000.0};
+            const auto kFilterParams = FilterParameters{.order = 4UZ, .fLow = 1.0, .fHigh = 10.0, .attenuationDb = 60, .fs = 1000.0};
 
             // compute analog and digital filters
 

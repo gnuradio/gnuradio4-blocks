@@ -92,12 +92,14 @@ const boost::ut::suite<"DataSet<T> visual test functions"> _DataSetTestFcuntions
     };
 };
 
+#ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdouble-promotion"
 #pragma GCC diagnostic ignored "-Wfloat-conversion"
 #pragma GCC diagnostic ignored "-Wconversion"
 #ifdef __clang__
 #pragma GCC diagnostic ignored "-Wimplicit-float-conversion" // GCC & Clang: Loss or promotion of floating-point precision, disabled only for unit-tests
+#endif
 #endif
 
 const boost::ut::suite<"DataSet<T> element-wise accessor"> _dataSetAccessors = [] {
@@ -772,7 +774,9 @@ const boost::ut::suite<"DataSet<T> filter"> _dataSetFilter = [] {
     } | std::tuple<float, double>{};
 };
 
+#ifdef __GNUC__
 #pragma GCC diagnostic pop
+#endif
 
 const boost::ut::suite<"DataSet consistency checks"> _dataSetConsistency = [] {
     using namespace boost::ut;

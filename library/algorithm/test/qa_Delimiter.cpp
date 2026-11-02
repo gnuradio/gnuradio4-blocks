@@ -244,7 +244,7 @@ const boost::ut::suite<"delimiter scanner"> delimiterTests = [] {
             cfg.bitsPerItem     = 8U;
             cfg.transparency    = Transparency::ByteEscape;
             cfg.escapeItem      = 0xDBU;
-            cfg.escapeMap       = {{0xDCU, 0xC0U}, {0xDDU, 0xDBU}};
+            cfg.escapeMap       = {{std::uint8_t{0xDC}, std::uint8_t{0xC0}}, {std::uint8_t{0xDD}, std::uint8_t{0xDB}}};
             cfg.maxPayloadItems = 256UZ;
             gr::digital::configureDelimiter(cfg);
             return cfg;
@@ -507,9 +507,9 @@ const boost::ut::suite<"delimiter scanner"> delimiterTests = [] {
             return cfg;
         };
 
-        expect(nothrow([&framed] { std::ignore = framed(0xDBU, {{0xDCU, 0xC0U}, {0xDDU, 0xDBU}}); })) << "SLIP's map covers both the delimiter and the introducer";
-        expect(throws([&framed] { std::ignore = framed(0xDBU, {{0xDCU, 0xC0U}}); })) << "the introducer has no pair, so the encoder cannot escape one in a payload";
-        expect(throws([&framed] { std::ignore = framed(0xDBU, {{0xDDU, 0xDBU}}); })) << "the delimiter has no pair, which the receiver could only warn about";
+        expect(nothrow([&framed] { std::ignore = framed(0xDBU, {{std::uint8_t{0xDC}, std::uint8_t{0xC0}}, {std::uint8_t{0xDD}, std::uint8_t{0xDB}}}); })) << "SLIP's map covers both the delimiter and the introducer";
+        expect(throws([&framed] { std::ignore = framed(0xDBU, {{std::uint8_t{0xDC}, std::uint8_t{0xC0}}}); })) << "the introducer has no pair, so the encoder cannot escape one in a payload";
+        expect(throws([&framed] { std::ignore = framed(0xDBU, {{std::uint8_t{0xDD}, std::uint8_t{0xDB}}}); })) << "the delimiter has no pair, which the receiver could only warn about";
 
         // the same check over a start delimiter, which is an item value the encoder emits and the receiver matches
         const auto opened = [](std::vector<std::pair<std::uint8_t, std::uint8_t>> pairs) {
@@ -524,8 +524,8 @@ const boost::ut::suite<"delimiter scanner"> delimiterTests = [] {
             cfg.maxPayloadItems = 256UZ;
             gr::digital::framerConfigure(cfg);
         };
-        expect(throws([&opened] { opened({{0xDCU, 0xC0U}, {0xDDU, 0xDBU}}); })) << "'$' is not an original, so a payload carrying it would open a frame in the middle of this one";
-        expect(nothrow([&opened] { opened({{0xDCU, 0xC0U}, {0xDDU, 0xDBU}, {0x5EU, 0x24U}}); }));
+        expect(throws([&opened] { opened({{std::uint8_t{0xDC}, std::uint8_t{0xC0}}, {std::uint8_t{0xDD}, std::uint8_t{0xDB}}}); })) << "'$' is not an original, so a payload carrying it would open a frame in the middle of this one";
+        expect(nothrow([&opened] { opened({{std::uint8_t{0xDC}, std::uint8_t{0xC0}}, {std::uint8_t{0xDD}, std::uint8_t{0xDB}}, {std::uint8_t{0x5E}, std::uint8_t{0x24}}}); }));
 
         // the four published framings pass the transmit-side table as they pass the receive-side one
         const auto bounded = [](DelimiterConfig cfg) {
@@ -538,7 +538,7 @@ const boost::ut::suite<"delimiter scanner"> delimiterTests = [] {
         expect(nothrow([&bounded] { bounded(gr::digital::nmea0183()); }));
 
         // a repeated original is accepted and encodes by the last pair naming it, both spellings decoding alike
-        const DelimiterConfig         twice = framed(0xDBU, {{0xDCU, 0xC0U}, {0xDDU, 0xDBU}, {0x5EU, 0xC0U}});
+        const DelimiterConfig         twice = framed(0xDBU, {{std::uint8_t{0xDC}, std::uint8_t{0xC0}}, {std::uint8_t{0xDD}, std::uint8_t{0xDB}}, {std::uint8_t{0x5E}, std::uint8_t{0xC0}}});
         gr::digital::DelimiterEncoder encoder;
         encoder.prepare(twice);
         const std::vector<std::uint8_t> payload{0xC0U, 0x41U};
