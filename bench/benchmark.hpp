@@ -2,6 +2,7 @@
 #define GNURADIO_BENCHMARK_HPP
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -9,6 +10,7 @@
 #include <format>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <numeric>
 #include <print>
@@ -33,7 +35,6 @@ namespace benchmark {
 #define BENCHMARK_ALWAYS_INLINE [[gnu::always_inline]] inline
 #elif defined(_MSC_VER) && !defined(__clang__)
 #define BENCHMARK_ALWAYS_INLINE __forceinline
-#define __func__                __FUNCTION__
 #else
 #define BENCHMARK_ALWAYS_INLINE
 #endif
@@ -43,6 +44,31 @@ namespace benchmark {
 #else
 #define SIMD_REG
 #endif
+
+namespace detail {
+/**
+ * Compiler barrier for toolchains without GNU inline asm (MSVC has none on x64). Initialising a
+ * volatile sink with the object's address is an observable side effect, so the address escapes and
+ * the whole object must hold its final value in memory at that point; the fence then keeps the
+ * surrounding accesses from moving across it. This is what the GNU `"m"` operand buys, and unlike a
+ * `const volatile T` copy it works for types that cannot be copied through a volatile lvalue, i.e
+ * std::string. Touching a single byte would not do: only that byte would have to be observable, and
+ * a result whose low byte is constant could then be optimised away in full.
+ */
+BENCHMARK_ALWAYS_INLINE void keepInMemory(const void* address) noexcept {
+    [[maybe_unused]] const volatile void* volatile escaped = address;
+    std::atomic_signal_fence(std::memory_order_acq_rel);
+}
+
+/**
+ * As keepInMemory, but the escaping pointer is non-const, matching the read-write operand the GNU
+ * path declares: reads of the object after the barrier have to come back from memory.
+ */
+BENCHMARK_ALWAYS_INLINE void keepInMemoryModified(void* address) noexcept {
+    [[maybe_unused]] volatile void* volatile escaped = address;
+    std::atomic_signal_fence(std::memory_order_acq_rel);
+}
+} // namespace detail
 
 /**
  * Tell the compiler that all arguments to this function are read and modified in the most
@@ -57,8 +83,7 @@ BENCHMARK_ALWAYS_INLINE void fake_modify(T& x, Ts&... more) {
         asm volatile("" : "+g,m"(x));
     }
 #else
-    const volatile T y = x;
-    x                  = y;
+    detail::keepInMemoryModified(std::addressof(x));
 #endif
     (fake_modify(more), ...);
 }
@@ -79,7 +104,7 @@ BENCHMARK_ALWAYS_INLINE void fake_read(const T& x, const Ts&... more) {
         asm volatile("" ::"g,m"(x));
     }
 #else
-    const volatile T y = x;
+    detail::keepInMemory(std::addressof(x));
 #endif
     if constexpr (sizeof...(Ts) > 0) {
         fake_read(more...);
@@ -97,8 +122,7 @@ BENCHMARK_ALWAYS_INLINE void force_to_memory(T& x, Ts&... more) {
     // NOLINTNEXTLINE(hicpp-no-assembler)
     asm volatile("" : "+m"(x));
 #else
-    const volatile T y = x;
-    x                  = y;
+    detail::keepInMemoryModified(std::addressof(x));
 #endif
     if constexpr (sizeof...(Ts) > 0) {
         force_to_memory(more...);
@@ -115,7 +139,7 @@ BENCHMARK_ALWAYS_INLINE void force_store(const T& x, const Ts&... more) {
     // NOLINTNEXTLINE(hicpp-no-assembler)
     asm volatile("" ::"m"(x));
 #else
-    const volatile T y = x;
+    detail::keepInMemory(std::addressof(x));
 #endif
     if constexpr (sizeof...(Ts) > 0) {
         force_store(more...);
@@ -486,14 +510,16 @@ class results {
     using EntryType = std::pair<std::string, ResultMap>;
     using Data      = std::vector<EntryType>;
 
-    // lazy init (Meyer's singleton) — avoids static init order issues
+    // Lazy init (Meyer's singleton) — avoids static init order issues. Deliberately never destroyed:
+    // boost::ut runs the registered suites from ~runner during static destruction, i.e. after a plain
+    // function-local static would already have been torn down
     static Data& storage() noexcept {
-        static Data d;
-        return d;
+        static Data* d = new Data();
+        return *d;
     }
     static std::mutex& lock() noexcept {
-        static std::mutex m;
-        return m;
+        static std::mutex* m = new std::mutex();
+        return *m;
     }
 
 public:
@@ -773,7 +799,7 @@ public:
             const auto        ns                  = stop_iter[N_ITERATIONS - 1] - start;
             const long double duration_s          = 1e-9L * static_cast<long double>(ns.count());
 
-            const auto add_statistics = [&]<typename T>(ResultMap& map, const T& time_diff) {
+            const auto add_statistics = [&]<typename T>(ResultMap& map, [[maybe_unused]] const T& time_diff) {
                 if constexpr (N_ITERATIONS != 1) {
                     const auto [min, mean, stddev, median, max] = utils::compute_statistics(time_diff);
                     map.try_emplace("min", min, "s", _precision);
@@ -1008,6 +1034,6 @@ public:
 } // namespace cfg
 
 template<>
-inline auto boost::ut::cfg<boost::ut::override> = ut::runner<cfg::reporter<printer>>{};
+inline auto boost::ut::cfg<boost::ut::override> = boost::ut::runner<::cfg::reporter<boost::ut::printer>>{};
 
 #endif // GNURADIO_BENCHMARK_HPP
