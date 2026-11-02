@@ -183,6 +183,8 @@ target_link_libraries(qa_SampleRateEstimator PRIVATE gnuradio-algorithm)
 target_link_libraries(qa_BurstTaper PRIVATE gnuradio-algorithm)
 if(TARGET qa_FileIo)
   target_link_libraries(qa_FileIo PRIVATE gnuradio-algorithm)
+  # qa_HttpBlock also serves HTTP on port 8080. The lock keeps the two tests apart.
+  set_tests_properties(qa_FileIo PROPERTIES RESOURCE_LOCK http_port_8080)
   if(NOT EMSCRIPTEN)
     target_link_libraries(qa_FileIo PRIVATE httplib::httplib)
   endif()
