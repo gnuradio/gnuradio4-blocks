@@ -191,7 +191,7 @@ struct BankRun {
         expect(graph.connect(bank, "out#"s + std::to_string(channel), *sinks[channel], "in"s).has_value()) << std::format("output {} of {} connects", channel, channels);
     }
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     expect(scheduler.exchange(std::move(graph)).has_value());
     expect(scheduler.runAndWait().has_value());
 
@@ -230,7 +230,7 @@ struct CascadeRun {
 
     const std::size_t prototypeLength = bank.designed_taps.value.size();
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     expect(scheduler.exchange(std::move(graph)).has_value());
     expect(scheduler.runAndWait().has_value());
 
@@ -883,7 +883,7 @@ const boost::ut::suite<"Channelizer"> channelizerTests = [] {
             expect(graph.connect(bank, "out#"s + std::to_string(channel), *others.back(), "in"s).has_value());
         }
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -955,7 +955,7 @@ const boost::ut::suite<"Channelizer"> channelizerTests = [] {
             expect(graph.connect(bank, "out#"s + std::to_string(channel), sink, "in"s).has_value());
         }
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         std::ignore = scheduler.runAndWait();
 

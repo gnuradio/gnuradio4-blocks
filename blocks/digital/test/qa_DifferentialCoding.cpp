@@ -201,7 +201,7 @@ template<typename T, typename TBlock>
     boost::ut::expect(graph.connect<"out", "in">(source, block).has_value());
     boost::ut::expect(graph.connect<"out", "in">(block, sink).has_value());
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     boost::ut::expect(scheduler.runAndWait().has_value());
 
@@ -583,7 +583,7 @@ const boost::ut::suite<"DifferentialCoding"> differentialCodingTests = [] {
         expect(graph.connect<"out", "in">(source, phasor).has_value());
         expect(graph.connect<"out", "in">(phasor, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 

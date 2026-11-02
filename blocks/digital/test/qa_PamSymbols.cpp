@@ -119,7 +119,7 @@ struct Run {
         boost::ut::expect(graph.connect<"records", "in">(tracker, *collector).has_value());
     }
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     const auto finished = scheduler.runAndWait();
     boost::ut::expect(finished.has_value()) << (finished.has_value() ? std::string{} : finished.error().message);

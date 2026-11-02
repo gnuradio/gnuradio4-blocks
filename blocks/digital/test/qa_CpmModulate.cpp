@@ -166,7 +166,7 @@ constexpr Design kDesigns[] = {{"rect", 1UZ, 0.5, 8UZ, 2UZ}, {"rect", 3UZ, 0.7, 
     boost::ut::expect(graph.connect<"out", "in">(timing, slicer).has_value());
     boost::ut::expect(graph.connect<"out", "in">(slicer, sink).has_value());
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     const auto run = scheduler.runAndWait();
     boost::ut::expect(run.has_value()) << (run.has_value() ? std::string{} : run.error().message);
@@ -333,7 +333,7 @@ const boost::ut::suite<"CpmModulate"> cpmModulateTests = [] {
         expect(graph.connect<"out", "in">(source, modulator).has_value());
         expect(graph.connect<"out", "in">(modulator, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 

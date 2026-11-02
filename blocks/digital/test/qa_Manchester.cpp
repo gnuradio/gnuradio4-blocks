@@ -153,7 +153,7 @@ template<typename TBlock>
     boost::ut::expect(graph.connect<"out", "in">(source, block).has_value());
     boost::ut::expect(graph.connect<"out", "in">(block, sink).has_value());
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     boost::ut::expect(scheduler.runAndWait().has_value());
 
@@ -219,7 +219,7 @@ struct SeenPair {
         boost::ut::expect(graph.connect<"violation", "in">(block, *flags).has_value());
     }
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     boost::ut::expect(scheduler.runAndWait().has_value());
 

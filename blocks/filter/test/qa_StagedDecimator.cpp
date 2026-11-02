@@ -557,7 +557,7 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(graph.connect<"out", "in">(source, decimator).has_value());
         expect(graph.connect<"out", "in">(decimator, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -597,7 +597,7 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(graph.connect<"out", "in">(source, decimator).has_value());
         expect(graph.connect<"out", "in">(decimator, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -670,7 +670,7 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         expect(graph.connect<"out", "in">(source, block).has_value());
         expect(fatal(sinks.has_value()));
         expect(gt(pathDelay(block), 16ULL)) << "the ladder delays the last two inputs past the last output";
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -692,7 +692,7 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
 
         expect(graph.connect<"out", "in">(source, block).has_value());
         expect(fatal(sinks.has_value()));
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 

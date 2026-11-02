@@ -906,7 +906,7 @@ const boost::ut::suite<"OFDM Schmidl-Cox sync"> _sync = [] {
             expect(graph.connect<"out", "in">(source, detect).has_value());
             expect(graph.connect<"out", "in">(detect, sink).has_value());
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             Run result;
             result.completed = scheduler.runAndWait().has_value();

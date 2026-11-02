@@ -147,7 +147,7 @@ template<typename TUpstream, typename TBlock>
     if (!graph.connect<"out", "in">(source, first).has_value() || !graph.connect<"out", "in">(first, block).has_value() || !sinks.has_value()) {
         return run;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     run.ran        = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     run.samples    = sinks->end._samples.size();
     run.endIndex   = sinks->end.endIndex();
