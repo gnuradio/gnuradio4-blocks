@@ -20,6 +20,7 @@ ignore_labels:
 # Vendored code keeps its upstream's formatting
 also_exclude:
   - "library/third_party/**/*"
+  - "blocks/*/test/graphs/**/*"
 
 restylers_version: stable
 

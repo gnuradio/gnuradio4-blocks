@@ -17,6 +17,8 @@ jobs:
       cancel-in-progress: false
     container:
       image: ghcr.io/${{ github.repository_owner }}/gnuradio4-core-sdk:${{ matrix.core_sdk_tag }}
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 3
     strategy:
       fail-fast: false
       matrix:
@@ -106,6 +108,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
             ${{ steps.enable_sccache.outputs.CXX_LAUNCHER }} \
             ${{ steps.enable_sccache.outputs.C_LAUNCHER }} \
+            -DUSE_CCACHE=OFF \
             -DENABLE_TESTING=ON \
             -DGR4_ENABLE_ZEROMQ=ON \
             -DENABLE_EXAMPLES=ON \
@@ -125,6 +128,7 @@ jobs:
             -DCMAKE_CROSSCOMPILING_EMULATOR="${system_node}" \
             ${{ steps.enable_sccache.outputs.CXX_LAUNCHER }} \
             ${{ steps.enable_sccache.outputs.C_LAUNCHER }} \
+            -DUSE_CCACHE=OFF \
             -DCMAKE_BUILD_TYPE=${{ matrix.cmake-build-type }} \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DENABLE_TESTING=ON \

@@ -1,0 +1,69 @@
+# basic::VectorSource publishing per-index tags into ExpectSink under `tags_exact`. The first source publishes two
+# tags at sample 1, one map each, and one tag at samples 3 and 4, with a uint32, a string and a bool value. Its sink
+# expects the two tags at sample 1 as a list, tag by tag, and the other tags as maps. The second source publishes one
+# tag with two keys at sample 1, which its sink expects as a list of one map. The third source repeats its values
+# twice and publishes tags at samples 0 and 5 of the six it emits. The run passes when every sink receives its samples
+# and its tags.
+blocks:
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: source
+      values: [1.0, 2.0, 3.0, 4.0, 5.0]
+      tags:
+        "1":
+          - level: !!uint32 3
+          - gate: open
+        "3":
+          mark: frame
+        "4":
+          last: true
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: sink
+      expected: [1.0, 2.0, 3.0, 4.0, 5.0]
+      expected_tags:
+        "1":
+          - level: !!uint32 3
+          - gate: open
+        "3":
+          mark: frame
+        "4":
+          last: true
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<float32>
+    parameters:
+      name: joined
+      values: [1.0, 2.0]
+      tags:
+        "1":
+          level: !!uint32 3
+          gate: open
+  - id: gr::blocks::testing::ExpectSink<float32>
+    parameters:
+      name: joined_sink
+      expected: [1.0, 2.0]
+      expected_tags:
+        "1":
+          - level: !!uint32 3
+            gate: open
+      tags_exact: true
+  - id: gr::blocks::basic::VectorSource<uint8>
+    parameters:
+      name: repeated
+      values: [1, 2, 3]
+      repeat: !!uint64 2
+      tags:
+        "0": { mark: start }
+        "5": { mark: end }
+  - id: gr::blocks::testing::ExpectSink<uint8>
+    parameters:
+      name: repeated_sink
+      expected: [1, 2, 3, 1, 2, 3]
+      expected_tags:
+        "0": { mark: start }
+        "5": { mark: end }
+      tags_exact: true
+connections:
+  - [source, out, sink, in]
+  - [joined, out, joined_sink, in]
+  - [repeated, out, repeated_sink, in]
