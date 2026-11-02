@@ -192,6 +192,11 @@ requires std::is_arithmetic_v<R>
     }
 }
 
+/// The type `ScalingConvert` forms its product in: `float` when `T` is `float` or when `float` holds every value of
+/// `T` and of `R` exactly, otherwise `double`.
+template<typename T, typename R>
+using ScalingProductType = std::conditional_t<std::same_as<T, float> || (std::numeric_limits<T>::digits <= std::numeric_limits<float>::digits && std::numeric_limits<R>::digits <= std::numeric_limits<float>::digits), float, double>;
+
 } // namespace detail
 
 GR_REGISTER_BLOCK(gr::blocks::basic::Convert, ([T], [U]), [ uint8_t, int16_t, int32_t, float ], [ uint8_t, int16_t, int32_t, float ])
@@ -225,19 +230,30 @@ requires std::is_arithmetic_v<T> && std::is_arithmetic_v<R>
 struct ScalingConvert : Block<ScalingConvert<T, R>> {
     using Description = Doc<R""(@brief Multiplies each input sample by `scale` and converts the product to the output type.
 
+`scale` is a `double` for every pair of types. The product is formed in `float` when the input is `float` or when
+`float` holds every input and output value exactly, and in `double` otherwise. In `float` the scale is rounded to
+`float` first, and the product is rounded to `float` before it converts.
+An integer input cannot overflow the product. An `int64_t` or `uint64_t` input past 2^53 loses its low bits in the
+`double` product.
 The product converts to the output type as in `Convert`: an integer output rounds to nearest, ties to even (in the
 default rounding mode), takes 0 for NaN and saturates at its range.
 `float` to `int32_t` needs the default floating-point semantics: under `-ffast-math` the result truncates.
 )"">;
     PortIn<T>  in;
     PortOut<R> out;
-    T          scale = static_cast<T>(1);
+    double     scale = 1.0;
 
     GR_MAKE_REFLECTABLE(ScalingConvert, in, out, scale);
 
     template<gr::meta::t_or_simd<T> V>
     [[nodiscard]] constexpr auto processOne(const V& input) const noexcept {
-        return detail::saturatingCast<R>(input * scale);
+        using P = detail::ScalingProductType<T, R>;
+        if constexpr (gr::meta::any_simd<V>) {
+            using PV = vir::stdx::rebind_simd_t<P, V>;
+            return detail::saturatingCast<R>(vir::stdx::static_simd_cast<PV>(input) * static_cast<P>(scale));
+        } else {
+            return detail::saturatingCast<R>(static_cast<P>(input) * static_cast<P>(scale));
+        }
     }
 };
 

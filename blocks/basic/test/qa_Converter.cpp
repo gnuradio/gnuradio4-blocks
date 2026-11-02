@@ -1,6 +1,9 @@
 #include <gnuradio-4.0/Graph.hpp>
+#include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/basic/ConverterBlocks.hpp>
 #include <gnuradio-4.0/basic/NullSources.hpp>
+#include <gnuradio-4.0/basic/VectorSink.hpp>
+#include <gnuradio-4.0/basic/VectorSource.hpp>
 
 #include <array>
 #include <bit>
@@ -114,6 +117,21 @@ void expectNaNAndInfinity() {
     expectBothPaths(gr::blocks::basic::Convert<T, R>{}, std::array<T, 5UZ>{std::numeric_limits<T>::quiet_NaN(), std::bit_cast<T>(kLowest), std::bit_cast<T>(kLowest | kSign), kInfinity, -kInfinity}, std::array<R, 5UZ>{R{0}, R{0}, R{0}, Limits::max(), Limits::min()});
 }
 
+/// Runs `inputs` through a graph of a `VectorSource`, `TBlock` with `settings` and a `VectorSink`, and returns what the
+/// sink received.
+template<typename TBlock, typename T, typename R>
+std::vector<R> runGraph(const std::vector<T>& inputs, const gr::property_map& settings) {
+    gr::Graph flow;
+    auto&     source    = flow.emplaceBlock<gr::blocks::basic::VectorSource<T>>({{"values", inputs}});
+    auto&     converter = flow.emplaceBlock<TBlock>(settings);
+    auto&     sink      = flow.emplaceBlock<gr::blocks::basic::VectorSink<R>>();
+    boost::ut::expect(boost::ut::fatal(flow.connect<"out", "in">(source, converter).has_value()));
+    boost::ut::expect(boost::ut::fatal(flow.connect<"out", "in">(converter, sink).has_value()));
+    gr::scheduler::Simple<> scheduler;
+    boost::ut::expect(boost::ut::fatal(scheduler.exchange(std::move(flow)).has_value()));
+    boost::ut::expect(scheduler.runAndWait().has_value());
+    return sink.data.value;
+}
 } // namespace unittest
 
 const boost::ut::suite<"basic Conversion tests"> basicConversion = [] {
@@ -175,7 +193,7 @@ const boost::ut::suite<"basic Conversion tests"> basicConversion = [] {
             TConvert converter;
             RetType  result = converter.processOne(/*input*/ static_cast<V>(42));
             if constexpr (kIsScalingBlock) {
-                converter.scale = static_cast<T>(0.5);
+                converter.scale = 0.5;
                 result          = converter.processOne(/*input*/ static_cast<V>(42));
             } else {
                 result = converter.processOne(/*input*/ static_cast<V>(21));
@@ -194,7 +212,7 @@ const boost::ut::suite<"basic Conversion tests"> basicConversion = [] {
             using TConvert = std::conditional_t<kIsScalingBlock, ScalingConvert<T, R>, Convert<T, R>>;
             TConvert converter;
             if constexpr (kIsScalingBlock) {
-                converter.scale = static_cast<T>(1.0);
+                converter.scale = 1.0;
             }
             RetType result = converter.processOne(/*input*/ static_cast<V>(42));
 
@@ -489,6 +507,63 @@ const boost::ut::suite<"conversion range and rounding"> conversionRange = [] {
         converter.scale = 32767;
         // 0.5 * 32767 is 16383.5, a tie that rounds to the even 16384
         expectBothPaths(converter, std::array{0.5f, 1.f, -1.f, 1.5f, -1.5f, kNaN, kInf}, std::array<std::int16_t, 7UZ>{16384, Limits::max(), -Limits::max(), Limits::max(), Limits::min(), 0, Limits::max()});
+    };
+
+    "ScalingConvert<float, int32_t> forms the product in float"_test = [] {
+        ScalingConvert<float, std::int32_t> converter;
+        converter.scale = 3;
+        // 16777215 x 3 is not a float; the product rounds to the nearest float before it converts
+        constexpr std::array<float, 2UZ> kInputs{16777215.f, -16777215.f};
+        std::array<std::int32_t, 2UZ>    expected{};
+        for (std::size_t i = 0UZ; i < kInputs.size(); ++i) {
+            expected[i] = unittest::nearestInRange<std::int32_t>(static_cast<double>(kInputs[i] * 3.f));
+        }
+        expect(neq(expected[0], 3 * 16777215));
+        expectBothPaths(converter, kInputs, expected);
+    };
+
+    "ScalingConvert with an integer input forms the product without overflow"_test = [] {
+        ScalingConvert<std::int16_t, std::int32_t> toInt32;
+        toInt32.scale = 4;
+        constexpr std::array<std::int16_t, 4UZ> kShort{16384, 32767, -32768, -1};
+        std::array<std::int32_t, 4UZ>           scaled{};
+        for (std::size_t i = 0UZ; i < kShort.size(); ++i) {
+            scaled[i] = 4 * std::int32_t{kShort[i]};
+        }
+        expectBothPaths(toInt32, kShort, scaled);
+
+        ScalingConvert<std::int32_t, float> toFloat;
+        toFloat.scale = 65536;
+        expectBothPaths(toFloat, std::array<std::int32_t, 3UZ>{1, 32768, -65536}, std::array{65536.f, 2147483648.f, -4294967296.f});
+    };
+
+    "ScalingConvert<int16_t, int32_t> gives the same output in a graph as in processOne"_test = [] {
+        using TBlock = ScalingConvert<std::int16_t, std::int32_t>;
+        constexpr std::array<std::int16_t, 4UZ> kShort{16384, 32767, -32768, -1};
+        std::vector<std::int16_t>               inputs;
+        // 71 samples run the full SIMD width and the tail widths 4, 2 and 1
+        for (std::size_t i = 0UZ; i < 71UZ; ++i) {
+            inputs.push_back(kShort[i % kShort.size()]);
+        }
+        const std::vector<std::int32_t> received = unittest::runGraph<TBlock, std::int16_t, std::int32_t>(inputs, {{"scale", 4.0}});
+        TBlock                          reference({{"scale", 4.0}});
+        reference.settings().init();
+        std::ignore = reference.settings().applyStagedParameters();
+        std::vector<std::int32_t> expected;
+        for (const std::int16_t value : inputs) {
+            expected.push_back(reference.processOne(value));
+        }
+        expect(eq(expected[0], 65536)) << "16384 * 4 in processOne";
+        expect(received == expected) << "the graph's output equals processOne's";
+    };
+
+    "ScalingConvert takes a fractional double scale for an integer input"_test = [] {
+        using TBlock = ScalingConvert<std::int16_t, float>;
+        expect(std::is_same_v<decltype(TBlock::scale), double>);
+        TBlock converter({{"scale", 1.0 / 32768.0}});
+        converter.settings().init();
+        std::ignore = converter.settings().applyStagedParameters();
+        expectBothPaths(converter, std::array<std::int16_t, 3UZ>{-32768, 16384, 1}, std::array{-1.f, 0.5f, 1.f / 32768.f});
     };
 
     "ComplexToInterleaved to an integer type rounds and saturates each component"_test = [] {
