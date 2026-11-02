@@ -2,8 +2,18 @@
 #include <gnuradio-4.0/basic/ConverterBlocks.hpp>
 #include <gnuradio-4.0/basic/NullSources.hpp>
 
+#include <array>
+#include <bit>
+#include <cmath>
+#include <concepts>
+#include <cstdint>
+#include <format>
 #include <iostream>
+#include <limits>
+#include <string>
 #include <tuple>
+#include <type_traits>
+#include <vector>
 
 namespace unittest {
 template<class T>
@@ -26,6 +36,85 @@ inline constexpr std::ostream& operator<<(std::ostream& os, const std::tuple<Ts.
 }
 
 #include <boost/ut.hpp>
+
+namespace unittest {
+/// Returns an integer `value` as `long long` or `unsigned long long`, which `std::format` prints as a number, and any
+/// other value unchanged.
+template<typename T>
+[[nodiscard]] constexpr auto printable(T value) {
+    if constexpr (std::is_integral_v<T>) {
+        return static_cast<std::conditional_t<std::is_signed_v<T>, long long, unsigned long long>>(value);
+    } else {
+        return value;
+    }
+}
+
+/// Returns the integer `value` limited to the range of `R`.
+template<typename R>
+[[nodiscard]] constexpr R clampToRange(long long value) {
+    using Limits = std::numeric_limits<R>;
+    if (value < static_cast<long long>(Limits::min())) {
+        return Limits::min();
+    }
+    if (value > static_cast<long long>(Limits::max())) {
+        return Limits::max();
+    }
+    return static_cast<R>(value);
+}
+
+/// Returns `value` rounded to the nearest integer, ties to even, and limited to the range of `R`.
+template<typename R>
+[[nodiscard]] R nearestInRange(double value) {
+    return clampToRange<R>(static_cast<long long>(std::nearbyint(value)));
+}
+
+/// Runs `block.processOne` on each input alone and on all inputs as one SIMD vector, and expects `expected` from both.
+template<typename TBlock, typename T, typename R, std::size_t N>
+void expectBothPaths(const TBlock& block, const std::array<T, N>& inputs, const std::array<R, N>& expected) {
+    using V = vir::stdx::fixed_size_simd<T, N>;
+    const V     batch([&inputs](auto i) { return inputs[i]; });
+    const auto  simdResult = block.processOne(batch);
+    std::string mismatches;
+    for (std::size_t i = 0UZ; i < N; ++i) {
+        const R scalar = block.processOne(inputs[i]);
+        const R lane   = simdResult[i];
+        if (scalar != expected[i] || lane != expected[i]) {
+            mismatches += std::format("{} {}: scalar {}, SIMD {}, expected {}\n", gr::meta::type_name<TBlock>(), printable(inputs[i]), printable(scalar), printable(lane), printable(expected[i]));
+        }
+    }
+    boost::ut::expect(mismatches.empty()) << mismatches;
+}
+
+/// Expects `Convert<T, R>` to give the lowest and the highest value of `R` for themselves, and the nearest integer
+/// within the range for the values 0.5 inside and 0.5 outside each of them.
+template<typename T, typename R>
+void expectAtLimits() {
+    using Limits                  = std::numeric_limits<R>;
+    const double             low  = static_cast<double>(Limits::min());
+    const double             high = static_cast<double>(Limits::max());
+    const std::array<T, 6UZ> inputs{static_cast<T>(low), static_cast<T>(high), static_cast<T>(low + 0.5), static_cast<T>(high - 0.5), static_cast<T>(low - 0.5), static_cast<T>(high + 0.5)};
+    std::array<R, 6UZ>       expected{};
+    for (std::size_t i = 0UZ; i < inputs.size(); ++i) {
+        expected[i] = nearestInRange<R>(static_cast<double>(inputs[i]));
+    }
+    boost::ut::expect(expected[0] == Limits::min() && expected[1] == Limits::max() && expected[4] == Limits::min() && expected[5] == Limits::max());
+    expectBothPaths(gr::blocks::basic::Convert<T, R>{}, inputs, expected);
+}
+
+/// Expects `Convert<T, R>` to give 0 for NaN and the lowest and highest value of `R` for the two infinities. The NaNs
+/// are the quiet one, the one with the lowest mantissa and the negative one with the lowest mantissa; the bit patterns
+/// come from the infinity's.
+template<std::floating_point T, typename R>
+void expectNaNAndInfinity() {
+    using Limits             = std::numeric_limits<R>;
+    using Bits               = std::conditional_t<sizeof(T) == sizeof(std::uint32_t), std::uint32_t, std::uint64_t>;
+    constexpr T    kInfinity = std::numeric_limits<T>::infinity();
+    constexpr Bits kLowest   = std::bit_cast<Bits>(kInfinity) + 1U;
+    constexpr Bits kSign     = Bits{1} << (std::numeric_limits<Bits>::digits - 1);
+    expectBothPaths(gr::blocks::basic::Convert<T, R>{}, std::array<T, 5UZ>{std::numeric_limits<T>::quiet_NaN(), std::bit_cast<T>(kLowest), std::bit_cast<T>(kLowest | kSign), kInfinity, -kInfinity}, std::array<R, 5UZ>{R{0}, R{0}, R{0}, Limits::max(), Limits::min()});
+}
+
+} // namespace unittest
 
 const boost::ut::suite<"basic Conversion tests"> basicConversion = [] {
     using namespace boost::ut;
@@ -301,6 +390,113 @@ const boost::ut::suite<"converter port names"> converterPortNames = [] {
         expect(flow.connect<"arg", "in">(arg, flow.emplaceBlock<NullSink<float>>()).has_value());
         expect(flow.connect<"deg", "in">(toDegree, flow.emplaceBlock<NullSink<float>>()).has_value());
         expect(flow.connect<"rad", "in">(toRadians, flow.emplaceBlock<NullSink<float>>()).has_value());
+    };
+};
+
+const boost::ut::suite<"conversion range and rounding"> conversionRange = [] {
+    using namespace boost::ut;
+    using namespace gr::blocks::basic;
+    using unittest::clampToRange;
+    using unittest::expectBothPaths;
+
+    constexpr static float kNaN = std::numeric_limits<float>::quiet_NaN();
+    constexpr static float kInf = std::numeric_limits<float>::infinity();
+
+    "float to integer rounds to nearest, ties to even"_test = [] {
+        expectBothPaths(Convert<float, std::int16_t>{}, std::array{2.5f, 3.5f, -2.5f, -3.5f, 0.5f, 1.5f, 2.4f, -0.7f}, std::array<std::int16_t, 8UZ>{2, 4, -2, -4, 0, 2, 2, -1});
+        expectBothPaths(Convert<double, std::int64_t>{}, std::array{2.5, 3.5, -2.5, -3.5, 0.7, -0.7}, std::array<std::int64_t, 6UZ>{2, 4, -2, -4, 1, -1});
+        // a floating-point input other than float and double rounds in double
+        static_assert(std::is_same_v<decltype(Convert<long double, std::int16_t>{}.processOne(2.5L)), std::int16_t>);
+        expectBothPaths(Convert<long double, std::int16_t>{}, std::array{2.5L, 3.5L, -0.7L, 40000.L}, std::array<std::int16_t, 4UZ>{2, 4, -1, std::numeric_limits<std::int16_t>::max()});
+    };
+
+    "float to integer saturates at the range and maps NaN to 0"_test = []<typename R>(R /*noop*/) {
+        using Limits = std::numeric_limits<R>;
+        expectBothPaths(Convert<float, R>{}, std::array{40000.f, -40000.f, 1e10f, -1e10f, kNaN, kInf, -kInf}, std::array{clampToRange<R>(40000), clampToRange<R>(-40000), Limits::max(), Limits::min(), R{0}, Limits::max(), Limits::min()});
+    } | std::tuple<std::uint8_t, std::int16_t, std::int32_t>();
+
+    "float to integer at and just past each limit"_test = [] {
+        using Int16  = std::numeric_limits<std::int16_t>;
+        using Uint8  = std::numeric_limits<std::uint8_t>;
+        using Int32  = std::numeric_limits<std::int32_t>;
+        using Int64  = std::numeric_limits<std::int64_t>;
+        using Uint64 = std::numeric_limits<std::uint64_t>;
+        // a tie next to a limit rounds to its even neighbor, and a value past a limit saturates
+        expectBothPaths(Convert<float, std::int16_t>{}, std::array{32766.5f, 32767.f, 32767.5f, 32768.f, -32767.5f, -32768.f, -32768.5f, -32768.6f}, std::array{std::int16_t{32766}, Int16::max(), Int16::max(), Int16::max(), Int16::min(), Int16::min(), Int16::min(), Int16::min()});
+        expectBothPaths(Convert<float, std::uint8_t>{}, std::array{254.5f, 255.f, 255.5f, 256.f, 0.5f, -0.4f, -0.5f, -0.6f}, std::array{std::uint8_t{254}, Uint8::max(), Uint8::max(), Uint8::max(), std::uint8_t{0}, std::uint8_t{0}, std::uint8_t{0}, std::uint8_t{0}});
+        // the largest float below 2^31 and the next one below -2^31
+        expectBothPaths(Convert<float, std::int32_t>{}, std::array{2147483520.f, 2147483648.f, -2147483648.f, -2147483904.f}, std::array{std::int32_t{2147483520}, Int32::max(), Int32::min(), Int32::min()});
+        // the largest double below 2^63 and the next one below -2^63
+        expectBothPaths(Convert<double, std::int64_t>{}, std::array{9223372036854774784.0, 9223372036854775808.0, -9223372036854775808.0, -9223372036854777856.0}, std::array{std::int64_t{9223372036854774784}, Int64::max(), Int64::min(), Int64::min()});
+        // the largest float below 2^64
+        expectBothPaths(Convert<float, std::uint64_t>{}, std::array{18446742974197923840.f, 18446744073709551616.f, -0.5f, -1.f}, std::array{std::uint64_t{18446742974197923840ULL}, Uint64::max(), std::uint64_t{0}, std::uint64_t{0}});
+    };
+
+    "NaN and infinity through a double input and a 64-bit output"_test = [] {
+        using Bits = gr::blocks::basic::detail::RoundingBits<float>;
+        using Wide = gr::blocks::basic::detail::RoundingBits<double>;
+        // the first NaN is the bit pattern after the infinity's
+        expect(Bits::kFirstNaN == std::bit_cast<std::int32_t>(std::numeric_limits<float>::infinity()) + 1);
+        expect(Wide::kFirstNaN == std::bit_cast<std::int64_t>(std::numeric_limits<double>::infinity()) + 1);
+        unittest::expectNaNAndInfinity<double, std::int16_t>();
+        unittest::expectNaNAndInfinity<double, std::int32_t>();
+        unittest::expectNaNAndInfinity<double, std::int64_t>();
+        unittest::expectNaNAndInfinity<double, std::uint64_t>();
+        unittest::expectNaNAndInfinity<float, std::int64_t>();
+        unittest::expectNaNAndInfinity<float, std::uint64_t>();
+    };
+
+    "float and double to integer at each limit and 0.5 inside and outside it"_test = [] {
+        unittest::expectAtLimits<float, std::int8_t>();
+        unittest::expectAtLimits<float, std::uint8_t>();
+        unittest::expectAtLimits<float, std::int16_t>();
+        unittest::expectAtLimits<float, std::uint16_t>();
+        unittest::expectAtLimits<double, std::int8_t>();
+        unittest::expectAtLimits<double, std::uint8_t>();
+        unittest::expectAtLimits<double, std::int16_t>();
+        unittest::expectAtLimits<double, std::int32_t>();
+        unittest::expectAtLimits<double, std::uint32_t>();
+    };
+
+    "float to int32_t on both sides of 2^22 and 2^23"_test = [] {
+        // a float steps by 0.5 from 2^22 on and by 1 from 2^23 on
+        constexpr std::array<float, 12UZ> kNear{4194302.5f, 4194303.5f, 4194303.75f, 4194304.f, 4194304.5f, 4194305.5f, 8388606.5f, 8388607.5f, 8388608.f, 8388609.f, -4194303.5f, -8388607.5f};
+        std::array<std::int32_t, 12UZ>    expected{};
+        for (std::size_t i = 0UZ; i < kNear.size(); ++i) {
+            expected[i] = unittest::nearestInRange<std::int32_t>(static_cast<double>(kNear[i]));
+        }
+        expectBothPaths(Convert<float, std::int32_t>{}, kNear, expected);
+    };
+
+    "integer narrowing saturates at the range"_test = [] {
+        constexpr std::array<std::int32_t, 6UZ> kWide{70000, -70000, 40000, -1, 255, 256};
+        std::array<std::int16_t, 6UZ>           toInt16{};
+        std::array<std::uint8_t, 6UZ>           toUint8{};
+        for (std::size_t i = 0UZ; i < kWide.size(); ++i) {
+            toInt16[i] = clampToRange<std::int16_t>(kWide[i]);
+            toUint8[i] = clampToRange<std::uint8_t>(kWide[i]);
+        }
+        expect(eq(toInt16[0], std::numeric_limits<std::int16_t>::max()));
+        expect(eq(toUint8[3], std::uint8_t{0}));
+        expectBothPaths(Convert<std::int32_t, std::int16_t>{}, kWide, toInt16);
+        expectBothPaths(Convert<std::int32_t, std::uint8_t>{}, kWide, toUint8);
+        expectBothPaths(Convert<std::int16_t, std::uint8_t>{}, std::array<std::int16_t, 4UZ>{-1, 300, -32768, 255}, std::array<std::uint8_t, 4UZ>{0, 255, 0, 255});
+    };
+
+    "ScalingConvert<float, int16_t> rounds and saturates the product"_test = [] {
+        using Limits = std::numeric_limits<std::int16_t>;
+        ScalingConvert<float, std::int16_t> converter;
+        converter.scale = 32767;
+        // 0.5 * 32767 is 16383.5, a tie that rounds to the even 16384
+        expectBothPaths(converter, std::array{0.5f, 1.f, -1.f, 1.5f, -1.5f, kNaN, kInf}, std::array<std::int16_t, 7UZ>{16384, Limits::max(), -Limits::max(), Limits::max(), Limits::min(), 0, Limits::max()});
+    };
+
+    "ComplexToInterleaved to an integer type rounds and saturates each component"_test = [] {
+        ComplexToInterleaved<std::complex<float>, std::int16_t> converter;
+        const std::vector<std::complex<float>>                  input{{40000.f, kNaN}, {2.5f, -40000.f}};
+        std::vector<std::int16_t>                               output(2UZ * input.size());
+        expect(converter.processBulk(input, output) == gr::work::Status::OK);
+        expect(output == std::vector<std::int16_t>{std::numeric_limits<std::int16_t>::max(), 0, 2, std::numeric_limits<std::int16_t>::min()});
     };
 };
 
