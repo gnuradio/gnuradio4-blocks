@@ -1636,6 +1636,64 @@ const boost::ut::suite<"NoiseBlanker"> noiseBlankerTests = [] {
         expect(eq(powerSamples, kStep + 997UZ)) << "the power crossing 1e-300 where its pole says, well before it could be flushed";
     };
 
+    "a call flushes a subnormal tracker once, at its end"_test = [] {
+        // At alpha = 0.1 the reference flushes the power at zero number 6 724 and the duty, from a half, at 70 416.
+        // The block keeps the subnormal power for the rest of the call, where it stops at the smallest subnormal since
+        // this pole does not decay it further, and sets it to zero when the call ends.
+        using Reference = gr::blocks::analog::reference::NoiseBlanker<CF>;
+
+        const gr::property_map settings{{"enabled", true}, {"sample_rate", kRate}, {"averaging_time", 0.0}, {"alpha", 0.1}, {"emit_tags", true}};
+        const auto             seeded = [&]<typename TBlock>(TBlock block) {
+            block.start();
+            block._warmup = 0UZ;
+            block._power  = 1.0; // where a settled tracker on unit-power noise sits
+            block._duty   = 0.5; // and where a run of impulses leaves the duty
+            return block;
+        };
+        const auto sameBits = [](const test::Result<CF>& a, const test::Result<CF>& b) { return std::ranges::equal(std::as_bytes(std::span(a.samples)), std::as_bytes(std::span(b.samples))) && a.tags == b.tags; };
+
+        std::vector<CF> quiet = noise(3000UZ, 0x6a09e667f3bcc908ULL);
+        for (CF& sample : quiet) {
+            sample *= 0.1f;
+        }
+        quiet[500UZ]  = CF(30.f, -20.f);
+        quiet[1500UZ] = CF(-25.f, 10.f);
+
+        NoiseBlanker<CF> block     = seeded(make<CF>(settings));
+        Reference        reference = seeded([&] {
+            Reference b{settings};
+            b.settings().init();
+            std::ignore = b.settings().applyStagedParameters();
+            return b;
+        }());
+
+        const std::vector<CF>  zeros(7500UZ, CF{});
+        const test::Result<CF> gotZeros  = test::run(block, std::span<const CF>(zeros));
+        const test::Result<CF> wantZeros = test::run(reference, std::span<const CF>(zeros));
+        expect(that % sameBits(gotZeros, wantZeros)) << "the silence leaves as the per-sample form's, bit for bit";
+        expect(eq(std::fpclassify(reference._power), FP_ZERO) && eq(std::fpclassify(block._power), FP_ZERO)) << "both end the call with the power at zero, the block's flushed at the end";
+        expect(block._duty == reference._duty && gt(block._duty, 0.0)) << "the duty is normal at the end and equal to the reference's";
+
+        const test::Result<CF> gotQuiet  = test::run(block, std::span<const CF>(quiet));
+        const test::Result<CF> wantQuiet = test::run(reference, std::span<const CF>(quiet));
+        expect(that % sameBits(gotQuiet, wantQuiet)) << "the next call, which finds the power at zero, leaves samples and tags as the per-sample form's";
+        expect(gt(gotQuiet.tags.size(), 2UZ)) << "with the impulses detected and marked";
+        expect(block._power == reference._power && block._duty == reference._duty) << "and with the same trackers at its end";
+
+        NoiseBlanker<CF>       longRun = seeded(make<CF>(settings));
+        Reference              longRef = seeded([&] {
+            Reference b{settings};
+            b.settings().init();
+            std::ignore = b.settings().applyStagedParameters();
+            return b;
+        }());
+        const std::vector<CF>  silence(80000UZ, CF{});
+        const test::Result<CF> gotSilence  = test::run(longRun, std::span<const CF>(silence));
+        const test::Result<CF> wantSilence = test::run(longRef, std::span<const CF>(silence));
+        expect(that % sameBits(gotSilence, wantSilence)) << "a call that carries both trackers into the subnormals leaves the same samples";
+        expect(eq(std::fpclassify(longRun._power), FP_ZERO) && eq(std::fpclassify(longRun._duty), FP_ZERO)) << "and ends with both at zero";
+    };
+
     "the per-sample cost stays inside the recorded budget"_test = [] {
         if (std::getenv("ENABLE_BENCHMARK_TESTS") == nullptr) {
             return; // opt-in, since a throughput figure belongs to a controlled run and not to every ctest invocation
