@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -24,6 +25,94 @@
 #include <gnuradio-4.0/basic/IqCorrection.hpp>
 #include <gnuradio-4.0/sync/Pll.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
+
+namespace gr::blocks::basic::reference {
+
+/// `DcOffsetCorrect` one sample per call, the estimate in the block's members.
+template<typename T>
+struct DcOffsetCorrect : Block<DcOffsetCorrect<T>> {
+    PortIn<T>  in;
+    PortOut<T> out;
+
+    Annotated<bool, "enabled">                                                                                   enabled     = false;
+    Annotated<float, "sample_rate", Limits<0.f, std::numeric_limits<float>::max(), detail::kSampleRatePositive>> sample_rate = 96000.f;
+    Annotated<double, "tau", Limits<0.0, std::numeric_limits<double>::max(), detail::kTauPositive>>              tau         = 1.0;
+    Annotated<double, "alpha">                                                                                   alpha       = 0.0;
+    Annotated<double, "corner_hz">                                                                               corner_hz   = 0.0;
+
+    GR_MAKE_REFLECTABLE(DcOffsetCorrect, in, out, enabled, sample_rate, tau, alpha, corner_hz);
+
+    bool   _enabled       = enabled.value;
+    float  _sampleRate    = sample_rate.value;
+    double _tau           = tau.value;
+    double _alpha         = 0.0;
+    double _oneMinusAlpha = 1.0;
+    double _real          = 0.0;
+    double _imag          = 0.0;
+
+    explicit DcOffsetCorrect(property_map init = {}) : Block<DcOffsetCorrect<T>>(std::move(init)) { accept(_enabled, _sampleRate, _tau, 1.0 / (1.0 + _tau * static_cast<double>(_sampleRate))); }
+
+    void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
+        const float  rate      = newSettings.contains("sample_rate") ? sample_rate.value : _sampleRate;
+        const double seconds   = newSettings.contains("tau") ? tau.value : _tau;
+        const double nextAlpha = 1.0 / (1.0 + seconds * static_cast<double>(rate));
+        if (!(nextAlpha > 0.0) || nextAlpha > 1.0) {
+            throw gr::exception("alpha must lie in (0, 1]");
+        }
+        const double nextCorner = nextAlpha * static_cast<double>(rate) / (2.0 * std::numbers::pi);
+        if ((newSettings.contains("alpha") && alpha.value != nextAlpha) || (newSettings.contains("corner_hz") && corner_hz.value != nextCorner)) {
+            throw gr::exception("alpha and corner_hz follow from tau and sample_rate");
+        }
+        accept(newSettings.contains("enabled") ? enabled.value : _enabled, rate, seconds, nextAlpha);
+    }
+
+    void reset() {
+        _real = 0.0;
+        _imag = 0.0;
+    }
+
+    [[nodiscard]] std::complex<double> dcEstimate() const noexcept { return {_real, _imag}; }
+
+    [[nodiscard]] constexpr T processOne(T sample) noexcept {
+        if (!_enabled) {
+            return sample;
+        }
+        if constexpr (meta::complex_like<T>) {
+            using Real            = typename T::value_type;
+            const double real     = static_cast<double>(sample.real());
+            const double imag     = static_cast<double>(sample.imag());
+            const double nextReal = _alpha * real + _oneMinusAlpha * _real;
+            const double nextImag = _alpha * imag + _oneMinusAlpha * _imag;
+            if (std::isfinite(nextReal) && std::isfinite(nextImag)) {
+                _real = flushed(nextReal);
+                _imag = flushed(nextImag);
+            }
+            return T(static_cast<Real>(real - _real), static_cast<Real>(imag - _imag));
+        } else {
+            const double real     = static_cast<double>(sample);
+            const double nextReal = _alpha * real + _oneMinusAlpha * _real;
+            if (std::isfinite(nextReal)) {
+                _real = flushed(nextReal);
+            }
+            return static_cast<T>(real - _real);
+        }
+    }
+
+private:
+    [[nodiscard]] static constexpr double flushed(double value) noexcept { return std::abs(value) < std::numeric_limits<double>::min() ? 0.0 : value; }
+
+    void accept(bool on, float rate, double seconds, double nextAlpha) {
+        _enabled       = on;
+        _sampleRate    = rate;
+        _tau           = seconds;
+        _alpha         = nextAlpha;
+        _oneMinusAlpha = 1.0 - nextAlpha;
+        alpha          = nextAlpha;
+        corner_hz      = nextAlpha * static_cast<double>(rate) / (2.0 * std::numbers::pi);
+    }
+};
+
+} // namespace gr::blocks::basic::reference
 
 namespace {
 
@@ -60,14 +149,26 @@ template<typename TBlock>
     return block.settings().applyStagedParameters().failedParameters.size() == keys;
 }
 
-/// Drives a processOne block over `input`, one sample at a time.
+/// Drives a block over `input`: a processOne block one sample at a time, a processBulk block in one call.
 template<typename TBlock>
 [[nodiscard]] std::vector<CF> drive(TBlock& block, std::span<const CF> input) {
     std::vector<CF> output(input.size());
-    for (std::size_t i = 0UZ; i < input.size(); ++i) {
-        output[i] = block.processOne(input[i]);
+    if constexpr (gr::HasProcessBulkFunction<TBlock>) {
+        std::ignore = block.processBulk(input, std::span<CF>(output));
+    } else {
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            output[i] = block.processOne(input[i]);
+        }
     }
     return output;
+}
+
+/// The output of a processBulk block for the one input @p sample.
+template<typename TBlock, typename T>
+[[nodiscard]] T step(TBlock& block, T sample) {
+    T made{};
+    std::ignore = block.processBulk(std::span<const T>(&sample, 1UZ), std::span<T>(&made, 1UZ));
+    return made;
 }
 
 /// The value `settings().get()` returns for `key`, or NaN when it holds none as a `double`.
@@ -373,6 +474,76 @@ void expectEachEstimateOnItsSample(const SwapRun& run, const std::vector<Estimat
     return tags;
 }
 
+/// A change of settings, or a reset when `settings` is empty, before the first call that starts at or past input `at`.
+struct Change {
+    std::size_t      at = 0UZ;
+    gr::property_map settings;
+};
+
+/// The output of `TBlock` over @p input along @p changes, with the estimate it ends on. A processBulk block takes calls
+/// of 1, 9, 64, 1000, 4096 and 3 samples in turn, a processOne block one sample per call.
+template<typename TBlock, typename T>
+[[nodiscard]] std::pair<std::vector<T>, std::complex<double>> runChanges(std::span<const T> input, std::span<const Change> changes) {
+    constexpr std::size_t kWindows[] = {1UZ, 9UZ, 64UZ, 1000UZ, 4096UZ, 3UZ};
+
+    TBlock         block = make<TBlock>({{"enabled", true}, {"sample_rate", 96000.f}, {"tau", 0.001}});
+    std::vector<T> output(input.size());
+    std::size_t    next = 0UZ;
+    for (std::size_t at = 0UZ, call = 0UZ; at < input.size(); ++call) {
+        const std::size_t count = std::min(kWindows[call % std::size(kWindows)], input.size() - at);
+        for (; next < changes.size() && changes[next].at <= at; ++next) {
+            if (changes[next].settings.empty()) {
+                block.reset();
+            } else {
+                apply(block, changes[next].settings);
+            }
+        }
+        if constexpr (gr::HasProcessBulkFunction<TBlock>) {
+            std::ignore = block.processBulk(input.subspan(at, count), std::span<T>(output).subspan(at, count));
+        } else {
+            for (std::size_t i = at; i < at + count; ++i) {
+                output[i] = block.processOne(input[i]);
+            }
+        }
+        at += count;
+    }
+    return {std::move(output), block.dcEstimate()};
+}
+
+/// What a scheduled run delivered at its sink.
+struct SinkRun {
+    bool                 ran = false;
+    std::vector<CF>      samples;
+    std::vector<gr::Tag> tags;
+};
+
+/// Runs a counted stream carrying `tags` through `TBlock`, with `enabled` and `tau` coupled to tag keys of their names.
+template<typename TBlock>
+[[nodiscard]] SinkRun runCoupled(const std::vector<gr::Tag>& tags) {
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<TagSource<CF, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 20000U}, {"mark_tag", false}});
+    source._tags     = tags;
+    auto& dc         = graph.emplaceBlock<TBlock>({{"enabled", true}, {"tau", 0.001}});
+    dc.settings().setTagCouplings({{"enabled", std::string("enabled")}, {"tau", std::string("tau")}});
+    auto& sink = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_BULK>>({{"name", "TagSink"}});
+
+    SinkRun run;
+    if (!graph.connect<"out", "in">(source, dc).has_value() || !graph.connect<"out", "in">(dc, sink).has_value()) {
+        return run;
+    }
+    gr::scheduler::Simple scheduler;
+    run.ran     = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
+    run.samples = std::vector<CF>(sink._samples.begin(), sink._samples.end());
+    run.tags    = std::vector<gr::Tag>(sink._tags.begin(), sink._tags.end());
+    return run;
+}
+
+/// True when @p a and @p b are equal bit for bit.
+template<typename T>
+[[nodiscard]] bool sameBits(std::span<const T> a, std::span<const T> b) {
+    return std::ranges::equal(std::as_bytes(a), std::as_bytes(b));
+}
+
 } // namespace
 
 /// Publishes `kSwapCount` samples of CF(1, 2) and ends the stream. `endTag` sits on the position after the last sample.
@@ -549,7 +720,7 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
             std::size_t         reached    = 0UZ;
             std::size_t         ninetyNine = 0UZ;
             for (std::size_t n = 1UZ; n <= count; ++n) {
-                std::ignore           = stepping.processOne(CF(static_cast<float>(kOffset), 0.f));
+                std::ignore           = step(stepping, CF(static_cast<float>(kOffset), 0.f));
                 const double fraction = stepping.dcEstimate().real() / kOffset;
                 if (reached == 0UZ && fraction >= 1.0 - 1.0 / std::numbers::e) {
                     reached = n;
@@ -579,10 +750,12 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         DcOffsetCorrect<CF> block = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", kProduct / static_cast<double>(kRate)}});
         expect(neq(1.0 - block.alpha.value, 1.0)) << "in double it does not";
 
-        const std::size_t count = static_cast<std::size_t>(4.0 * kProduct);
-        const CF          dc(0.05f, 0.f);
-        for (std::size_t i = 0UZ; i < count; ++i) {
-            std::ignore = block.processOne(dc);
+        const std::size_t     count = static_cast<std::size_t>(4.0 * kProduct);
+        const std::vector<CF> dc(1UZ << 16, CF(0.05f, 0.f));
+        std::vector<CF>       sink(dc.size());
+        for (std::size_t done = 0UZ; done < count; done += dc.size()) {
+            const std::size_t n = std::min(dc.size(), count - done);
+            std::ignore         = block.processBulk(std::span<const CF>(dc).first(n), std::span<CF>(sink).first(n));
         }
         const double want = 0.05 * (1.0 - std::exp(-4.0));
         expect(approx(block.dcEstimate().real(), want, 0.1 * want)) << std::format("four time constants: {:.7f} against the float32 direct form's 0.2172", block.dcEstimate().real());
@@ -602,12 +775,47 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         expect(eq(block.dcEstimate().real(), converged)) << "a disabled block does not track";
 
         apply(block, {{"enabled", true}});
-        const CF first = block.processOne(CF(0.05f, 0.f));
+        const CF first = step(block, CF(0.05f, 0.f));
         expect(lt(std::abs(static_cast<double>(first.real())), 1e-4)) << "so re-enabling nulls the spike at once rather than over tau";
 
         apply(block, {{"tau", 10.0 * kProduct / static_cast<double>(kRate)}});
         expect(approx(block.dcEstimate().real(), converged, 1e-4)) << "a tau change keeps the converged estimate";
         expect(approx(block.alpha.value, 1.0 / (1.0 + 10.0 * kProduct), 1e-12)) << "only how fast it chases";
+    };
+
+    "the estimate and every output follow the per-sample form, bit for bit"_test = [] {
+        const auto compare = []<typename T>(const char* type) {
+            std::vector<T>        input(20000UZ);
+            const std::vector<CF> x = noise(input.size(), 0x082efa98ec4e6c89ULL, 0.05);
+            for (std::size_t i = 0UZ; i < input.size(); ++i) {
+                if constexpr (std::same_as<T, float>) {
+                    input[i] = x[i].real();
+                } else {
+                    input[i] = x[i];
+                }
+            }
+            input[4321UZ]                     = std::numeric_limits<float>::quiet_NaN();
+            input[9876UZ]                     = std::numeric_limits<float>::infinity();
+            const std::vector<Change> changes = {{3000UZ, {{"enabled", false}}}, {5000UZ, {{"enabled", true}}}, {8000UZ, {{"tau", 0.01}}}, {12000UZ, {}}, {15000UZ, {{"sample_rate", 1e6f}}}};
+            const auto [want, wantEstimate]   = runChanges<gr::blocks::basic::reference::DcOffsetCorrect<T>, T>(input, changes);
+            const auto [got, gotEstimate]     = runChanges<DcOffsetCorrect<T>, T>(input, changes);
+            expect(sameBits(std::span<const T>(got), std::span<const T>(want))) << type;
+            expect(gotEstimate == wantEstimate) << type << ": the same estimate at the end";
+            expect(neq(wantEstimate.real(), 0.0)) << type << ": the run ends with an estimate";
+        };
+        compare.template operator()<float>("float");
+        compare.template operator()<CF>("complex<float>");
+    };
+
+    "samples and tags leave as the per-sample form's while tags toggle the block and move tau"_test = [] {
+        std::vector<gr::Tag> tags{{100UZ, {{"probe", gr::Size_t(1)}}}, {2500UZ, {{"enabled", false}}}, {2501UZ, {{"probe", gr::Size_t(2)}}}, {6000UZ, {{"enabled", true}}}, {9000UZ, {{"tau", 0.01}, {"probe", gr::Size_t(3)}}}, {19999UZ, {{"probe", gr::Size_t(4)}}}};
+        const SinkRun        want = runCoupled<gr::blocks::basic::reference::DcOffsetCorrect<CF>>(tags);
+        const SinkRun        got  = runCoupled<DcOffsetCorrect<CF>>(tags);
+        expect(want.ran && got.ran);
+        expect(eq(got.samples.size(), 20000UZ));
+        expect(sameBits(std::span<const CF>(got.samples), std::span<const CF>(want.samples)));
+        expect(ge(want.tags.size(), 6UZ)) << "the sink sees the tags";
+        expect(got.tags == want.tags) << "the same tags on the same samples, in the same order";
     };
 
     "the real form is the complex real lane, bit for bit"_test = [] {
@@ -621,8 +829,8 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
             for (std::size_t i = 0UZ; i < complexIn.size(); ++i) {
                 // The imaginary component is zeroed, and the complex block's real lane sees the
                 // same arithmetic. Both estimates then update from the same values.
-                const CF    fromComplex = complexBlock.processOne(CF(complexIn[i].real(), 0.f));
-                const float fromReal    = realBlock.processOne(complexIn[i].real());
+                const CF    fromComplex = step(complexBlock, CF(complexIn[i].real(), 0.f));
+                const float fromReal    = step(realBlock, complexIn[i].real());
                 expect(eq(fromComplex.real(), fromReal)) << std::format("enabled={} sample {}", on, i);
                 if (fromComplex.real() != fromReal) {
                     return;
@@ -637,7 +845,7 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         DcOffsetCorrect<float> block = make<DcOffsetCorrect<float>>({{"enabled", true}, {"sample_rate", 96000.f}, {"tau", tauFor(0.1, 96000.0)}});
         float                  last  = 1.f;
         for (std::size_t i = 0UZ; i < 4096UZ; ++i) {
-            last = block.processOne(1.f);
+            last = step(block, 1.f);
         }
         expect(lt(std::abs(static_cast<double>(last)), 1e-6)) << "H(1) = 0, so a constant envelope level is nulled";
     };
@@ -928,7 +1136,7 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
             DcOffsetCorrect<CF> reference       = make<DcOffsetCorrect<CF>>(settings);
             std::ignore                         = drive(block, std::span<const CF>(x).first(kAt));
             const std::complex<double> estimate = block.dcEstimate();
-            const CF                   atBad    = block.processOne(bad);
+            const CF                   atBad    = step(block, bad);
             expect(block.dcEstimate() == estimate) << std::format("({}, {}) leaves the estimate where it was", bad.real(), bad.imag());
             expect(sameFloat(atBad.real(), static_cast<float>(static_cast<double>(bad.real()) - estimate.real())) && sameFloat(atBad.imag(), static_cast<float>(static_cast<double>(bad.imag()) - estimate.imag()))) << "the sample itself leaves less the held estimate";
 
@@ -942,9 +1150,9 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         bool                   same      = true;
         for (std::size_t i = 0UZ; i < x.size(); ++i) {
             if (i == kAt) {
-                std::ignore = block.processOne(kNan);
+                std::ignore = step(block, kNan);
             }
-            same = same && block.processOne(x[i].real()) == reference.processOne(x[i].real());
+            same = same && step(block, x[i].real()) == step(reference, x[i].real());
         }
         expect(same) << "the real form holds its estimate the same way";
     };
@@ -999,13 +1207,72 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
             real                = alpha * x + rest * real;
             imag                = alpha * y + rest * imag;
 
-            const CF made = block.processOne(sample);
+            const CF made = step(block, sample);
             identical     = block.dcEstimate().real() == real && block.dcEstimate().imag() == imag && made == CF(static_cast<float>(x - real), static_cast<float>(y - imag));
             ++compared;
         }
         expect(identical) << std::format("the estimate and the output agree bit for bit with the unflushed recursion at every sample, {} of them", compared);
         expect(lt(real, 1e-300) && lt(imag, 1e-300)) << "and the comparison ran until both components were below 1e-300";
         expect(neq(block.dcEstimate().real(), 0.0) && neq(block.dcEstimate().imag(), 0.0)) << "with the flush still not fired, so none of it was flushed arithmetic";
+    };
+
+    "a call flushes a subnormal estimate once, at its end"_test = [] {
+        // alpha = 0.1 after a step of 500 samples: the reference flushes the real component at zero number 6 696 and
+        // the imaginary one at 6 691. The block keeps the subnormal estimate for the rest of the call and sets it to
+        // zero when the call ends. The smallest subnormal does not decay further at this pole. A block without the
+        // flush at the end of the call leaves it in the estimate.
+        constexpr float       kRate = 96000.f;
+        constexpr std::size_t kStep = 500UZ;
+        const double          tau   = tauFor(0.1, static_cast<double>(kRate));
+
+        const auto input = [&](std::size_t zeros) {
+            std::vector<CF> samples = flat(kStep, CF(0.05f, 0.03f));
+            samples.resize(kStep + zeros, CF{});
+            return samples;
+        };
+        const auto bits = [](CF a, CF b) { return std::bit_cast<std::uint32_t>(a.real()) == std::bit_cast<std::uint32_t>(b.real()) && std::bit_cast<std::uint32_t>(a.imag()) == std::bit_cast<std::uint32_t>(b.imag()); };
+
+        for (const std::size_t zeros : {6600UZ, 7500UZ}) {
+            const std::vector<CF>                             x         = input(zeros);
+            DcOffsetCorrect<CF>                               block     = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tau}});
+            gr::blocks::basic::reference::DcOffsetCorrect<CF> reference = make<gr::blocks::basic::reference::DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tau}});
+
+            const std::vector<CF> got = drive(block, std::span<const CF>(x));
+            std::vector<CF>       want(x.size());
+            std::size_t           unlike  = 0UZ;
+            bool                  flushed = true; // a bit that differs sits where the reference has flushed a component: a zero of the other sign
+            for (std::size_t i = 0UZ; i < x.size(); ++i) {
+                want[i] = reference.processOne(x[i]);
+                if (!bits(got[i], want[i])) {
+                    ++unlike;
+                    flushed = flushed && (reference.dcEstimate().real() == 0.0 || reference.dcEstimate().imag() == 0.0);
+                }
+            }
+
+            expect(std::ranges::equal(got, want)) << std::format("{} zeros: every output equals the per-sample form's by value", zeros);
+            if (zeros == 6600UZ) {
+                expect(eq(unlike, 0UZ)) << "the estimate stayed normal and every output is the same bit for bit";
+                expect(block.dcEstimate() == reference.dcEstimate()) << "and so is the estimate";
+                expect(neq(block.dcEstimate().real(), 0.0)) << "which is not zero";
+            } else {
+                expect(eq(std::fpclassify(block.dcEstimate().real()), FP_ZERO) && eq(std::fpclassify(block.dcEstimate().imag()), FP_ZERO)) << "the call ended with both components zero";
+                expect(block.dcEstimate() == reference.dcEstimate()) << "as the per-sample form's";
+                expect(flushed) << "the outputs differ only as zeros of the other sign, and only once the reference has flushed";
+            }
+        }
+
+        std::vector<float> real(kStep + 7500UZ, 0.f);
+        std::fill_n(real.begin(), kStep, 0.05f);
+        DcOffsetCorrect<float>                               block     = make<DcOffsetCorrect<float>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tau}});
+        gr::blocks::basic::reference::DcOffsetCorrect<float> reference = make<gr::blocks::basic::reference::DcOffsetCorrect<float>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tau}});
+        std::vector<float>                                   got(real.size());
+        std::ignore = block.processBulk(std::span<const float>(real), std::span<float>(got));
+        bool same   = true;
+        for (std::size_t i = 0UZ; i < real.size(); ++i) {
+            same = same && got[i] == reference.processOne(real[i]);
+        }
+        expect(same) << "the real form's outputs equal the per-sample form's by value";
+        expect(eq(std::fpclassify(block.dcEstimate().real()), FP_ZERO) && block.dcEstimate() == reference.dcEstimate()) << "and it ends with the estimate at zero";
     };
 };
 
