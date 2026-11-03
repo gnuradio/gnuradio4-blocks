@@ -32,6 +32,12 @@ struct SafeOp<T, std::divides<T>> {
     [[nodiscard]] constexpr T operator()(const T& a, const T& b) const noexcept { return b == T{} ? T{} : static_cast<T>(a / b); }
 };
 
+// the complex product by components, without the library's recovery of an infinite product from NaN parts
+template<gr::meta::complex_like T>
+struct SafeOp<T, std::multiplies<T>> {
+    [[nodiscard]] constexpr T operator()(const T& a, const T& b) const noexcept { return T(a.real() * b.real() - a.imag() * b.imag(), a.real() * b.imag() + a.imag() * b.real()); }
+};
+
 template<typename T, typename op>
 inline constexpr bool kMultiplicative = std::same_as<op, std::multiplies<T>> || std::same_as<op, std::divides<T>>;
 
@@ -78,7 +84,7 @@ struct MathOpImpl : Block<MathOpImpl<T, op>, detail::ConstOpDroppedKeys<T, op>> 
                 return V{};
             }
         } else { // non-simd branch
-            return op()(a, value);
+            return detail::SafeOp<T, op>{}(a, value);
         }
     }
 };
@@ -108,7 +114,8 @@ struct MathOpMultiPortImpl : Block<MathOpMultiPortImpl<T, op>, detail::MultiPort
     - Add: out = in_1 + in_2 + in_3 + ...
     - Subtract: out = in_1 - in_2 - in_3 - ...
 
-    For integral types, division by a zero divisor yields 0.
+    For integral types, division by a zero divisor yields 0. A complex product is taken by components, without C's
+    recovery of an infinite product from NaN parts.
     )"">;
 
     // ports
@@ -129,8 +136,12 @@ struct MathOpMultiPortImpl : Block<MathOpMultiPortImpl<T, op>, detail::MultiPort
 
     template<gr::InputSpanLike TInSpan>
     gr::work::Status processBulk(const std::span<TInSpan>& ins, gr::OutputSpanLike auto& sout) const {
-        std::copy(ins[0].begin(), ins[0].end(), sout.begin());
-        for (std::size_t n = 1; n < ins.size(); n++) {
+        if (ins.size() == 1UZ) {
+            std::copy(ins[0].begin(), ins[0].end(), sout.begin());
+            return gr::work::Status::OK;
+        }
+        std::transform(ins[0].begin(), ins[0].end(), ins[1].begin(), sout.begin(), detail::SafeOp<T, op>{});
+        for (std::size_t n = 2; n < ins.size(); n++) {
             std::transform(sout.begin(), sout.end(), ins[n].begin(), sout.begin(), detail::SafeOp<T, op>{});
         }
         return gr::work::Status::OK;

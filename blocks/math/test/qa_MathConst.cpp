@@ -58,6 +58,22 @@ const boost::ut::suite<"constant math tests"> constantMath = [] {
         expect(eq(multiply.processOne(std::complex<double>{1.0, 1.0}), std::complex<double>{2.0, 2.0}));
     };
 
+    // The product by components is C's product wherever C does not recover an infinity from NaN parts, which it
+    // never does for finite factors.
+    "a complex MultiplyConst gives std::multiplies' product of finite values"_test = [] {
+        using C                         = std::complex<float>;
+        const std::vector<C> input      = finiteComplexInput();
+        std::size_t          mismatches = 0UZ;
+        for (std::size_t k = 0UZ; k < input.size(); k += 61UZ) {
+            auto block = MultiplyConst<C>(property_map{{"value", input[k]}});
+            block.init(block.progress);
+            for (const C x : input) {
+                mismatches += static_cast<std::size_t>(!sameParts(block.processOne(x), std::multiplies<C>{}(x, input[k])));
+            }
+        }
+        expect(eq(mismatches, 0UZ)) << "products that differ from std::multiplies";
+    };
+
     "a complex constant factor drops phase_est, a real one and an offset forward it"_test = [] {
         using C = std::complex<float>;
         const std::vector<std::string_view> keys{"freq_est", "phase_est", "burst_id"};

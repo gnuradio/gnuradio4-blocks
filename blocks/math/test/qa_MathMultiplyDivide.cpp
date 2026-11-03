@@ -1,5 +1,12 @@
 #include <boost/ut.hpp>
 
+#include <array>
+#include <cmath>
+#include <complex>
+#include <span>
+
+#include <gnuradio-4.0/testing/TestSpans.hpp>
+
 #include "MathTestHelpers.hpp"
 
 const boost::ut::suite<"multiply and divide tests"> multiplyDivide = [] {
@@ -21,6 +28,41 @@ const boost::ut::suite<"multiply and divide tests"> multiplyDivide = [] {
     } | kArithmeticTypes;
 
     "Divide by a zero divisor yields zero for integral types"_test = []<typename T>(const T&) { test_block<T, Divide<T>>({.inputs = {gr::Tensor<T>(gr::data_from, {6, 8, 10, 12}), gr::Tensor<T>(gr::data_from, {2, 0, 5, 0})}, .output = gr::Tensor<T>(gr::data_from, {3, 0, 2, 0})}); } | std::tuple<uint8_t, int16_t, int32_t>();
+
+    "a complex Multiply of two and three finite streams gives std::multiplies' products"_test = [] {
+        using C                    = std::complex<float>;
+        namespace spans            = gr::blocks::testing::span;
+        const std::vector<C> first = finiteComplexInput();
+        std::vector<C>       second(first.rbegin(), first.rend());
+        std::vector<C>       third(first.size());
+        for (std::size_t i = 0UZ; i < first.size(); ++i) {
+            third[i] = first[(i * 61UZ) % first.size()];
+        }
+
+        auto twoInputs = Multiply<C>(property_map{{"n_inputs", Size_t{2U}}});
+        twoInputs.init(twoInputs.progress);
+        auto threeInputs = Multiply<C>(property_map{{"n_inputs", Size_t{3U}}});
+        threeInputs.init(threeInputs.progress);
+
+        std::vector<C>                       twoOut(first.size());
+        std::vector<C>                       threeOut(first.size());
+        std::array<spans::InputSpan<C>, 2UZ> two{spans::InputSpan<C>{std::span<const C>(first)}, spans::InputSpan<C>{std::span<const C>(second)}};
+        std::array<spans::InputSpan<C>, 3UZ> three{spans::InputSpan<C>{std::span<const C>(first)}, spans::InputSpan<C>{std::span<const C>(second)}, spans::InputSpan<C>{std::span<const C>(third)}};
+        spans::OutputSpan<C>                 twoSpan{std::span<C>(twoOut)};
+        spans::OutputSpan<C>                 threeSpan{std::span<C>(threeOut)};
+        std::ignore = twoInputs.processBulk(std::span<spans::InputSpan<C>>(two), twoSpan);
+        std::ignore = threeInputs.processBulk(std::span<spans::InputSpan<C>>(three), threeSpan);
+
+        std::size_t mismatches = 0UZ;
+        for (std::size_t i = 0UZ; i < first.size(); ++i) {
+            const C product = std::multiplies<C>{}(first[i], second[i]);
+            mismatches += static_cast<std::size_t>(!sameParts(twoOut[i], product));
+            if (std::isfinite(product.real()) && std::isfinite(product.imag())) { // C recovers an infinity from an overflowed product
+                mismatches += static_cast<std::size_t>(!sameParts(threeOut[i], std::multiplies<C>{}(product, third[i])));
+            }
+        }
+        expect(eq(mismatches, 0UZ)) << "products that differ from std::multiplies";
+    };
 
     "a product or a quotient of streams drops the carrier estimates, a sum forwards them"_test = [] {
         using C = std::complex<float>;
