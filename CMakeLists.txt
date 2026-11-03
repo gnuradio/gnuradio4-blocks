@@ -35,7 +35,6 @@ option(GR4_ENABLE_ZEROMQ_EXAMPLES "Build the ZeroMQ examples" OFF)
 option(GR4_ENABLE_HTTP_TESTS "Build HTTP integration tests" OFF)
 option(GR4_ENABLE_PYTHON "Build the Python block and its test (needs Python 3.12 or later with NumPy)" OFF)
 option(GR_USE_FETCHCONTENT_DEPS "Allow CMake to download selected third-party dependencies with FetchContent" OFF)
-option(USE_CCACHE "Use ccache if available" ON)
 option(WARNINGS_AS_ERRORS "Enable -Werror flags" ON)
 
 # A prefix this tree has already been installed into. What an export writes into an installed config file is read by
@@ -79,16 +78,6 @@ if(CMAKE_GENERATOR MATCHES "Ninja")
   set_property(GLOBAL APPEND PROPERTY JOB_POOLS compile_pool=${GR_BUILD_PARALLEL_LEVEL} link_pool=2)
   set(CMAKE_JOB_POOL_COMPILE compile_pool)
   set(CMAKE_JOB_POOL_LINK link_pool)
-endif()
-
-find_program(CCACHE_PROGRAM ccache)
-if(CCACHE_PROGRAM AND USE_CCACHE)
-  message(STATUS "ccache found and will be used")
-  set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
-elseif(USE_CCACHE)
-  message(WARNING "USE_CCACHE is ON but ccache was not found on PATH — builds will not be cached")
-else()
-  message(STATUS "ccache will not be used")
 endif()
 
 if(ENABLE_TESTING
