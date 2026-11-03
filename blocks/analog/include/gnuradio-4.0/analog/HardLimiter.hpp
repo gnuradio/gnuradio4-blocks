@@ -28,6 +28,8 @@ nothing to drift with.
 
 A sample of exactly zero has no direction and passes through as zero - never a non-finite value - which is what its
 phase difference with anything already is. Stateless and 1:1, so it may sit anywhere in a fused run.
+
+Each part of a `std::complex<float>` output is within one float step of the part divided by the exact magnitude.
 )"">;
 
     PortIn<T>  in;
@@ -36,7 +38,17 @@ phase difference with anything already is. Stateless and 1:1, so it may sit anyw
     GR_MAKE_REFLECTABLE(HardLimiter, in, out);
 
     [[nodiscard]] constexpr T processOne(T sample) const noexcept {
-        if constexpr (gr::meta::complex_like<T>) {
+        if constexpr (std::same_as<T, std::complex<float>>) {
+            // no square of a float part overflows or underflows in double
+            const double re  = static_cast<double>(sample.real());
+            const double im  = static_cast<double>(sample.imag());
+            const double sum = re * re + im * im;
+            if (!(sum > 0.0)) {
+                return T{};
+            }
+            const double inverse = 1.0 / std::sqrt(sum);
+            return T(static_cast<float>(re * inverse), static_cast<float>(im * inverse));
+        } else if constexpr (gr::meta::complex_like<T>) {
             const auto magnitude = std::abs(sample);
             return magnitude > typename T::value_type{0} ? sample / magnitude : T{};
         } else {
