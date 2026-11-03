@@ -1,11 +1,13 @@
 #include <boost/ut.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <complex>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <iterator>
 #include <limits>
 #include <numeric>
 #include <print>
@@ -68,6 +70,82 @@ template<typename TBlock, typename T>
     spans::OutputSpan<T> outSpan{std::span<T>(output), outputAt, &published};
     std::ignore = block.processBulk(inSpan, outSpan);
     return published;
+}
+
+/// An input span whose iterators note any position outside `[begin, end]` that they are asked to form.
+template<typename T>
+struct CheckedInput : spans::InputSpan<T> {
+    struct Iterator {
+        using iterator_category = std::random_access_iterator_tag;
+        using iterator_concept  = std::contiguous_iterator_tag;
+        using element_type      = const T;
+        using value_type        = T;
+        using difference_type   = std::ptrdiff_t;
+        using pointer           = const T*;
+        using reference         = const T&;
+
+        const T*       items   = nullptr;
+        std::ptrdiff_t at      = 0;
+        std::ptrdiff_t size    = 0;
+        bool*          outside = nullptr;
+
+        [[nodiscard]] Iterator operator+(std::ptrdiff_t step) const {
+            Iterator moved = *this;
+            moved.at += step;
+            if (moved.at < 0 || moved.at > size) {
+                *outside = true;
+            }
+            return moved;
+        }
+        [[nodiscard]] friend Iterator operator+(std::ptrdiff_t step, const Iterator& it) { return it + step; }
+        [[nodiscard]] Iterator        operator-(std::ptrdiff_t step) const { return *this + (-step); }
+        [[nodiscard]] std::ptrdiff_t  operator-(const Iterator& other) const { return at - other.at; }
+        Iterator&                     operator++() { return *this = *this + 1; }
+        Iterator                      operator++(int) {
+            Iterator before = *this;
+            ++*this;
+            return before;
+        }
+        Iterator& operator+=(std::ptrdiff_t step) { return *this = *this + step; }
+        Iterator& operator-=(std::ptrdiff_t step) { return *this = *this + (-step); }
+        Iterator& operator--() { return *this = *this + (-1); }
+        Iterator  operator--(int) {
+            Iterator before = *this;
+            --*this;
+            return before;
+        }
+        [[nodiscard]] reference operator*() const { return items[at]; }
+        [[nodiscard]] pointer   operator->() const { return items + at; }
+        [[nodiscard]] reference operator[](std::ptrdiff_t step) const { return *(*this + step); }
+        [[nodiscard]] bool      operator==(const Iterator& other) const { return at == other.at; }
+        [[nodiscard]] auto      operator<=>(const Iterator& other) const { return at <=> other.at; }
+    };
+
+    bool* outside = nullptr;
+
+    CheckedInput(std::span<const T> items, bool* flag) : spans::InputSpan<T>(items), outside(flag) {}
+
+    [[nodiscard]] Iterator begin() const { return {this->data(), 0, static_cast<std::ptrdiff_t>(this->size()), outside}; }
+    [[nodiscard]] Iterator end() const { return begin() + static_cast<std::ptrdiff_t>(this->size()); }
+};
+
+/// What one call over `input` handed back, and whether the block formed an iterator outside its input.
+struct CheckedCall {
+    std::vector<float> samples;
+    std::size_t        consumed = 0UZ;
+    bool               outside  = false;
+};
+
+template<typename TBlock>
+[[nodiscard]] CheckedCall callChecked(TBlock& block, std::span<const float> input) {
+    CheckedCall              call;
+    std::vector<float>       output(input.size());
+    CheckedInput<float>      inSpan(input, &call.outside);
+    spans::OutputSpan<float> outSpan{std::span<float>(output)};
+    std::ignore   = block.processBulk(inSpan, outSpan);
+    call.samples  = std::vector<float>(output.begin(), output.begin() + static_cast<std::ptrdiff_t>(outSpan.count));
+    call.consumed = inSpan.consumed;
+    return call;
 }
 
 /// The `gr:sample_rate` values of the tags in `tags`, in order.
@@ -177,6 +255,188 @@ template<typename TBlock>
     return run;
 }
 
+namespace reference {
+
+using gr::blocks::basic::detail::TagRelay;
+
+/// `KeepOneInN` item by item: a tag check and a phase step on every input, and the rate key built on every kept item.
+template<typename T>
+struct KeepOneInN : gr::Block<KeepOneInN<T>, gr::NoTagPropagation> {
+    gr::PortIn<T>  in;
+    gr::PortOut<T> out;
+
+    gr::Annotated<gr::Size_t, "n", gr::Limits<1U, std::numeric_limits<gr::Size_t>::max()>> n = 1U;
+
+    GR_MAKE_REFLECTABLE(KeepOneInN, in, out, n);
+
+    gr::Size_t _n         = n.value;
+    gr::Size_t _counter   = n.value;
+    float      _inputRate = 0.f;
+    TagRelay   _relay{};
+
+    void settingsChanged(const gr::property_map& /*oldSettings*/, const gr::property_map& newSettings) {
+        if (!newSettings.contains("n") || n.value == _n) {
+            return;
+        }
+        _n       = n.value;
+        _counter = _n;
+        if (_inputRate > 0.f) {
+            _relay._carry.insert(_relay._carry.begin(), gr::property_map{{std::pmr::string(gr::tag::SAMPLE_RATE.key()), gr::pmt::Value(_inputRate)}});
+        }
+    }
+
+    void start() {
+        _inputRate = 0.f;
+        _relay.reset();
+    }
+
+    void reset() { _counter = _n; }
+
+    [[nodiscard]] gr::work::Status processBulk(gr::InputSpanLike auto& inSpan, gr::OutputSpanLike auto& outSpan) {
+        outSpan.publish(keep(inSpan, outSpan));
+        return gr::work::Status::OK;
+    }
+
+    [[nodiscard]] gr::work::Status processEpilogue(gr::InputSpanLike auto& inSpan, gr::OutputSpanLike auto& outSpan) {
+        if (gr::lifecycle::isShuttingDown(this->state())) {
+            _relay.reset();
+            outSpan.publish(0UZ);
+            return gr::work::Status::OK;
+        }
+        const std::size_t made = keep(inSpan, outSpan);
+        _relay.collectPastEnd(in, inSpan.streamIndex + inSpan.size());
+        releaseWaiting(outSpan, made);
+        outSpan.publish(made);
+        return gr::work::Status::OK;
+    }
+
+private:
+    [[nodiscard]] std::size_t keep(gr::InputSpanLike auto& inSpan, gr::OutputSpanLike auto& outSpan) {
+        std::size_t made   = 0UZ;
+        std::size_t walked = 0UZ;
+        _relay.begin(inSpan);
+        for (; walked < inSpan.size() && made < outSpan.size(); ++walked) {
+            _relay.collect(inSpan, walked);
+            if (--_counter > 0U) {
+                continue;
+            }
+            _counter      = _n;
+            outSpan[made] = inSpan[walked];
+            releaseWaiting(outSpan, made);
+            ++made;
+        }
+        std::ignore = inSpan.consume(walked);
+        return made;
+    }
+
+    void releaseWaiting(gr::OutputSpanLike auto& outSpan, std::size_t at) {
+        const std::pmr::string sampleRate(gr::tag::SAMPLE_RATE.key());
+        for (gr::property_map& tag : _relay._carry) {
+            if (auto found = tag.find(sampleRate); found != tag.end()) {
+                if (const float* rate = found->second.template get_if<float>(); rate != nullptr) {
+                    _inputRate    = *rate;
+                    found->second = static_cast<float>(static_cast<double>(*rate) / static_cast<double>(_n));
+                } else if (const double* wide = found->second.template get_if<double>(); wide != nullptr) {
+                    _inputRate    = static_cast<float>(*wide);
+                    found->second = *wide / static_cast<double>(_n);
+                }
+            }
+        }
+        _relay.release(outSpan, at);
+    }
+};
+
+} // namespace reference
+
+/// What a driven run delivered: every output item and every published tag, in order.
+template<typename T>
+struct Driven {
+    std::vector<T>       samples;
+    std::vector<gr::Tag> tags;
+};
+
+/// A change of settings, applied before the first call that starts at or past input `at`.
+struct Change {
+    std::size_t      at = 0UZ;
+    gr::property_map settings;
+};
+
+/// The input windows 1, 5, 64, 1000, 4096 and 3 items, and the output windows 1, 7, 2048, 2, 300 and 4096.
+inline constexpr std::array<std::size_t, 6> kMixedIn{1UZ, 5UZ, 64UZ, 1000UZ, 4096UZ, 3UZ};
+inline constexpr std::array<std::size_t, 6> kMixedOut{1UZ, 7UZ, 2048UZ, 2UZ, 300UZ, 4096UZ};
+
+/// Drives `TBlock` made with @p settings over @p input carrying @p tags and ends the stream with its epilogue. Call
+/// `k` offers `inWindows[k % size]` input items and room for `outWindows[k % size]` output items, so some calls stop
+/// on a full output.
+template<typename TBlock, typename T>
+[[nodiscard]] Driven<T> driveScripted(gr::property_map settings, std::span<const T> input, std::span<const gr::Tag> tags, std::span<const Change> changes, std::span<const std::size_t> inWindows = kMixedIn, std::span<const std::size_t> outWindows = kMixedOut) {
+    TBlock block = makeBlock<TBlock>(std::move(settings));
+    block.start();
+    Driven<T>        result;
+    spans::TagCursor cursor(tags);
+    std::size_t      at   = 0UZ;
+    std::size_t      next = 0UZ;
+    std::vector<T>   scratch(4096UZ);
+    for (std::size_t call = 0UZ; at < input.size(); ++call) {
+        for (; next < changes.size() && changes[next].at <= at; ++next) {
+            std::ignore = block.settings().setStaged(changes[next].settings);
+            std::ignore = block.settings().applyStagedParameters();
+        }
+        const std::size_t    inCount = std::min(inWindows[call % inWindows.size()], input.size() - at);
+        spans::InputSpan<T>  inSpan(input.subspan(at, inCount), at, cursor.window(at, inCount));
+        spans::OutputSpan<T> outSpan(std::span<T>(scratch).first(outWindows[call % outWindows.size()]), result.samples.size(), &result.tags);
+        std::ignore = block.processBulk(inSpan, outSpan);
+        cursor.retire(inSpan);
+        result.samples.insert(result.samples.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(outSpan.count));
+        at += inSpan.consumed;
+    }
+    spans::InputSpan<T>  endIn(std::span<const T>{}, at, cursor.window(at, 0UZ));
+    spans::OutputSpan<T> endOut(std::span<T>{}, result.samples.size(), &result.tags);
+    std::ignore = block.processEpilogue(endIn, endOut);
+    return result;
+}
+
+/// @p nItems random items.
+template<typename T>
+[[nodiscard]] std::vector<T> randomItems(std::size_t nItems) {
+    std::vector<T> items(nItems);
+    std::uint64_t  state = 0x243f6a8885a308d3ULL;
+    const auto     draw  = [&state] {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        return static_cast<float>(static_cast<double>(state >> 11U) / static_cast<double>(1ULL << 53U) - 0.5);
+    };
+    for (T& item : items) {
+        if constexpr (std::same_as<T, float>) {
+            item = draw();
+        } else {
+            const float real = draw();
+            item             = T(real, draw());
+        }
+    }
+    return items;
+}
+
+/// Tags at irregular gaps of 0 to 599 items over @p nItems inputs: probes, `gr:sample_rate` as a float and as a
+/// double, and runs of several tags on one item.
+[[nodiscard]] std::vector<gr::Tag> irregularTags(std::size_t nItems) {
+    std::vector<gr::Tag> tags;
+    std::uint64_t        state = 0x13198a2e03707344ULL;
+    for (std::size_t at = 3UZ, k = 0UZ; at < nItems; ++k) {
+        switch (k % 4UZ) {
+        case 0UZ: tags.push_back(gr::Tag{at, probe(k)}); break;
+        case 1UZ: tags.push_back(gr::Tag{at, {{"probe", static_cast<gr::Size_t>(k)}, {gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}, 48000.f}}}); break;
+        case 2UZ: tags.push_back(gr::Tag{at, {{gr::property_map::key_type{gr::tag::SAMPLE_RATE.key()}, 1e6}}}); break;
+        default:
+            tags.push_back(gr::Tag{at, probe(k)});
+            tags.push_back(gr::Tag{at, probe(k + 1000UZ)});
+            break;
+        }
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        at += static_cast<std::uint32_t>((state >> 33U) % 600U);
+    }
+    return tags;
+}
+
 } // namespace
 
 const boost::ut::suite<"KeepOneInN"> keepOneInNTests = [] {
@@ -253,6 +513,22 @@ const boost::ut::suite<"KeepOneInN"> keepOneInNTests = [] {
 
         const auto after = spans::run<KeepOneInN<float>, float>(block, std::span<const float>(input).subspan(13UZ));
         expect(eq(after.samples.front(), 17.f)) << "the next item out is n_new inputs after the change, not three";
+    };
+
+    "a chunk that ends before the next kept item forms no iterator past its end"_test = [] {
+        constexpr gr::Size_t n     = 1U << 20U;
+        KeepOneInN<float>    block = makeBlock<KeepOneInN<float>>({{"n", n}});
+        const auto           input = counted(static_cast<std::size_t>(n) + 50UZ);
+
+        const auto shortChunk = callChecked(block, std::span<const float>(input).first(100UZ));
+        expect(!shortChunk.outside) << "the kept item lies about n items past the end of the chunk";
+        expect(eq(shortChunk.samples.size(), 0UZ));
+        expect(eq(shortChunk.consumed, 100UZ));
+
+        const auto rest = callChecked(block, std::span<const float>(input).subspan(100UZ));
+        expect(!rest.outside);
+        expect(that % (rest.samples == std::vector<float>{static_cast<float>(n - 1U)})) << "the n-th item of the stream, found where the short chunk left the count";
+        expect(eq(rest.consumed, input.size() - 100UZ));
     };
 
     "a refused n leaves the block keeping one in the n it accepted"_test = [] {
@@ -376,6 +652,40 @@ const boost::ut::suite<"KeepOneInN"> keepOneInNTests = [] {
     };
 
     "n below one is rejected at settings time"_test = [] { expect(throws([] { std::ignore = makeBlock<KeepOneInN<float>>({{"n", 0U}}); })); };
+
+    "items and tags leave as the item-by-item form's, through tags, full outputs and changes of n"_test = [] {
+        const auto compare = []<typename T>(const char* type) {
+            const std::vector<T>       input   = randomItems<T>(20000UZ);
+            const std::vector<gr::Tag> tags    = irregularTags(input.size());
+            const std::vector<Change>  changes = {{5000UZ, {{"n", gr::Size_t(3)}}}, {12000UZ, {{"n", gr::Size_t(1)}}}, {15000UZ, {{"n", gr::Size_t(13)}}}};
+            const Driven<T>            want    = driveScripted<reference::KeepOneInN<T>, T>({{"n", gr::Size_t(4)}}, input, tags, changes);
+            const Driven<T>            got     = driveScripted<KeepOneInN<T>, T>({{"n", gr::Size_t(4)}}, input, tags, changes);
+            expect(gt(want.samples.size(), 2000UZ) && gt(want.tags.size(), 50UZ)) << type << ": the run keeps items and carries tags";
+            expect(std::ranges::equal(got.samples, want.samples)) << type;
+            expect(got.tags == want.tags) << type << ": the same tags at the same outputs, in the same order";
+        };
+        compare.template operator()<float>("float");
+        compare.template operator()<std::complex<float>>("complex<float>");
+    };
+
+    "a full output on the last kept item leaves the items after it for the next call"_test = [] {
+        // Five items in and room for one out: a call keeps one item and has dropped items after it. A change of n
+        // staged between calls must apply at the same input offset as in the item-by-item form.
+        const auto compare = []<typename T>(const char* type) {
+            constexpr std::array<std::size_t, 1> kIn{5UZ};
+            constexpr std::array<std::size_t, 1> kOut{1UZ};
+            const std::vector<T>                 input   = randomItems<T>(2000UZ);
+            const std::vector<gr::Tag>           tags    = irregularTags(input.size());
+            const std::vector<Change>            changes = {{200UZ, {{"n", gr::Size_t(3)}}}, {1000UZ, {{"n", gr::Size_t(4)}}}, {1500UZ, {{"n", gr::Size_t(2)}}}};
+            const Driven<T>                      want    = driveScripted<reference::KeepOneInN<T>, T>({{"n", gr::Size_t(4)}}, input, tags, changes, kIn, kOut);
+            const Driven<T>                      got     = driveScripted<KeepOneInN<T>, T>({{"n", gr::Size_t(4)}}, input, tags, changes, kIn, kOut);
+            expect(gt(want.samples.size(), 400UZ) && gt(want.tags.size(), 5UZ)) << type << ": the run keeps items and carries tags";
+            expect(std::ranges::equal(got.samples, want.samples)) << type << ": a change of n lands on the same item";
+            expect(got.tags == want.tags) << type << ": the same tags at the same outputs, in the same order";
+        };
+        compare.template operator()<float>("float");
+        compare.template operator()<std::complex<float>>("complex<float>");
+    };
 
     "output and tag offsets do not depend on chunking"_test = [] {
         constexpr gr::Size_t n     = 7U;
