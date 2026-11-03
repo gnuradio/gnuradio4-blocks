@@ -1,9 +1,14 @@
 #include <boost/ut.hpp>
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cmath>
 #include <complex>
+#include <cstdint>
+#include <limits>
 #include <numbers>
+#include <random>
 #include <span>
 #include <string>
 #include <vector>
@@ -89,6 +94,43 @@ template<typename TIn, typename TOut, typename TBlock>
         }
     }
     return offsets;
+}
+
+/// @brief Test values between samples of (1, 0), so that each product is a test value or its conjugate, exact: every
+/// pair of parts from the signed zeros, the smallest subnormal, one, the smallest and largest normals, the infinities
+/// and a NaN, then random bit patterns and Gaussian noise.
+[[nodiscard]] std::vector<std::complex<float>> productTestInput() {
+    using L                                = std::numeric_limits<float>;
+    const std::array<float, 13UZ>    parts = {0.f, -0.f, L::denorm_min(), -L::denorm_min(), L::min(), -L::min(), 1.f, -1.f, L::max(), -L::max(), L::infinity(), -L::infinity(), L::quiet_NaN()};
+    std::vector<std::complex<float>> values;
+    for (const float re : parts) {
+        for (const float im : parts) {
+            values.emplace_back(re, im);
+        }
+    }
+    std::mt19937                                 rng(20261103U);
+    std::uniform_int_distribution<std::uint32_t> bits;
+    std::normal_distribution<float>              noise(0.f, 0.3f);
+    for (std::size_t i = 0UZ; i < 2048UZ; ++i) {
+        values.emplace_back(std::bit_cast<float>(bits(rng)), std::bit_cast<float>(bits(rng)));
+        values.emplace_back(noise(rng), noise(rng));
+    }
+    std::vector<std::complex<float>> input;
+    for (const std::complex<float> value : values) {
+        input.emplace_back(1.f, 0.f);
+        input.push_back(value);
+    }
+    return input;
+}
+
+/// @brief True for two equal values of the same sign and for two NaNs.
+[[nodiscard]] bool sameValue(double a, double b) { return (std::isnan(a) && std::isnan(b)) || (a == b && std::signbit(a) == std::signbit(b)); }
+
+/// @brief One float ulp at the magnitude of `value`.
+[[nodiscard]] double floatUlp(double value) {
+    using L       = std::numeric_limits<float>;
+    const int exp = std::max(std::ilogb(value), L::min_exponent - 1);
+    return std::ldexp(1.0, exp - (L::digits - 1));
 }
 
 static_assert(QuadratureDemod<float>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
@@ -194,6 +236,50 @@ const boost::ut::suite<"QuadratureDemod"> quadratureDemodTests = [] {
         demodulateInto(changedGain, std::span(input).subspan(split, remaining), std::span(retuned).subspan(split, remaining));
         for (std::size_t i = split; i < input.size(); ++i) {
             expect(eq(retuned[i], 2.0f * reference[i])) << "gain change must scale exactly at i=" << i;
+        }
+    };
+
+    // gr::meta::atan2 is within 2 ulp of the exact arctangent; the double std::atan2 of the product stands for the
+    // exact value, its own error far below a float ulp
+    "each output is within 2 ulp of std::atan2 of its product, and a zero product gives 0, at every chunk size"_test = [] {
+        const std::vector<std::complex<float>> input = productTestInput();
+        const std::vector<float>               whole = demodulate(input, 1.0f);
+
+        std::size_t         outside = 0UZ;
+        std::complex<float> prior{};
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            const std::complex<float> sample = input[i];
+            const float               real   = sample.real() * prior.real() + sample.imag() * prior.imag();
+            const float               imag   = sample.imag() * prior.real() - sample.real() * prior.imag();
+            prior                            = sample;
+            const double output              = static_cast<double>(whole[i]);
+            if (real == 0.f && imag == 0.f) {
+                outside += static_cast<std::size_t>(!sameValue(output, 0.0));
+                continue;
+            }
+            const double reference = std::atan2(static_cast<double>(imag), static_cast<double>(real));
+            if (std::isnan(reference) || reference == 0.0) {
+                outside += static_cast<std::size_t>(!sameValue(output, reference));
+            } else {
+                outside += static_cast<std::size_t>(!(std::abs(output - reference) <= 2.0 * floatUlp(reference)));
+            }
+        }
+        expect(eq(outside, 0UZ)) << "outputs outside the bound";
+
+        std::size_t chunkMismatches = 0UZ;
+        for (const std::size_t chunkSize : {1UZ, 3UZ, 255UZ, 257UZ}) {
+            const std::vector<float> chunked = demodulate(input, 1.0f, chunkSize);
+            for (std::size_t i = 0UZ; i < input.size(); ++i) {
+                chunkMismatches += static_cast<std::size_t>(!sameValue(static_cast<double>(chunked[i]), static_cast<double>(whole[i])));
+            }
+        }
+        expect(eq(chunkMismatches, 0UZ)) << "chunked outputs that differ from one call";
+    };
+
+    "the first output after a reset is 0 for a sample in every quadrant"_test = [] {
+        for (const std::complex<float> first : {std::complex<float>{1.f, 1.f}, std::complex<float>{-1.f, 1.f}, std::complex<float>{-1.f, -1.f}, std::complex<float>{1.f, -1.f}}) {
+            const std::vector<float> output = demodulate({first, first}, 2.0f);
+            expect(eq(output[0], 0.0f) && !std::signbit(output[0])) << "first output for " << first.real() << ", " << first.imag();
         }
     };
 
