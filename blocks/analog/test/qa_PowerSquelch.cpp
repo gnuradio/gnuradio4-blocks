@@ -5,6 +5,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdlib>
+#include <limits>
 #include <numbers>
 #include <print>
 #include <span>
@@ -195,6 +196,64 @@ const boost::ut::suite<"PowerSquelch"> powerSquelchTests = [] {
                 expect(that % (got.offsetsOf(kSquelchStartOfBurst) == want.offsetsOf(kSquelchStartOfBurst))) << "gate=" << gate << " chunk " << chunkSize;
                 expect(that % (got.offsetsOf(kSquelchEndOfBurst) == want.offsetsOf(kSquelchEndOfBurst))) << "gate=" << gate << " chunk " << chunkSize;
             }
+        }
+    };
+
+    "a call flushes a subnormal average once, at its end"_test = [] {
+        // A step and 71 000 zeros at alpha = 1e-2, which take the average below the smallest normal, through the ramp
+        // and in both gate modes. The call that ends past the flush point leaves the average at zero.
+        std::vector<CF> first(1000UZ, CF{kLoud, 0.f});
+        first.resize(1000UZ + 71000UZ, CF{});
+        std::vector<CF> second(2000UZ, CF{});
+        for (std::size_t i = 0UZ; i < second.size(); ++i) {
+            second[i] = i % 300UZ < 150UZ ? CF{0.8f, 0.f} : CF{};
+        }
+
+        for (const bool gate : {false, true}) {
+            const gr::property_map settings = {{"alpha", 1e-2}, {"threshold_db", -20.0}, {"ramp", gr::Size_t{4}}, {"gate", gate}};
+            PowerSquelch<CF>       block    = makeSquelch<CF>(settings);
+            PowerSquelch<CF>       single   = makeSquelch<CF>(settings);
+
+            const auto got  = spans::run<PowerSquelch<CF>, CF>(block, std::span<const CF>(first));
+            const auto want = spans::run<PowerSquelch<CF>, CF>(single, std::span<const CF>(first), 1UZ);
+            expect(std::ranges::equal(got.samples, want.samples)) << "gate=" << gate << ": the silent call leaves the samples one sample per call leaves";
+            expect(that % (got.offsetsOf(kSquelchEndOfBurst) == want.offsetsOf(kSquelchEndOfBurst))) << "gate=" << gate << ": and the same burst tags";
+            expect(eq(std::fpclassify(single._detector._power), FP_ZERO) && eq(std::fpclassify(block._detector._power), FP_ZERO)) << "gate=" << gate << ": both end with the average at zero";
+
+            const auto gotNext  = spans::run<PowerSquelch<CF>, CF>(block, std::span<const CF>(second));
+            const auto wantNext = spans::run<PowerSquelch<CF>, CF>(single, std::span<const CF>(second), 1UZ);
+            expect(std::ranges::equal(gotNext.samples, wantNext.samples)) << "gate=" << gate << ": the call after it leaves the same samples";
+            expect(that % (gotNext.offsetsOf(kSquelchStartOfBurst) == wantNext.offsetsOf(kSquelchStartOfBurst))) << "gate=" << gate << ": and the same start tags";
+            expect(eq(block._detector._power, single._detector._power)) << "gate=" << gate << ": and the same average";
+            expect(gt(wantNext.offsetsOf(kSquelchStartOfBurst).size(), 0UZ)) << "gate=" << gate << ": with the squelch opening on the tone";
+        }
+    };
+
+    "a threshold below the smallest normal closes on the sample a flush after every sample does"_test = [] {
+        // 1e-308 is a subnormal. A flush before every decision leaves no average between zero and the smallest normal,
+        // so the squelch closes on the first sample whose average is below the smallest normal, at every call size.
+        constexpr double kAlpha       = 1e-2;
+        constexpr double kThresholdDb = -3080.0;
+        const double     threshold    = std::pow(10.0, kThresholdDb / 10.0);
+
+        std::vector<CF> input(1000UZ, CF{kLoud, 0.f});
+        input.resize(1000UZ + 71000UZ, CF{});
+        std::size_t open    = 0UZ;
+        double      average = 0.0;
+        for (const CF& sample : input) {
+            average = (1.0 - kAlpha) * average + kAlpha * static_cast<double>(std::norm(sample));
+            if (average < std::numeric_limits<double>::min()) {
+                average = 0.0;
+            }
+            open += average >= threshold ? 1UZ : 0UZ;
+        }
+        expect(gt(open, 1000UZ)) << "the reference stays open past the loud samples";
+
+        for (const std::size_t chunk : {0UZ, 1UZ, 7UZ, 4096UZ}) {
+            PowerSquelch<CF> block = makeSquelch<CF>({{"alpha", kAlpha}, {"threshold_db", kThresholdDb}, {"ramp", gr::Size_t{0}}, {"gate", true}});
+            const auto       got   = spans::run<PowerSquelch<CF>, CF>(block, std::span<const CF>(input), chunk);
+            expect(eq(got.samples.size(), open + 1UZ)) << "calls of " << chunk << ": the open samples and the one it closes on pass";
+            expect(that % (got.offsetsOf(kSquelchEndOfBurst) == std::vector<std::size_t>{open})) << "calls of " << chunk << ": the end tag is on the closing sample";
         }
     };
 

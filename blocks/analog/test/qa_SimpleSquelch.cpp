@@ -5,6 +5,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdlib>
+#include <limits>
 #include <numbers>
 #include <print>
 #include <span>
@@ -206,6 +207,68 @@ const boost::ut::suite<"SimpleSquelch"> simpleSquelchTests = [] {
         }
         expect(identical) << "state and output agree bit for bit with the unflushed recursion at every sample";
         expect(lt(reference, 1e-300)) << "and the comparison ran until the state was below 1e-300";
+    };
+
+    "a call flushes a subnormal average once, at its end"_test = [] {
+        // A step at alpha = 1e-2 leaves the average below the smallest normal after about 70 485 zeros. One sample per
+        // call flushes after every sample, and one call over the whole span flushes at its end. This pole never takes
+        // the smallest subnormal to zero. A missing flush at the end of the call leaves the average there.
+        const gr::property_map settings = {{"alpha", 1e-2}, {"threshold_db", -150.0}};
+
+        std::vector<float> first(1000UZ, 1.f);
+        first.resize(1000UZ + 71000UZ, 0.f);
+        std::vector<float> second;
+        for (std::size_t i = 0UZ; i < 2000UZ; ++i) {
+            second.push_back(i % 300UZ < 150UZ ? 0.8f : 0.f);
+        }
+
+        SimpleSquelch<float> block  = makeBlock<SimpleSquelch<float>>(settings);
+        SimpleSquelch<float> single = makeBlock<SimpleSquelch<float>>(settings);
+
+        const std::vector<float> got  = run<float>(block, std::span<const float>(first));
+        const std::vector<float> want = run<float>(single, std::span<const float>(first), 1UZ);
+        expect(std::ranges::equal(got, want)) << "the silent call leaves the samples one sample per call leaves";
+        expect(eq(std::fpclassify(single._detector._power), FP_ZERO) && eq(std::fpclassify(block._detector._power), FP_ZERO)) << "and both end with the average at zero";
+
+        const std::vector<float> gotNext  = run<float>(block, std::span<const float>(second));
+        const std::vector<float> wantNext = run<float>(single, std::span<const float>(second), 1UZ);
+        expect(std::ranges::equal(gotNext, wantNext)) << "the call after it, which finds the average at zero, leaves the same samples";
+        expect(eq(block._detector._power, single._detector._power)) << "and the same average";
+        expect(gt(std::ranges::count_if(gotNext, [](float sample) { return sample != 0.f; }), std::ptrdiff_t{0})) << "with the squelch open on the tone";
+    };
+
+    "a threshold below the smallest normal decides as a flush after every sample does"_test = [] {
+        // 1e-308 is a subnormal. A flush before every decision leaves no average between zero and the smallest normal,
+        // so the decision closes on the first sample whose average is below the smallest normal. The decision a call
+        // ends on must be that one at every call size.
+        constexpr double kAlpha       = 1e-2;
+        constexpr double kThresholdDb = -3080.0;
+        const double     threshold    = std::pow(10.0, kThresholdDb / 10.0);
+
+        std::vector<float> input(1000UZ, 1.f);
+        input.resize(1000UZ + 71000UZ, 0.f);
+        std::vector<bool> decision(input.size());
+        double            average = 0.0;
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            average = (1.0 - kAlpha) * average + kAlpha * static_cast<double>(input[i]) * static_cast<double>(input[i]);
+            if (average < std::numeric_limits<double>::min()) {
+                average = 0.0;
+            }
+            decision[i] = average >= threshold;
+        }
+        expect(decision[1000UZ] && !decision.back()) << "the reference opens on the step and is closed at the end";
+
+        for (const std::size_t chunk : {1UZ, 7UZ, 4096UZ}) {
+            SimpleSquelch<float> block = makeBlock<SimpleSquelch<float>>({{"alpha", kAlpha}, {"threshold_db", kThresholdDb}});
+            std::size_t          wrong = 0UZ;
+            for (std::size_t base = 0UZ; base < input.size(); base += chunk) {
+                const std::size_t  count = std::min(chunk, input.size() - base);
+                std::vector<float> output(count);
+                std::ignore = block.processBulk(std::span<const float>(input).subspan(base, count), std::span<float>(output));
+                wrong += block.unmuted != decision[base + count - 1UZ] ? 1UZ : 0UZ;
+            }
+            expect(eq(wrong, 0UZ)) << "calls of " << chunk << ": the decision at the end of each call is the flushed recursion's";
+        }
     };
 
     "nanoseconds per sample"_test = [] {
