@@ -31,36 +31,9 @@ struct RealOf<std::complex<TReal>> {
     using type = TReal;
 };
 
-/// A length-D moving average by running sum. A step with `reseed` set recomputes the sum exactly from the history.
+/// The real values in one sample: one for a real sample, two for a complex one.
 template<typename T>
-struct Boxcar {
-    std::vector<T> _history{};
-    std::size_t    _cursor = 0UZ;
-    T              _sum{};
-
-    void configure(std::size_t length) {
-        _history.assign(length, T{});
-        _cursor = 0UZ;
-        _sum    = T{};
-    }
-
-    [[nodiscard]] T step(T sample, bool reseed) noexcept {
-        const T dropped   = _history[_cursor];
-        _history[_cursor] = sample;
-        _cursor           = _cursor + 1UZ == _history.size() ? 0UZ : _cursor + 1UZ;
-
-        if (reseed) {
-            T sum{};
-            for (std::size_t k = 0UZ; k < _history.size(); ++k) { // ascending, oldest first
-                sum += _history[(_cursor + k) % _history.size()];
-            }
-            _sum = sum;
-        } else {
-            _sum += sample - dropped;
-        }
-        return _sum / static_cast<typename RealOf<T>::type>(_history.size());
-    }
-};
+inline constexpr std::size_t kPartsOf = std::same_as<T, typename RealOf<T>::type> ? 1UZ : 2UZ;
 
 } // namespace detail
 
@@ -106,10 +79,20 @@ carry a start-up transient.
 
     GR_MAKE_REFLECTABLE(DcBlocker, in, out, length, long_form, reseed_interval, group_delay);
 
-    std::vector<detail::Boxcar<T>> _stages{};
-    std::vector<T>                 _delay{};
-    std::size_t                    _cursor = 0UZ;
-    std::uint64_t                  _offset = 0ULL;
+    using Real                          = typename detail::RealOf<T>::type;
+    static constexpr std::size_t kParts = detail::kPartsOf<T>;
+
+    std::vector<Real>              _history{}; ///< the last `D` inputs of each boxcar, boxcar after boxcar, `kParts` values a sample
+    std::array<Real, 4UZ * kParts> _sums{};    ///< the running sum of each boxcar
+    std::vector<Real>              _delay{};   ///< the delay line, `kParts` values a sample
+    std::size_t                    _nStages     = 4UZ;
+    std::size_t                    _length      = 32UZ; ///< `D`, the samples each boxcar holds
+    std::size_t                    _delayLength = 62UZ; ///< the samples the delay line holds
+    std::size_t                    _cursor      = 0UZ;  ///< the history slot every boxcar writes next
+    std::size_t                    _delayCursor = 0UZ;  ///< the line slot of the sample due now
+    Real                           _divisor{32};        ///< `D` in the sample's real type
+    std::uint64_t                  _offset      = 0ULL; ///< samples filtered since the pipeline was built
+    gr::Size_t                     _untilReseed = 0U;   ///< samples before the next exact recomputation of the sums
 
     bool       _running       = false;
     gr::Size_t _builtLength   = length.value;          ///< the accepted `length`, which the pipeline is built for
@@ -128,7 +111,7 @@ carry a start-up transient.
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         const bool       shapeWritten = newSettings.contains("length") || newSettings.contains("long_form");
-        const gr::Size_t builtDelay   = static_cast<gr::Size_t>(_delay.size());
+        const gr::Size_t builtDelay   = static_cast<gr::Size_t>(_delayLength);
         if (!shapeWritten && newSettings.contains("group_delay") && group_delay.value != builtDelay) {
             throw gr::exception(std::format("group_delay follows from length and long_form, which give {}", builtDelay));
         }
@@ -143,7 +126,10 @@ carry a start-up transient.
         if (rebuild) {
             build(nextLength, nextLongForm);
         }
-        group_delay = static_cast<gr::Size_t>(_delay.size());
+        // the sums are recomputed on every sample whose offset since the build is a multiple of the interval
+        const gr::Size_t phase = static_cast<gr::Size_t>(_offset % _interval);
+        _untilReseed           = phase == 0U ? 0U : _interval - phase;
+        group_delay            = static_cast<gr::Size_t>(_delayLength);
     }
 
     void reset() { build(_builtLength, _builtLongForm); }
@@ -151,41 +137,125 @@ carry a start-up transient.
     [[nodiscard]] std::size_t tagDecimation() const noexcept { return 1UZ; }
 
     /// The delay every tag moves by, in half samples.
-    [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept { return 2ULL * static_cast<std::uint64_t>(_delay.size()); }
+    [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept { return 2ULL * static_cast<std::uint64_t>(_delayLength); }
 
     void filterSamples(std::span<const T> input, std::span<T> output) noexcept {
         const std::size_t nSamples = std::min(input.size(), output.size());
-        const std::size_t interval = _interval;
+        const Real*       from     = reinterpret_cast<const Real*>(input.data());
+        Real*             to       = reinterpret_cast<Real*>(output.data());
 
-        for (std::size_t i = 0UZ; i < nSamples; ++i) {
-            const bool reseed = _offset % interval == 0ULL;
-            T          value  = input[i];
-            for (detail::Boxcar<T>& stage : _stages) {
-                value = stage.step(value, reseed);
+        for (std::size_t done = 0UZ; done < nSamples;) {
+            if (_untilReseed == 0U) {
+                reseedOne(from + done * kParts, to + done * kParts);
+                _untilReseed = _interval - 1U;
+                ++done;
+                continue;
             }
-            const T aligned = _delay[_cursor];
-            _delay[_cursor] = input[i];
-            _cursor         = _cursor + 1UZ == _delay.size() ? 0UZ : _cursor + 1UZ;
-            output[i]       = aligned - value;
-            ++_offset;
+            const std::size_t run = std::min(nSamples - done, static_cast<std::size_t>(_untilReseed));
+            if (_nStages == 4UZ) {
+                filterRun<4UZ>(from + done * kParts, to + done * kParts, run);
+            } else {
+                filterRun<2UZ>(from + done * kParts, to + done * kParts, run);
+            }
+            _untilReseed -= static_cast<gr::Size_t>(run);
+            done += run;
         }
+        _offset += static_cast<std::uint64_t>(nSamples);
     }
 
 private:
     [[nodiscard]] static constexpr std::size_t delayOf(gr::Size_t newLength, bool newLongForm) noexcept { return (newLongForm ? 2UZ : 1UZ) * (static_cast<std::size_t>(newLength) - 1UZ); }
 
-    void build(gr::Size_t newLength, bool newLongForm) {
-        _stages.assign(newLongForm ? 4UZ : 2UZ, detail::Boxcar<T>{});
-        for (detail::Boxcar<T>& stage : _stages) {
-            stage.configure(newLength);
+    /// Filters @p nSamples samples with no recomputation among them. Each boxcar's sum adds the entering sample less the
+    /// leaving one.
+    template<std::size_t kStages>
+    void filterRun(const Real* from, Real* to, std::size_t nSamples) noexcept {
+        std::array<Real, kStages * kParts> sums{};
+        std::copy_n(_sums.begin(), sums.size(), sums.begin());
+        Real*             history     = _history.data();
+        Real*             line        = _delay.data();
+        const std::size_t boxcar      = _length;
+        const std::size_t stride      = _length * kParts;
+        const std::size_t delayLength = _delayLength;
+        const Real        divisor     = _divisor;
+        std::size_t       cursor      = _cursor;
+        std::size_t       due         = _delayCursor;
+
+        for (std::size_t i = 0UZ; i < nSamples; ++i) {
+            std::array<Real, kParts> value{};
+            std::copy_n(from + i * kParts, kParts, value.begin());
+            Real* slot = history + cursor * kParts;
+            for (std::size_t s = 0UZ; s < kStages; ++s, slot += stride) {
+                for (std::size_t p = 0UZ; p < kParts; ++p) {
+                    const Real dropped = slot[p];
+                    slot[p]            = value[p];
+                    sums[s * kParts + p] += value[p] - dropped;
+                    value[p] = sums[s * kParts + p] / divisor;
+                }
+            }
+            cursor        = cursor + 1UZ == boxcar ? 0UZ : cursor + 1UZ;
+            Real* aligned = line + due * kParts;
+            for (std::size_t p = 0UZ; p < kParts; ++p) {
+                const Real sample  = from[i * kParts + p];
+                to[i * kParts + p] = aligned[p] - value[p];
+                aligned[p]         = sample;
+            }
+            due = due + 1UZ == delayLength ? 0UZ : due + 1UZ;
         }
-        // The line holds exactly the group delay in slots. `_delay[_cursor]` holds the sample due now.
-        _delay.assign(delayOf(newLength, newLongForm), T{});
+
+        std::copy_n(sums.begin(), sums.size(), _sums.begin());
+        _cursor      = cursor;
+        _delayCursor = due;
+    }
+
+    /// Filters one sample and recomputes each boxcar's sum from its history, oldest sample first.
+    void reseedOne(const Real* from, Real* to) noexcept {
+        const std::size_t        next = _cursor + 1UZ == _length ? 0UZ : _cursor + 1UZ; // the oldest slot once the sample is in
+        std::array<Real, kParts> value{};
+        std::copy_n(from, kParts, value.begin());
+        for (std::size_t s = 0UZ; s < _nStages; ++s) {
+            Real* stage = _history.data() + s * _length * kParts;
+            std::copy_n(value.begin(), kParts, stage + _cursor * kParts);
+            for (std::size_t p = 0UZ; p < kParts; ++p) {
+                Real sum{};
+                for (std::size_t k = next; k < _length; ++k) {
+                    sum += stage[k * kParts + p];
+                }
+                for (std::size_t k = 0UZ; k < next; ++k) {
+                    sum += stage[k * kParts + p];
+                }
+                _sums[s * kParts + p] = sum;
+                value[p]              = sum / _divisor;
+            }
+        }
+        _cursor       = next;
+        Real* aligned = _delay.data() + _delayCursor * kParts;
+        for (std::size_t p = 0UZ; p < kParts; ++p) {
+            const Real sample = from[p];
+            to[p]             = aligned[p] - value[p];
+            aligned[p]        = sample;
+        }
+        _delayCursor = _delayCursor + 1UZ == _delayLength ? 0UZ : _delayCursor + 1UZ;
+    }
+
+    void build(gr::Size_t newLength, bool newLongForm) {
+        const std::size_t nStages     = newLongForm ? 4UZ : 2UZ;
+        const std::size_t boxcar      = static_cast<std::size_t>(newLength);
+        const std::size_t delayLength = delayOf(newLength, newLongForm);
+        _history.assign(nStages * kParts * boxcar, Real{});
+        _delay.assign(kParts * delayLength, Real{});
+        _sums.fill(Real{});
+        _nStages       = nStages;
+        _length        = boxcar;
+        _delayLength   = delayLength;
+        _divisor       = static_cast<Real>(boxcar);
         _cursor        = 0UZ;
+        _delayCursor   = 0UZ;
         _offset        = 0ULL;
+        _untilReseed   = 0U;
         _builtLength   = newLength;
         _builtLongForm = newLongForm;
-        group_delay    = static_cast<gr::Size_t>(_delay.size());
+        group_delay    = static_cast<gr::Size_t>(delayLength);
     }
 };
 

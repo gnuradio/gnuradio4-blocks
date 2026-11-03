@@ -214,6 +214,215 @@ struct RetunedRun {
     return run;
 }
 
+namespace reference {
+
+using gr::blocks::filter::detail::RealOf;
+
+/// A length-D moving average by running sum, one sample per step. A step with `reseed` set recomputes the sum from
+/// the history, oldest sample first.
+template<typename T>
+struct Boxcar {
+    std::vector<T> _history{};
+    std::size_t    _cursor = 0UZ;
+    T              _sum{};
+
+    void configure(std::size_t length) {
+        _history.assign(length, T{});
+        _cursor = 0UZ;
+        _sum    = T{};
+    }
+
+    [[nodiscard]] T step(T sample, bool reseed) noexcept {
+        const T dropped   = _history[_cursor];
+        _history[_cursor] = sample;
+        _cursor           = _cursor + 1UZ == _history.size() ? 0UZ : _cursor + 1UZ;
+        if (reseed) {
+            T sum{};
+            for (std::size_t k = 0UZ; k < _history.size(); ++k) {
+                sum += _history[(_cursor + k) % _history.size()];
+            }
+            _sum = sum;
+        } else {
+            _sum += sample - dropped;
+        }
+        return _sum / static_cast<typename RealOf<T>::type>(_history.size());
+    }
+};
+
+/// `DcBlocker` sample by sample, a `Boxcar` object per stage and a reseed test on every sample.
+template<typename T>
+struct DcBlocker : gr::Block<DcBlocker<T>>, gr::blocks::filter::detail::DelayedTagFilter<DcBlocker<T>, T, T> {
+    gr::PortIn<T>  in;
+    gr::PortOut<T> out;
+
+    gr::Annotated<gr::Size_t, "length", gr::Limits<2U, std::numeric_limits<gr::Size_t>::max()>>          length          = 32U;
+    gr::Annotated<bool, "long_form">                                                                     long_form       = true;
+    gr::Annotated<gr::Size_t, "reseed_interval", gr::Limits<1U, std::numeric_limits<gr::Size_t>::max()>> reseed_interval = 4096U;
+    gr::Annotated<gr::Size_t, "group_delay">                                                             group_delay     = 62U;
+
+    GR_MAKE_REFLECTABLE(DcBlocker, in, out, length, long_form, reseed_interval, group_delay);
+
+    std::vector<Boxcar<T>> _stages{};
+    std::vector<T>         _delay{};
+    std::size_t            _cursor        = 0UZ;
+    std::uint64_t          _offset        = 0ULL;
+    bool                   _running       = false;
+    gr::Size_t             _builtLength   = length.value;
+    bool                   _builtLongForm = long_form.value;
+    gr::Size_t             _interval      = reseed_interval.value;
+
+    explicit DcBlocker(gr::property_map init = {}) : gr::Block<DcBlocker<T>>(std::move(init)) { build(_builtLength, _builtLongForm); }
+
+    void start() {
+        _running = true;
+        this->tagsStart();
+    }
+
+    void stop() { _running = false; }
+
+    void settingsChanged(const gr::property_map& /*oldSettings*/, const gr::property_map& newSettings) {
+        const bool       shapeWritten = newSettings.contains("length") || newSettings.contains("long_form");
+        const gr::Size_t builtDelay   = static_cast<gr::Size_t>(_delay.size());
+        if (!shapeWritten && newSettings.contains("group_delay") && group_delay.value != builtDelay) {
+            throw gr::exception("group_delay follows from length and long_form");
+        }
+        const gr::Size_t nextLength   = newSettings.contains("length") ? length.value : _builtLength;
+        const bool       nextLongForm = newSettings.contains("long_form") ? long_form.value : _builtLongForm;
+        const gr::Size_t nextInterval = newSettings.contains("reseed_interval") ? reseed_interval.value : _interval;
+        const bool       rebuild      = nextLength != _builtLength || nextLongForm != _builtLongForm;
+        if (rebuild && _running) {
+            throw gr::exception("length and long_form are fixed while the block runs");
+        }
+        _interval = nextInterval;
+        if (rebuild) {
+            build(nextLength, nextLongForm);
+        }
+        group_delay = static_cast<gr::Size_t>(_delay.size());
+    }
+
+    void reset() { build(_builtLength, _builtLongForm); }
+
+    [[nodiscard]] std::size_t tagDecimation() const noexcept { return 1UZ; }
+
+    [[nodiscard]] std::optional<std::uint64_t> twiceTagDelay() const noexcept { return 2ULL * static_cast<std::uint64_t>(_delay.size()); }
+
+    void filterSamples(std::span<const T> input, std::span<T> output) noexcept {
+        const std::size_t nSamples = std::min(input.size(), output.size());
+        const std::size_t interval = _interval;
+        for (std::size_t i = 0UZ; i < nSamples; ++i) {
+            const bool reseed = _offset % interval == 0ULL;
+            T          value  = input[i];
+            for (Boxcar<T>& stage : _stages) {
+                value = stage.step(value, reseed);
+            }
+            const T aligned = _delay[_cursor];
+            _delay[_cursor] = input[i];
+            _cursor         = _cursor + 1UZ == _delay.size() ? 0UZ : _cursor + 1UZ;
+            output[i]       = aligned - value;
+            ++_offset;
+        }
+    }
+
+private:
+    void build(gr::Size_t newLength, bool newLongForm) {
+        _stages.assign(newLongForm ? 4UZ : 2UZ, Boxcar<T>{});
+        for (Boxcar<T>& stage : _stages) {
+            stage.configure(newLength);
+        }
+        _delay.assign((newLongForm ? 2UZ : 1UZ) * (static_cast<std::size_t>(newLength) - 1UZ), T{});
+        _cursor        = 0UZ;
+        _offset        = 0ULL;
+        _builtLength   = newLength;
+        _builtLongForm = newLongForm;
+        group_delay    = static_cast<gr::Size_t>(_delay.size());
+    }
+};
+
+} // namespace reference
+
+/// True when @p a and @p b hold the same bits.
+template<typename T>
+[[nodiscard]] bool sameBits(std::span<const T> a, std::span<const T> b) {
+    return std::ranges::equal(std::as_bytes(a), std::as_bytes(b));
+}
+
+/// A random stream with a DC offset that changes every 1000 samples, so a running sum and its recomputation round
+/// differently.
+template<typename T>
+[[nodiscard]] std::vector<T> offsetNoise(std::size_t nSamples) {
+    const std::vector<float> noise = pseudoRandom(2UZ * nSamples);
+    std::vector<T>           input(nSamples);
+    for (std::size_t i = 0UZ; i < nSamples; ++i) {
+        const float offset = 300.f * static_cast<float>(i / 1000UZ % 3UZ);
+        if constexpr (std::same_as<T, float>) {
+            input[i] = offset + noise[i];
+        } else {
+            input[i] = T(offset + noise[2UZ * i], noise[2UZ * i + 1UZ] - offset);
+        }
+    }
+    return input;
+}
+
+/// One step of a scripted run: the settings applied first, then the samples filtered in chunks.
+struct Leg {
+    gr::property_map settings;
+    std::size_t      nSamples = 0UZ;
+};
+
+/// The output of `TBlock` over @p input along @p legs, in chunks that cycle through 1, 7, 100, 333, 4096 and 2 samples.
+template<typename TBlock, typename T>
+[[nodiscard]] std::vector<T> runLegs(std::span<const T> input, std::initializer_list<Leg> legs) {
+    TBlock block(gr::property_map{});
+    block.settings().init();
+    std::ignore = block.settings().applyStagedParameters();
+
+    constexpr std::size_t kChunks[] = {1UZ, 7UZ, 100UZ, 333UZ, 4096UZ, 2UZ};
+    std::vector<T>        output(input.size());
+    std::size_t           at    = 0UZ;
+    std::size_t           chunk = 0UZ;
+    for (const Leg& leg : legs) {
+        std::ignore = block.settings().setStaged(leg.settings);
+        std::ignore = block.settings().applyStagedParameters();
+        for (const std::size_t end = std::min(at + leg.nSamples, input.size()); at < end; chunk = (chunk + 1UZ) % std::size(kChunks)) {
+            const std::size_t count = std::min(kChunks[chunk], end - at);
+            std::ignore             = block.processBulk(input.subspan(at, count), std::span<T>(output).subspan(at, count));
+            at += count;
+        }
+    }
+    return output;
+}
+
+/// What a scheduled run delivered: the samples and every tag at the end sink, the end-of-stream index included.
+struct ComparedRun {
+    bool                 ran = false;
+    std::vector<float>   samples;
+    std::vector<gr::Tag> tags;
+};
+
+/// Runs @p values through `TBlock`, its `reseed_interval` coupled to a tag key of that name, with @p tags on the input.
+template<typename TBlock>
+[[nodiscard]] ComparedRun runCompared(const std::vector<float>& values, const std::vector<gr::Tag>& tags) {
+    using gr::blocks::testing::ProcessFunction;
+    using gr::blocks::testing::TagSource;
+
+    gr::Graph graph;
+    auto&     source = graph.emplaceBlock<TagSource<float, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", static_cast<gr::Size_t>(values.size())}, {"values", gr::Tensor<float>(values.begin(), values.end())}});
+    source._tags     = tags;
+    auto& block      = graph.emplaceBlock<TBlock>({{"length", kLength}, {"long_form", true}, {"reseed_interval", gr::Size_t(100)}});
+    block.settings().setTagCouplings({{"reseed_interval", std::string("reseed_interval")}});
+    auto sinks = gr::blocks::filter::testing::connectEndSinks<float>(graph, block);
+
+    ComparedRun run;
+    if (!graph.connect<"out", "in">(source, block).has_value() || !sinks.has_value()) {
+        return run;
+    }
+    gr::scheduler::Simple scheduler;
+    run.ran     = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
+    run.samples = std::vector<float>(sinks->end._samples.begin(), sinks->end._samples.end());
+    run.tags    = sinks->end._tags;
+    return run;
+}
+
 } // namespace
 
 const boost::ut::suite<"DcBlocker"> dcBlockerTests = [] {
@@ -293,6 +502,41 @@ const boost::ut::suite<"DcBlocker"> dcBlockerTests = [] {
             const std::vector<float> got   = run<float>(block, std::span<const float>(input), chunkSize);
             expect(std::ranges::equal(got, want)) << "chunk size " << chunkSize;
         }
+    };
+
+    "the output is the per-sample form's, bit for bit, through reseeds and changes of the interval and the length"_test = [] {
+        const auto compare = []<typename T>(const char* type) {
+            const std::vector<T>             input = offsetNoise<T>(8250UZ);
+            const std::initializer_list<Leg> legs  = {
+                {{{"length", kLength}, {"long_form", true}, {"reseed_interval", gr::Size_t(100)}}, 1000UZ}, // ten reseeds
+                {{{"reseed_interval", gr::Size_t(37)}}, 500UZ},                                             // the next one 36 samples on
+                {{{"reseed_interval", gr::Size_t(1)}}, 50UZ},                                               // one on every sample
+                {{{"reseed_interval", gr::Size_t(4096)}}, 5000UZ},
+                {{{"length", gr::Size_t(16)}, {"long_form", false}, {"reseed_interval", gr::Size_t(64)}}, 1000UZ},
+                {{{"length", gr::Size_t(5)}, {"long_form", true}}, 700UZ},
+            };
+            const std::vector<T> want = runLegs<reference::DcBlocker<T>, T>(std::span<const T>(input), legs);
+            const std::vector<T> got  = runLegs<DcBlocker<T>, T>(std::span<const T>(input), legs);
+            expect(sameBits(std::span<const T>(got), std::span<const T>(want))) << type;
+
+            const std::vector<T> shifted = runLegs<reference::DcBlocker<T>, T>(std::span<const T>(input), {{{{"reseed_interval", gr::Size_t(99)}}, 1000UZ}});
+            expect(!sameBits(std::span<const T>(shifted).first(1000UZ), std::span<const T>(want).first(1000UZ))) << type << ": the stream tells the reseed positions apart";
+        };
+        compare.template operator()<float>("float");
+        compare.template operator()<CF>("complex<float>");
+    };
+
+    "samples and tags leave as the per-sample form's while tags move the reseed interval"_test = [] {
+        const std::vector<float>   values = offsetNoise<float>(6000UZ);
+        const auto                 marker = [] { return gr::property_map{{gr::property_map::key_type{gr::tag::TRIGGER_NAME.key()}, std::string("edge")}, {gr::property_map::key_type{"private_key"}, std::string("carried")}}; };
+        const std::vector<gr::Tag> tags{{777UZ, marker()}, {1500UZ, {{"reseed_interval", gr::Size_t(37)}}}, {3001UZ, {{"reseed_interval", gr::Size_t(1)}}}, {3050UZ, {{"reseed_interval", gr::Size_t(4096)}}}, {4000UZ, marker()}, {5990UZ, marker()}};
+        const ComparedRun          want = runCompared<reference::DcBlocker<float>>(values, tags);
+        const ComparedRun          got  = runCompared<DcBlocker<float>>(values, tags);
+        expect(want.ran && got.ran);
+        expect(eq(got.samples.size(), values.size()));
+        expect(sameBits(std::span<const float>(got.samples), std::span<const float>(want.samples)));
+        expect(eq(gr::blocks::filter::testing::offsetsOf(want.tags, "private_key").size(), 3UZ)) << "the run carries the marker tags";
+        expect(got.tags == want.tags) << "the same tags at the same outputs, in the same order";
     };
 
     "the reseed keeps the drift bounded"_test = [] {
