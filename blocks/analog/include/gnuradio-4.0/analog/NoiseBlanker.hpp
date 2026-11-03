@@ -251,25 +251,29 @@ settings at the end of each call that changes them.
         std::size_t       tag      = 0UZ;
         std::size_t       leaving  = 0UZ;
 
-        // The block forwards the tags itself. Each tag waits `delay_samples` for its sample and leaves in index order
-        // with the block's own markers. The filter is the framework's.
-        for (std::size_t i = 0UZ; i < nSamples; ++i) {
-            const std::uint64_t at = _emitted + i;
-            while (tag < nTags && inSpan.rawTags[tag].index <= inSpan.streamIndex + i) {
-                if (inSpan.rawTags[tag].index >= inSpan.streamIndex) {
-                    property_map forwarded = this->filterAndSubstituteTag(inSpan.rawTags[tag].map);
-                    if (!forwarded.empty()) {
-                        _pendingTags.emplace_back(at + _delay, std::move(forwarded));
+        if (nSamples > 0UZ && passesUnchanged()) {
+            leaving = passLine(inSpan, outSpan, nSamples);
+        } else {
+            // The block forwards the tags itself. Each tag waits `delay_samples` for its sample and leaves in index
+            // order with the block's own markers. The filter is the framework's.
+            for (std::size_t i = 0UZ; i < nSamples; ++i) {
+                const std::uint64_t at = _emitted + i;
+                while (tag < nTags && inSpan.rawTags[tag].index <= inSpan.streamIndex + i) {
+                    if (inSpan.rawTags[tag].index >= inSpan.streamIndex) {
+                        property_map forwarded = this->filterAndSubstituteTag(inSpan.rawTags[tag].map);
+                        if (!forwarded.empty()) {
+                            _pendingTags.emplace_back(at + _delay, std::move(forwarded));
+                        }
                     }
+                    ++tag;
                 }
-                ++tag;
+                accept(inSpan[i]);
+                while (leaving < _pendingTags.size() && _pendingTags[leaving].first <= at) {
+                    outSpan.publishTag(_pendingTags[leaving].second, i);
+                    ++leaving;
+                }
+                outSpan[i] = emit(outSpan, i);
             }
-            accept(inSpan[i]);
-            while (leaving < _pendingTags.size() && _pendingTags[leaving].first <= at) {
-                outSpan.publishTag(_pendingTags[leaving].second, i);
-                ++leaving;
-            }
-            outSpan[i] = emit(outSpan, i);
         }
         _pendingTags.erase(_pendingTags.begin(), _pendingTags.begin() + static_cast<std::ptrdiff_t>(leaving));
         _emitted += nSamples;
@@ -359,6 +363,84 @@ private:
     [[nodiscard]] std::size_t slot(std::size_t ahead) const noexcept {
         const std::size_t at = _oldest + ahead;
         return at >= _ring ? at - _ring : at;
+    }
+
+    /// True when the block is disabled, no window is open, no input in the line is marked, and the excess count is
+    /// below the warm-up length. Each input then leaves `delay_samples` later unchanged.
+    [[nodiscard]] bool passesUnchanged() const noexcept {
+        if (_enabled || _remaining > 0U || _excess >= _warmupLength) {
+            return false;
+        }
+        const std::span<const std::uint8_t> marked(_marked); // every slot but `_oldest`, which holds the sample emitted last
+        return !std::ranges::contains(marked.first(_oldest), std::uint8_t{1}) && !std::ranges::contains(marked.subspan(_oldest + 1UZ), std::uint8_t{1});
+    }
+
+    /**
+     * @brief Move @p nSamples inputs through the line as copies, with the state the per-sample loop leaves, and
+     * publish the tags due among them. Returns the number of held tags published.
+     *
+     * Item 0 is the sample emitted last and items 1 to `delay_samples` the inputs still in the line, item `j` in slot
+     * `(_oldest + j) % _ring`. The call's inputs follow. Output `i` is item `i + 1`.
+     */
+    template<typename TInSpan, typename TOutSpan>
+    [[nodiscard]] std::size_t passLine(TInSpan& inSpan, TOutSpan& outSpan, std::size_t nSamples) {
+        std::size_t collected = 0UZ; // the input the per-sample loop takes the tag at
+        for (std::size_t tag = 0UZ; tag < inSpan.rawTags.size() && inSpan.rawTags[tag].index < inSpan.streamIndex + nSamples; ++tag) {
+            const std::size_t index = inSpan.rawTags[tag].index;
+            if (index < inSpan.streamIndex) {
+                continue;
+            }
+            collected              = std::max(collected, index - inSpan.streamIndex);
+            property_map forwarded = this->filterAndSubstituteTag(inSpan.rawTags[tag].map);
+            if (!forwarded.empty()) {
+                _pendingTags.emplace_back(_emitted + collected + _delay, std::move(forwarded));
+            }
+        }
+        std::size_t leaving = 0UZ;
+        for (std::size_t at = 0UZ; leaving < _pendingTags.size(); ++leaving) { // each held tag leaves at its due output, and never ahead of the tag before it
+            const std::uint64_t due   = _pendingTags[leaving].first;
+            const std::uint64_t ahead = due > _emitted ? due - _emitted : 0ULL;
+            if (ahead >= nSamples) {
+                break;
+            }
+            at = std::max(at, static_cast<std::size_t>(ahead));
+            outSpan.publishTag(_pendingTags[leaving].second, at);
+        }
+
+        const auto        input    = inSpan.begin();
+        const auto        output   = outSpan.begin();
+        const std::size_t fromLine = std::min(nSamples, _delay);
+        const std::size_t start    = _oldest + 1UZ == _ring ? 0UZ : _oldest + 1UZ;
+        const std::size_t head     = std::min(fromLine, _ring - start);
+        std::copy_n(_line.begin() + static_cast<std::ptrdiff_t>(start), head, output);
+        std::copy_n(_line.begin(), fromLine - head, output + static_cast<std::ptrdiff_t>(head));
+        if (nSamples > _delay) {
+            std::copy_n(input, nSamples - _delay, output + static_cast<std::ptrdiff_t>(_delay));
+        }
+        const std::size_t kept  = std::min(nSamples, _ring); // the newest inputs, the ones the line keeps
+        const std::size_t first = (_oldest + nSamples - kept) % _ring;
+        const std::size_t wrap  = std::min(kept, _ring - first);
+        std::copy_n(input + static_cast<std::ptrdiff_t>(nSamples - kept), wrap, _line.begin() + static_cast<std::ptrdiff_t>(first));
+        std::copy_n(input + static_cast<std::ptrdiff_t>(nSamples - kept + wrap), kept - wrap, _line.begin());
+
+        _oldest = (_oldest + nSamples) % _ring;
+        _cursor = _oldest == 0UZ ? _ring - 1UZ : _oldest - 1UZ;
+        std::ranges::fill(_marked, std::uint8_t{0});
+        _anchor       = output[static_cast<std::ptrdiff_t>(nSamples - 1UZ)];
+        _runPosition  = 0U;
+        _held         = 0U;
+        _windowLength = 0U;
+        _warmup       = _warmup > nSamples ? _warmup - nSamples : 0UZ;
+        _excess       = _excess > nSamples ? _excess - static_cast<std::uint32_t>(nSamples) : 0U;
+        double duty   = _duty;
+        for (std::size_t i = 0UZ; i < nSamples && duty != 0.0; ++i) { // the duty average decays toward zero, as in accept()
+            duty += 0.1 * _alpha * (0.0 - duty);
+            if (duty < std::numeric_limits<double>::min()) {
+                duty = 0.0;
+            }
+        }
+        _duty = duty;
+        return leaving;
     }
 
     /**
