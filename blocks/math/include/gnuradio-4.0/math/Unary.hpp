@@ -1,15 +1,21 @@
 #ifndef GNURADIO_MATH_UNARY_HPP
 #define GNURADIO_MATH_UNARY_HPP
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <numbers>
+#include <span>
 #include <type_traits>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
+#include <gnuradio-4.0/meta/simd_math.hpp>
 #include <gnuradio-4.0/meta/utils.hpp>
 
 namespace gr::blocks::math {
@@ -118,8 +124,50 @@ struct ports_of<op, Derived, T, R> {
  * - `Description`, the documentation of the blocks it makes;
  * - optionally `kChangesFrequency`, true when the operation changes the frequency of a complex carrier;
  * - optionally `template<typename Derived, typename T, typename R> using ports`, the ports and the
- *   settings of its blocks, `Ports` when absent. A `ports` type passes `DroppedKeys<op, R>` to `Block`.
+ *   settings of its blocks, `Ports` when absent. A `ports` type passes `DroppedKeys<op, R>` to `Block`;
+ * - optionally `lanes(re, im)`, the function of the real and the imaginary parts of a complex sample on simd vectors
+ *   of float lanes, with `kSpanLoop<op>` set (below).
  */
+
+/// the float lanes of the span loop of an operation with `lanes`
+using FloatVector = vir::stdx::native_simd<float>;
+
+/// true for an operation whose `std::complex<float>` blocks run `op::lanes` over the whole span; set for the operation
+/// type alone, so an operation derived from it keeps the per-sample path
+template<typename op>
+inline constexpr bool kSpanLoop = false;
+
+/// `output[i] = op::lanes(re, im)` of `input[i]`, the parts taken apart a tile at a time. The last vector of a span is
+/// padded with zeros and only its filled lanes are stored, so each output is the same at any span length and offset.
+template<typename op>
+void overParts(std::span<const std::complex<float>> input, std::span<float> output) noexcept {
+    constexpr std::size_t kWidth = FloatVector::size();
+    constexpr std::size_t kTile  = 256UZ;
+    static_assert(kTile % kWidth == 0UZ);
+    std::array<float, kTile> re;
+    std::array<float, kTile> im;
+    const std::size_t        nSamples = std::min(input.size(), output.size());
+    for (std::size_t base = 0UZ; base < nSamples; base += kTile) {
+        const std::size_t count  = std::min(kTile, nSamples - base);
+        const std::size_t padded = (count + kWidth - 1UZ) / kWidth * kWidth;
+        for (std::size_t i = 0UZ; i < count; ++i) {
+            re[i] = input[base + i].real();
+            im[i] = input[base + i].imag();
+        }
+        std::fill(re.begin() + static_cast<std::ptrdiff_t>(count), re.begin() + static_cast<std::ptrdiff_t>(padded), 0.f);
+        std::fill(im.begin() + static_cast<std::ptrdiff_t>(count), im.begin() + static_cast<std::ptrdiff_t>(padded), 0.f);
+        for (std::size_t i = 0UZ; i < padded; i += kWidth) {
+            const FloatVector result = op::lanes(FloatVector(re.data() + i, vir::stdx::element_aligned), FloatVector(im.data() + i, vir::stdx::element_aligned));
+            if (i + kWidth <= count) {
+                result.copy_to(output.data() + base + i, vir::stdx::element_aligned);
+            } else {
+                std::array<float, kWidth> last;
+                result.copy_to(last.data(), vir::stdx::element_aligned);
+                std::copy_n(last.begin(), count - i, output.begin() + static_cast<std::ptrdiff_t>(base + i));
+            }
+        }
+    }
+}
 
 struct Negate {
     using Description = Doc<"@brief Negates each sample.">;
@@ -454,8 +502,26 @@ struct Round {
 
 /// the magnitude of a complex sample; the absolute value of a real one
 struct Magnitude : Abs {
-    using Description = Doc<"@brief Outputs the magnitude of each complex sample.">;
+    using Description = Doc<R""(@brief Outputs the magnitude of each complex sample.
+
+For `std::complex<float>` the block squares and sums the parts in double and rounds the square root to float once. An
+infinite part gives +inf, also beside a NaN.
+)"">;
+
+    // A float part squared in double neither overflows nor underflows, and the sum of two squares is rounded once.
+    [[nodiscard]] static FloatVector lanes(const FloatVector& re, const FloatVector& im) noexcept {
+        using D                     = vir::stdx::rebind_simd_t<double, FloatVector>;
+        const D           x         = vir::stdx::static_simd_cast<D>(re);
+        const D           y         = vir::stdx::static_simd_cast<D>(im);
+        FloatVector       magnitude = vir::stdx::static_simd_cast<FloatVector>(vir::stdx::sqrt(x * x + y * y));
+        const FloatVector infinity(std::numeric_limits<float>::infinity());
+        where(vir::stdx::abs(re) == infinity || vir::stdx::abs(im) == infinity, magnitude) = infinity;
+        return magnitude;
+    }
 };
+
+template<>
+inline constexpr bool kSpanLoop<Magnitude> = true;
 
 /// re*re + im*im of a complex sample; x*x of a real one
 struct MagnitudeSquared {
@@ -475,7 +541,12 @@ struct MagnitudeSquared {
 
 /// the argument of a complex sample in radians, in [-pi, pi]; 0 or pi for a real one
 struct Phase {
-    using Description = Doc<"@brief Outputs the phase of each complex sample, in radians.">;
+    using Description = Doc<R""(@brief Outputs the phase of each complex sample, in radians.
+
+For `std::complex<float>` the phase is `gr::meta::atan2` of the parts on simd vectors of float lanes, within 2 ulp
+of the exact value. Zeros, infinities and NaN give the C library's results: a zero sample gives 0 with the sign of its
+imaginary part, or +-pi when its real part is -0.
+)"">;
     template<typename T>
     using result                = meta::fundamental_base_value_type_t<T>;
     static constexpr bool kSimd = false;
@@ -483,7 +554,11 @@ struct Phase {
     [[nodiscard]] static meta::fundamental_base_value_type_t<V> apply(const V& x, const B& /*block*/) noexcept {
         return narrow<meta::fundamental_base_value_type_t<V>>(std::arg(x));
     }
+    [[nodiscard]] static FloatVector lanes(const FloatVector& re, const FloatVector& im) noexcept { return gr::meta::atan2(im, re); }
 };
+
+template<>
+inline constexpr bool kSpanLoop<Phase> = true;
 
 struct Real {
     using Description = Doc<"@brief Outputs the real part of each complex sample.">;
@@ -518,6 +593,9 @@ struct Imag {
  * `scale` and `offset` have the output type. At 1 and 0 the output is `op(in)` exactly. Integer results of `Negate`,
  * `Abs` and the scale and offset step wrap in the type: the lowest value of a signed type negates to itself. No
  * other operation is registered for an integer type.
+ *
+ * `Magnitude` and `Phase` of `std::complex<float>` run over the whole span in simd lanes, with `processBulk` and no
+ * `processOne`, so neither can be a member of a `Merge`.
  */
 template<typename op, typename T>
 struct Unary : unary::ports_of<op, Unary<op, T>, T, typename op::template result<T>>::type {
@@ -532,6 +610,7 @@ struct Unary : unary::ports_of<op, Unary<op, T>, T, typename op::template result
     static_assert(std::same_as<typename Unary::DroppedTagKeysControl, unary::DroppedKeys<op, R>>, "the ports of an operation pass unary::DroppedKeys<op, R> to Block");
 
     static constexpr bool kSimdPath = op::kSimd && std::is_arithmetic_v<T> && std::same_as<T, R>;
+    static constexpr bool kSpanPath = unary::kSpanLoop<op> && std::same_as<T, std::complex<float>>;
 
     bool _affine = false; // scale or offset differs from the identity
 
@@ -544,8 +623,20 @@ struct Unary : unary::ports_of<op, Unary<op, T>, T, typename op::template result
         return _affine ? unary::affine(y, scale.value, offset.value) : y;
     }
 
+    [[nodiscard]] work::Status processBulk(std::span<const T> input, std::span<R> output) const noexcept
+    requires(kSpanPath)
+    {
+        unary::overParts<op>(input, output);
+        if (_affine) {
+            for (R& y : output.first(std::min(input.size(), output.size()))) {
+                y = unary::affine(y, scale.value, offset.value);
+            }
+        }
+        return work::Status::OK;
+    }
+
     [[nodiscard]] constexpr R processOne(const T& x) const noexcept
-    requires(!kSimdPath)
+    requires(!kSimdPath && !kSpanPath)
     {
         const R y = op::apply(x, *this);
         if (!_affine) {

@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <random>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -196,6 +199,140 @@ const boost::ut::suite<"Unary integer wrap"> unaryWrap = [] {
         }
         expect(eq(mismatches, 0UZ)) << "calls whose output differs from the wrapped result";
     } | std::tuple<std::int16_t, std::int32_t>{};
+};
+
+namespace {
+
+using CF = std::complex<float>;
+
+/// @brief Every pair of parts from the signed zeros, the smallest subnormal, the smallest and largest normals, one,
+/// the infinities and a NaN, then random bit patterns and Gaussian noise.
+[[nodiscard]] std::vector<CF> complexInput() {
+    using L                             = std::numeric_limits<float>;
+    const std::array<float, 13UZ> parts = {0.f, -0.f, L::denorm_min(), -L::denorm_min(), L::min(), -L::min(), 1.f, -1.f, L::max(), -L::max(), L::infinity(), -L::infinity(), L::quiet_NaN()};
+    std::vector<CF>               input;
+    for (const float re : parts) {
+        for (const float im : parts) {
+            input.emplace_back(re, im);
+        }
+    }
+    std::mt19937                                 rng(20261103U);
+    std::uniform_int_distribution<std::uint32_t> bits;
+    std::normal_distribution<float>              noise(0.f, 0.3f);
+    for (std::size_t i = 0UZ; i < 4096UZ; ++i) {
+        input.emplace_back(std::bit_cast<float>(bits(rng)), std::bit_cast<float>(bits(rng)));
+        input.emplace_back(noise(rng), noise(rng));
+    }
+    return input;
+}
+
+/// @brief The output of `processBulk` over `input` in calls of `chunk` samples.
+template<typename TBlock>
+[[nodiscard]] std::vector<float> spanPath(const TBlock& block, std::span<const CF> input, std::size_t chunk) {
+    std::vector<float> output(input.size());
+    for (std::size_t base = 0UZ; base < input.size(); base += chunk) {
+        const std::size_t count = std::min(chunk, input.size() - base);
+        std::ignore             = block.processBulk(input.subspan(base, count), std::span<float>(output).subspan(base, count));
+    }
+    return output;
+}
+
+/// @brief The number of calls of `chunk` samples, for each chunk size below, whose output is not `whole` bit for bit.
+template<typename TBlock>
+[[nodiscard]] std::size_t chunkMismatches(const TBlock& block, std::span<const CF> input, const std::vector<float>& whole) {
+    std::size_t mismatches = 0UZ;
+    for (const std::size_t chunk : {1UZ, 3UZ, 255UZ, 257UZ}) {
+        const std::vector<float> chunked = spanPath(block, input, chunk);
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            mismatches += static_cast<std::size_t>(!sameValue(chunked[i], whole[i]));
+        }
+    }
+    return mismatches;
+}
+
+/// @brief The spacing of float values at the magnitude of `value`.
+[[nodiscard]] double floatUlp(double value) {
+    using L       = std::numeric_limits<float>;
+    const int exp = std::max(std::ilogb(value), L::min_exponent - 1);
+    return std::ldexp(1.0, exp - (L::digits - 1));
+}
+
+} // namespace
+
+const boost::ut::suite<"Unary complex span loops"> unaryComplexSpans = [] {
+    using namespace boost::ut;
+    using namespace gr::blocks::math;
+
+    static_assert(Magnitude<CF>::kSpanPath && gr::HasProcessBulkFunction<Magnitude<CF>> && !gr::HasProcessOneFunction<Magnitude<CF>>);
+    static_assert(Phase<CF>::kSpanPath && gr::HasProcessBulkFunction<Phase<CF>> && !gr::HasProcessOneFunction<Phase<CF>>);
+
+    // The double hypot of two float parts rounded to float is the magnitude computed in double and rounded once,
+    // with C's special values: +inf for an infinite part beside a NaN, NaN for a NaN beside a finite part.
+    "Magnitude gives the double hypot of the parts rounded to float, at every chunk size"_test = [] {
+        Magnitude<CF> block;
+        applySettings(block);
+        const std::vector<CF>     input = complexInput();
+        const std::span<const CF> in(input);
+        const std::vector<float>  whole = spanPath(block, in, in.size());
+
+        std::size_t mismatches = 0UZ;
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            mismatches += static_cast<std::size_t>(!sameValue(whole[i], static_cast<float>(std::hypot(static_cast<double>(input[i].real()), static_cast<double>(input[i].imag())))));
+        }
+        expect(eq(mismatches, 0UZ)) << "samples whose magnitude differs from the double hypot";
+        expect(eq(chunkMismatches(block, in, whole), 0UZ)) << "chunked outputs that differ from one call";
+#ifdef __GLIBC__
+        // glibc's hypotf squares and sums the parts in double and rounds the square root once
+        std::size_t libraryMismatches = 0UZ;
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            libraryMismatches += static_cast<std::size_t>(!sameValue(whole[i], std::abs(input[i])));
+        }
+        expect(eq(libraryMismatches, 0UZ)) << "samples whose magnitude differs from std::abs";
+#endif
+    };
+
+    "a Magnitude scale and offset apply to the magnitude"_test = [] {
+        Magnitude<CF> block({{"scale", 2.f}, {"offset", 0.5f}});
+        applySettings(block);
+        const std::vector<CF>    input{{3.f, 4.f}, {0.f, -1.f}, {0.f, 0.f}};
+        const std::vector<float> output = spanPath(block, std::span<const CF>(input), input.size());
+        expect(that % (output == std::vector<float>{10.5f, 2.5f, 0.5f}));
+    };
+
+    // gr::meta::atan2 is within 2 ulp of the exact arctangent on float lanes; the double std::atan2 of the parts
+    // stands for the exact value, its own error far below a float ulp
+    "Phase is within 2 ulp of std::atan2 of the parts, with C's zeros and NaN, at every chunk size"_test = [] {
+        Phase<CF> block;
+        applySettings(block);
+        const std::vector<CF>     input = complexInput();
+        const std::span<const CF> in(input);
+        const std::vector<float>  whole = spanPath(block, in, in.size());
+
+        std::size_t outside = 0UZ;
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            const double reference = std::atan2(static_cast<double>(input[i].imag()), static_cast<double>(input[i].real()));
+            const double phase     = static_cast<double>(whole[i]);
+            if (std::isnan(reference) || reference == 0.0) {
+                outside += static_cast<std::size_t>(!sameValue(phase, reference));
+            } else {
+                outside += static_cast<std::size_t>(!(std::abs(phase - reference) <= 2.0 * floatUlp(reference)));
+            }
+        }
+        expect(eq(outside, 0UZ)) << "samples whose phase lies outside the bound";
+        expect(eq(chunkMismatches(block, in, whole), 0UZ)) << "chunked outputs that differ from one call";
+    };
+
+    "a zero sample's Phase is std::arg's: 0 with the imaginary part's sign, or +-pi for a real part of -0"_test = [] {
+        Phase<CF> block;
+        applySettings(block);
+        const std::vector<CF>    input{{0.f, 0.f}, {0.f, -0.f}, {-0.f, 0.f}, {-0.f, -0.f}};
+        const std::vector<float> output     = spanPath(block, std::span<const CF>(input), input.size());
+        std::size_t              mismatches = 0UZ;
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            mismatches += static_cast<std::size_t>(!sameValue(output[i], std::arg(input[i])));
+        }
+        expect(eq(mismatches, 0UZ));
+    };
 };
 
 int main() { /* not needed for UT */ }
