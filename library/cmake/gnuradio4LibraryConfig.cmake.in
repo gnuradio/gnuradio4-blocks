@@ -3,6 +3,9 @@
 include(CMakeFindDependencyMacro)
 
 find_dependency(gnuradio4 CONFIG)
+# gnuradio4::gnuradio-algorithm links both directly
+find_dependency(magic_enum 0.9.3 CONFIG)
+find_dependency(vir-simd CONFIG)
 
 include("${CMAKE_CURRENT_LIST_DIR}/gnuradio4LibraryTargets.cmake")
 

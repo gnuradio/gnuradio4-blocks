@@ -2,7 +2,7 @@
 # socket pair, which needs nothing beyond POSIX. The socket blocks build whenever the family is enabled; only the ZMQ
 # half is conditional on its dependency.
 set(GR4_NETWORK_HAVE_LIBZMQ FALSE)
-if(TARGET PkgConfig::GR4_LIBZMQ AND (GR4_NETWORK_CPPZMQ_TARGET OR GR4_CPPZMQ_INCLUDE_DIR))
+if(TARGET cppzmq)
   set(GR4_NETWORK_HAVE_LIBZMQ TRUE)
 else()
   message(
@@ -17,20 +17,8 @@ target_link_libraries(gr-network INTERFACE gnuradio4::gnuradio-core gnuradio4::g
 target_include_directories(gr-network INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
                                                 $<INSTALL_INTERFACE:include/>)
 if(GR4_NETWORK_HAVE_LIBZMQ)
-  target_link_libraries(gr-network INTERFACE PkgConfig::GR4_LIBZMQ)
-  # the exported interface now names a target only this project's configure defines, so the installed config file has to
-  # define it too; said here, where the interface is written, and read at the top level where that file is generated
-  set_property(GLOBAL PROPERTY GR4_EXPORT_NEEDS_LIBZMQ TRUE)
-  # cppzmq is header-only, so the directory zmq.hpp sits in is a usage requirement of this family and cannot be derived
-  # from libzmq: the two are separate packages and need not share an include directory. What the install interface can
-  # say about that directory is only that it is needed -- the path itself is this machine's -- so the installed config
-  # file resolves cppzmq on the consumer's machine and attaches what it finds to the imported target.
-  set_property(GLOBAL PROPERTY GR4_EXPORT_NEEDS_CPPZMQ TRUE)
-  if(GR4_NETWORK_CPPZMQ_TARGET)
-    target_link_libraries(gr-network INTERFACE ${GR4_NETWORK_CPPZMQ_TARGET})
-  else()
-    target_include_directories(gr-network SYSTEM INTERFACE $<BUILD_INTERFACE:${GR4_CPPZMQ_INCLUDE_DIR}>)
-  endif()
+  # the cppzmq target carries libzmq with it, so this one link gives the family both the C library and zmq.hpp
+  target_link_libraries(gr-network INTERFACE cppzmq)
 endif()
 install(TARGETS gr-network EXPORT gnuradio4Targets)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/network"

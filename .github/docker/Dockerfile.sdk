@@ -80,7 +80,7 @@ COPY --from=builder /opt/gnuradio4 /opt/gnuradio4
 
 ENV GNURADIO4_PREFIX=/opt/gnuradio4 \
     GR4_SDK_TARGET=${SDK_TARGET} \
-    CMAKE_PREFIX_PATH=/opt/gnuradio4 \
+    CMAKE_PREFIX_PATH=/opt/gnuradio4${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}} \
     LD_LIBRARY_PATH=/opt/gnuradio4/lib:/opt/gnuradio4/lib64:${LD_LIBRARY_PATH} \
     PATH=/opt/gnuradio4/bin:${PATH}
 

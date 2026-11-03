@@ -22,8 +22,6 @@ option(CMAKE_INSTALL_RPATH_USE_LINK_PATH "Add the directories of linked librarie
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
-include(FetchContent)
-find_package(PkgConfig QUIET)
 
 option(ENABLE_EXAMPLES "Enable example builds" ON)
 option(ENABLE_TESTING "Enable test builds" ON)
@@ -34,7 +32,6 @@ option(GR4_ENABLE_ZEROMQ "Build the ZeroMQ block family" OFF)
 option(GR4_ENABLE_ZEROMQ_EXAMPLES "Build the ZeroMQ examples" OFF)
 option(GR4_ENABLE_HTTP_TESTS "Build HTTP integration tests" OFF)
 option(GR4_ENABLE_PYTHON "Build the Python block and its test (needs Python 3.12 or later with NumPy)" OFF)
-option(GR_USE_FETCHCONTENT_DEPS "Allow CMake to download selected third-party dependencies with FetchContent" OFF)
 option(WARNINGS_AS_ERRORS "Enable -Werror flags" ON)
 
 # A prefix this tree has already been installed into. What an export writes into an installed config file is read by
@@ -116,67 +113,66 @@ endif()
 if(NOT TARGET ut-benchmark AND TARGET gnuradio4::ut-benchmark)
   add_library(ut-benchmark ALIAS gnuradio4::ut-benchmark)
 endif()
-set(BOOST_UT_DISABLE_MODULE
-    ON
-    CACHE BOOL "Disable UT Module Support" FORCE)
-add_compile_definitions(BOOST_UT_DISABLE_MODULE)
-if(EMSCRIPTEN OR GR_USE_FETCHCONTENT_DEPS)
-  FetchContent_Declare(
-    ut
-    GIT_REPOSITORY https://github.com/boost-ext/ut.git
-    GIT_TAG 53e17f25119598c6458d30351b260193096ba67e
-    EXCLUDE_FROM_ALL)
+# core exports gnuradio4::ut-benchmark only from a build with its tests enabled. Without it, bench/ defines and exports
+# one in this project, and the package config has to find the Boost.UT that target links for a consumer.
+if(TARGET gnuradio4::ut-benchmark)
+  set(GR4_EXPORT_NEEDS_UT OFF)
 else()
-  find_package(ut CONFIG QUIET)
-  if(TARGET Boost::ut AND NOT TARGET ut)
-    add_library(ut ALIAS Boost::ut)
-  elseif(TARGET boost::ut AND NOT TARGET ut)
-    add_library(ut ALIAS boost::ut)
-  endif()
-  if(NOT TARGET ut)
-    find_path(GR_BOOST_UT_INCLUDE_DIR boost/ut.hpp)
-    if(NOT GR_BOOST_UT_INCLUDE_DIR)
-      message(FATAL_ERROR "Boost.UT was not found. Install libboost-ext-ut-dev, ut-devel, or a source-built Boost.UT.")
-    endif()
-    add_library(ut INTERFACE)
-    target_include_directories(ut INTERFACE ${GR_BOOST_UT_INCLUDE_DIR})
-  endif()
-endif()
-if(EMSCRIPTEN OR GR_USE_FETCHCONTENT_DEPS)
-  FetchContent_MakeAvailable(ut)
+  set(GR4_EXPORT_NEEDS_UT ON)
 endif()
 
-if(EMSCRIPTEN AND TARGET ut)
-  # Boost.UT upstream adds -fwasm-exceptions which conflicts with -fexceptions, so replace it
-  get_target_property(_ut_copts ut INTERFACE_COMPILE_OPTIONS)
-  get_target_property(_ut_lopts ut INTERFACE_LINK_OPTIONS)
+# core's package config already finds both, because its exported targets link them; the library links them directly, so
+# they are found here as well, at the versions core requires
+find_package(
+  magic_enum
+  0.9.3
+  CONFIG
+  REQUIRED)
+find_package(vir-simd CONFIG REQUIRED)
+# vir-simd installs no version file; core's package config defines this check, which reads the version from its header
+gr_require_vir_simd_version(0.4.4)
+
+# Boost.UT is needed whatever ENABLE_TESTING says: the installed gr-testing family links ut-benchmark, whose header
+# includes it
+add_compile_definitions(BOOST_UT_DISABLE_MODULE)
+find_package(
+  ut
+  2.3.1
+  CONFIG
+  REQUIRED)
+if(TARGET Boost::ut AND NOT TARGET ut)
+  add_library(ut ALIAS Boost::ut)
+elseif(TARGET boost::ut AND NOT TARGET ut)
+  add_library(ut ALIAS boost::ut)
+endif()
+
+if(EMSCRIPTEN)
+  # Boost.UT upstream adds -fwasm-exceptions which conflicts with -fexceptions, so replace it. The options live on the
+  # imported target that ut aliases.
+  get_target_property(_ut_target ut ALIASED_TARGET)
+  if(NOT _ut_target)
+    set(_ut_target ut)
+  endif()
+  get_target_property(_ut_copts ${_ut_target} INTERFACE_COMPILE_OPTIONS)
+  get_target_property(_ut_lopts ${_ut_target} INTERFACE_LINK_OPTIONS)
   if(_ut_copts)
     list(REMOVE_ITEM _ut_copts -fwasm-exceptions)
     list(APPEND _ut_copts -fexceptions)
-    set_target_properties(ut PROPERTIES INTERFACE_COMPILE_OPTIONS "${_ut_copts}")
+    set_target_properties(${_ut_target} PROPERTIES INTERFACE_COMPILE_OPTIONS "${_ut_copts}")
   endif()
   if(_ut_lopts)
     list(REMOVE_ITEM _ut_lopts -fwasm-exceptions)
     list(APPEND _ut_lopts -fexceptions)
-    set_target_properties(ut PROPERTIES INTERFACE_LINK_OPTIONS "${_ut_lopts}")
+    set_target_properties(${_ut_target} PROPERTIES INTERFACE_LINK_OPTIONS "${_ut_lopts}")
   endif()
 endif()
 
-if(NOT TARGET Boost::ut AND TARGET ut)
-  add_library(Boost::ut ALIAS ut)
-endif()
-
-find_package(httplib CONFIG QUIET)
-if(NOT TARGET httplib::httplib)
-  pkg_search_module(
-    CPP_HTTPLIB
-    QUIET
-    IMPORTED_TARGET
-    cpp-httplib
-    httplib)
-  if(CPP_HTTPLIB_FOUND)
-    add_library(httplib::httplib INTERFACE IMPORTED)
-    target_link_libraries(httplib::httplib INTERFACE PkgConfig::CPP_HTTPLIB)
+# the tests that serve files over HTTP; Emscripten builds fetch through the browser instead
+if(ENABLE_TESTING AND NOT EMSCRIPTEN)
+  # cpp-httplib's version file accepts only its own minor version, so a version passed to find_package would pin 0.18.x
+  find_package(httplib CONFIG REQUIRED)
+  if(httplib_VERSION VERSION_LESS 0.18.1)
+    message(FATAL_ERROR "cpp-httplib ${httplib_VERSION} was found, 0.18.1 or newer is required")
   endif()
 endif()
 
@@ -190,7 +186,13 @@ endif()
 
 set(GR4_EXPORT_NEEDS_SOAPYSDR OFF)
 if(GR4_ENABLE_SDR)
-  find_package(SoapySDR CONFIG QUIET)
+  # optional: the plain-header blocks of the family build without it. 0.8 is the first release with the reference-clock
+  # calls and the setupStream returning the stream that the Soapy blocks use.
+  find_package(
+    SoapySDR
+    0.8
+    CONFIG
+    QUIET)
   if(TARGET SoapySDR)
     # the sdr family links SoapySDR's imported target and the export writes that name into the installed targets file;
     # record it so the package config requires the same dependency of a consumer.
@@ -198,82 +200,42 @@ if(GR4_ENABLE_SDR)
   endif()
 endif()
 
-set(GR4_EXPORT_NEEDS_ZEROMQ OFF)
-set(GR4_ZEROMQ_CPPZMQ_PROVIDER "")
+# cppzmq's package finds libzmq itself, through libzmq's own package or, for an autotools libzmq, the pkg-config
+# fallback cppzmq installs beside it, and its cppzmq target links libzmq. 4.7 is the first release with the typed
+# zmq::sockopt options both families set. The zeromq family cannot build without it; the network family builds its
+# TCP/UDP transports either way.
 if(GR4_ENABLE_ZEROMQ)
-  find_package(cppzmq CONFIG QUIET)
-  if(TARGET cppzmq)
-    set(GR4_CPPZMQ_TARGET cppzmq)
-    set(GR4_ZEROMQ_CPPZMQ_PROVIDER "cmake")
-  else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(
-      CPPZMQ
-      REQUIRED
-      IMPORTED_TARGET
-      cppzmq)
-    set(GR4_CPPZMQ_TARGET PkgConfig::CPPZMQ)
-    set(GR4_ZEROMQ_CPPZMQ_PROVIDER "pkgconfig")
-  endif()
-  set(GR4_EXPORT_NEEDS_ZEROMQ ON)
+  find_package(
+    cppzmq
+    4.7
+    CONFIG
+    REQUIRED)
+elseif(GR4_ENABLE_NETWORK)
+  find_package(
+    cppzmq
+    4.7
+    CONFIG
+    QUIET)
+endif()
+if(TARGET cppzmq)
+  set(GR4_EXPORT_NEEDS_CPPZMQ ON)
+else()
+  set(GR4_EXPORT_NEEDS_CPPZMQ OFF)
 endif()
 
-if(GR4_ENABLE_NETWORK)
-  # libzmq through pkg-config and the header-only cppzmq binding beside it: typed socket options are what keep
-  # ZMQ_MAXMSGSIZE, an int64_t among options that are mostly int, from being set at the wrong width.
-  pkg_check_modules(
-    GR4_LIBZMQ
-    QUIET
-    IMPORTED_TARGET
-    libzmq)
-  # cppzmq as a package before cppzmq as a loose header: a package carries the directory zmq.hpp sits in, and a target
-  # is the only form of that directory an installed config file can re-create for a consumer. The bare header search
-  # stays as the last resort, for a tree that has zmq.hpp and no package files for it; the directory it answers with
-  # belongs to this machine and is no statement about any other, so it is the provider rather than the directory that is
-  # recorded, and the installed config file searches the consumer's own machine.
-  set(GR4_NETWORK_CPPZMQ_TARGET "")
-  set(GR4_NETWORK_CPPZMQ_PROVIDER "")
-  find_package(cppzmq CONFIG QUIET)
-  if(TARGET cppzmq)
-    set(GR4_NETWORK_CPPZMQ_TARGET cppzmq)
-    set(GR4_NETWORK_CPPZMQ_PROVIDER "cmake")
-  else()
-    pkg_check_modules(
-      GR4_CPPZMQ
-      QUIET
-      IMPORTED_TARGET
-      cppzmq)
-    if(TARGET PkgConfig::GR4_CPPZMQ)
-      set(GR4_NETWORK_CPPZMQ_TARGET PkgConfig::GR4_CPPZMQ)
-      set(GR4_NETWORK_CPPZMQ_PROVIDER "pkgconfig")
-    else()
-      find_path(GR4_CPPZMQ_INCLUDE_DIR zmq.hpp)
-      if(GR4_CPPZMQ_INCLUDE_DIR)
-        set(GR4_NETWORK_CPPZMQ_PROVIDER "header")
-      endif()
-    endif()
-  endif()
-endif()
-
+# libsoundio ships no package of its own, so cmake/Findlibsoundio.cmake takes the one gr-deps installs for it, then
+# pkg-config, then a plain search, and defines libsoundio::libsoundio. Under Emscripten the audio family uses its own
+# audio worklet backend and needs none of this.
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 set(GR4_EXPORT_NEEDS_LIBSOUNDIO OFF)
 if(GR4_ENABLE_AUDIO AND NOT EMSCRIPTEN)
-  # the audio family's backend links gnuradio4::gr-libsoundio, which nothing else defines. libsoundio ships no
-  # pkg-config file, so it is found by library and header and wrapped here; under Emscripten the family uses its own
-  # audio worklet backend and needs none of this.
-  find_library(GR4_LIBSOUNDIO_LIBRARY soundio)
-  find_path(GR4_LIBSOUNDIO_INCLUDE_DIR soundio/soundio.h)
-  if(GR4_LIBSOUNDIO_LIBRARY AND GR4_LIBSOUNDIO_INCLUDE_DIR)
-    add_library(gr-libsoundio INTERFACE)
-    add_library(gnuradio4::gr-libsoundio ALIAS gr-libsoundio)
-    # Both are what a search answered on this machine and are a statement about no other, so neither is exported: a
-    # consumer that reads a library path and an include directory out of an installed targets file resolves them only
-    # where the same paths exist. The install interface says that the dependency is needed and nothing more, and the
-    # installed config file runs the same two searches on the consumer's own machine and attaches what they find to the
-    # imported target.
-    target_include_directories(gr-libsoundio SYSTEM INTERFACE $<BUILD_INTERFACE:${GR4_LIBSOUNDIO_INCLUDE_DIR}>)
-    target_link_libraries(gr-libsoundio INTERFACE $<BUILD_INTERFACE:${GR4_LIBSOUNDIO_LIBRARY}>)
+  find_package(
+    libsoundio
+    2.0
+    MODULE
+    QUIET)
+  if(TARGET libsoundio::libsoundio)
     set(GR4_EXPORT_NEEDS_LIBSOUNDIO ON)
-    install(TARGETS gr-libsoundio EXPORT gnuradio4Targets)
   else()
     message(WARNING "GR4_ENABLE_AUDIO is ON but libsoundio was not found — the audio block family is not built")
     set(GR4_ENABLE_AUDIO OFF)
@@ -311,17 +273,6 @@ add_subdirectory(blocks)
 set(GR4_EXPORT_NAME gnuradio4Targets)
 set(GR4_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/gnuradio4Blocks")
 
-# What the network family recorded about the libzmq and the cppzmq its exported interface depends on. Substituted into
-# the config file as literal conditions, so each must always be one of the two constants and never the empty string.
-get_property(GR4_EXPORT_NEEDS_LIBZMQ GLOBAL PROPERTY GR4_EXPORT_NEEDS_LIBZMQ)
-if(NOT GR4_EXPORT_NEEDS_LIBZMQ)
-  set(GR4_EXPORT_NEEDS_LIBZMQ FALSE)
-endif()
-get_property(GR4_EXPORT_NEEDS_CPPZMQ GLOBAL PROPERTY GR4_EXPORT_NEEDS_CPPZMQ)
-if(NOT GR4_EXPORT_NEEDS_CPPZMQ)
-  set(GR4_EXPORT_NEEDS_CPPZMQ FALSE)
-endif()
-
 configure_package_config_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/gnuradio4BlocksConfig.cmake.in"
   "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4BlocksConfig.cmake" INSTALL_DESTINATION "${GR4_CMAKE_INSTALL_DIR}")
@@ -336,6 +287,10 @@ configure_file(cmake/gnuradio4Blocks.pc.in "${CMAKE_CURRENT_BINARY_DIR}/gnuradio
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4BlocksConfig.cmake"
               "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4BlocksConfigVersion.cmake"
               "${CMAKE_CURRENT_BINARY_DIR}/gnuradio4Blocks.pc" DESTINATION "${GR4_CMAKE_INSTALL_DIR}")
+# the package config finds libsoundio for a consumer through the same module
+if(GR4_EXPORT_NEEDS_LIBSOUNDIO)
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Findlibsoundio.cmake" DESTINATION "${GR4_CMAKE_INSTALL_DIR}")
+endif()
 
 install(
   EXPORT ${GR4_EXPORT_NAME}
