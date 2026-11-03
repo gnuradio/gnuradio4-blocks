@@ -104,6 +104,46 @@ const boost::ut::suite<"Fourier Transforms"> fftTests = [] {
         gr::dataset::draw(dataSet, {.chart_width = 130UZ, .chart_height = 28UZ}, 0UZ);
     } | AllTypesToTest{};
 
+    "FFT phase setting"_test = []<typename T>() {
+        using InType  = T::InType;
+        using OutType = T::OutType;
+
+        constexpr gr::Size_t      N{64};
+        const std::vector<InType> signal = generateSineSample<InType>(N, 1.f, 0.1f, 1.f);
+        const auto                frame  = [&signal](FFT<InType, OutType>& block) {
+            std::vector<OutType> v{OutType()};
+            expect(gr::work::Status::OK == block.processBulk(signal, std::span<OutType>(v)));
+            return v[0];
+        };
+
+        FFT<InType, OutType> withPhase({{"fftSize", N}});
+        withPhase.init(withPhase.progress);
+        const OutType on = frame(withPhase);
+        expect(eq(on.size(), 4UZ));
+        expect(on.signal_quantities == std::vector<std::string>{"Magnitude(FFT)", "Phase(FFT)", "Re(FFT)", "Im(FFT)"});
+        expect(gr::test::eq_collections(on.signalValues(1UZ), withPhase._phaseSpectrum)) << "the second signal is the phase spectrum";
+        expect(std::ranges::any_of(withPhase._phaseSpectrum, [](auto phase) { return phase != 0; })) << "the phase spectrum is computed";
+
+        FFT<InType, OutType> withoutPhase({{"fftSize", N}, {"outputPhase", false}});
+        withoutPhase.init(withoutPhase.progress);
+        const OutType off = frame(withoutPhase);
+        expect(dataset::checkConsistency(off, "phase off").has_value());
+        expect(eq(off.size(), 3UZ));
+        expect(off.signal_quantities == std::vector<std::string>{"Magnitude(FFT)", "Re(FFT)", "Im(FFT)"});
+        expect(eq(off.signal_values.size(), 3UZ * withoutPhase._magnitudeSpectrum.size()));
+        expect(gr::test::eq_collections(off.signalValues(0UZ), on.signalValues(0UZ))) << "the magnitude stays the first signal";
+        expect(gr::test::eq_collections(off.signalValues(1UZ), on.signalValues(2UZ))) << "the real part follows the magnitude";
+        expect(gr::test::eq_collections(off.signalValues(2UZ), on.signalValues(3UZ))) << "the imaginary part follows the real part";
+        expect(std::ranges::all_of(withoutPhase._phaseSpectrum, [](auto phase) { return phase == 0; })) << "the phase spectrum is not computed";
+
+        expect(withoutPhase.settings().set({{"outputPhase", true}}).empty());
+        std::ignore        = withoutPhase.settings().activateContext();
+        std::ignore        = withoutPhase.settings().applyStagedParameters();
+        const OutType back = frame(withoutPhase);
+        expect(eq(back.size(), 4UZ)) << "the next frame after the change carries the phase";
+        expect(gr::test::eq_collections(back.signalValues(1UZ), on.signalValues(1UZ)));
+    } | AllTypesToTest{};
+
     "FFT block types tests"_test = [] {
         static_assert(std::is_same_v<FFT<std::complex<float>>::value_type, float>, "output type must be float");
         static_assert(std::is_same_v<FFT<std::complex<double>>::value_type, double>, "output type must be float");
