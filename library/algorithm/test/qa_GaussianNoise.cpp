@@ -1,11 +1,15 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstddef>
 #include <format>
+#include <limits>
 #include <numeric>
 #include <print>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <gnuradio-4.0/algorithm/rng/GaussianNoise.hpp>
@@ -91,6 +95,42 @@ const boost::ut::suite noiseGeneratorTests = [] {
         for (const std::size_t chunk : {1UZ, 2UZ, 3UZ, 5UZ, 8UZ, 17UZ}) {
             expect(viaFill(chunk) == reference) << std::format("fill in {}-sample calls must match one call", chunk);
             expect(viaFillComplex(chunk) == referenceComplex) << std::format("fillComplex in {}-sample calls must match one call", chunk);
+        }
+    };
+
+    // complexSample() takes the log through std::log. gr::meta's float log is within 2 ulp of the exact result, and
+    // the test takes the C library's within 2. With an ulp at most 2^-23 of a value, the two logs differ by at most
+    // 8 times 2^-24 of either. The divide adds 2, the square root halves the sum and adds 2, and the
+    // products with u, 1/sqrt(2) and the amplitude add 2 each: 13 times 2^-24 a part.
+    "fillComplex<float> follows complexSample() within the log's bound"_test = [] {
+        constexpr double      kUnits   = 13.;
+        constexpr std::size_t nSamples = 1000UZ;
+        for (const float amplitude : {1.f, 0.3f}) {
+            for (const std::size_t chunk : {nSamples, 257UZ, 7UZ, 1UZ}) {
+                Xoshiro256pp                     rng(2024);
+                Xoshiro256pp                     rngReference(2024);
+                GaussianNoise<float>             gauss(rng);
+                GaussianNoise<float>             reference(rngReference);
+                std::vector<std::complex<float>> out(nSamples);
+                for (std::size_t i = 0UZ; i < nSamples; i += chunk) {
+                    gauss.fillComplex(std::span<std::complex<float>>(out.data() + i, std::min(chunk, nSamples - i)), amplitude);
+                }
+                std::size_t outside{0UZ};
+                std::string firstOutside;
+                for (std::size_t i = 0UZ; i < nSamples; ++i) {
+                    const std::complex<float> want = reference.complexSample();
+                    for (const auto& [got, part] : {std::pair{out[i].real(), want.real()}, std::pair{out[i].imag(), want.imag()}}) {
+                        const float  expected = amplitude * part;
+                        const double bound    = kUnits * std::ldexp(std::abs(static_cast<double>(expected)), -24) + 2. * static_cast<double>(std::numeric_limits<float>::denorm_min());
+                        if (std::abs(static_cast<double>(got) - static_cast<double>(expected)) > bound && outside++ == 0UZ) {
+                            firstOutside = std::format("sample {}: {} against {}", i, got, expected);
+                        }
+                    }
+                }
+                expect(eq(outside, 0UZ)) << std::format("amplitude {} chunk {}: {} parts outside the bound, first {}", amplitude, chunk, outside, firstOutside);
+                expect(std::ranges::equal(rng._state, rngReference._state)) << std::format("amplitude {} chunk {}: the generator state follows the same draws", amplitude, chunk);
+                expect(eq(gauss(), reference())) << std::format("amplitude {} chunk {}: the next real draw matches", amplitude, chunk);
+            }
         }
     };
 
