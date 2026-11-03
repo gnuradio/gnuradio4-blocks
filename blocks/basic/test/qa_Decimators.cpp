@@ -346,6 +346,104 @@ private:
     }
 };
 
+/// `KeepMInN` run by run inside a group, with no copy that spans groups.
+template<typename T>
+struct KeepMInN : gr::Block<KeepMInN<T>, gr::NoTagPropagation> {
+    gr::PortIn<T>  in;
+    gr::PortOut<T> out;
+
+    gr::Annotated<gr::Size_t, "m", gr::Limits<1U, std::numeric_limits<gr::Size_t>::max()>> m      = 1U;
+    gr::Annotated<gr::Size_t, "n", gr::Limits<1U, std::numeric_limits<gr::Size_t>::max()>> n      = 1U;
+    gr::Annotated<gr::Size_t, "offset">                                                    offset = 0U;
+
+    GR_MAKE_REFLECTABLE(KeepMInN, in, out, m, n, offset);
+
+    gr::Size_t _m      = m.value;
+    gr::Size_t _n      = n.value;
+    gr::Size_t _offset = offset.value;
+    gr::Size_t _phase  = 0U;
+    TagRelay   _relay{};
+
+    void settingsChanged(const gr::property_map& /*oldSettings*/, const gr::property_map& newSettings) {
+        const gr::Size_t nextM      = newSettings.contains("m") ? m.value : _m;
+        const gr::Size_t nextN      = newSettings.contains("n") ? n.value : _n;
+        const gr::Size_t nextOffset = newSettings.contains("offset") ? offset.value : _offset;
+        if (std::uint64_t{nextOffset} + std::uint64_t{nextM} > std::uint64_t{nextN}) {
+            throw gr::exception("offset + m must not exceed n");
+        }
+        if (nextM != _m || nextN != _n || nextOffset != _offset) {
+            _m      = nextM;
+            _n      = nextN;
+            _offset = nextOffset;
+            _phase  = 0U;
+        }
+    }
+
+    void start() { _relay.reset(); }
+
+    void reset() { _phase = 0U; }
+
+    [[nodiscard]] gr::work::Status processBulk(gr::InputSpanLike auto& inSpan, gr::OutputSpanLike auto& outSpan) {
+        outSpan.publish(keep(inSpan, outSpan));
+        return gr::work::Status::OK;
+    }
+
+    [[nodiscard]] gr::work::Status processEpilogue(gr::InputSpanLike auto& inSpan, gr::OutputSpanLike auto& outSpan) {
+        if (gr::lifecycle::isShuttingDown(this->state())) {
+            _relay.reset();
+            outSpan.publish(0UZ);
+            return gr::work::Status::OK;
+        }
+        const std::size_t made = keep(inSpan, outSpan);
+        _relay.collectPastEnd(in, inSpan.streamIndex + inSpan.size());
+        _relay.release(outSpan, made);
+        outSpan.publish(made);
+        return gr::work::Status::OK;
+    }
+
+private:
+    [[nodiscard]] std::size_t keep(gr::InputSpanLike auto& inSpan, gr::OutputSpanLike auto& outSpan) {
+        const std::size_t group  = static_cast<std::size_t>(_n);
+        const std::size_t first  = static_cast<std::size_t>(_offset);
+        const std::size_t last   = first + static_cast<std::size_t>(_m);
+        std::size_t       walked = 0UZ;
+        std::size_t       made   = 0UZ;
+        _relay.begin(inSpan);
+        while (walked < inSpan.size()) {
+            const std::size_t phase = static_cast<std::size_t>(_phase);
+            if (phase >= first && phase < last) {
+                const std::size_t run = std::min({last - phase, inSpan.size() - walked, outSpan.size() - made});
+                if (run == 0UZ) {
+                    break;
+                }
+                if (_relay.idle()) {
+                    std::copy_n(inSpan.begin() + static_cast<std::ptrdiff_t>(walked), run, outSpan.begin() + static_cast<std::ptrdiff_t>(made));
+                } else {
+                    for (std::size_t i = 0UZ; i < run; ++i) {
+                        _relay.collect(inSpan, walked + i);
+                        outSpan[made + i] = inSpan[walked + i];
+                        _relay.release(outSpan, made + i);
+                    }
+                }
+                walked += run;
+                made += run;
+                _phase = static_cast<gr::Size_t>(phase + run);
+            } else {
+                const std::size_t until = phase < first ? first : group;
+                const std::size_t run   = std::min(until - phase, inSpan.size() - walked);
+                _relay.collect(inSpan, walked + run - 1UZ);
+                walked += run;
+                _phase = static_cast<gr::Size_t>(phase + run);
+            }
+            if (_phase >= static_cast<gr::Size_t>(group)) {
+                _phase = 0U;
+            }
+        }
+        std::ignore = inSpan.consume(walked);
+        return made;
+    }
+};
+
 } // namespace reference
 
 /// What a driven run delivered: every output item and every published tag, in order.
@@ -745,6 +843,22 @@ const boost::ut::suite<"KeepMInN"> keepMInNTests = [] {
         expect(eq(result.samples.back(), 1002.f));
     };
 
+    "a chunk with no whole group forms no iterator past its end"_test = [] {
+        KeepMInN<float> block = makeBlock<KeepMInN<float>>({{"m", 2U}, {"n", 1000U}, {"offset", 900U}});
+        const auto      input = counted(1200UZ);
+
+        const auto shortChunk = callChecked(block, std::span<const float>(input).first(100UZ));
+        expect(!shortChunk.outside) << "the slice starts 800 items past the end of the chunk";
+        expect(eq(shortChunk.samples.size(), 0UZ));
+        expect(eq(shortChunk.consumed, 100UZ));
+        expect(eq(static_cast<std::size_t>(block._phase), 100UZ)) << "the walk went on to the end of the chunk";
+
+        const auto rest = callChecked(block, std::span<const float>(input).subspan(100UZ));
+        expect(!rest.outside) << "also in the next group, whose slice starts 700 items past the end of the input";
+        expect(that % (rest.samples == std::vector<float>{900.f, 901.f})) << "the slice of the first group, found where the short chunk left the phase";
+        expect(eq(rest.consumed, input.size() - 100UZ));
+    };
+
     "a group larger than the input span is counted across calls"_test = [] {
         constexpr std::size_t edge   = 65536UZ;     // the span size a scheduler gives the block
         constexpr gr::Size_t  n      = 4U * 65536U; // four spans per group, which a declared decimator could not run
@@ -907,6 +1021,22 @@ const boost::ut::suite<"KeepMInN"> keepMInNTests = [] {
         expect(eq(published.size(), 2UZ));
         expect(eq(published[0].index, 6710886UZ)) << "a kept item lands on its own output offset";
         expect(eq(published[1].index, 6710888UZ)) << "an item past the slice lands on the next group's first kept item";
+    };
+
+    "items and tags leave as the run-by-run form's, through tags, full outputs and changes of the slice"_test = [] {
+        const auto compare = []<typename T>(const char* type) {
+            const std::vector<T>       input   = randomItems<T>(20000UZ);
+            const std::vector<gr::Tag> tags    = irregularTags(input.size());
+            const std::vector<Change>  changes = {{6000UZ, {{"m", gr::Size_t(1)}, {"n", gr::Size_t(4)}, {"offset", gr::Size_t(0)}}}, {11000UZ, {{"m", gr::Size_t(3)}, {"n", gr::Size_t(3)}}}, {15000UZ, {{"m", gr::Size_t(4)}, {"n", gr::Size_t(9)}, {"offset", gr::Size_t(5)}}}};
+            const gr::property_map     settings{{"m", gr::Size_t(2)}, {"n", gr::Size_t(5)}, {"offset", gr::Size_t(1)}};
+            const Driven<T>            want = driveScripted<reference::KeepMInN<T>, T>(settings, input, tags, changes);
+            const Driven<T>            got  = driveScripted<KeepMInN<T>, T>(settings, input, tags, changes);
+            expect(gt(want.samples.size(), 5000UZ) && gt(want.tags.size(), 50UZ)) << type << ": the run keeps items and carries tags";
+            expect(std::ranges::equal(got.samples, want.samples)) << type;
+            expect(got.tags == want.tags) << type << ": the same tags at the same outputs, in the same order";
+        };
+        compare.template operator()<float>("float");
+        compare.template operator()<std::complex<float>>("complex<float>");
     };
 
     "output and tag offsets do not depend on chunking"_test = [] {

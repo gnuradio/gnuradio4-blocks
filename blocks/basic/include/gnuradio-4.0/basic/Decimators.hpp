@@ -314,6 +314,24 @@ private:
         _relay.begin(inSpan);
 
         while (walked < inSpan.size()) {
+            if (_phase == 0U && _relay.idle()) { // no tag left to place: copy the slices of whole groups in one loop
+                const std::size_t slice  = last - first;
+                const std::size_t groups = std::min((inSpan.size() - walked) / group, (outSpan.size() - made) / slice);
+                if (groups > 0UZ) { // the iterators are formed only over groups the input holds
+                    const auto source = inSpan.begin() + static_cast<std::ptrdiff_t>(walked + first);
+                    const auto target = outSpan.begin() + static_cast<std::ptrdiff_t>(made);
+                    for (std::size_t g = 0UZ; g < groups; ++g) {
+                        for (std::size_t k = 0UZ; k < slice; ++k) {
+                            target[static_cast<std::ptrdiff_t>(g * slice + k)] = source[static_cast<std::ptrdiff_t>(g * group + k)];
+                        }
+                    }
+                }
+                walked += groups * group;
+                made += groups * slice;
+                if (walked == inSpan.size()) {
+                    break;
+                }
+            }
             const std::size_t phase = static_cast<std::size_t>(_phase);
             if (phase >= first && phase < last) { // inside the slice, copy the run that fits both spans
                 const std::size_t run = std::min({last - phase, inSpan.size() - walked, outSpan.size() - made});
