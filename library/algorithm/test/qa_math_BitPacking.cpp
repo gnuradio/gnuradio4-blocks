@@ -1,6 +1,6 @@
 #include <boost/ut.hpp>
 
-#include <magic_enum.hpp>
+#include <gnuradio-4.0/meta/MagicEnum.hpp>
 
 #include <algorithm>
 #include <array>

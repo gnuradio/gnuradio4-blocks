@@ -19,7 +19,7 @@
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
-#include <magic_enum.hpp>
+#include <gnuradio-4.0/meta/MagicEnum.hpp>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>

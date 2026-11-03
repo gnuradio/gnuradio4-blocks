@@ -23,8 +23,7 @@
 #endif
 #pragma GCC diagnostic ignored "-Wsign-conversion"
 #endif
-#include <magic_enum.hpp>
-#include <magic_enum_utility.hpp>
+#include <gnuradio-4.0/meta/MagicEnum.hpp>
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif

@@ -10,8 +10,7 @@
 #include <gnuradio-4.0/algorithm/signal/SignalGeneratorCore.hpp>
 #include <gnuradio-4.0/algorithm/signal/ToneGenerator.hpp>
 
-#include <magic_enum.hpp>
-#include <magic_enum_utility.hpp>
+#include <gnuradio-4.0/meta/MagicEnum.hpp>
 
 namespace gr::blocks::basic {
 

@@ -7,7 +7,7 @@ target_link_libraries(
             gnuradio4::gr-common
             gnuradio4::gr-fileio)
 if(NOT EMSCRIPTEN)
-  target_link_libraries(gr-audio INTERFACE gnuradio4::gr-libsoundio)
+  target_link_libraries(gr-audio INTERFACE libsoundio::libsoundio)
 endif()
 if(EMSCRIPTEN)
   target_link_options(

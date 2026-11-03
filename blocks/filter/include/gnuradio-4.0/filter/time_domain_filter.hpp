@@ -16,7 +16,7 @@
 #include <gnuradio-4.0/algorithm/filter/FilterTool.hpp>
 #include <gnuradio-4.0/meta/UncertainValue.hpp>
 
-#include <magic_enum.hpp>
+#include <gnuradio-4.0/meta/MagicEnum.hpp>
 
 #include <gnuradio-4.0/filter/TagDelay.hpp>
 
