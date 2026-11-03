@@ -3,16 +3,77 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
+#include <cstddef>
 #include <iterator>
 #include <numbers>
+#include <utility>
 #include <vector>
 
 #include <format>
 #include <ranges>
 
+#include <gnuradio-4.0/meta/simd_math.hpp>
+
 #include <gnuradio-4.0/algorithm/math/Decibel.hpp>
 
 namespace gr::algorithm::fft {
+
+namespace detail {
+using FloatVector = vir::stdx::native_simd<float>;
+
+/// @brief The real and the imaginary parts of the bins [k, k + FloatVector::size()) as two vectors.
+inline std::pair<FloatVector, FloatVector> deinterleave(const std::complex<float>* bins, std::size_t k) noexcept {
+    const float* parts = reinterpret_cast<const float*>(bins + k);
+    return {FloatVector([parts](auto i) { return parts[2UZ * i]; }), FloatVector([parts](auto i) { return parts[2UZ * i + 1UZ]; })};
+}
+
+/// @brief Writes the scaled magnitudes, in dB if `outputInDb`, of the leading whole vectors of bins [0, n) of an
+/// N-point transform to `out` and returns their count. The caller computes the remaining bins.
+inline std::size_t magnitudeSpectrumVectors(const std::complex<float>* bins, float* out, std::size_t n, std::size_t N, bool halfSpectrum, bool outputInDb) noexcept {
+    using V                   = FloatVector;
+    const float       unit    = 1.f / static_cast<float>(N);
+    const float       folded  = 2.f / static_cast<float>(N);
+    const std::size_t nyquist = N / 2UZ;
+    const V           floorAmplitude(static_cast<float>(gr::math::kDbFloorAmplitude));
+    const V           floorDb(static_cast<float>(gr::math::kDbFloor));
+    std::size_t       k = 0UZ;
+    for (; k + V::size() <= n; k += V::size()) {
+        const auto [re, im] = deinterleave(bins, k);
+        V scale(halfSpectrum ? folded : unit);
+        if (halfSpectrum && (k == 0UZ || (k <= nyquist && nyquist < k + V::size()))) {
+            scale = V([k, nyquist, unit, folded](auto i) {
+                const std::size_t bin = k + i;
+                return bin == 0UZ || bin == nyquist ? unit : folded;
+            });
+        }
+        V magnitude = gr::meta::hypot(re, im) * scale;
+        if (outputInDb) {
+            V level                                  = V(20.f) * gr::meta::log10(magnitude);
+            where(magnitude < floorAmplitude, level) = floorDb;
+            magnitude                                = level;
+        }
+        magnitude.copy_to(out + k, vir::stdx::element_aligned);
+    }
+    return k;
+}
+
+/// @brief Writes the phases of the leading whole vectors of bins [0, n) to `out` and returns their count. The caller
+/// computes the remaining bins.
+inline std::size_t phaseSpectrumVectors(const std::complex<float>* bins, float* out, std::size_t n) noexcept {
+    using V       = FloatVector;
+    std::size_t k = 0UZ;
+    for (; k + V::size() <= n; k += V::size()) {
+        const auto [re, im] = deinterleave(bins, k);
+        gr::meta::atan2(im, re).copy_to(out + k, vir::stdx::element_aligned);
+    }
+    return k;
+}
+
+/// @brief True where the spectrum of `TIn` into `TOut` runs over float vectors.
+template<typename TIn, typename TOut>
+inline constexpr bool kSpectrumInVectors = std::is_same_v<std::ranges::range_value_t<TIn>, std::complex<float>> && std::ranges::contiguous_range<TIn> && std::ranges::contiguous_range<TOut> && std::is_same_v<std::ranges::range_value_t<TOut>, float>;
+} // namespace detail
 
 struct ConfigMagnitude {
     bool computeHalfSpectrum = false;
@@ -23,6 +84,8 @@ struct ConfigMagnitude {
 /// @brief amplitude spectrum of an unnormalized DFT result.
 /// Every bin of the full spectrum is scaled by 1/N. The half spectrum scales by 2/N to account for
 /// the mirrored bin it drops, except at DC and Nyquist, which have no twin.
+/// Float bins of a contiguous range are computed in simd vectors through `gr::meta::hypot` and `gr::meta::log10`,
+/// each within 2 ulp of the exact result. The bins past the last whole vector and double bins call the C library.
 template<std::ranges::input_range TContainerIn, std::ranges::output_range<typename TContainerIn::value_type::value_type> TContainerOut = std::vector<typename TContainerIn::value_type::value_type>, typename T = TContainerIn::value_type>
 requires(std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>)
 auto computeMagnitudeSpectrum(const TContainerIn& fftIn, TContainerOut&& magOut = {}, ConfigMagnitude config = {}) {
@@ -45,20 +108,20 @@ auto computeMagnitudeSpectrum(const TContainerIn& fftIn, TContainerOut&& magOut 
 
     if constexpr (requires(std::size_t n) {
                       magOut.clear();
-                      magOut.reserve(n);
+                      magOut.resize(n);
                   }) {
         magOut.clear();
-        magOut.reserve(magSize);
-        auto it = fftIn.begin();
-        for (std::size_t k = 0UZ; k < magSize; ++k, ++it) {
-            magOut.push_back(computeMagnitude(*it, k));
-        }
+        magOut.resize(magSize);
     } else {
         static_assert(std::tuple_size_v<TContainerIn> == std::tuple_size_v<TContainerOut>, "Size mismatch for fixed-size container.");
-        auto it = fftIn.begin();
-        for (std::size_t k = 0UZ; k < magSize; ++k, ++it) {
-            magOut[k] = computeMagnitude(*it, k);
-        }
+    }
+
+    std::size_t k = 0UZ;
+    if constexpr (detail::kSpectrumInVectors<const TContainerIn&, TContainerOut&>) {
+        k = detail::magnitudeSpectrumVectors(std::ranges::data(fftIn), std::ranges::data(magOut), magSize, N, config.computeHalfSpectrum, config.outputInDb);
+    }
+    for (auto it = std::next(fftIn.begin(), static_cast<std::ptrdiff_t>(k)); k < magSize; ++k, ++it) {
+        magOut[k] = computeMagnitude(*it, k);
     }
 
     if constexpr (std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>) {
@@ -108,6 +171,9 @@ void unwrapPhase(TContainerInOut& phase) {
     });
 }
 
+/// @brief phase spectrum of a DFT result, in radians or degrees.
+/// Float bins of a contiguous range take their phase through `gr::meta::atan2`, within 2 ulp of the exact angle; the
+/// rest call the C library.
 template<std::ranges::input_range TContainerIn, std::ranges::output_range<typename TContainerIn::value_type::value_type> TContainerOut = std::vector<typename TContainerIn::value_type::value_type>, typename T = TContainerIn::value_type>
 requires(std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>)
 auto computePhaseSpectrum(const TContainerIn& fftIn, TContainerOut&& phaseOut = {}, ConfigPhase config = {}) {
@@ -116,18 +182,23 @@ auto computePhaseSpectrum(const TContainerIn& fftIn, TContainerOut&& phaseOut = 
         throw std::invalid_argument("fftIn cannot be empty.");
     }
 
-    std::size_t phaseSize    = config.computeHalfSpectrum ? (N / 2) : N;
-    auto        computePhase = [](const auto& c) { return std::atan2(c.imag(), c.real()); };
+    std::size_t phaseSize = config.computeHalfSpectrum ? (N / 2) : N;
     if constexpr (requires(std::size_t n) {
                       phaseOut.clear();
-                      phaseOut.reserve(n);
+                      phaseOut.resize(n);
                   }) {
         phaseOut.clear();
-        phaseOut.reserve(phaseSize);
-        std::transform(fftIn.begin(), std::next(fftIn.begin(), static_cast<std::ptrdiff_t>(phaseSize)), std::back_inserter(phaseOut), computePhase);
+        phaseOut.resize(phaseSize);
     } else {
         static_assert(std::tuple_size_v<TContainerIn> == std::tuple_size_v<TContainerOut>, "Size mismatch for fixed-size container.");
-        std::transform(fftIn.begin(), std::next(fftIn.begin(), static_cast<std::ptrdiff_t>(phaseSize)), phaseOut.begin(), computePhase);
+    }
+
+    std::size_t k = 0UZ;
+    if constexpr (detail::kSpectrumInVectors<const TContainerIn&, TContainerOut&>) {
+        k = detail::phaseSpectrumVectors(std::ranges::data(fftIn), std::ranges::data(phaseOut), phaseSize);
+    }
+    for (auto it = std::next(fftIn.begin(), static_cast<std::ptrdiff_t>(k)); k < phaseSize; ++k, ++it) {
+        phaseOut[k] = std::atan2((*it).imag(), (*it).real());
     }
 
     if (config.unwrapPhase) {

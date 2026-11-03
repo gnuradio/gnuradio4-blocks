@@ -1,12 +1,16 @@
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <format>
 #include <limits>
 #include <numbers>
 #include <numeric>
+#include <random>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <tuple>
@@ -100,6 +104,46 @@ std::vector<std::complex<double>> asDoubleSpectrum(const TActual& spectrum) {
         out[k] = std::complex<double>(static_cast<double>(spectrum[k].real()), static_cast<double>(spectrum[k].imag()));
     }
     return out;
+}
+
+// One bin whose parts spread over 2^-60 to 2^60, every pair of the edge values (signed zeros, infinities, NaN, the
+// smallest subnormal, the smallest normal, one and the largest float), then more spread bins in all four quadrants.
+std::vector<std::complex<float>> spectrumTestBins(std::size_t n) {
+    constexpr float                       inf = std::numeric_limits<float>::infinity();
+    constexpr float                       nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float                       sub = std::numeric_limits<float>::denorm_min();
+    constexpr float                       low = std::numeric_limits<float>::min();
+    constexpr float                       big = std::numeric_limits<float>::max();
+    constexpr std::array                  edges{0.f, -0.f, inf, -inf, nan, sub, -sub, low, 1.f, -1.f, big, -big};
+    std::mt19937                          rng(4242U);
+    std::uniform_real_distribution<float> exponent(-60.f, 60.f);
+    std::bernoulli_distribution           negative(0.5);
+    const auto                            part = [&] { return negative(rng) ? -std::exp2(exponent(rng)) : std::exp2(exponent(rng)); };
+
+    std::vector<std::complex<float>> bins;
+    const float                      first = part();
+    bins.emplace_back(first, part());
+    for (const float re : edges) {
+        for (const float im : edges) {
+            bins.emplace_back(re, im);
+        }
+    }
+    while (bins.size() < n) {
+        const float re = part();
+        bins.emplace_back(re, part());
+    }
+    bins.resize(n);
+    return bins;
+}
+
+// True where `got` and `want` are the same infinity, NaN or signed zero, or where they differ by at most
+// `units` times 2^-24 of `want` plus `absolute` and two of the smallest subnormal.
+bool withinBound(float got, float want, double units, double absolute = 0.) {
+    if (!std::isfinite(want) || !std::isfinite(got) || want == 0.f) {
+        return (std::isnan(got) && std::isnan(want)) || std::bit_cast<std::uint32_t>(got) == std::bit_cast<std::uint32_t>(want);
+    }
+    const double bound = units * std::ldexp(std::abs(static_cast<double>(want)), -24) + absolute + 2. * static_cast<double>(std::numeric_limits<float>::denorm_min());
+    return std::abs(static_cast<double>(got) - static_cast<double>(want)) <= bound;
 }
 
 template<gr::meta::array_or_vector_type T, gr::meta::array_or_vector_type U = T>
@@ -794,6 +838,67 @@ const boost::ut::suite<"FFT algorithms and window functions"> windowTests = [] {
         expect(approx(static_cast<double>(gr::algorithm::fft::computeMagnitudeSpectrum(dcSpectrum)[0]), 2., tolerance)) << std::format("<{}> DC, full spectrum", type_name<TVal>());
         expect(approx(static_cast<double>(gr::algorithm::fft::computeMagnitudeSpectrum(dcSpectrum, {.computeHalfSpectrum = true})[0]), 2., tolerance)) << std::format("<{}> DC, half spectrum", type_name<TVal>());
     } | std::tuple<float, double>();
+
+    // gr::meta's float hypot, log10 and atan2 are within 2 ulp of the exact result, and the test takes the C
+    // library's within 2. An ulp is at most 2^-23 of a value. Two results then differ by at most 8 times 2^-24 of
+    // either. Each further rounding of the two paths adds 2 times 2^-24. A level in dB moves by 20/ln(10) times
+    // the magnitude's relative difference.
+    "float magnitude spectrum against the C library"_test = [] {
+        static_assert(gr::algorithm::fft::detail::kSpectrumInVectors<const std::vector<std::complex<float>>&, std::vector<float>&>);
+        constexpr double kMagnitudeUnits = 8. + 2.;
+        constexpr double kLevelUnits     = 8. + 2.;
+        const double     levelAbsolute   = 20. / std::numbers::ln10 * std::ldexp(kMagnitudeUnits, -24);
+        for (const std::size_t N : {1031UZ, 64UZ, 3UZ}) {
+            const auto bins = spectrumTestBins(N);
+            for (const bool half : {false, true}) {
+                for (const bool dB : {false, true}) {
+                    const auto        got = gr::algorithm::fft::computeMagnitudeSpectrum(bins, {}, {.computeHalfSpectrum = half, .outputInDb = dB});
+                    const std::size_t M   = half ? N / 2UZ : N;
+                    std::size_t       outside{0UZ};
+                    std::string       firstOutside;
+                    for (std::size_t k = 0UZ; k < std::min(M, got.size()); ++k) {
+                        const bool  folded = half && k != 0UZ && k != N / 2UZ;
+                        const float mag    = std::hypot(bins[k].real(), bins[k].imag()) * ((folded ? 2.f : 1.f) / static_cast<float>(N));
+                        const float want   = dB ? gr::math::amplitudeToDb(mag) : mag;
+                        if (!(dB ? withinBound(got[k], want, kLevelUnits, levelAbsolute) : withinBound(got[k], want, kMagnitudeUnits))) {
+                            if (outside++ == 0UZ) {
+                                firstOutside = std::format("bin {} of ({}, {}): {} against {}", k, bins[k].real(), bins[k].imag(), got[k], want);
+                            }
+                        }
+                    }
+                    expect(eq(got.size(), M));
+                    expect(eq(outside, 0UZ)) << std::format("N {} half {} dB {}: {} bins outside the bound, first {}", N, half, dB, outside, firstOutside);
+                }
+            }
+            const auto shifted   = gr::algorithm::fft::computeMagnitudeSpectrum(bins, {}, {.shiftSpectrum = true});
+            auto       unshifted = gr::algorithm::fft::computeMagnitudeSpectrum(bins);
+            std::ranges::rotate(unshifted, unshifted.begin() + static_cast<std::ptrdiff_t>(N / 2UZ));
+            expect(std::ranges::equal(shifted, unshifted, [](float a, float b) { return withinBound(a, b, 0.); })) << std::format("N {}: the shifted spectrum is the spectrum rotated by N/2", N);
+        }
+    };
+
+    "float phase spectrum against the C library"_test = [] {
+        constexpr double kPhaseUnits = 8.;
+        for (const std::size_t N : {1031UZ, 64UZ, 3UZ}) {
+            const auto bins = spectrumTestBins(N);
+            for (const bool half : {false, true}) {
+                const auto        got = gr::algorithm::fft::computePhaseSpectrum(bins, {}, {.computeHalfSpectrum = half});
+                const std::size_t M   = half ? N / 2UZ : N;
+                std::size_t       outside{0UZ};
+                std::string       firstOutside;
+                for (std::size_t k = 0UZ; k < std::min(M, got.size()); ++k) {
+                    const float want = std::atan2(bins[k].imag(), bins[k].real());
+                    if (!withinBound(got[k], want, kPhaseUnits)) {
+                        if (outside++ == 0UZ) {
+                            firstOutside = std::format("bin {} of ({}, {}): {} against {}", k, bins[k].real(), bins[k].imag(), got[k], want);
+                        }
+                    }
+                }
+                expect(eq(got.size(), M));
+                expect(eq(outside, 0UZ)) << std::format("N {} half {}: {} bins outside the bound, first {}", N, half, outside, firstOutside);
+            }
+        }
+    };
 
     "Unwrap Phase tests"_test = [] {
         std::vector<double> phase = {0.2, -1., 2.5, -3.1, 0.9, -0.5, 1.2, 0.8, 1.5, -1.2, -2.7, 0.9, -0.8, -1.4, 0.6, 1.1, -1.9, 0.4, 1.3, -0.7};
