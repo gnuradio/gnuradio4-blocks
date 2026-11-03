@@ -256,6 +256,8 @@ settings at the end of each call that changes them.
         } else {
             // The block forwards the tags itself. Each tag waits `delay_samples` for its sample and leaves in index
             // order with the block's own markers. The filter is the framework's.
+            double meanPower = _power;
+            double meanDuty  = _duty;
             for (std::size_t i = 0UZ; i < nSamples; ++i) {
                 const std::uint64_t at = _emitted + i;
                 while (tag < nTags && inSpan.rawTags[tag].index <= inSpan.streamIndex + i) {
@@ -267,13 +269,15 @@ settings at the end of each call that changes them.
                     }
                     ++tag;
                 }
-                accept(inSpan[i]);
+                accept(inSpan[i], meanPower, meanDuty);
                 while (leaving < _pendingTags.size() && _pendingTags[leaving].first <= at) {
                     outSpan.publishTag(_pendingTags[leaving].second, i);
                     ++leaving;
                 }
                 outSpan[i] = emit(outSpan, i);
             }
+            _power = flushed(meanPower);
+            _duty  = flushed(meanDuty);
         }
         _pendingTags.erase(_pendingTags.begin(), _pendingTags.begin() + static_cast<std::ptrdiff_t>(leaving));
         _emitted += nSamples;
@@ -544,8 +548,11 @@ private:
         _pendingTags      = std::move(pending);
     }
 
+    /// @brief A running average below the smallest normal `double` is zero.
+    [[nodiscard]] static constexpr double flushed(double average) noexcept { return average < std::numeric_limits<double>::min() ? 0.0 : average; }
+
     /// @brief Take one input. Decide first, then track the power from the samples the decision left in place.
-    void accept(T sample) {
+    void accept(T sample, double& meanPower, double& meanDuty) {
         const double power      = squaredMagnitude(sample);
         const bool   windowOpen = _remaining > 0U;
 
@@ -557,13 +564,10 @@ private:
             --_warmup;
             detected = _enabled && !(power < std::numeric_limits<double>::infinity());
         } else if (_enabled) {
-            detected = !(power <= _threshold * _power);
+            detected = !(power <= _threshold * meanPower);
         }
         if (!windowOpen && !detected && _enabled) {
-            _power += _alpha * (power - _power);
-            if (_power < std::numeric_limits<double>::min()) {
-                _power = 0.0; // a pole below one decays a silent input into subnormals, where it stays, and each one costs a microcode assist
-            }
+            meanPower += _alpha * (power - meanPower);
         }
 
         _cursor        = _cursor + 1UZ == _ring ? 0UZ : _cursor + 1UZ;
@@ -587,10 +591,7 @@ private:
             _warmup = _warmupLength;
             _excess = 0U;
         }
-        _duty += 0.1 * _alpha * ((marked ? 1.0 : 0.0) - _duty); // ten tracker time constants, since a 0.14 % duty needs a longer average than the power
-        if (_duty < std::numeric_limits<double>::min()) {
-            _duty = 0.0; // the same decay into the subnormals as the power, ten times slower
-        }
+        meanDuty += 0.1 * _alpha * ((marked ? 1.0 : 0.0) - meanDuty); // ten tracker time constants, since a 0.14 % duty needs a longer average than the power
 
         if (detected && windowOpen && _retrigger) {
             const std::uint32_t room = _windowLength > static_cast<std::uint32_t>(_maxWindow) ? 0U : static_cast<std::uint32_t>(_maxWindow) + 1U - _windowLength;
