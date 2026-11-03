@@ -30,7 +30,7 @@
 #include <gnuradio-4.0/algorithm/measurement/Kurtosis.hpp>
 #include <gnuradio-4.0/measurement/Detectors.hpp>
 
-#include <magic_enum.hpp>
+#include <gnuradio-4.0/meta/MagicEnum.hpp>
 
 namespace gr::blocks::measurement {
 

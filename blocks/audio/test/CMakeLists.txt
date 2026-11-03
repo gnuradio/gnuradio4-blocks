@@ -1,10 +1,9 @@
 add_ut_test(qa_Audio)
-target_link_libraries(
-  qa_Audio
-  PRIVATE gr-audio
-          gr-basic
-          gr-testing
-          httplib::httplib)
+target_link_libraries(qa_Audio PRIVATE gr-audio gr-basic gr-testing)
+# httplib is found only for native builds
+if(NOT EMSCRIPTEN)
+  target_link_libraries(qa_Audio PRIVATE httplib::httplib)
+endif()
 
 # The exported interface is only ever read from an install, so these legs need one; GR4_INSTALLED_PREFIX names a prefix
 # this tree has already been installed into and they are registered only where one is named. --fresh keeps a cache left

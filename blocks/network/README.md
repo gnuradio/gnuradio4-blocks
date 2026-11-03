@@ -9,9 +9,9 @@ The envelope is transport-neutral, so this module is named for the family rather
 transport: ZeroMQ is the first carrier and a byte-stream transport is meant to land beside it
 without a second format.
 
-The family is off by default (`GR4_ENABLE_NETWORK`) and is built only where libzmq and the
-cppzmq header are found, because an optional external dependency cannot enter an unconditional
-module without becoming unconditional for everything downstream.
+The family is off by default (`GR4_ENABLE_NETWORK`). Its ZMQ transports are built only where the
+cppzmq package, which brings libzmq with it, is found, because an optional external dependency
+cannot enter an unconditional module without becoming unconditional for everything downstream.
 
 Three pairs share that envelope, and each carries a different one of the things a flowgraph is made of.
 

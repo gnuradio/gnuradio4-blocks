@@ -5,8 +5,8 @@
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/algorithm/fileio/FileIo.hpp>
 #include <gnuradio-4.0/fileio/FileIoTypes.hpp>
+#include <gnuradio-4.0/meta/MagicEnum.hpp>
 #include <gnuradio-4.0/meta/formatter.hpp>
-#include <magic_enum.hpp>
 
 #include <chrono>
 #include <complex>
