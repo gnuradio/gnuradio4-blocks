@@ -49,8 +49,11 @@ else()
   set_tests_properties(qa_ExampleGraphsInstall PROPERTIES FIXTURES_SETUP gr4_example_graphs_installed)
   set_tests_properties(qa_ExampleGraphsInstall PROPERTIES TIMEOUT 60)
   set_tests_properties(qa_ExampleGraphs PROPERTIES FIXTURES_REQUIRED gr4_example_graphs_installed)
-  target_compile_definitions(
+  # the definition only selects the case; the directory reaches the run through the environment
+  target_compile_definitions(qa_ExampleGraphs PRIVATE GR4_EXAMPLE_GRAPHS_INSTALL_CASE)
+  set_tests_properties(
     qa_ExampleGraphs
-    PRIVATE INSTALLED_EXAMPLE_GRAPHS_PATH="${GR4_EXAMPLE_GRAPHS_TEST_PREFIX}/${GR4_EXAMPLE_GRAPHS_INSTALL_DIR}")
+    PROPERTIES ENVIRONMENT
+               "INSTALLED_EXAMPLE_GRAPHS_PATH=${GR4_EXAMPLE_GRAPHS_TEST_PREFIX}/${GR4_EXAMPLE_GRAPHS_INSTALL_DIR}")
 endif()
 set_tests_properties(qa_ExampleGraphs PROPERTIES TIMEOUT 60)

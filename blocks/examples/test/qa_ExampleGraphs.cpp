@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <exception>
 #include <expected>
 #include <format>
@@ -70,7 +71,14 @@ void registerGraphFamilies() {
     return found->text;
 }
 
-#ifdef INSTALLED_EXAMPLE_GRAPHS_PATH
+#ifdef GR4_EXAMPLE_GRAPHS_INSTALL_CASE
+/// @brief The directory of the installed graph files, named by the environment of the run.
+[[nodiscard]] std::string installedGraphsPath() {
+    const char* path = std::getenv("INSTALLED_EXAMPLE_GRAPHS_PATH");
+    boost::ut::expect(path != nullptr && *path != '\0') << "qa_ExampleGraphs: INSTALLED_EXAMPLE_GRAPHS_PATH is not set" << boost::ut::fatal;
+    return path;
+}
+
 [[nodiscard]] std::string readFile(std::string_view directory, std::string_view fileName) {
     const std::string path = std::format("{}/{}", directory, fileName);
     std::ifstream     file(path, std::ios::binary);
@@ -219,11 +227,11 @@ const boost::ut::suite<"example graphs"> exampleGraphTests = [] {
         }
     };
 
-#ifdef INSTALLED_EXAMPLE_GRAPHS_PATH
+#ifdef GR4_EXAMPLE_GRAPHS_INSTALL_CASE
     // ctest installs the files into a prefix inside the build tree before this binary runs
     "every example graph in the install layout is the source file and loads with every block under its id"_test = [] {
         for (const auto& [fileName, text] : gr::examples::kExampleGraphs) {
-            const std::string installed = readFile(INSTALLED_EXAMPLE_GRAPHS_PATH, fileName);
+            const std::string installed = readFile(installedGraphsPath(), fileName);
             expect(eq(std::string_view{installed}, text)) << std::format("the installed {} is the source file", fileName);
             auto graph = gr::loadGrc(gr::globalPluginLoader(), installed);
             expectBlocksUnderTheirIds(*graph, installed);
