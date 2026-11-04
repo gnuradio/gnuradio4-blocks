@@ -120,6 +120,8 @@ struct ports_of<op, Derived, T, R> {
  * An operation is a type with:
  * - `template<typename T> using result`, the output type for the input type `T`;
  * - `kSimd`, true when `apply` takes a `vir::stdx::simd` of an arithmetic input type;
+ * - optionally `kSimdFloatOnly`, true when only the float block takes simd vectors: a block of any other type calls
+ *   `apply` once per sample;
  * - `static apply(x, block)`, the function of one sample or of one simd vector;
  * - `Description`, the documentation of the blocks it makes;
  * - optionally `kChangesFrequency`, true when the operation changes the frequency of a complex carrier;
@@ -334,121 +336,176 @@ struct Sqrt {
 struct Exp {
     using Description = Doc<"@brief Outputs e raised to each sample.">;
     template<typename T>
-    using result                = T;
-    static constexpr bool kSimd = false;
+    using result                         = T;
+    static constexpr bool kSimd          = true;
+    static constexpr bool kSimdFloatOnly = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::exp(x);
+        if constexpr (meta::any_simd<V>) {
+            return gr::meta::exp(x);
+        } else {
+            return std::exp(x);
+        }
     }
 };
 
 struct Log {
     using Description = Doc<"@brief Outputs the natural logarithm of each sample.">;
     template<typename T>
-    using result                = T;
-    static constexpr bool kSimd = false;
+    using result                         = T;
+    static constexpr bool kSimd          = true;
+    static constexpr bool kSimdFloatOnly = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::log(x);
+        if constexpr (meta::any_simd<V>) {
+            return gr::meta::log(x);
+        } else {
+            return std::log(x);
+        }
     }
 };
 
 struct Log10 {
     using Description = Doc<"@brief Outputs the base-10 logarithm of each sample. With scale 10 the output is the power in dB.">;
     template<typename T>
-    using result                = T;
-    static constexpr bool kSimd = false;
+    using result                         = T;
+    static constexpr bool kSimd          = true;
+    static constexpr bool kSimdFloatOnly = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::log10(x);
+        if constexpr (meta::any_simd<V>) {
+            return gr::meta::log10(x);
+        } else {
+            return std::log10(x);
+        }
     }
 };
 
 struct Log2 {
     using Description = Doc<"@brief Outputs the base-2 logarithm of each sample.">;
     template<typename T>
-    using result                = T;
-    static constexpr bool kSimd = false;
+    using result                         = T;
+    static constexpr bool kSimd          = true;
+    static constexpr bool kSimdFloatOnly = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::log2(x);
+        if constexpr (meta::any_simd<V>) {
+            return gr::meta::log2(x);
+        } else {
+            return std::log2(x);
+        }
     }
 };
 
 struct Sin {
     using Description = Doc<"@brief Outputs the sine of each sample, in radians.">;
     template<typename T>
-    using result                = T;
-    static constexpr bool kSimd = false;
+    using result                         = T;
+    static constexpr bool kSimd          = true;
+    static constexpr bool kSimdFloatOnly = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::sin(x);
+        if constexpr (meta::any_simd<V>) {
+            return gr::meta::sin(x);
+        } else {
+            return std::sin(x);
+        }
     }
 };
 
 struct Cos {
     using Description = Doc<"@brief Outputs the cosine of each sample, in radians.">;
     template<typename T>
-    using result                = T;
-    static constexpr bool kSimd = false;
+    using result                         = T;
+    static constexpr bool kSimd          = true;
+    static constexpr bool kSimdFloatOnly = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::cos(x);
+        if constexpr (meta::any_simd<V>) {
+            return gr::meta::cos(x);
+        } else {
+            return std::cos(x);
+        }
     }
 };
 
 struct Tan {
     using Description = Doc<"@brief Outputs the tangent of each sample, in radians.">;
     template<typename T>
-    using result                = T;
-    static constexpr bool kSimd = false;
+    using result                         = T;
+    static constexpr bool kSimd          = true;
+    static constexpr bool kSimdFloatOnly = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::tan(x);
+        if constexpr (meta::any_simd<V>) {
+            return gr::meta::tan(x);
+        } else {
+            return std::tan(x);
+        }
     }
 };
 
 struct Atan {
     using Description = Doc<"@brief Outputs the arc tangent of each sample, in radians.">;
     template<typename T>
-    using result                = T;
-    static constexpr bool kSimd = false;
+    using result                         = T;
+    static constexpr bool kSimd          = true;
+    static constexpr bool kSimdFloatOnly = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::atan(x);
+        if constexpr (meta::any_simd<V>) {
+            return gr::meta::atan(x);
+        } else {
+            return std::atan(x);
+        }
     }
 };
 
 struct Sinh {
     using Description = Doc<"@brief Outputs the hyperbolic sine of each sample.">;
     template<typename T>
-    using result                = T;
-    static constexpr bool kSimd = false;
+    using result                         = T;
+    static constexpr bool kSimd          = true;
+    static constexpr bool kSimdFloatOnly = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::sinh(x);
+        if constexpr (meta::any_simd<V>) {
+            return gr::meta::sinh(x);
+        } else {
+            return std::sinh(x);
+        }
     }
 };
 
 struct Cosh {
     using Description = Doc<"@brief Outputs the hyperbolic cosine of each sample.">;
     template<typename T>
-    using result                = T;
-    static constexpr bool kSimd = false;
+    using result                         = T;
+    static constexpr bool kSimd          = true;
+    static constexpr bool kSimdFloatOnly = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::cosh(x);
+        if constexpr (meta::any_simd<V>) {
+            return gr::meta::cosh(x);
+        } else {
+            return std::cosh(x);
+        }
     }
 };
 
 struct Tanh {
     using Description = Doc<"@brief Outputs the hyperbolic tangent of each sample.">;
     template<typename T>
-    using result                = T;
-    static constexpr bool kSimd = false;
+    using result                         = T;
+    static constexpr bool kSimd          = true;
+    static constexpr bool kSimdFloatOnly = true;
     template<typename V, typename B>
     [[nodiscard]] static V apply(const V& x, const B& /*block*/) noexcept {
-        return std::tanh(x);
+        if constexpr (meta::any_simd<V>) {
+            return gr::meta::tanh(x);
+        } else {
+            return std::tanh(x);
+        }
     }
 };
 
@@ -596,6 +653,10 @@ struct Imag {
  *
  * `Magnitude` and `Phase` of `std::complex<float>` run over the whole span in simd lanes, with `processBulk` and no
  * `processOne`, so neither can be a member of a `Merge`.
+ *
+ * The float blocks of `Exp`, `Log`, `Log10`, `Log2`, `Sin`, `Cos`, `Tan`, `Atan`, `Sinh`, `Cosh` and `Tanh` take simd
+ * vectors and are within 2 ulp of the exact value, with the C library's special values. Their double blocks call the C
+ * library.
  */
 template<typename op, typename T>
 struct Unary : unary::ports_of<op, Unary<op, T>, T, typename op::template result<T>>::type {
@@ -609,7 +670,7 @@ struct Unary : unary::ports_of<op, Unary<op, T>, T, typename op::template result
 
     static_assert(std::same_as<typename Unary::DroppedTagKeysControl, unary::DroppedKeys<op, R>>, "the ports of an operation pass unary::DroppedKeys<op, R> to Block");
 
-    static constexpr bool kSimdPath = op::kSimd && std::is_arithmetic_v<T> && std::same_as<T, R>;
+    static constexpr bool kSimdPath = op::kSimd && std::is_arithmetic_v<T> && std::same_as<T, R> && (std::same_as<T, float> || !requires { requires op::kSimdFloatOnly; });
     static constexpr bool kSpanPath = unary::kSpanLoop<op> && std::same_as<T, std::complex<float>>;
 
     bool _affine = false; // scale or offset differs from the identity
