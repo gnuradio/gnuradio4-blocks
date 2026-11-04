@@ -5,6 +5,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -66,8 +67,15 @@ void substitute(std::string& text, std::string_view from, std::string_view to) {
     }
 }
 
+/// @brief The directory of the example graphs, named by the environment of the run.
+[[nodiscard]] std::string exampleGraphsPath() {
+    const char* path = std::getenv("EXAMPLE_GRAPHS_PATH");
+    boost::ut::expect(path != nullptr && *path != '\0') << "qa_StreamPacketGraphs: EXAMPLE_GRAPHS_PATH is not set" << boost::ut::fatal;
+    return path;
+}
+
 [[nodiscard]] std::string readGraph(std::string_view fileName, std::string_view stream, std::string_view messages) {
-    std::ifstream      file(std::format("{}/{}", EXAMPLE_GRAPHS_PATH, fileName), std::ios::binary);
+    std::ifstream      file(std::format("{}/{}", exampleGraphsPath(), fileName), std::ios::binary);
     std::ostringstream content;
     content << file.rdbuf();
     std::string text = content.str();

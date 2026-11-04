@@ -117,6 +117,13 @@ struct Workspace {
 
 // ─── running the two executables as real processes ────────────────────────────────────────────────────────────────
 
+/// @brief The path of a program under test, named by the environment of the run.
+[[nodiscard]] std::string programPath(const char* variable) {
+    const char* path = std::getenv(variable);
+    boost::ut::expect(path != nullptr && *path != '\0') << std::format("qa_PacketLink: {} is not set", variable) << boost::ut::fatal;
+    return path;
+}
+
 struct Child {
     ::pid_t     pid = -1;
     std::string label;
@@ -342,8 +349,8 @@ const boost::ut::suite<"packet link acceptance"> packetLinkTests = [] {
 
         // `push` waits for a peer rather than publishing into an empty room, so neither order of these two lines can
         // lose a packet and the counts below are exact whichever process reaches its socket first.
-        Child receiver(GR4_PACKET_LINK_RX, {endpoint.uri, std::format("{}", kRecords), recoveredFile, rxReport}, workspace.file("rx.log"));
-        Child transmitter(GR4_PACKET_LINK_TX, {endpoint.uri, std::format("{}", kOfferedRecords), std::format("{}", kRecordBytes), txReport}, workspace.file("tx.log"));
+        Child receiver(programPath("GR4_PACKET_LINK_RX"), {endpoint.uri, std::format("{}", kRecords), recoveredFile, rxReport}, workspace.file("rx.log"));
+        Child transmitter(programPath("GR4_PACKET_LINK_TX"), {endpoint.uri, std::format("{}", kOfferedRecords), std::format("{}", kRecordBytes), txReport}, workspace.file("tx.log"));
 
         // the receiver ends its own run at the packet it was asked for; the transmitter is ended afterwards, so its
         // socket is open for the whole of the receiver's run and nothing is discarded underneath it
@@ -449,7 +456,7 @@ const boost::ut::suite<"packet link acceptance"> packetLinkTests = [] {
 
         constexpr std::uint32_t nAccepted = 4U;
         RawSender               peer(endpoint.uri);
-        Child                   receiver(GR4_PACKET_LINK_RX, {endpoint.uri, std::format("{}", nAccepted), recoveredFile, rxReport}, workspace.file("rx.log"));
+        Child                   receiver(programPath("GR4_PACKET_LINK_RX"), {endpoint.uri, std::format("{}", nAccepted), recoveredFile, rxReport}, workspace.file("rx.log"));
 
         const std::vector<std::uint8_t> sample = expectedRecord(0U);
 

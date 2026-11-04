@@ -35,18 +35,24 @@ if(GR4_NETWORK_HAVE_LIBZMQ)
             gnuradio4::gr-basic
             gnuradio4::GrBasicBlocksShared
             gnuradio4::GrNetworkBlocksShared)
-  target_compile_definitions(qa_StreamPacketGraphs
-                             PRIVATE EXAMPLE_GRAPHS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../examples")
-  set_tests_properties(qa_StreamPacketGraphs PROPERTIES TIMEOUT 120)
+  set_tests_properties(
+    qa_StreamPacketGraphs
+    PROPERTIES TIMEOUT
+               120
+               ENVIRONMENT
+               "EXAMPLE_GRAPHS_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../examples")
 
-  # the acceptance driver launches the two executables in ../src as real, separate processes, so it is told where they
-  # were built and is rebuilt whenever they are
+  # the acceptance driver launches the two executables in ../src as real, separate processes, so the run is told where
+  # they were built and the driver is rebuilt whenever they are
   add_ut_test(qa_PacketLink)
   target_link_libraries(qa_PacketLink PRIVATE gr-network)
   add_dependencies(qa_PacketLink packet_link_tx packet_link_rx)
-  target_compile_definitions(qa_PacketLink PRIVATE GR4_PACKET_LINK_TX="$<TARGET_FILE:packet_link_tx>"
-                                                   GR4_PACKET_LINK_RX="$<TARGET_FILE:packet_link_rx>")
-  set_tests_properties(qa_PacketLink PROPERTIES TIMEOUT 120)
+  set_tests_properties(
+    qa_PacketLink
+    PROPERTIES TIMEOUT
+               120
+               ENVIRONMENT
+               "GR4_PACKET_LINK_TX=$<TARGET_FILE:packet_link_tx>;GR4_PACKET_LINK_RX=$<TARGET_FILE:packet_link_rx>")
 
   # The exported interface is only ever read from an install, so the test needs one; GR4_INSTALLED_PREFIX names a prefix
   # this tree has already been installed into and the leg is registered only where one is named. --fresh keeps a cache
