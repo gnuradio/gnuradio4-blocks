@@ -7,7 +7,9 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <limits>
+#include <numbers>
 #include <random>
 #include <span>
 #include <tuple>
@@ -332,6 +334,151 @@ const boost::ut::suite<"Unary complex span loops"> unaryComplexSpans = [] {
             mismatches += static_cast<std::size_t>(!sameValue(output[i], std::arg(input[i])));
         }
         expect(eq(mismatches, 0UZ));
+    };
+};
+
+namespace {
+
+/// @brief The signed zeros, the smallest subnormal, the smallest and largest normals, one, the infinities, a NaN and
+/// each of `edges` with its two float neighbors, then random bit patterns, then values uniform in [`low`, `high`]. The
+/// uniform values come last and apart, so that whole vectors of them take the simd form's path for ordinary arguments.
+[[nodiscard]] std::vector<float> elementaryInput(std::initializer_list<float> edges, float low, float high) {
+    using L = std::numeric_limits<float>;
+    std::vector<float> input{0.f, L::denorm_min(), L::min(), 1.f, L::max(), L::infinity(), L::quiet_NaN()};
+    for (const float edge : edges) {
+        input.insert(input.end(), {std::nextafter(edge, 0.f), edge, std::nextafter(edge, L::infinity())});
+    }
+    const std::size_t positive = input.size();
+    for (std::size_t i = 0UZ; i < positive; ++i) {
+        input.push_back(-input[i]);
+    }
+    std::mt19937                                 rng(20261103U);
+    std::uniform_int_distribution<std::uint32_t> bits;
+    std::uniform_real_distribution<float>        uniform(low, high);
+    for (std::size_t i = 0UZ; i < 4096UZ; ++i) {
+        input.push_back(std::bit_cast<float>(bits(rng)));
+    }
+    for (std::size_t i = 0UZ; i < 4096UZ; ++i) {
+        input.push_back(uniform(rng));
+    }
+    return input;
+}
+
+/// @brief True when `output` lies within `ulps` float steps of the exact value `reference`, the step taken at the
+/// reference. A zero, infinite or NaN reference is matched exactly, sign included. A finite reference beyond the float
+/// range stands at 2^128, one step past the largest float, where an infinite output also stands.
+[[nodiscard]] bool withinUlps(float output, double reference, double ulps) {
+    using L = std::numeric_limits<float>;
+    if (std::isnan(reference) || std::isinf(reference) || reference == 0.0) {
+        return sameValue(static_cast<double>(output), reference);
+    }
+    constexpr double kBeyond  = 0x1p128;
+    const double     exact    = std::clamp(reference, -kBeyond, kBeyond);
+    const double     value    = std::isinf(output) ? std::copysign(kBeyond, static_cast<double>(output)) : static_cast<double>(output);
+    const int        exponent = std::clamp(std::ilogb(exact), L::min_exponent - 1, L::max_exponent - 1);
+    return std::abs(value - exact) <= ulps * std::ldexp(1.0, exponent - (L::digits - 1));
+}
+
+/// @brief The outputs of the scalar call, the native simd call and the 32-wide simd call (the widest the scheduler
+/// runs) of a float block made from `TBlock` that lie outside `ulps` steps of the double `reference`.
+template<typename TBlock, typename F>
+[[nodiscard]] std::size_t outsideBound(std::span<const float> in, F reference, double ulps) {
+    static_assert(TBlock::kSimdPath);
+    TBlock block;
+    applySettings(block);
+    std::size_t outside = 0UZ;
+    for (const std::vector<float>& output : {scalarPath(block, in), simdPathOf<vir::stdx::native_simd<float>>(block, in), simdPathOf<vir::stdx::fixed_size_simd<float, 32>>(block, in)}) {
+        for (std::size_t i = 0UZ; i < in.size(); ++i) {
+            outside += static_cast<std::size_t>(!withinUlps(output[i], reference(static_cast<double>(in[i])), ulps));
+        }
+    }
+    return outside;
+}
+
+/// @brief The outputs of a double block made from `TBlock` over `in`, called as the scheduler calls it, that are not
+/// `reference`'s value: simd vectors where the block takes them, one sample at a time otherwise.
+template<typename TBlock, typename F>
+[[nodiscard]] std::size_t doubleMismatches(std::span<const float> in, F reference) {
+    TBlock block;
+    applySettings(block);
+    std::vector<double> input(in.size());
+    std::ranges::transform(in, input.begin(), [](float x) { return static_cast<double>(x); });
+    const std::span<const double> values(input);
+    std::vector<double>           output;
+    if constexpr (TBlock::kSimdPath) {
+        output = simdPathOf<vir::stdx::fixed_size_simd<double, 32>>(block, values);
+    } else {
+        output = scalarPath(block, values);
+    }
+    return mismatchCount(values, output, reference);
+}
+
+// core's gr::meta functions on float lanes are within 2 ulp of the exact result, with C's special values
+constexpr double kElementaryUlps = 2.0;
+
+/// @brief Expects the float block of `TBlock` within 2 ulp of `reference` over `input`, the double function of the
+/// float argument standing for the exact result (its own error is far below a float step), and the double block to
+/// give `reference`'s value: the C library's, one sample at a time.
+template<template<typename> typename TBlock, typename F>
+void expectElementary(const std::vector<float>& input, F reference) {
+    using namespace boost::ut;
+    expect(eq(outsideBound<TBlock<float>>(input, reference, kElementaryUlps), 0UZ)) << "float outputs outside the bound";
+    expect(!TBlock<double>::kSimdPath) << "a double block takes simd vectors";
+    expect(eq(doubleMismatches<TBlock<double>>(input, reference), 0UZ)) << "double outputs that differ from the C library's";
+}
+
+} // namespace
+
+const boost::ut::suite<"Unary float elementary functions"> unaryElementary = [] {
+    using namespace boost::ut;
+    using namespace gr::blocks::math;
+    using L = std::numeric_limits<float>;
+
+    // The edges are where a result overflows, underflows, reaches 0 or 1 or changes form, and the bounds of the
+    // arguments for which a vector of float lanes takes the shorter path.
+    "Exp of float is within 2 ulp of double std::exp, and Exp of double is std::exp per sample"_test = [] {
+        const std::vector<float> input = elementaryInput({0x1p-60f, 1.f, 87.f, 87.33654f, 88.72284f, 103.27893f, 103.97208f}, -87.f, 87.f);
+        expectElementary<Exp>(input, [](double x) { return std::exp(x); });
+    };
+    "Log of float is within 2 ulp of double std::log, and Log of double is std::log per sample"_test = [] {
+        const std::vector<float> input = elementaryInput({L::min(), 1.f, 2.f, 10.f}, 1e-3f, 1e4f);
+        expectElementary<Log>(input, [](double x) { return std::log(x); });
+    };
+    "Log10 of float is within 2 ulp of double std::log10, and Log10 of double is std::log10 per sample"_test = [] {
+        const std::vector<float> input = elementaryInput({L::min(), 1.f, 2.f, 10.f}, 1e-3f, 1e4f);
+        expectElementary<Log10>(input, [](double x) { return std::log10(x); });
+    };
+    "Log2 of float is within 2 ulp of double std::log2, and Log2 of double is std::log2 per sample"_test = [] {
+        const std::vector<float> input = elementaryInput({L::min(), 1.f, 2.f, 10.f}, 1e-3f, 1e4f);
+        expectElementary<Log2>(input, [](double x) { return std::log2(x); });
+    };
+    "Sin of float is within 2 ulp of double std::sin, and Sin of double is std::sin per sample"_test = [] {
+        const std::vector<float> input = elementaryInput({0x1p-27f, std::numbers::pi_v<float> / 2.f, std::numbers::pi_v<float>, 8192.f, 1e6f, 1e30f}, -8192.f, 8192.f);
+        expectElementary<Sin>(input, [](double x) { return std::sin(x); });
+    };
+    "Cos of float is within 2 ulp of double std::cos, and Cos of double is std::cos per sample"_test = [] {
+        const std::vector<float> input = elementaryInput({0x1p-27f, std::numbers::pi_v<float> / 2.f, std::numbers::pi_v<float>, 8192.f, 1e6f, 1e30f}, -8192.f, 8192.f);
+        expectElementary<Cos>(input, [](double x) { return std::cos(x); });
+    };
+    "Tan of float is within 2 ulp of double std::tan, and Tan of double is std::tan per sample"_test = [] {
+        const std::vector<float> input = elementaryInput({0x1p-27f, std::numbers::pi_v<float> / 2.f, std::numbers::pi_v<float>, 8192.f, 1e6f, 1e30f}, -8192.f, 8192.f);
+        expectElementary<Tan>(input, [](double x) { return std::tan(x); });
+    };
+    "Atan of float is within 2 ulp of double std::atan, and Atan of double is std::atan per sample"_test = [] {
+        const std::vector<float> input = elementaryInput({0x1p-28f, 1.f, 0x1p26f}, -100.f, 100.f);
+        expectElementary<Atan>(input, [](double x) { return std::atan(x); });
+    };
+    "Sinh of float is within 2 ulp of double std::sinh, and Sinh of double is std::sinh per sample"_test = [] {
+        const std::vector<float> input = elementaryInput({0x1p-28f, 1.f, 20.f, 86.f, 89.41599f}, -86.f, 86.f);
+        expectElementary<Sinh>(input, [](double x) { return std::sinh(x); });
+    };
+    "Cosh of float is within 2 ulp of double std::cosh, and Cosh of double is std::cosh per sample"_test = [] {
+        const std::vector<float> input = elementaryInput({0x1p-60f, 1.f, 20.f, 86.f, 89.41599f}, -86.f, 86.f);
+        expectElementary<Cosh>(input, [](double x) { return std::cosh(x); });
+    };
+    "Tanh of float is within 2 ulp of double std::tanh, and Tanh of double is std::tanh per sample"_test = [] {
+        const std::vector<float> input = elementaryInput({0x1p-28f, 0.75f, 9.01f, 20.f, 43.f}, -43.f, 43.f);
+        expectElementary<Tanh>(input, [](double x) { return std::tanh(x); });
     };
 };
 
