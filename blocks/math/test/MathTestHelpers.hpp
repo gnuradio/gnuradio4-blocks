@@ -3,7 +3,14 @@
 
 #include <boost/ut.hpp>
 
+#include <array>
+#include <bit>
+#include <cmath>
+#include <complex>
+#include <cstdint>
 #include <functional>
+#include <limits>
+#include <random>
 #include <set>
 #include <string>
 #include <string_view>
@@ -14,6 +21,36 @@
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
+
+/// @brief Finite complex values: every pair of parts from the signed zeros, one and the smallest and largest normals
+/// of either sign, then random finite bit patterns and Gaussian noise.
+[[nodiscard]] inline std::vector<std::complex<float>> finiteComplexInput() {
+    using L                                = std::numeric_limits<float>;
+    const std::array<float, 8UZ>     parts = {0.f, -0.f, 1.f, -1.f, L::min(), -L::min(), L::max(), -L::max()};
+    std::vector<std::complex<float>> input;
+    for (const float re : parts) {
+        for (const float im : parts) {
+            input.emplace_back(re, im);
+        }
+    }
+    std::mt19937                                 rng(20261103U);
+    std::uniform_int_distribution<std::uint32_t> bits;
+    std::normal_distribution<float>              noise(0.f, 0.3f);
+    while (input.size() < 4096UZ) {
+        const std::complex<float> pattern(std::bit_cast<float>(bits(rng)), std::bit_cast<float>(bits(rng)));
+        if (std::isfinite(pattern.real()) && std::isfinite(pattern.imag())) {
+            input.push_back(pattern);
+        }
+        input.emplace_back(noise(rng), noise(rng));
+    }
+    return input;
+}
+
+/// @brief True for two complex values whose parts are the same values, a NaN part matching a NaN part.
+[[nodiscard]] inline bool sameParts(std::complex<float> a, std::complex<float> b) {
+    const auto same = [](float x, float y) { return (std::isnan(x) && std::isnan(y)) || (x == y && std::signbit(x) == std::signbit(y)); };
+    return same(a.real(), b.real()) && same(a.imag(), b.imag());
+}
 
 template<typename T>
 struct TestParameters {
