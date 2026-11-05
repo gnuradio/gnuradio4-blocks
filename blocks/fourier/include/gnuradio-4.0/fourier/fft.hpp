@@ -35,7 +35,10 @@ struct FFT : Block<FFT<T, U, FourierAlgorithm>, BackwardTagPropagation, Resampli
 
 The FFT block is capable of performing Fourier Transform computations on real or complex data,
 and populates a DataSet with the results, including real, imaginary, magnitude, and phase
-spectrum of the signal. For details see:
+spectrum of the signal. The DataSet holds the magnitude, phase, real and imaginary signals in that order.
+With `outputPhase` false the block skips the phase spectrum and the DataSet holds the magnitude, real and
+imaginary signals. A change applies from the next frame.
+For details see:
  * https://en.wikipedia.org/wiki/Fourier_transform
  * https://en.wikipedia.org/wiki/Discrete-time_Fourier_transform
  * https://en.wikipedia.org/wiki/Fast_Fourier_transform
@@ -122,13 +125,14 @@ On the choice of window (mathematically aka. apodisation) functions
     Annotated<bool, "output in dB", Doc<"calculate output in decibels">>             outputInDb{false};
     Annotated<bool, "output in deg", Doc<"calculate phase in degrees">>              outputInDeg{false};
     Annotated<bool, "unwrap phase", Doc<"calculate unwrapped phase">>                unwrapPhase{false};
+    Annotated<bool, "output phase", Doc<"phase spectrum in the output DataSet">>     outputPhase{true};
     Annotated<float, "sample rate", Doc<"signal sample rate">, Unit<"Hz">>           sample_rate = 1.f;
     Annotated<std::string, "signal name", Visible>                                   signal_name = "unknown signal";
     Annotated<std::string, "signal unit", Visible, Doc<"signal's physical SI unit">> signal_unit = "a.u.";
     Annotated<float, "signal min", Doc<"signal physical min. (e.g. DAQ) limit">>     signal_min  = -std::numeric_limits<float>::max();
     Annotated<float, "signal max", Doc<"signal physical max. (e.g. DAQ) limit">>     signal_max  = +std::numeric_limits<float>::max();
 
-    GR_MAKE_REFLECTABLE(FFT, in, out, algorithm, fftSize, window, outputInDb, outputInDeg, unwrapPhase, sample_rate, signal_name, signal_unit, signal_min, signal_max);
+    GR_MAKE_REFLECTABLE(FFT, in, out, algorithm, fftSize, window, outputInDb, outputInDeg, unwrapPhase, outputPhase, sample_rate, signal_name, signal_unit, signal_min, signal_max);
 
     // semi-private caching vectors (need to be public for unit-test) -> TODO: move to FFT implementations, casting from T -> U::value_type should be done there
     std::vector<InDataType>  _inData             = std::vector<InDataType>(fftSize, 0);
@@ -185,7 +189,9 @@ On the choice of window (mathematically aka. apodisation) functions
         _fftImpl.compute(_inData, std::span<OutDataType>(_outData));
 
         _magnitudeSpectrum = gr::algorithm::fft::computeMagnitudeSpectrum(_outData, std::move(_magnitudeSpectrum), algorithm::fft::ConfigMagnitude{.computeHalfSpectrum = !computeFullSpectrum, .outputInDb = outputInDb, .shiftSpectrum = true});
-        _phaseSpectrum     = gr::algorithm::fft::computePhaseSpectrum(_outData, std::move(_phaseSpectrum), algorithm::fft::ConfigPhase{.computeHalfSpectrum = !computeFullSpectrum, .outputInDeg = outputInDeg, .unwrapPhase = unwrapPhase, .shiftSpectrum = true});
+        if (outputPhase) {
+            _phaseSpectrum = gr::algorithm::fft::computePhaseSpectrum(_outData, std::move(_phaseSpectrum), algorithm::fft::ConfigPhase{.computeHalfSpectrum = !computeFullSpectrum, .outputInDeg = outputInDeg, .unwrapPhase = unwrapPhase, .shiftSpectrum = true});
+        }
 
         createDataset(output[0]);
 
@@ -194,8 +200,8 @@ On the choice of window (mathematically aka. apodisation) functions
 
     // (re-)creates the DataSet skeleton: everything but the per-frame values, ranges and timestamp
     void rebuildDataSetSkeleton() {
-        const std::size_t     N{_magnitudeSpectrum.size()};
-        constexpr std::size_t nSignals = 4;
+        const std::size_t N{_magnitudeSpectrum.size()};
+        const std::size_t nSignals = outputPhase ? 4UZ : 3UZ;
 
         U& ds        = _dataSetSkeleton;
         ds           = U{};
@@ -222,6 +228,11 @@ On the choice of window (mathematically aka. apodisation) functions
         ds.signal_names      = {std::format("Magnitude({})", signal_name), std::format("Phase({})", signal_name), std::format("Re(FFT({}))", signal_name), std::format("Im(FFT({}))", signal_name)};
         ds.signal_quantities = {"Magnitude(FFT)", "Phase(FFT)", "Re(FFT)", "Im(FFT)"};
         ds.signal_units      = {std::format("{}/√Hz", signal_unit), "rad", std::format("Re{}", signal_unit) /* real part */, std::format("Im{}", signal_unit) /* imaginary part */};
+        if (!outputPhase) {
+            ds.signal_names.erase(std::next(ds.signal_names.begin()));
+            ds.signal_quantities.erase(std::next(ds.signal_quantities.begin()));
+            ds.signal_units.erase(std::next(ds.signal_units.begin()));
+        }
         assert(ds.signal_names.size() == nSignals);
         assert(ds.signal_quantities.size() == nSignals);
         assert(ds.signal_units.size() == nSignals);
@@ -236,6 +247,7 @@ On the choice of window (mathematically aka. apodisation) functions
             {std::pmr::string("output_in_db"), pmt::Value(outputInDb)},                       //
             {std::pmr::string("output_in_deg"), pmt::Value(outputInDeg)},                     //
             {std::pmr::string("unwrap_phase"), pmt::Value(unwrapPhase)},                      //
+            {std::pmr::string("output_phase"), pmt::Value(outputPhase)},                      //
             {std::pmr::string("input_chunk_size"), pmt::Value(this->input_chunk_size)},       //
             {std::pmr::string("output_chunk_size"), gr::pmt::Value(this->output_chunk_size)}, //
             {std::pmr::string("stride"), gr::pmt::Value(this->stride)}};
@@ -250,8 +262,10 @@ On the choice of window (mathematically aka. apodisation) functions
     }
 
     constexpr void createDataset(U& ds) {
-        const std::size_t     N{_magnitudeSpectrum.size()};
-        constexpr std::size_t nSignals = 4;
+        const std::size_t N{_magnitudeSpectrum.size()};
+        const std::size_t nSignals = outputPhase ? 4UZ : 3UZ;
+        const std::size_t reIndex  = nSignals - 2UZ;
+        const std::size_t imIndex  = nSignals - 1UZ;
 
         if (_dataSetSkeletonDirty || _dataSetSkeleton.signal_values.size() != nSignals * N) {
             rebuildDataSetSkeleton();
@@ -263,20 +277,22 @@ On the choice of window (mathematically aka. apodisation) functions
 
         assert(_magnitudeSpectrum.size() == ds.signalValues(0UZ).size());
         std::copy_n(_magnitudeSpectrum.begin(), N, ds.signalValues(0UZ).begin());
-        assert(_phaseSpectrum.size() == ds.signalValues(1UZ).size());
-        std::copy_n(_phaseSpectrum.begin(), N, ds.signalValues(1UZ).begin());
+        if (outputPhase) {
+            assert(_phaseSpectrum.size() == ds.signalValues(1UZ).size());
+            std::copy_n(_phaseSpectrum.begin(), N, ds.signalValues(1UZ).begin());
+        }
 
         if constexpr (gr::meta::complex_like<T>) { // complex in -> complex-out FFT
-            assert(_outData.size() == ds.signalValues(2UZ).size());
-            assert(_outData.size() == ds.signalValues(3UZ).size());
-            std::ranges::transform(_outData, ds.signalValues(2UZ).begin(), [](const auto& c) { return std::real(c); });
-            std::ranges::transform(_outData, ds.signalValues(3UZ).begin(), [](const auto& c) { return std::imag(c); });
+            assert(_outData.size() == ds.signalValues(reIndex).size());
+            assert(_outData.size() == ds.signalValues(imIndex).size());
+            std::ranges::transform(_outData, ds.signalValues(reIndex).begin(), [](const auto& c) { return std::real(c); });
+            std::ranges::transform(_outData, ds.signalValues(imIndex).begin(), [](const auto& c) { return std::imag(c); });
         } else { // handle real-valued FFT -- only the upper half (positive frequencies) are relevant, negative are a copy and/or inverted (for imaginary part)
             auto fftUpperHalf = std::span{_outData}.last(N);
-            assert(fftUpperHalf.size() == ds.signalValues(2UZ).size());
-            assert(fftUpperHalf.size() == ds.signalValues(3UZ).size());
-            std::ranges::transform(fftUpperHalf, ds.signalValues(2UZ).begin(), [](const auto& c) { return std::real(c); });
-            std::ranges::transform(fftUpperHalf, ds.signalValues(3UZ).begin(), [](const auto& c) { return std::imag(c); });
+            assert(fftUpperHalf.size() == ds.signalValues(reIndex).size());
+            assert(fftUpperHalf.size() == ds.signalValues(imIndex).size());
+            std::ranges::transform(fftUpperHalf, ds.signalValues(reIndex).begin(), [](const auto& c) { return std::real(c); });
+            std::ranges::transform(fftUpperHalf, ds.signalValues(imIndex).begin(), [](const auto& c) { return std::imag(c); });
         }
 
         for (std::size_t i = 0; i < nSignals; i++) {
