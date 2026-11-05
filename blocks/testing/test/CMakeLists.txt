@@ -23,7 +23,12 @@ gr_add_graph_test(
   graphs/vector-expect-mismatch.yaml
   PASS_REGULAR_EXPRESSION
   "sample 2 is 3, expected 3\\.5")
-gr_add_graph_test(graph_testing_vector_expect_tolerance graphs/vector-expect-tolerance.yaml)
+# the graph expects the smallest subnormal double, which a worker that flushes subnormals reads as zero
+gr_add_graph_test(
+  graph_testing_vector_expect_tolerance
+  graphs/vector-expect-tolerance.yaml
+  SET
+  "flush_subnormals=false")
 gr_add_graph_test(
   graph_testing_vector_expect_tolerance_mismatch
   graphs/vector-expect-tolerance-mismatch.yaml
