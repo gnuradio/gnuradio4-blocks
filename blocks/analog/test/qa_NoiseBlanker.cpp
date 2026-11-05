@@ -27,6 +27,446 @@
 
 #include <gnuradio-4.0/testing/TestSpans.hpp>
 
+namespace gr::blocks::analog::reference {
+
+/// `NoiseBlanker` sample by sample on every call, enabled or not.
+template<typename T>
+requires(std::same_as<T, float> || std::same_as<T, std::complex<float>>)
+struct NoiseBlanker : Block<NoiseBlanker<T>, NoTagPropagation> {
+    PortIn<T>  in;
+    PortOut<T> out;
+
+    Annotated<bool, "enabled", Visible>                                                                                                       enabled            = false;
+    Annotated<float, "sample_rate", Unit<"Hz">, Limits<0.f, std::numeric_limits<float>::max(), detail::kSampleRatePositive>>                  sample_rate        = 96000.f;
+    Annotated<double, "threshold_db", Unit<"dB">, Limits<std::numeric_limits<double>::lowest(), std::numeric_limits<double>::max()>, Visible> threshold_db       = 9.32;
+    Annotated<double, "averaging_time", Unit<"s">, Limits<0.0, std::numeric_limits<double>::max()>>                                           averaging_time     = 0.01;
+    Annotated<double, "alpha", Limits<0.0, 1.0, detail::kAlphaPositive>>                                                                      alpha              = 1e-3;
+    Annotated<gr::Size_t, "blank_samples", Limits<1U, std::numeric_limits<gr::Size_t>::max()>>                                                blank_samples      = 7U;
+    Annotated<gr::Size_t, "lookback_samples">                                                                                                 lookback_samples   = 2U;
+    Annotated<std::string, "replacement", Visible>                                                                                            replacement        = std::string("interpolate");
+    Annotated<bool, "retrigger">                                                                                                              retrigger          = false;
+    Annotated<gr::Size_t, "max_window_samples">                                                                                               max_window_samples = 0U;
+    Annotated<bool, "emit_tags">                                                                                                              emit_tags          = false;
+    Annotated<gr::Size_t, "delay_samples">                                                                                                    delay_samples      = 9U;
+    Annotated<double, "tracked_power">                                                                                                        tracked_power      = 0.0;
+    Annotated<double, "blanked_fraction">                                                                                                     blanked_fraction   = 0.0;
+
+    GR_MAKE_REFLECTABLE(NoiseBlanker, in, out, enabled, sample_rate, threshold_db, averaging_time, alpha, blank_samples, lookback_samples, replacement, retrigger, max_window_samples, emit_tags, delay_samples, tracked_power, blanked_fraction);
+
+    std::vector<T>                                      _line{};
+    std::vector<std::uint8_t>                           _marked{};
+    std::vector<std::pair<std::uint64_t, property_map>> _pendingTags{};
+    std::size_t                                         _cursor       = 0UZ;
+    std::size_t                                         _oldest       = 1UZ;
+    std::size_t                                         _ring         = 10UZ;
+    std::size_t                                         _delay        = 9UZ;
+    std::size_t                                         _lookback     = 2UZ;
+    std::size_t                                         _blank        = 7UZ;
+    std::size_t                                         _maxWindow    = 28UZ;
+    std::size_t                                         _maxSetting   = 0UZ;
+    detail::Replacement                                 _rule         = detail::Replacement::Interpolate;
+    bool                                                _enabled      = false;
+    bool                                                _retrigger    = false;
+    bool                                                _emitTags     = false;
+    float                                               _rate         = 96000.f;
+    double                                              _averaging    = 0.01;
+    double                                              _alpha        = 1e-3;
+    double                                              _threshold    = 8.5507;
+    double                                              _power        = 0.0;
+    double                                              _duty         = 0.0;
+    std::size_t                                         _warmup       = 960UZ;
+    std::size_t                                         _warmupLength = 960UZ;
+    std::uint32_t                                       _remaining    = 0U;
+    std::uint32_t                                       _windowLength = 0U;
+    std::uint32_t                                       _excess       = 0U;
+    std::uint32_t                                       _runPosition  = 0U;
+    std::uint32_t                                       _held         = 0U;
+    std::uint64_t                                       _emitted      = 0ULL;
+    T                                                   _anchor{};
+
+    explicit NoiseBlanker(property_map init = {}) : Block<NoiseBlanker<T>, NoTagPropagation>(std::move(init)) { configure({}, true); }
+
+    void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) { configure(newSettings, false); }
+
+    void configure(const property_map& newSettings, bool everything) {
+        const auto          moves       = [&newSettings, everything](std::string_view key) { return everything || newSettings.contains(key); };
+        bool                nextEnabled = _enabled;
+        float               rate        = _rate;
+        double              averaging   = _averaging;
+        double              pole        = _alpha;
+        double              threshold   = _threshold;
+        std::size_t         lookback    = _lookback;
+        std::size_t         blank       = _blank;
+        std::size_t         maxSetting  = _maxSetting;
+        detail::Replacement rule        = _rule;
+        bool                nextRetrig  = _retrigger;
+        bool                nextTags    = _emitTags;
+
+        if (moves("enabled")) {
+            nextEnabled = enabled;
+        }
+        if (moves("sample_rate")) {
+            rate = sample_rate;
+        }
+        if (moves("averaging_time")) {
+            averaging = averaging_time;
+        }
+        if (moves("alpha")) {
+            pole = alpha;
+        }
+        if (moves("threshold_db")) {
+            threshold = std::pow(10.0, threshold_db / 10.0);
+        }
+        if (moves("blank_samples")) {
+            blank = static_cast<std::size_t>(blank_samples.value);
+        }
+        if (moves("lookback_samples")) {
+            lookback = static_cast<std::size_t>(lookback_samples.value);
+        }
+        if (moves("max_window_samples")) {
+            maxSetting = static_cast<std::size_t>(max_window_samples.value);
+        }
+        if (moves("replacement")) {
+            const auto parsed = detail::parseReplacement(replacement.value);
+            if (!parsed) {
+                throw gr::exception(parsed.error().message);
+            }
+            rule = *parsed;
+        }
+        if (moves("retrigger")) {
+            nextRetrig = retrigger;
+        }
+        if (moves("emit_tags")) {
+            nextTags = emit_tags;
+        }
+        const auto coefficient = detail::averagerCoefficient(pole, averaging, static_cast<double>(rate));
+        if (!coefficient) {
+            throw gr::exception(coefficient.error().message);
+        }
+
+        const bool restart = everything || *coefficient != _alpha || (nextEnabled && !_enabled);
+        _enabled           = nextEnabled;
+        _rate              = rate;
+        _averaging         = averaging;
+        _alpha             = *coefficient;
+        alpha              = _alpha;
+        _threshold         = threshold;
+        _maxSetting        = maxSetting;
+        _maxWindow         = maxSetting == 0UZ ? 4UZ * blank : maxSetting;
+        _rule              = rule;
+        _retrigger         = nextRetrig;
+        _emitTags          = nextTags;
+        _warmupLength      = averaging > 0.0 ? static_cast<std::size_t>(std::ceil(static_cast<double>(rate) * averaging)) : static_cast<std::size_t>(std::ceil(1.0 / _alpha));
+        if (restart) {
+            _warmup = _warmupLength;
+        }
+        if (everything || lookback != _lookback || blank != _blank) {
+            relay(lookback, blank);
+        }
+    }
+
+    void start() {
+        _pendingTags.clear();
+        _emitted = 0ULL;
+        restart();
+    }
+
+    void reset() {
+        drop(_delay);
+        restart();
+    }
+
+    [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
+        const std::size_t nSamples = std::min(inSpan.size(), outSpan.size());
+        const std::size_t nTags    = inSpan.rawTags.size();
+        std::size_t       tag      = 0UZ;
+        std::size_t       leaving  = 0UZ;
+
+        for (std::size_t i = 0UZ; i < nSamples; ++i) {
+            const std::uint64_t at = _emitted + i;
+            while (tag < nTags && inSpan.rawTags[tag].index <= inSpan.streamIndex + i) {
+                if (inSpan.rawTags[tag].index >= inSpan.streamIndex) {
+                    property_map forwarded = this->filterAndSubstituteTag(inSpan.rawTags[tag].map);
+                    if (!forwarded.empty()) {
+                        _pendingTags.emplace_back(at + _delay, std::move(forwarded));
+                    }
+                }
+                ++tag;
+            }
+            accept(inSpan[i]);
+            while (leaving < _pendingTags.size() && _pendingTags[leaving].first <= at) {
+                outSpan.publishTag(_pendingTags[leaving].second, i);
+                ++leaving;
+            }
+            outSpan[i] = emit(outSpan, i);
+        }
+        _pendingTags.erase(_pendingTags.begin(), _pendingTags.begin() + static_cast<std::ptrdiff_t>(leaving));
+        _emitted += nSamples;
+
+        if (tracked_power.value != _power || blanked_fraction.value != _duty) {
+            tracked_power    = _power;
+            blanked_fraction = _duty;
+            std::ignore      = this->updateActiveParameters({"tracked_power", "blanked_fraction"});
+        }
+        std::ignore = inSpan.consume(nSamples);
+        outSpan.publish(nSamples);
+        return work::Status::OK;
+    }
+
+    template<typename TInputSpans, typename TOutputSpans>
+    void forwardTags(TInputSpans& inputSpans, TOutputSpans& outputSpans, std::size_t processedIn) {
+        if (processedIn > 0UZ) {
+            return;
+        }
+        std::vector<std::pair<std::uint64_t, property_map>> leaving = std::move(_pendingTags);
+        _pendingTags.clear();
+        if (_emitTags) {
+            std::uint32_t length = _runPosition;
+            for (std::size_t ahead = 1UZ; ahead <= _delay; ++ahead) {
+                if (_marked[slot(ahead)] == 0U) {
+                    continue;
+                }
+                ++length;
+                if (ahead == _delay || _marked[slot(ahead + 1UZ)] == 0U) {
+                    leaving.emplace_back(_emitted + ahead - 1UZ, marker(length));
+                    length = 0U;
+                }
+            }
+        }
+        std::ranges::stable_sort(leaving, std::ranges::less{}, &std::pair<std::uint64_t, property_map>::first);
+
+        const std::pmr::string endOfStream = static_cast<std::pmr::string>(gr::tag::END_OF_STREAM);
+        gr::for_each_reader_span(
+            [this, &leaving, &endOfStream](auto& span) {
+                if (!span.isSync || !span.isConnected) {
+                    return;
+                }
+                for (const gr::Tag& tag : span.rawTags) {
+                    if (tag.index < span.streamIndex) {
+                        continue;
+                    }
+                    property_map forwarded = this->filterAndSubstituteTag(tag.map);
+                    forwarded.erase(endOfStream);
+                    if (!forwarded.empty()) {
+                        leaving.emplace_back(std::numeric_limits<std::uint64_t>::max(), std::move(forwarded));
+                    }
+                }
+            },
+            inputSpans);
+
+        for (const auto& held : leaving) {
+            gr::for_each_writer_span(
+                [&held](auto& span) {
+                    if (span.isSync && span.isConnected) {
+                        span.publishTag(held.second, 0UZ);
+                    }
+                },
+                outputSpans);
+        }
+    }
+
+private:
+    [[nodiscard]] static constexpr double squaredMagnitude(T sample) noexcept {
+        if constexpr (std::same_as<T, float>) {
+            return static_cast<double>(sample) * static_cast<double>(sample);
+        } else {
+            return static_cast<double>(sample.real()) * static_cast<double>(sample.real()) + static_cast<double>(sample.imag()) * static_cast<double>(sample.imag());
+        }
+    }
+
+    [[nodiscard]] static property_map marker(std::uint32_t length) { return property_map{{detail::kNoiseBlanked, static_cast<gr::Size_t>(length)}}; }
+
+    [[nodiscard]] std::size_t slot(std::size_t ahead) const noexcept {
+        const std::size_t at = _oldest + ahead;
+        return at >= _ring ? at - _ring : at;
+    }
+
+    void relay(std::size_t lookback, std::size_t blank) {
+        const std::size_t         delay = lookback + blank;
+        std::vector<T>            line(delay + 1UZ, T{});
+        std::vector<std::uint8_t> marked(delay + 1UZ, std::uint8_t{0});
+        if (!_line.empty()) {
+            const std::size_t kept = std::min(delay, _delay);
+            line[0UZ]              = _line[slot(0UZ)];
+            marked[0UZ]            = _marked[slot(0UZ)];
+            for (std::size_t k = 1UZ; k <= kept; ++k) {
+                line[delay - kept + k]   = _line[slot(_delay - kept + k)];
+                marked[delay - kept + k] = _marked[slot(_delay - kept + k)];
+            }
+            if (_runPosition > 0U) {
+                std::fill(marked.begin() + 1, marked.begin() + static_cast<std::ptrdiff_t>(delay - kept + 1UZ), std::uint8_t{1});
+            }
+            if (delay >= _delay) {
+                for (auto& held : _pendingTags) {
+                    held.first += delay - _delay;
+                }
+            } else {
+                drop(_delay - delay);
+            }
+        }
+        if (marked[1UZ] == 0U) {
+            _runPosition = 0U;
+            _held        = 0U;
+        }
+        _line         = std::move(line);
+        _marked       = std::move(marked);
+        _ring         = delay + 1UZ;
+        _cursor       = delay;
+        _oldest       = 0UZ;
+        _delay        = delay;
+        _lookback     = lookback;
+        _blank        = blank;
+        _remaining    = std::min(_remaining, static_cast<std::uint32_t>(blank));
+        delay_samples = static_cast<gr::Size_t>(delay);
+    }
+
+    void restart() {
+        std::ranges::fill(_line, T{});
+        _marked.assign(_ring, std::uint8_t{0});
+        _cursor       = 0UZ;
+        _oldest       = 1UZ;
+        _power        = 0.0;
+        _duty         = 0.0;
+        _warmup       = _warmupLength;
+        _remaining    = 0U;
+        _windowLength = 0U;
+        _excess       = 0U;
+        _runPosition  = 0U;
+        _held         = 0U;
+        _anchor       = T{};
+    }
+
+    void drop(std::size_t dropped) {
+        const bool                                          holding = _runPosition > 0U && _held == _runPosition;
+        std::uint32_t                                       length  = _runPosition;
+        std::size_t                                         tag     = 0UZ;
+        std::vector<std::pair<std::uint64_t, property_map>> pending;
+        pending.reserve(_pendingTags.size() + dropped);
+        for (std::size_t ahead = 1UZ; ahead <= dropped; ++ahead) {
+            for (; tag < _pendingTags.size() && _pendingTags[tag].first < _emitted + ahead; ++tag) {
+                pending.emplace_back(_emitted, std::move(_pendingTags[tag].second));
+            }
+            if (_marked[slot(ahead)] == 0U) {
+                _anchor = _line[slot(ahead)];
+                continue;
+            }
+            ++length;
+            if (ahead == _delay || _marked[slot(ahead + 1UZ)] == 0U) {
+                if (_emitTags) {
+                    pending.emplace_back(_emitted, marker(length));
+                }
+                length = 0U;
+            }
+        }
+        for (; tag < _pendingTags.size(); ++tag) {
+            pending.emplace_back(_pendingTags[tag].first - dropped, std::move(_pendingTags[tag].second));
+        }
+        const bool goesOn = _runPosition > 0U && length == _runPosition + dropped;
+        _held             = goesOn ? (holding ? length : _held) : 0U;
+        _runPosition      = length;
+        _pendingTags      = std::move(pending);
+    }
+
+    void accept(T sample) {
+        const double power      = squaredMagnitude(sample);
+        const bool   windowOpen = _remaining > 0U;
+
+        bool detected = false;
+        if (_warmup > 0UZ) {
+            --_warmup;
+            detected = _enabled && !(power < std::numeric_limits<double>::infinity());
+        } else if (_enabled) {
+            detected = !(power <= _threshold * _power);
+        }
+        if (!windowOpen && !detected && _enabled) {
+            _power += _alpha * (power - _power);
+            if (_power < std::numeric_limits<double>::min()) {
+                _power = 0.0;
+            }
+        }
+
+        _cursor        = _cursor + 1UZ == _ring ? 0UZ : _cursor + 1UZ;
+        _oldest        = _cursor + 1UZ == _ring ? 0UZ : _cursor + 1UZ;
+        _line[_cursor] = sample;
+        bool marked    = windowOpen;
+
+        if (detected && !windowOpen) {
+            for (std::size_t back = 1UZ; back <= _lookback; ++back) {
+                _marked[_cursor >= back ? _cursor - back : _cursor + _ring - back] = 1U;
+            }
+            _windowLength = static_cast<std::uint32_t>(_lookback);
+            _remaining    = static_cast<std::uint32_t>(_blank);
+            marked        = true;
+        }
+
+        _marked[_cursor] = marked ? std::uint8_t{1} : std::uint8_t{0};
+        _windowLength    = marked ? _windowLength + 1U : 0U;
+        _excess          = marked ? _excess + 1U : (_excess > 0U ? _excess - 1U : 0U);
+        if (_excess >= _warmupLength) {
+            _warmup = _warmupLength;
+            _excess = 0U;
+        }
+        _duty += 0.1 * _alpha * ((marked ? 1.0 : 0.0) - _duty);
+        if (_duty < std::numeric_limits<double>::min()) {
+            _duty = 0.0;
+        }
+
+        if (detected && windowOpen && _retrigger) {
+            const std::uint32_t room = _windowLength > static_cast<std::uint32_t>(_maxWindow) ? 0U : static_cast<std::uint32_t>(_maxWindow) + 1U - _windowLength;
+            _remaining               = std::min(static_cast<std::uint32_t>(_blank), room);
+        }
+        if (_remaining > 0U) {
+            --_remaining;
+        }
+    }
+
+    template<typename TOutSpan>
+    [[nodiscard]] T emit(TOutSpan& outSpan, std::size_t at) {
+        const std::size_t oldest = slot(0UZ);
+        if (_marked[oldest] == 0U) {
+            _anchor      = _line[oldest];
+            _runPosition = 0U;
+            _held        = 0U;
+            return _anchor;
+        }
+
+        std::size_t ahead = 1UZ;
+        while (ahead <= _delay && _marked[slot(ahead)] != 0U) {
+            ++ahead;
+        }
+        ++_runPosition;
+        if (ahead > _delay) {
+            _held = _runPosition;
+            return _rule == detail::Replacement::Zero ? T{} : _anchor;
+        }
+
+        const std::uint32_t position = _runPosition - _held;
+        const std::uint32_t span     = position + static_cast<std::uint32_t>(ahead) - 1U;
+        if (ahead == 1UZ) {
+            if (_emitTags) {
+                outSpan.publishTag(marker(_runPosition), at);
+            }
+            _runPosition = 0U;
+            _held        = 0U;
+        }
+
+        switch (_rule) {
+        case detail::Replacement::Zero: return T{};
+        case detail::Replacement::Hold: return _anchor;
+        default: break;
+        }
+        const T      after  = _line[slot(ahead)];
+        const double weight = static_cast<double>(position) / static_cast<double>(span + 1U);
+        if constexpr (std::same_as<T, float>) {
+            return static_cast<float>(static_cast<double>(_anchor) + (static_cast<double>(after) - static_cast<double>(_anchor)) * weight);
+        } else {
+            return T(static_cast<float>(static_cast<double>(_anchor.real()) + (static_cast<double>(after.real()) - static_cast<double>(_anchor.real())) * weight), static_cast<float>(static_cast<double>(_anchor.imag()) + (static_cast<double>(after.imag()) - static_cast<double>(_anchor.imag())) * weight));
+        }
+    }
+};
+
+} // namespace gr::blocks::analog::reference
+
 namespace {
 
 using gr::blocks::analog::NoiseBlanker;
@@ -187,6 +627,71 @@ struct Random {
         weight *= planted / static_cast<double>(k + 1UZ);
     }
     return total;
+}
+
+/// What a driven run delivered: every output sample, every published tag, and the two observables at the end.
+template<typename T>
+struct Blanked {
+    std::vector<T>       samples;
+    std::vector<gr::Tag> tags;
+    double               trackedPower    = 0.0;
+    double               blankedFraction = 0.0;
+};
+
+/// Settings that take effect from the first call at or past input `at`.
+struct Change {
+    std::size_t      at = 0UZ;
+    gr::property_map settings;
+};
+
+/// Drives `TBlock` over @p input carrying @p tags. The calls cycle through windows of 1, 9, 64, 1000, 4096 and 3
+/// samples, and every third call's output holds half of its input window.
+template<typename TBlock, typename T>
+[[nodiscard]] Blanked<T> driveScripted(std::span<const T> input, std::span<const gr::Tag> tags, std::span<const Change> changes) {
+    constexpr std::size_t kWindows[] = {1UZ, 9UZ, 64UZ, 1000UZ, 4096UZ, 3UZ};
+
+    TBlock block{gr::property_map{}};
+    block.settings().init();
+    std::ignore = block.settings().applyStagedParameters();
+    block.start();
+    Blanked<T>      result;
+    test::TagCursor cursor(tags);
+    std::vector<T>  scratch(4096UZ);
+    std::size_t     at   = 0UZ;
+    std::size_t     next = 0UZ;
+    for (std::size_t call = 0UZ; at < input.size(); ++call) {
+        for (; next < changes.size() && changes[next].at <= at; ++next) {
+            apply(block, changes[next].settings);
+        }
+        const std::size_t   count = std::min(kWindows[call % std::size(kWindows)], input.size() - at);
+        const std::size_t   room  = call % 3UZ == 2UZ ? std::max(count / 2UZ, 1UZ) : count;
+        test::InputSpan<T>  inSpan(input.subspan(at, count), at, cursor.window(at, count));
+        test::OutputSpan<T> outSpan(std::span<T>(scratch).first(room), result.samples.size(), &result.tags);
+        std::ignore = block.processBulk(inSpan, outSpan);
+        cursor.retire(inSpan);
+        result.samples.insert(result.samples.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(outSpan.count));
+        at += inSpan.consumed;
+    }
+    result.trackedPower    = block.tracked_power.value;
+    result.blankedFraction = block.blanked_fraction.value;
+    return result;
+}
+
+/// Noise with an impulse every 397 samples and a level ten times higher over inputs 15000 to 15599.
+template<typename T>
+[[nodiscard]] std::vector<T> impulsive(std::size_t count) {
+    const std::vector<CF> base = noise(count, 0x9216d5d98979fb1bULL);
+    std::vector<T>        x(count);
+    for (std::size_t i = 0UZ; i < count; ++i) {
+        const float scale = i >= 15000UZ && i < 15600UZ ? 1.f : 0.1f;
+        const CF    value = (i % 397UZ == 0UZ ? CF(30.f, -20.f) : base[i]) * scale;
+        if constexpr (std::same_as<T, float>) {
+            x[i] = value.real();
+        } else {
+            x[i] = value;
+        }
+    }
+    return x;
 }
 
 } // namespace
@@ -555,6 +1060,31 @@ const boost::ut::suite<"NoiseBlanker"> noiseBlankerTests = [] {
             longest = std::max(longest, run);
         }
         expect(le(longest, kBurst + 9UZ)) << "and a sustained burst is replaced for as long as it lasts and no longer";
+    };
+
+    "samples, tags and observables leave as the per-sample form's, enabled, disabled and resized"_test = [] {
+        const auto compare = []<typename T>(const char* type) {
+            const std::vector<T> input = impulsive<T>(20000UZ);
+            std::vector<gr::Tag> tags;
+            for (std::size_t at = 5UZ; at < input.size(); at += 211UZ + at % 389UZ) {
+                tags.push_back(gr::Tag{at, {{"probe", static_cast<gr::Size_t>(at)}}});
+            }
+            const std::vector<Change> changes = {
+                {0UZ, {{"sample_rate", 1e5f}, {"averaging_time", 0.01}, {"emit_tags", true}}},                                                                                                                                                                                       // disabled from the start
+                {3000UZ, {{"enabled", true}}}, {8338UZ, {{"enabled", false}}},                                                                                                                                                                                                       // shortly after the impulse at 8337
+                {11000UZ, {{"lookback_samples", gr::Size_t(4)}, {"blank_samples", gr::Size_t(10)}}}, {13000UZ, {{"lookback_samples", gr::Size_t(1)}, {"blank_samples", gr::Size_t(3)}}}, {14000UZ, {{"enabled", true}}}, {15500UZ, {{"enabled", false}, {"averaging_time", 0.001}}}, // a count of replaced inputs above the new warm-up length
+            };
+            const Blanked<T> want = driveScripted<gr::blocks::analog::reference::NoiseBlanker<T>, T>(input, tags, changes);
+            const Blanked<T> got  = driveScripted<NoiseBlanker<T>, T>(input, tags, changes);
+            expect(eq(got.samples.size(), input.size()) && eq(want.samples.size(), input.size())) << type;
+            expect(std::ranges::equal(std::as_bytes(std::span(got.samples)), std::as_bytes(std::span(want.samples)))) << type << ": the same bits";
+            expect(gt(want.tags.size(), 60UZ)) << type << ": the run carries probes and markers";
+            expect(got.tags == want.tags) << type << ": the same tags at the same outputs, in the same order";
+            expect(eq(got.trackedPower, want.trackedPower) && eq(got.blankedFraction, want.blankedFraction)) << type << ": the same observables";
+            expect(gt(want.blankedFraction, 0.0)) << type << ": the duty average still decays at the end";
+        };
+        compare.template operator()<float>("float");
+        compare.template operator()<CF>("complex<float>");
     };
 
     "the output does not depend on the chunking"_test = [] {
@@ -1104,6 +1634,64 @@ const boost::ut::suite<"NoiseBlanker"> noiseBlankerTests = [] {
         expect(identical) << "both states and the output agree bit for bit with the unflushed recursions at every sample";
         expect(lt(power, 1e-300) && lt(duty, 1e-300)) << "and the comparison ran until each state was below 1e-300";
         expect(eq(powerSamples, kStep + 997UZ)) << "the power crossing 1e-300 where its pole says, well before it could be flushed";
+    };
+
+    "a call flushes a subnormal tracker once, at its end"_test = [] {
+        // At alpha = 0.1 the reference flushes the power at zero number 6 724 and the duty, from a half, at 70 416.
+        // The block keeps the subnormal power for the rest of the call, where it stops at the smallest subnormal since
+        // this pole does not decay it further, and sets it to zero when the call ends.
+        using Reference = gr::blocks::analog::reference::NoiseBlanker<CF>;
+
+        const gr::property_map settings{{"enabled", true}, {"sample_rate", kRate}, {"averaging_time", 0.0}, {"alpha", 0.1}, {"emit_tags", true}};
+        const auto             seeded = [&]<typename TBlock>(TBlock block) {
+            block.start();
+            block._warmup = 0UZ;
+            block._power  = 1.0; // where a settled tracker on unit-power noise sits
+            block._duty   = 0.5; // and where a run of impulses leaves the duty
+            return block;
+        };
+        const auto sameBits = [](const test::Result<CF>& a, const test::Result<CF>& b) { return std::ranges::equal(std::as_bytes(std::span(a.samples)), std::as_bytes(std::span(b.samples))) && a.tags == b.tags; };
+
+        std::vector<CF> quiet = noise(3000UZ, 0x6a09e667f3bcc908ULL);
+        for (CF& sample : quiet) {
+            sample *= 0.1f;
+        }
+        quiet[500UZ]  = CF(30.f, -20.f);
+        quiet[1500UZ] = CF(-25.f, 10.f);
+
+        NoiseBlanker<CF> block     = seeded(make<CF>(settings));
+        Reference        reference = seeded([&] {
+            Reference b{settings};
+            b.settings().init();
+            std::ignore = b.settings().applyStagedParameters();
+            return b;
+        }());
+
+        const std::vector<CF>  zeros(7500UZ, CF{});
+        const test::Result<CF> gotZeros  = test::run(block, std::span<const CF>(zeros));
+        const test::Result<CF> wantZeros = test::run(reference, std::span<const CF>(zeros));
+        expect(that % sameBits(gotZeros, wantZeros)) << "the silence leaves as the per-sample form's, bit for bit";
+        expect(eq(std::fpclassify(reference._power), FP_ZERO) && eq(std::fpclassify(block._power), FP_ZERO)) << "both end the call with the power at zero, the block's flushed at the end";
+        expect(block._duty == reference._duty && gt(block._duty, 0.0)) << "the duty is normal at the end and equal to the reference's";
+
+        const test::Result<CF> gotQuiet  = test::run(block, std::span<const CF>(quiet));
+        const test::Result<CF> wantQuiet = test::run(reference, std::span<const CF>(quiet));
+        expect(that % sameBits(gotQuiet, wantQuiet)) << "the next call, which finds the power at zero, leaves samples and tags as the per-sample form's";
+        expect(gt(gotQuiet.tags.size(), 2UZ)) << "with the impulses detected and marked";
+        expect(block._power == reference._power && block._duty == reference._duty) << "and with the same trackers at its end";
+
+        NoiseBlanker<CF>       longRun = seeded(make<CF>(settings));
+        Reference              longRef = seeded([&] {
+            Reference b{settings};
+            b.settings().init();
+            std::ignore = b.settings().applyStagedParameters();
+            return b;
+        }());
+        const std::vector<CF>  silence(80000UZ, CF{});
+        const test::Result<CF> gotSilence  = test::run(longRun, std::span<const CF>(silence));
+        const test::Result<CF> wantSilence = test::run(longRef, std::span<const CF>(silence));
+        expect(that % sameBits(gotSilence, wantSilence)) << "a call that carries both trackers into the subnormals leaves the same samples";
+        expect(eq(std::fpclassify(longRun._power), FP_ZERO) && eq(std::fpclassify(longRun._duty), FP_ZERO)) << "and ends with both at zero";
     };
 
     "the per-sample cost stays inside the recorded budget"_test = [] {

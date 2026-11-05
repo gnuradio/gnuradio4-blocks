@@ -146,21 +146,56 @@ private:
     }
 };
 
-/// @brief Single-pole power average against a linear threshold; the dB conversion happens on set, not per sample.
+template<typename T>
+[[nodiscard]] constexpr double magnitudeSquared(T sample) noexcept {
+    if constexpr (std::same_as<T, float>) {
+        return static_cast<double>(sample) * static_cast<double>(sample);
+    } else {
+        return static_cast<double>(sample.real()) * static_cast<double>(sample.real()) + static_cast<double>(sample.imag()) * static_cast<double>(sample.imag());
+    }
+}
+
+/**
+ * @brief Single-pole power average against a linear threshold; the dB conversion happens on set, not per sample.
+ *
+ * `begin` copies the average into a `Pass`, which a call holds in a local and updates per sample. `end` stores it back
+ * and sets an average below the smallest normal `double` to zero. A silent input decays the average into the
+ * subnormals, where each operation on it costs a microcode assist.
+ */
 struct PowerDetector {
     double _power     = 0.0;
     double _alpha     = 1e-4;
     double _threshold = 1e-15;
 
+    struct Pass {
+        double _power;
+        double _alpha;
+        double _threshold;
+
+        [[nodiscard]] bool unmuted(double squared) noexcept {
+            _power = (1.0 - _alpha) * _power + _alpha * squared;
+            return _power >= _threshold;
+        }
+
+        template<typename T>
+        [[nodiscard]] bool detectorUnmuted(T sample) noexcept {
+            return unmuted(detail::magnitudeSquared(sample));
+        }
+    };
+
     void reset() noexcept { _power = 0.0; }
 
-    [[nodiscard]] bool unmuted(double magnitudeSquared) noexcept {
-        _power = (1.0 - _alpha) * _power + _alpha * magnitudeSquared;
-        if (_power < std::numeric_limits<double>::min()) {
-            _power = 0.0; // a pole below one decays a silent input into subnormals and stays there; each one costs a microcode assist
-        }
-        return _power >= _threshold;
+    /// @brief Sets the threshold from a level in dB. A positive threshold below the smallest normal `double` becomes
+    /// that value: an average is either zero or normal once flushed, and the unflushed average of a call must decide
+    /// as the flushed one does.
+    void setThresholdDb(double thresholdDb) noexcept {
+        const double threshold = std::pow(10.0, thresholdDb / 10.0);
+        _threshold             = threshold > 0.0 ? std::max(threshold, std::numeric_limits<double>::min()) : threshold;
     }
+
+    [[nodiscard]] Pass begin() const noexcept { return {_power, _alpha, _threshold}; }
+
+    void end(const Pass& pass) noexcept { _power = pass._power < std::numeric_limits<double>::min() ? 0.0 : pass._power; }
 };
 
 /// @brief One single-bin DFT of length N by the three-term recursion, normalized so |X| does not depend on N.
@@ -192,23 +227,14 @@ struct Goertzel {
     }
 };
 
-template<typename T>
-[[nodiscard]] constexpr double magnitudeSquared(T sample) noexcept {
-    if constexpr (std::same_as<T, float>) {
-        return static_cast<double>(sample) * static_cast<double>(sample);
-    } else {
-        return static_cast<double>(sample.real()) * static_cast<double>(sample.real()) + static_cast<double>(sample.imag()) * static_cast<double>(sample.imag());
-    }
-}
-
 /**
  * @brief Ports, tags and gating for a squelch whose detector the owning block supplies.
  *
- * The owner provides `detectorUnmuted(sample)`; everything here is the part the ramping squelches would otherwise each
- * get subtly differently. Tag forwarding is manual because the produced-sample map is data-dependent while gating: an
- * input tag on a suppressed sample moves forward to the next produced one, and one with no produced sample left in the
- * call is held rather than dropped. The key filter is the framework's, so an owned key such as `sample_rate` leaves
- * carrying the owner's value.
+ * The detector handed to `run` provides `detectorUnmuted(sample)`; everything here is the part the ramping squelches
+ * would otherwise each get subtly differently. Tag forwarding is manual because the produced-sample map is
+ * data-dependent while gating: an input tag on a suppressed sample moves forward to the next produced one, and one with
+ * no produced sample left in the call is held rather than dropped. The key filter is the framework's, so an owned key
+ * such as `sample_rate` leaves carrying the owner's value.
  */
 template<typename TOwner>
 struct SquelchGate {
@@ -221,7 +247,7 @@ struct SquelchGate {
     }
 
     template<typename TInSpan, typename TOutSpan>
-    [[nodiscard]] std::size_t run(TOwner& owner, TInSpan& inSpan, TOutSpan& outSpan, std::size_t nSamples, bool gating) {
+    [[nodiscard]] std::size_t run(TOwner& owner, auto& detector, TInSpan& inSpan, TOutSpan& outSpan, std::size_t nSamples, bool gating) {
         const std::size_t nTags  = inSpan.rawTags.size();
         std::size_t       cursor = 0UZ;
         std::size_t       made   = 0UZ;
@@ -230,7 +256,7 @@ struct SquelchGate {
             if (cursor < nTags) {
                 collect(owner, inSpan, i, cursor);
             }
-            const GateMachine::Step step = _gate.step(owner.detectorUnmuted(inSpan[i]));
+            const GateMachine::Step step = _gate.step(detector.detectorUnmuted(inSpan[i]));
             if (!step.produce && gating) {
                 continue;
             }
@@ -321,9 +347,9 @@ re-publication with the value it arrived with.
         if (!coefficient) {
             throw gr::exception(coefficient.error().message);
         }
-        _detector._alpha     = *coefficient;
-        _detector._threshold = std::pow(10.0, threshold_db / 10.0);
-        alpha                = _detector._alpha;
+        _detector._alpha = *coefficient;
+        _detector.setThresholdDb(threshold_db);
+        alpha = _detector._alpha;
         _machine._gate.setRamp(static_cast<std::uint32_t>(ramp.value));
     }
 
@@ -332,11 +358,11 @@ re-publication with the value it arrived with.
         _machine.reset();
     }
 
-    [[nodiscard]] bool detectorUnmuted(T sample) noexcept { return _detector.unmuted(detail::magnitudeSquared(sample)); }
-
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
         const std::size_t nSamples = std::min(inSpan.size(), outSpan.size());
-        const std::size_t made     = _machine.run(*this, inSpan, outSpan, nSamples, gate);
+        auto              pass     = _detector.begin();
+        const std::size_t made     = _machine.run(*this, pass, inSpan, outSpan, nSamples, gate);
+        _detector.end(pass);
 
         unmuted     = _machine._gate.isOpen();
         std::ignore = inSpan.consume(nSamples);
@@ -427,7 +453,7 @@ machine documented on PowerSquelch.
 
     [[nodiscard]] work::Status processBulk(InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan) {
         const std::size_t nSamples = std::min(inSpan.size(), outSpan.size());
-        const std::size_t made     = _machine.run(*this, inSpan, outSpan, nSamples, gate);
+        const std::size_t made     = _machine.run(*this, *this, inSpan, outSpan, nSamples, gate);
 
         unmuted     = _machine._gate.isOpen();
         std::ignore = inSpan.consume(nSamples);
@@ -502,9 +528,9 @@ with the values it arrived with.
         if (!coefficient) {
             throw gr::exception(coefficient.error().message);
         }
-        _detector._alpha     = *coefficient;
-        _detector._threshold = std::pow(10.0, threshold_db / 10.0);
-        alpha                = _detector._alpha;
+        _detector._alpha = *coefficient;
+        _detector.setThresholdDb(threshold_db);
+        alpha = _detector._alpha;
     }
 
     void reset() { _detector.reset(); }
@@ -512,10 +538,12 @@ with the values it arrived with.
     [[nodiscard]] work::Status processBulk(std::span<const T> input, std::span<T> output) noexcept {
         const std::size_t nSamples = std::min(input.size(), output.size());
         bool              open     = unmuted;
+        auto              pass     = _detector.begin();
         for (std::size_t i = 0UZ; i < nSamples; ++i) {
-            open      = _detector.unmuted(detail::magnitudeSquared(input[i]));
+            open      = pass.detectorUnmuted(input[i]);
             output[i] = open ? input[i] : T{};
         }
+        _detector.end(pass);
         unmuted = open;
         return work::Status::OK;
     }

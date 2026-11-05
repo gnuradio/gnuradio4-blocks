@@ -168,15 +168,44 @@ private:
         std::size_t walked = 0UZ;
         _relay.begin(inSpan);
 
-        for (; walked < inSpan.size() && made < outSpan.size(); ++walked) {
+        for (; walked < inSpan.size() && made < outSpan.size() && !_relay.idle(); ++walked) {
             _relay.collect(inSpan, walked);
             if (--_counter > 0U) {
                 continue;
             }
             _counter      = _n;
             outSpan[made] = inSpan[walked];
-            releaseWaiting(outSpan, made);
+            if (!_relay._carry.empty()) {
+                releaseWaiting(outSpan, made);
+            }
             ++made;
+        }
+
+        if (walked < inSpan.size() && made < outSpan.size()) { // no tag left to place: keep every n-th item in one loop
+            const std::size_t group = static_cast<std::size_t>(_n);
+            const std::size_t left  = inSpan.size() - walked;
+            const std::size_t first = static_cast<std::size_t>(_counter) - 1UZ; // the next kept item's offset from `walked`
+            const std::size_t due   = left > first ? (left - first - 1UZ) / group + 1UZ : 0UZ;
+            const std::size_t kept  = std::min(due, outSpan.size() - made);
+            if (kept > 0UZ) { // the iterators are formed only over items the input holds
+                const auto source  = inSpan.begin() + static_cast<std::ptrdiff_t>(walked + first);
+                const auto written = outSpan.begin() + static_cast<std::ptrdiff_t>(made);
+                for (std::size_t k = 0UZ; k < kept; ++k) {
+                    written[static_cast<std::ptrdiff_t>(k)] = source[static_cast<std::ptrdiff_t>(k * group)];
+                }
+            }
+            made += kept;
+            if (kept == 0UZ) { // the input ends before the next kept item
+                walked += left;
+                _counter = static_cast<gr::Size_t>(first + 1UZ - left);
+            } else if (made == outSpan.size()) { // the output is full, and the walk stops after the last kept item
+                walked += first + (kept - 1UZ) * group + 1UZ;
+                _counter = _n;
+            } else {
+                const std::size_t after = left - (first + (kept - 1UZ) * group + 1UZ); // dropped items past the last kept one
+                walked += left;
+                _counter = static_cast<gr::Size_t>(group - after);
+            }
         }
 
         std::ignore = inSpan.consume(walked);
@@ -184,9 +213,8 @@ private:
     }
 
     void releaseWaiting(OutputSpanLike auto& outSpan, std::size_t at) {
-        const std::pmr::string sampleRate(gr::tag::SAMPLE_RATE.key());
         for (property_map& tag : _relay._carry) {
-            if (auto found = tag.find(sampleRate); found != tag.end()) {
+            if (auto found = tag.find(gr::tag::SAMPLE_RATE.key()); found != tag.end()) {
                 if (const float* rate = found->second.template get_if<float>(); rate != nullptr) {
                     _inputRate    = *rate;
                     found->second = static_cast<float>(static_cast<double>(*rate) / static_cast<double>(_n));
@@ -286,6 +314,24 @@ private:
         _relay.begin(inSpan);
 
         while (walked < inSpan.size()) {
+            if (_phase == 0U && _relay.idle()) { // no tag left to place: copy the slices of whole groups in one loop
+                const std::size_t slice  = last - first;
+                const std::size_t groups = std::min((inSpan.size() - walked) / group, (outSpan.size() - made) / slice);
+                if (groups > 0UZ) { // the iterators are formed only over groups the input holds
+                    const auto source = inSpan.begin() + static_cast<std::ptrdiff_t>(walked + first);
+                    const auto target = outSpan.begin() + static_cast<std::ptrdiff_t>(made);
+                    for (std::size_t g = 0UZ; g < groups; ++g) {
+                        for (std::size_t k = 0UZ; k < slice; ++k) {
+                            target[static_cast<std::ptrdiff_t>(g * slice + k)] = source[static_cast<std::ptrdiff_t>(g * group + k)];
+                        }
+                    }
+                }
+                walked += groups * group;
+                made += groups * slice;
+                if (walked == inSpan.size()) {
+                    break;
+                }
+            }
             const std::size_t phase = static_cast<std::size_t>(_phase);
             if (phase >= first && phase < last) { // inside the slice, copy the run that fits both spans
                 const std::size_t run = std::min({last - phase, inSpan.size() - walked, outSpan.size() - made});

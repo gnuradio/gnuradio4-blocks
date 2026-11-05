@@ -1,12 +1,14 @@
 #ifndef GNURADIO_IQ_CORRECTION_HPP
 #define GNURADIO_IQ_CORRECTION_HPP
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
 #include <format>
 #include <limits>
 #include <numbers>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -201,32 +203,47 @@ that differs from the value it derives. `reset()` sets the estimate to zero.
     /// The tracked DC offset. Call it on the thread that runs the block, or while the block is stopped.
     [[nodiscard]] std::complex<double> dcEstimate() const noexcept { return {_real, _imag}; }
 
-    /// Updates the estimate with @p sample and returns @p sample less the estimate, or @p sample unchanged while
-    /// disabled. A component of the estimate below the smallest normal `double` is set to zero, and a silent input
-    /// leaves the estimate at zero.
-    [[nodiscard]] constexpr T processOne(T sample) noexcept {
+    /// Updates the estimate with each input and writes the input less the estimate, or each input unchanged while
+    /// disabled. A component of the estimate below the smallest normal `double` is set to zero at the end of a call, and
+    /// a silent input leaves the estimate at zero. A call handles the first `min(input.size(), output.size())` samples.
+    [[nodiscard]] work::Status processBulk(std::span<const T> input, std::span<T> output) noexcept {
+        const std::size_t nSamples = std::min(input.size(), output.size());
         if (!_enabled) {
-            return sample;
+            std::copy_n(input.begin(), nSamples, output.begin());
+            return work::Status::OK;
         }
+        const double gain     = _alpha;
+        const double rest     = _oneMinusAlpha;
+        double       estimate = _real;
         if constexpr (meta::complex_like<T>) {
-            using Real            = typename T::value_type;
-            const double real     = static_cast<double>(sample.real());
-            const double imag     = static_cast<double>(sample.imag());
-            const double nextReal = _alpha * real + _oneMinusAlpha * _real;
-            const double nextImag = _alpha * imag + _oneMinusAlpha * _imag;
-            if (std::isfinite(nextReal) && std::isfinite(nextImag)) {
-                _real = flushed(nextReal);
-                _imag = flushed(nextImag);
+            using Real          = typename T::value_type;
+            double estimateImag = _imag;
+            for (std::size_t i = 0UZ; i < nSamples; ++i) {
+                const double real     = static_cast<double>(input[i].real());
+                const double imag     = static_cast<double>(input[i].imag());
+                const double nextReal = gain * real + rest * estimate;
+                const double nextImag = gain * imag + rest * estimateImag;
+                if (std::isfinite(nextReal) && std::isfinite(nextImag)) {
+                    estimate     = nextReal;
+                    estimateImag = nextImag;
+                }
+                output[i] = T(static_cast<Real>(real - estimate), static_cast<Real>(imag - estimateImag));
             }
-            return T(static_cast<Real>(real - _real), static_cast<Real>(imag - _imag));
+            _imag = flushed(estimateImag);
         } else {
-            const double real     = static_cast<double>(sample);
-            const double nextReal = _alpha * real + _oneMinusAlpha * _real;
-            if (std::isfinite(nextReal)) {
-                _real = flushed(nextReal);
+            for (std::size_t i = 0UZ; i < nSamples; ++i) {
+                const double real     = static_cast<double>(input[i]);
+                const double nextReal = gain * real + rest * estimate;
+                if (!std::isfinite(nextReal)) [[unlikely]] { // GCC compiles a select here into a move of the estimate through integer registers on every sample
+                    output[i] = static_cast<T>(real - estimate);
+                    continue;
+                }
+                estimate  = nextReal;
+                output[i] = static_cast<T>(real - estimate);
             }
-            return static_cast<T>(real - _real);
         }
+        _real = flushed(estimate);
+        return work::Status::OK;
     }
 
 private:
