@@ -20,7 +20,7 @@ namespace gr::dataset::generate {
 
 namespace detail {
 template<typename T, typename TValue = gr::meta::fundamental_base_value_type_t<T>>
-constexpr auto initialize = [](TValue value, TValue uncertainty = {}) -> T {
+constexpr auto initialize = [](TValue value, [[maybe_unused]] TValue uncertainty = {}) -> T {
     if constexpr (gr::UncertainValueLike<T>) {
         return T{value, uncertainty};
     } else {

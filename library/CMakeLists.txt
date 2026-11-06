@@ -11,6 +11,9 @@ if(NOT TARGET exprtk)
   target_include_directories(exprtk PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party>
                                            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
   target_compile_options(exprtk PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wno-null-dereference>)
+  # this target does not link gnuradio-options, so it has to ask for /bigobj itself; the single
+  # 46k-line ExprTk translation unit exceeds the COFF section limit without it (C1128)
+  target_compile_options(exprtk PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
 endif()
 if(NOT TARGET gnuradio4::exprtk)
   add_library(gnuradio4::exprtk ALIAS exprtk)

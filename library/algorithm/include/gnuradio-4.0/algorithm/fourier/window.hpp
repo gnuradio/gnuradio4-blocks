@@ -165,7 +165,7 @@ void create(ContainerType& container, Type windowFunction, const T param = std::
     switch (windowFunction) {
     case None:
     case Rectangular: {
-        std::ranges::fill(container, 1);
+        std::ranges::fill(container, static_cast<T>(1));
         return;
     }
     case Hamming: {
@@ -175,13 +175,18 @@ void create(ContainerType& container, Type windowFunction, const T param = std::
         detail::fillSymmetric<T>(container, n, [a](const std::size_t i) { return static_cast<T>(0.53836) - static_cast<T>(0.46164) * std::cos(a * static_cast<T>(i)); });
         return;
     }
-#ifdef __GNUC__
+#if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
 #endif
     case HannExp:
-#ifdef __GNUC__
+#if defined(__GNUC__)
 #pragma GCC diagnostic pop
+#elif defined(_MSC_VER)
+#pragma warning(pop)
 #endif
     case Hann: {
         // formula: w(n) = 0.5 - 0.5 * cos((2 * pi * n) / (N - 1))
@@ -300,7 +305,7 @@ void create(ContainerType& container, Type windowFunction, const T param = std::
         // formula: x = n/(N - 1); w = 0.5 (1 - cos(2 pi x / alpha)) for x < alpha/2, 1 in between, mirrored at the far end
         // alpha == 0 is Rectangular and alpha == 1 is Hann, both exactly
         if (p <= static_cast<T>(0)) {
-            std::ranges::fill(container, 1);
+            std::ranges::fill(container, static_cast<T>(1));
             return;
         }
         const T taper = static_cast<T>(n - 1) * p / static_cast<T>(2); // taper length in samples
