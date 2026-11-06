@@ -1,19 +1,25 @@
 #ifndef GNURADIO_IQ_CORRECTION_HPP
 #define GNURADIO_IQ_CORRECTION_HPP
 
-#include <array>
+#include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstddef>
 #include <format>
 #include <limits>
 #include <numbers>
+#include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <utility>
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/Port.hpp>
 #include <gnuradio-4.0/Tag.hpp>
+#include <gnuradio-4.0/algorithm/channel/IqImbalanceCorrector.hpp>
+#include <gnuradio-4.0/algorithm/filter/SinglePoleAverage.hpp>
 #include <gnuradio-4.0/annotated.hpp>
 
 namespace gr::blocks::basic {
@@ -133,51 +139,74 @@ as `pi/2 - p`, reduced to `[-pi, pi]`, and a frequency `f` as `-f`, of the same 
     }
 };
 
-GR_REGISTER_BLOCK(gr::blocks::basic::DcOffsetCorrect, [T], [ std::complex<float>, float ])
+GR_REGISTER_BLOCK(gr::blocks::basic::DcIqCorrection, [T], [ std::complex<float>, float ])
 
 template<typename T>
 requires(gr::meta::complex_like<T> || std::floating_point<T>)
-struct DcOffsetCorrect : Block<DcOffsetCorrect<T>> {
+struct DcIqCorrection : Block<DcIqCorrection<T>> {
     using Description = Doc<R""(
-@brief Subtracts a running estimate of the mean, removing DC from a complex or a real stream.
+@brief Removes DC and corrects the IQ gain and phase imbalance of a receiver's stream, each part switched on its own.
 
-On a complex stream the block removes a converter's bias and an LO leaking into its own mixer. On a real stream it
-removes the carrier level from an AM detector's envelope. It gives one sample out for each one in, of the input's type.
-The output has no delay. Every tag passes through on its own sample with the values it arrived with.
+The block sits directly after a receiver. On a complex stream it removes a converter's bias and an LO leaking into its
+own mixer, and it corrects the gain and phase imbalance between the I and Q arms. On a real stream it removes the
+carrier level from an AM detector's envelope, and the IQ part has no effect. It gives one sample out for each one in, of
+the input's type. The output has no delay. Every tag passes through on its own sample with the values it arrived with.
 
-The estimate is a single-pole average, `e = alpha * x + (1 - alpha) * e`, with `alpha = 1/(1 + tau*sample_rate)`. It
-runs in `double`, since in `float` the factor `1 - alpha` rounds to 1 once `tau*sample_rate` reaches `2^25`. A sample
-with a NaN or infinite component leaves the estimate unchanged, and the block outputs that sample less the held
-estimate. `dcEstimate()` returns the estimate, with the imaginary part zero on a real stream.
+`enable_dc` turns the DC removal on. The block subtracts a single-pole average, `e = alpha * x + (1 - alpha) * e`, with
+`alpha = 1/(1 + tau*sample_rate)`. It runs in `double`, since in `float` the factor `1 - alpha` rounds to 1 once
+`tau*sample_rate` reaches `2^25`. An output sample can differ from the sample-by-sample recursion by about one float
+rounding of the signal, and where the scheduler splits the stream can change which samples differ. A sample with a NaN
+or infinite component leaves the estimate unchanged, and the block outputs that sample less the held estimate.
+`dcEstimate()` returns the estimate, with the imaginary part zero on a real stream. `tau` sets the time constant in
+seconds, and `sample_rate` the stream rate it counts against. A change of either moves the pole and keeps the estimate.
+The block writes the derived `alpha` and `corner_hz`, the high-pass -3 dB point. It refuses a `tau` and `sample_rate`
+whose product overflows a `double`, and a written `alpha` or `corner_hz` that differs from the value it derives.
 
-`enabled` turns the subtraction on. Disabled, the default, the block passes every sample through unchanged and holds the
-estimate. `tau` sets the time constant in seconds, and `sample_rate` the stream rate it counts against. A change of
-either moves the pole and keeps the estimate. The block writes the derived `alpha` and `corner_hz`, the high-pass -3 dB
-point. It refuses a `tau` and `sample_rate` whose product overflows a `double`, and a written `alpha` or `corner_hz`
-that differs from the value it derives. `reset()` sets the estimate to zero.
+`enable_iq` turns the IQ correction on. Over runs of 1024 samples the block averages `P_I = E[I^2]`, `P_Q = E[Q^2]` and
+`C = E[I*Q]` of the first difference of the stream, `x[n] - x[n-1]`, with the time constant `iq_tau` in seconds. The
+difference carries the same imbalance and no DC. It weighs content at `f` by `4*sin^2(pi*f/sample_rate)`: a signal
+within a small fraction of `sample_rate` of the tuned frequency, such as a carrier or an AM station tuned to the center,
+barely enters the estimate. The block outputs `I' = I` and `Q' = k*(Q - c*I)`, with `c = C/P_I` and
+`k = sqrt(P_I/(P_Q - C^2/P_I))`, after the DC removal when both parts are on. Each run is corrected with the
+coefficients the runs before it gave. The correction reaches at most 3 dB of gain and 10 degrees of phase. Only an
+imbalance that does not depend on frequency is corrected. The estimate assumes circular content, as noise and most band
+content are. A strong real-valued signal at the tuned frequency whose content spreads across the band, such as a fast
+BPSK or one with unfiltered symbol steps, biases it. The block then adds an image of its own, at most -14.3 dBc on a
+receiver with no imbalance of its own. The block writes the estimated imbalance as `iq_gain_db`, the gain of Q against
+I, and `iq_phase_deg`, the quadrature error, to its members and to its settings after each run of 1024 samples. It
+refuses an `iq_tau` and `sample_rate` that give a run no weight.
+
+Each estimate is held while its part is off. With both off, the default, the block passes every sample through
+unchanged. `reset()` sets both estimates to zero and the correction to none.
 )"">;
 
     PortIn<T>  in;
     PortOut<T> out;
 
-    Annotated<bool, "enabled", Doc<"subtract the tracked offset">, Visible>                                                                                                  enabled     = false;
-    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"stream rate">, Limits<0.f, std::numeric_limits<float>::max(), detail::kSampleRatePositive>>                             sample_rate = 96000.f;
-    Annotated<double, "tau", Unit<"s">, Doc<"time constant of the estimate, corner 1/(2*pi*tau) Hz">, Limits<0.0, std::numeric_limits<double>::max(), detail::kTauPositive>> tau         = 1.0;
-    Annotated<double, "alpha", Doc<"derived smoothing coefficient 1/(1 + tau*sample_rate)">>                                                                                 alpha       = 0.0;
-    Annotated<double, "corner_hz", Unit<"Hz">, Doc<"derived highpass -3 dB point, alpha*sample_rate/(2*pi)">>                                                                corner_hz   = 0.0;
+    Annotated<bool, "enable_dc", Doc<"subtract the tracked offset">, Visible>                                                                                                enable_dc    = false;
+    Annotated<float, "sample_rate", Unit<"Hz">, Doc<"stream rate">, Limits<0.f, std::numeric_limits<float>::max(), detail::kSampleRatePositive>>                             sample_rate  = 96000.f;
+    Annotated<double, "tau", Unit<"s">, Doc<"time constant of the estimate, corner 1/(2*pi*tau) Hz">, Limits<0.0, std::numeric_limits<double>::max(), detail::kTauPositive>> tau          = 1.0;
+    Annotated<double, "alpha", Doc<"derived smoothing coefficient 1/(1 + tau*sample_rate)">>                                                                                 alpha        = 0.0;
+    Annotated<double, "corner_hz", Unit<"Hz">, Doc<"derived highpass -3 dB point, alpha*sample_rate/(2*pi)">>                                                                corner_hz    = 0.0;
+    Annotated<bool, "enable_iq", Doc<"correct the IQ gain and phase imbalance">, Visible>                                                                                    enable_iq    = false;
+    Annotated<double, "iq_tau", Unit<"s">, Doc<"time constant of the imbalance estimate">, Limits<0.0, std::numeric_limits<double>::max(), detail::kTauPositive>>            iq_tau       = 0.1;
+    Annotated<double, "iq_gain_db", Unit<"dB">, Doc<"estimated gain of Q against I, written by the block">>                                                                  iq_gain_db   = 0.0;
+    Annotated<double, "iq_phase_deg", Unit<"deg">, Doc<"estimated quadrature phase error, written by the block">>                                                            iq_phase_deg = 0.0;
 
-    GR_MAKE_REFLECTABLE(DcOffsetCorrect, in, out, enabled, sample_rate, tau, alpha, corner_hz);
+    GR_MAKE_REFLECTABLE(DcIqCorrection, in, out, enable_dc, sample_rate, tau, alpha, corner_hz, enable_iq, iq_tau, iq_gain_db, iq_phase_deg);
 
-    bool   _enabled       = enabled.value;     ///< the accepted `enabled`
-    float  _sampleRate    = sample_rate.value; ///< the accepted `sample_rate`
-    double _tau           = tau.value;         ///< the accepted `tau`
-    double _alpha         = 0.0;
-    double _oneMinusAlpha = 1.0;
-    double _real          = 0.0;
-    double _imag          = 0.0;
+    bool   _dcEnabled  = enable_dc.value;   ///< the accepted `enable_dc`
+    float  _sampleRate = sample_rate.value; ///< the accepted `sample_rate`
+    double _tau        = tau.value;         ///< the accepted `tau`
+    bool   _iqEnabled  = enable_iq.value;   ///< the accepted `enable_iq`
+    double _iqTau      = iq_tau.value;      ///< the accepted `iq_tau`
 
-    /// Derives `alpha`, the pole `1 - alpha` and `corner_hz` from the default settings.
-    explicit DcOffsetCorrect(property_map init = {}) : Block<DcOffsetCorrect<T>>(std::move(init)) { accept(_enabled, _sampleRate, _tau, 1.0 / (1.0 + _tau * static_cast<double>(_sampleRate))); }
+    /// Derives `alpha`, `corner_hz` and the imbalance estimate's time constant from the default settings.
+    explicit DcIqCorrection(property_map init = {}) : Block<DcIqCorrection<T>>(std::move(init)) {
+        std::ignore = _iq.setTimeConstant(_iqTau * static_cast<double>(_sampleRate));
+        accept(_dcEnabled, _sampleRate, _tau, 1.0 / (1.0 + _tau * static_cast<double>(_sampleRate)));
+        acceptIq(_iqEnabled, _iqTau);
+    }
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         const float  rate      = newSettings.contains("sample_rate") ? sample_rate.value : _sampleRate;
@@ -190,58 +219,73 @@ that differs from the value it derives. `reset()` sets the estimate to zero.
         if ((newSettings.contains("alpha") && alpha.value != nextAlpha) || (newSettings.contains("corner_hz") && corner_hz.value != nextCorner)) {
             throw gr::exception(std::format("alpha and corner_hz follow from tau and sample_rate, which give {} and {}", nextAlpha, nextCorner));
         }
-        accept(newSettings.contains("enabled") ? enabled.value : _enabled, rate, seconds, nextAlpha);
+        const double iqSeconds = newSettings.contains("iq_tau") ? iq_tau.value : _iqTau;
+        if (!_iq.setTimeConstant(iqSeconds * static_cast<double>(rate))) {
+            throw gr::exception(std::format("iq_tau {} at sample_rate {} gives no update weight", iqSeconds, rate));
+        }
+        accept(newSettings.contains("enable_dc") ? enable_dc.value : _dcEnabled, rate, seconds, nextAlpha);
+        acceptIq(newSettings.contains("enable_iq") ? enable_iq.value : _iqEnabled, iqSeconds);
     }
 
     void reset() {
-        _real = 0.0;
-        _imag = 0.0;
+        _dc.reset();
+        _iq.reset();
+        publishIq();
     }
 
     /// The tracked DC offset. Call it on the thread that runs the block, or while the block is stopped.
-    [[nodiscard]] std::complex<double> dcEstimate() const noexcept { return {_real, _imag}; }
+    [[nodiscard]] std::complex<double> dcEstimate() const noexcept { return std::complex<double>(_dc.estimate()); }
 
-    /// Updates the estimate with @p sample and returns @p sample less the estimate, or @p sample unchanged while
-    /// disabled. A component of the estimate below the smallest normal `double` is set to zero, and a silent input
-    /// leaves the estimate at zero.
-    [[nodiscard]] constexpr T processOne(T sample) noexcept {
-        if (!_enabled) {
-            return sample;
-        }
+    /// Writes each sample with the parts that are on applied: less the DC estimate updated with it, then corrected
+    /// for the imbalance.
+    [[nodiscard]] work::Status processBulk(std::span<const T> input, std::span<T> output) noexcept {
         if constexpr (meta::complex_like<T>) {
-            using Real            = typename T::value_type;
-            const double real     = static_cast<double>(sample.real());
-            const double imag     = static_cast<double>(sample.imag());
-            const double nextReal = _alpha * real + _oneMinusAlpha * _real;
-            const double nextImag = _alpha * imag + _oneMinusAlpha * _imag;
-            if (std::isfinite(nextReal) && std::isfinite(nextImag)) {
-                _real = flushed(nextReal);
-                _imag = flushed(nextImag);
+            if (_iqEnabled) {
+                const std::size_t updates = _dcEnabled ? _iq.process(input, output, [this](std::span<const T> raw, std::span<T> base) { _dc.subtract(raw, base); }) : _iq.process(input, output);
+                if (updates > 0UZ) {
+                    publishIq();
+                }
+                return work::Status::OK;
             }
-            return T(static_cast<Real>(real - _real), static_cast<Real>(imag - _imag));
-        } else {
-            const double real     = static_cast<double>(sample);
-            const double nextReal = _alpha * real + _oneMinusAlpha * _real;
-            if (std::isfinite(nextReal)) {
-                _real = flushed(nextReal);
-            }
-            return static_cast<T>(real - _real);
         }
+        if (_dcEnabled) {
+            _dc.subtract(input, output);
+        } else {
+            std::ranges::copy(input, output.begin());
+        }
+        return work::Status::OK;
     }
 
 private:
-    [[nodiscard]] static constexpr double flushed(double value) noexcept { return std::abs(value) < std::numeric_limits<double>::min() ? 0.0 : value; }
+    using Real = decltype(std::real(std::declval<T>()));
+
+    gr::filter::SinglePoleAverage<T>        _dc;
+    gr::channel::IqImbalanceCorrector<Real> _iq;
+
+    void publishIq() noexcept {
+        iq_gain_db   = _iq.gainDb();
+        iq_phase_deg = _iq.phaseDeg();
+        std::ignore  = this->updateActiveParameters({"iq_gain_db", "iq_phase_deg"});
+    }
 
     [[nodiscard]] static constexpr double cornerOf(double nextAlpha, float rate) noexcept { return nextAlpha * static_cast<double>(rate) / (2.0 * std::numbers::pi); }
 
     void accept(bool on, float rate, double seconds, double nextAlpha) {
-        _enabled       = on;
-        _sampleRate    = rate;
-        _tau           = seconds;
-        _alpha         = nextAlpha;
-        _oneMinusAlpha = 1.0 - nextAlpha;
-        alpha          = nextAlpha;
-        corner_hz      = cornerOf(nextAlpha, rate);
+        _dcEnabled  = on;
+        _sampleRate = rate;
+        _tau        = seconds;
+        std::ignore = _dc.setAlpha(nextAlpha);
+        alpha       = nextAlpha;
+        corner_hz   = cornerOf(nextAlpha, rate);
+    }
+
+    void acceptIq(bool on, double seconds) {
+        _iqEnabled = on;
+        _iqTau     = seconds;
+        if (!on) {
+            _iq.markDiscontinuity();
+        }
+        publishIq();
     }
 };
 
