@@ -1,7 +1,7 @@
 add_ut_test(qa_BasicFileIo)
 target_link_libraries(qa_BasicFileIo PRIVATE gr-fileio gr-basic gr-testing)
-if(NOT EMSCRIPTEN)
-  # under node a poll from a worker thread does not return while the main thread blocks
+# under node a poll from a worker thread does not return while the main thread blocks; Windows has no poll() to test
+if(NOT EMSCRIPTEN AND NOT WIN32)
   add_ut_test(qa_FdIo)
   target_link_libraries(qa_FdIo PRIVATE gr-basic gr-fileio gr-testing)
 endif()
