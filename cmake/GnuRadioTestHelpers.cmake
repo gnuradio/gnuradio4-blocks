@@ -85,6 +85,11 @@ function(setup_test_no_asan TEST_NAME)
             gnuradio-blocklib-core
             ut
             ${GR_TEST_HELPER_LIBRARIES})
+  if(EMSCRIPTEN)
+    # Under node, a program reads Emscripten's own environment by default, not the host's. NODE_HOST_ENV (Emscripten
+    # 4.0.21 and later) gives the test the environment ctest sets: DISABLE_SENSITIVE_TESTS and the test's properties.
+    target_link_options(${TEST_NAME} PRIVATE -sNODE_HOST_ENV=1)
+  endif()
   add_test(NAME ${TEST_NAME} COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME})
 endfunction()
 
