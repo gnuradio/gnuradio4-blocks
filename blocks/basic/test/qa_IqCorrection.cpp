@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -11,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -21,6 +21,8 @@
 #include <gnuradio-4.0/Scheduler.hpp>
 #include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/YamlPmt.hpp>
+#include <gnuradio-4.0/algorithm/channel/IqImbalanceCorrector.hpp>
+#include <gnuradio-4.0/algorithm/filter/SinglePoleAverage.hpp>
 
 #include <gnuradio-4.0/basic/IqCorrection.hpp>
 #include <gnuradio-4.0/sync/Pll.hpp>
@@ -116,7 +118,7 @@ private:
 
 namespace {
 
-using gr::blocks::basic::DcOffsetCorrect;
+using gr::blocks::basic::FrontEndCorrection;
 using gr::blocks::basic::IqSwap;
 using gr::blocks::sync::PllCarrierTracking;
 using gr::blocks::testing::ProcessFunction;
@@ -149,12 +151,12 @@ template<typename TBlock>
     return block.settings().applyStagedParameters().failedParameters.size() == keys;
 }
 
-/// Drives a block over `input`: a processOne block one sample at a time, a processBulk block in one call.
-template<typename TBlock>
-[[nodiscard]] std::vector<CF> drive(TBlock& block, std::span<const CF> input) {
-    std::vector<CF> output(input.size());
+/// Drives a processBulk block over `input` in one call, or a processOne block one sample at a time.
+template<typename TBlock, typename T>
+[[nodiscard]] std::vector<T> drive(TBlock& block, std::span<const T> input) {
+    std::vector<T> output(input.size());
     if constexpr (gr::HasProcessBulkFunction<TBlock>) {
-        std::ignore = block.processBulk(input, std::span<CF>(output));
+        std::ignore = block.processBulk(input, std::span<T>(output));
     } else {
         for (std::size_t i = 0UZ; i < input.size(); ++i) {
             output[i] = block.processOne(input[i]);
@@ -163,12 +165,18 @@ template<typename TBlock>
     return output;
 }
 
-/// The output of a processBulk block for the one input @p sample.
+template<typename TBlock>
+[[nodiscard]] std::vector<CF> drive(TBlock& block, const std::vector<CF>& input) {
+    return drive(block, std::span<const CF>(input));
+}
+
+/// One processBulk call of `block` over the single sample `sample`.
 template<typename TBlock, typename T>
-[[nodiscard]] T step(TBlock& block, T sample) {
-    T made{};
-    std::ignore = block.processBulk(std::span<const T>(&sample, 1UZ), std::span<T>(&made, 1UZ));
-    return made;
+[[nodiscard]] T one(TBlock& block, T sample) {
+    const std::vector<T> input{sample};
+    std::vector<T>       output(1UZ);
+    std::ignore = block.processBulk(std::span<const T>(input), std::span<T>(output));
+    return output[0];
 }
 
 /// The value `settings().get()` returns for `key`, or NaN when it holds none as a `double`.
@@ -275,7 +283,7 @@ struct Marker {
 
 constexpr std::size_t kAbsent = std::numeric_limits<std::size_t>::max();
 
-/// What a scheduled run of `DcOffsetCorrect<CF>` delivered, and the `tau` it held at the end.
+/// What a scheduled run of `FrontEndCorrection<CF>` delivered, and the `tau` it held at the end.
 struct TaggedRun {
     bool            ran = false;
     std::vector<CF> samples;
@@ -283,12 +291,12 @@ struct TaggedRun {
     double          reportedTau = 0.0;
 };
 
-/// Runs a counted stream carrying `tags` through an enabled `DcOffsetCorrect<CF>` into a sink.
+/// Runs a counted stream carrying `tags` through an enabled `FrontEndCorrection<CF>` into a sink.
 [[nodiscard]] TaggedRun runTagged(const std::vector<gr::Tag>& tags) {
     gr::Graph graph;
     auto&     source = graph.emplaceBlock<TagSource<CF, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 4000U}, {"mark_tag", false}});
     source._tags     = tags;
-    auto& dc         = graph.emplaceBlock<DcOffsetCorrect<CF>>({{"enabled", true}});
+    auto& dc         = graph.emplaceBlock<FrontEndCorrection<CF>>({{"enable_dc", true}});
     dc.settings().setTagCouplings({{"tau", std::string("tau")}});
     auto& sink = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
 
@@ -475,27 +483,41 @@ void expectEachEstimateOnItsSample(const SwapRun& run, const std::vector<Estimat
 }
 
 /// A change of settings, or a reset when `settings` is empty, before the first call that starts at or past input `at`.
+/// The DC switch is named `enable_dc`.
 struct Change {
     std::size_t      at = 0UZ;
     gr::property_map settings;
 };
 
-/// The output of `TBlock` over @p input along @p changes, with the estimate it ends on. A processBulk block takes calls
-/// of 1, 9, 64, 1000, 4096 and 3 samples in turn, a processOne block one sample per call.
-template<typename TBlock, typename T>
-[[nodiscard]] std::pair<std::vector<T>, std::complex<double>> runChanges(std::span<const T> input, std::span<const Change> changes) {
-    constexpr std::size_t kWindows[] = {1UZ, 9UZ, 64UZ, 1000UZ, 4096UZ, 3UZ};
+/// A block that names its DC switch `enabled`, as the reference block does.
+template<typename TBlock>
+concept NamesEnabled = requires(TBlock block) { block.enabled; };
 
-    TBlock         block = make<TBlock>({{"enabled", true}, {"sample_rate", 96000.f}, {"tau", 0.001}});
+/// @p settings for @p TBlock: the reference block names its DC switch `enabled`.
+template<typename TBlock>
+[[nodiscard]] gr::property_map settingsFor(gr::property_map settings) {
+    if constexpr (NamesEnabled<TBlock>) {
+        if (auto node = settings.extract("enable_dc"); !node.empty()) {
+            settings.insert_or_assign("enabled", std::move(node.mapped()));
+        }
+    }
+    return settings;
+}
+
+/// The output of `TBlock` over @p input along @p changes, with the estimate it ends on. A processBulk block takes calls
+/// of the lengths @p windows in turn, a processOne block one sample per call.
+template<typename TBlock, typename T>
+[[nodiscard]] std::pair<std::vector<T>, std::complex<double>> runChanges(std::span<const T> input, std::span<const Change> changes, std::span<const std::size_t> windows) {
+    TBlock         block = make<TBlock>(settingsFor<TBlock>({{"enable_dc", true}, {"sample_rate", 96000.f}, {"tau", 0.001}}));
     std::vector<T> output(input.size());
     std::size_t    next = 0UZ;
     for (std::size_t at = 0UZ, call = 0UZ; at < input.size(); ++call) {
-        const std::size_t count = std::min(kWindows[call % std::size(kWindows)], input.size() - at);
+        const std::size_t count = std::min(windows[call % windows.size()], input.size() - at);
         for (; next < changes.size() && changes[next].at <= at; ++next) {
             if (changes[next].settings.empty()) {
                 block.reset();
             } else {
-                apply(block, changes[next].settings);
+                apply(block, settingsFor<TBlock>(changes[next].settings));
             }
         }
         if constexpr (gr::HasProcessBulkFunction<TBlock>) {
@@ -517,14 +539,16 @@ struct SinkRun {
     std::vector<gr::Tag> tags;
 };
 
-/// Runs a counted stream carrying `tags` through `TBlock`, with `enabled` and `tau` coupled to tag keys of their names.
+/// Runs a counted stream carrying `tags` through `TBlock`, with its DC switch coupled to the tag key `enabled` and `tau`
+/// to the tag key `tau`.
 template<typename TBlock>
 [[nodiscard]] SinkRun runCoupled(const std::vector<gr::Tag>& tags) {
     gr::Graph graph;
-    auto&     source = graph.emplaceBlock<TagSource<CF, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 20000U}, {"mark_tag", false}});
-    source._tags     = tags;
-    auto& dc         = graph.emplaceBlock<TBlock>({{"enabled", true}, {"tau", 0.001}});
-    dc.settings().setTagCouplings({{"enabled", std::string("enabled")}, {"tau", std::string("tau")}});
+    auto&     source  = graph.emplaceBlock<TagSource<CF, ProcessFunction::USE_PROCESS_BULK>>({{"n_samples_max", 20000U}, {"mark_tag", false}});
+    source._tags      = tags;
+    auto&       dc    = graph.emplaceBlock<TBlock>(settingsFor<TBlock>({{"enable_dc", true}, {"tau", 0.001}}));
+    const char* dcKey = NamesEnabled<TBlock> ? "enabled" : "enable_dc";
+    dc.settings().setTagCouplings({{dcKey, std::string("enabled")}, {"tau", std::string("tau")}});
     auto& sink = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_BULK>>({{"name", "TagSink"}});
 
     SinkRun run;
@@ -538,10 +562,21 @@ template<typename TBlock>
     return run;
 }
 
-/// True when @p a and @p b are equal bit for bit.
+/// True when @p got is @p want, or the `float` next to it, or both are NaN, or the two differ by at most 1e-12 of the
+/// signal's size @p scale: the estimate it subtracts drifts from the recursion's by that bound, and where the output is a
+/// small difference of two near values that drift is more than a float step of it.
+[[nodiscard]] bool withinOneRounding(float got, float want, double scale) { return got == want || (std::isnan(got) && std::isnan(want)) || got == std::nextafter(want, std::numeric_limits<float>::infinity()) || got == std::nextafter(want, -std::numeric_limits<float>::infinity()) || std::abs(static_cast<double>(got) - static_cast<double>(want)) <= 1e-12 * scale; }
+
+[[nodiscard]] bool withinOneRounding(CF got, CF want, double scale) { return withinOneRounding(got.real(), want.real(), scale) && withinOneRounding(got.imag(), want.imag(), scale); }
+
+/// The number of samples of @p got that lie farther from @p want than one rounding, for a signal of size @p scale.
 template<typename T>
-[[nodiscard]] bool sameBits(std::span<const T> a, std::span<const T> b) {
-    return std::ranges::equal(std::as_bytes(a), std::as_bytes(b));
+[[nodiscard]] std::size_t outsideOneRounding(std::span<const T> got, std::span<const T> want, double scale = 1.0) {
+    std::size_t outside = 0UZ;
+    for (std::size_t i = 0UZ; i < got.size(); ++i) {
+        outside += withinOneRounding(got[i], want[i], scale) ? 0UZ : 1UZ;
+    }
+    return outside;
 }
 
 } // namespace
@@ -615,17 +650,68 @@ namespace {
     return recorder._endTags;
 }
 
+/// Puts the imbalance of a receiver on `samples`: `I = I0` and `Q = g * (Q0 * cos(phi) - I0 * sin(phi))`.
+void imbalance(std::vector<CF>& samples, double gainDb, double phaseDeg) {
+    const double g     = std::pow(10.0, gainDb / 20.0);
+    const double phase = phaseDeg * kPi / 180.0;
+    for (CF& sample : samples) {
+        const double i = static_cast<double>(sample.real());
+        const double q = static_cast<double>(sample.imag());
+        sample         = CF(sample.real(), static_cast<float>(g * (q * std::cos(phase) - i * std::sin(phase))));
+    }
+}
+
+/// The image that imbalance gives a tone, in dBc: `|B/A|^2 = (1 - 2 g cos(phi) + g^2) / (1 + 2 g cos(phi) + g^2)`.
+[[nodiscard]] double imageDbOf(double gainDb, double phaseDeg) {
+    const double g      = std::pow(10.0, gainDb / 20.0);
+    const double cosine = std::cos(phaseDeg * kPi / 180.0);
+    return 10.0 * std::log10((1.0 - 2.0 * g * cosine + g * g) / (1.0 + 2.0 * g * cosine + g * g));
+}
+
+/// The image of a tone on bin `k` of `window`, in dBc: the DFT at bin `-k` against the DFT at bin `k`.
+[[nodiscard]] double imageDbAt(std::span<const CF> window, std::size_t k) {
+    std::complex<double> tone{};
+    std::complex<double> image{};
+    const double         step = 2.0 * kPi * static_cast<double>(k) / static_cast<double>(window.size());
+    for (std::size_t n = 0UZ; n < window.size(); ++n) {
+        const std::complex<double> turn = std::polar(1.0, step * static_cast<double>(n));
+        tone += std::complex<double>(window[n]) * std::conj(turn);
+        image += std::complex<double>(window[n]) * turn;
+    }
+    return 20.0 * std::log10(std::abs(image) / std::abs(tone));
+}
+
+/// Adds `amplitude` times a complex tone on bin `k` of a window of `size` samples.
+void addTone(std::vector<CF>& samples, double amplitude, std::size_t k, std::size_t size) {
+    const double step = 2.0 * kPi * static_cast<double>(k) / static_cast<double>(size);
+    for (std::size_t n = 0UZ; n < samples.size(); ++n) {
+        const double phase = step * static_cast<double>(n % size);
+        samples[n] += CF(static_cast<float>(amplitude * std::cos(phase)), static_cast<float>(amplitude * std::sin(phase)));
+    }
+}
+
+/// Runs `block` over `input` in calls of `call` samples.
+template<typename TBlock>
+[[nodiscard]] std::vector<CF> driveInCalls(TBlock& block, std::span<const CF> input, std::size_t call) {
+    std::vector<CF> output(input.size());
+    for (std::size_t at = 0UZ; at < input.size(); at += call) {
+        const std::size_t count = std::min(call, input.size() - at);
+        std::ignore             = block.processBulk(input.subspan(at, count), std::span<CF>(output).subspan(at, count));
+    }
+    return output;
+}
+
 } // namespace
 
 static_assert(IqSwap<CF>::hasForwardTagsOverride(), "IqSwap forwards its tags itself, mapping the carrier estimates");
-static_assert(DcOffsetCorrect<CF>::keepsTagOffsets() && DcOffsetCorrect<float>::keepsTagOffsets(), "DcOffsetCorrect leaves each tag at its own offset");
+static_assert(FrontEndCorrection<CF>::keepsTagOffsets() && FrontEndCorrection<float>::keepsTagOffsets(), "FrontEndCorrection leaves each tag at its own offset");
 
 const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
     using namespace boost::ut;
 
     static_assert(gr::HasConstProcessOneFunction<IqSwap<CF>>, "IqSwap writes no state");
-    static_assert(!gr::HasConstProcessOneFunction<DcOffsetCorrect<CF>>, "DcOffsetCorrect updates its estimate");
-    static_assert(!gr::HasConstProcessOneFunction<DcOffsetCorrect<float>>, "the real form carries the same estimate");
+    static_assert(!gr::HasConstProcessOneFunction<FrontEndCorrection<CF>>, "FrontEndCorrection updates its estimate");
+    static_assert(!gr::HasConstProcessOneFunction<FrontEndCorrection<float>>, "the real form carries the same estimate");
 
     "the swap exchanges the components, bit for bit"_test = [] {
         IqSwap<CF>            block = make<IqSwap<CF>>({{"enabled", true}});
@@ -659,7 +745,7 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
     "the null at DC is structural, at every alpha"_test = [] {
         constexpr float kRate = 96000.f;
         for (const double wanted : {0.5, 0.1, 1e-5}) {
-            DcOffsetCorrect<CF> block = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tauFor(wanted, static_cast<double>(kRate))}});
+            FrontEndCorrection<CF> block = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", tauFor(wanted, static_cast<double>(kRate))}});
             expect(approx(block.alpha.value, wanted, wanted * 1e-9)) << "alpha comes from tau and the rate";
 
             const std::size_t     count = static_cast<std::size_t>(1.5 * std::log(1e-6 / std::numbers::sqrt2) / std::log1p(-wanted)) + 64UZ;
@@ -669,9 +755,9 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
 
         // alpha = 1e-8 needs 1.4e9 samples to reach 1e-6 by simulation. H(1) = 0 gives the closed form below, and
         // the test asserts it. The decay is exactly (1-alpha)^(n+1), and its limit is zero.
-        constexpr double      kAlpha = 1e-8;
-        DcOffsetCorrect<CF>   slow   = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tauFor(kAlpha, static_cast<double>(kRate))}});
-        const std::vector<CF> y      = drive(slow, std::span<const CF>(flat(1000000UZ, CF(1.f, 1.f))));
+        constexpr double       kAlpha = 1e-8;
+        FrontEndCorrection<CF> slow   = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", tauFor(kAlpha, static_cast<double>(kRate))}});
+        const std::vector<CF>  y      = drive(slow, std::span<const CF>(flat(1000000UZ, CF(1.f, 1.f))));
         for (const std::size_t at : {0UZ, 1UZ, 1000UZ, 999999UZ}) {
             const double want = std::pow(1.0 - kAlpha, static_cast<double>(at + 1UZ));
             expect(approx(static_cast<double>(y[at].real()), want, 1e-6)) << std::format("alpha 1e-8, sample {}", at);
@@ -681,21 +767,21 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
     "the corner is where the time constant says and the passband gain is not one"_test = [] {
         constexpr float kRate = 96000.f;
         for (const double seconds : {0.01, 0.1}) {
-            DcOffsetCorrect<CF> block  = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", seconds}});
-            const double        alpha  = block.alpha;
-            const std::size_t   settle = static_cast<std::size_t>(30.0 / alpha);
+            FrontEndCorrection<CF> block  = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", seconds}});
+            const double           alpha  = block.alpha;
+            const std::size_t      settle = static_cast<std::size_t>(30.0 / alpha);
 
-            const gr::property_map settings{{"enabled", true}, {"sample_rate", kRate}, {"tau", seconds}};
-            DcOffsetCorrect<CF>    atCorner  = make<DcOffsetCorrect<CF>>(settings);
-            DcOffsetCorrect<CF>    atMidband = make<DcOffsetCorrect<CF>>(settings);
+            const gr::property_map settings{{"enable_dc", true}, {"sample_rate", kRate}, {"tau", seconds}};
+            FrontEndCorrection<CF> atCorner  = make<FrontEndCorrection<CF>>(settings);
+            FrontEndCorrection<CF> atMidband = make<FrontEndCorrection<CF>>(settings);
             const std::vector<CF>  corner    = drive(atCorner, std::span<const CF>(tone(settle + 4096UZ, 1.0, alpha / (2.0 * kPi))));
             const std::vector<CF>  midband   = drive(atMidband, std::span<const CF>(tone(settle + 4096UZ, 1.0, 0.25)));
 
             const double ratio = meanMagnitude(std::span<const CF>(corner).last(4096UZ)) / meanMagnitude(std::span<const CF>(midband).last(4096UZ));
             expect(approx(ratio, 1.0 / std::numbers::sqrt2, 0.02 / std::numbers::sqrt2)) << std::format("tau {} s: the -3 dB point sits at alpha*fs/(2*pi) = {:.4f} Hz", seconds, block.corner_hz.value);
 
-            DcOffsetCorrect<CF> atNyquist = make<DcOffsetCorrect<CF>>(settings);
-            std::vector<CF>     alternating(settle + 4096UZ);
+            FrontEndCorrection<CF> atNyquist = make<FrontEndCorrection<CF>>(settings);
+            std::vector<CF>        alternating(settle + 4096UZ);
             for (std::size_t i = 0UZ; i < alternating.size(); ++i) {
                 alternating[i] = CF(i % 2UZ == 0UZ ? 1.f : -1.f, 0.f);
             }
@@ -708,19 +794,19 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         constexpr float  kRate   = 96000.f;
         constexpr double kOffset = 0.05;
         for (const double product : {1e3, 1e5}) {
-            const double        alpha = 1.0 / (1.0 + product);
-            DcOffsetCorrect<CF> block = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", product / static_cast<double>(kRate)}});
+            const double           alpha = 1.0 / (1.0 + product);
+            FrontEndCorrection<CF> block = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", product / static_cast<double>(kRate)}});
 
             // The closed form, on a noise-free offset. Unit-rms noise cannot resolve this to 2 %. The tracker's own
             // output noise is sqrt(alpha/2) per component, which at fs*tau = 1e3 is 0.022 against an offset of 0.05.
             const std::size_t count = static_cast<std::size_t>(6.0 * product);
             std::ignore             = drive(block, std::span<const CF>(flat(count, CF(static_cast<float>(kOffset), 0.f))));
 
-            DcOffsetCorrect<CF> stepping   = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", product / static_cast<double>(kRate)}});
-            std::size_t         reached    = 0UZ;
-            std::size_t         ninetyNine = 0UZ;
+            FrontEndCorrection<CF> stepping   = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", product / static_cast<double>(kRate)}});
+            std::size_t            reached    = 0UZ;
+            std::size_t            ninetyNine = 0UZ;
             for (std::size_t n = 1UZ; n <= count; ++n) {
-                std::ignore           = step(stepping, CF(static_cast<float>(kOffset), 0.f));
+                std::ignore           = one(stepping, CF(static_cast<float>(kOffset), 0.f));
                 const double fraction = stepping.dcEstimate().real() / kOffset;
                 if (reached == 0UZ && fraction >= 1.0 - 1.0 / std::numbers::e) {
                     reached = n;
@@ -734,9 +820,9 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
             expect(approx(static_cast<double>(ninetyNine), wantNinetyNine, 0.02 * wantNinetyNine)) << "and 99 % where 1 - (1-alpha)^n predicts";
             expect(lt(std::abs(block.dcEstimate().real() - kOffset), kOffset * 1e-2)) << "converged";
 
-            DcOffsetCorrect<CF> noisy = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", product / static_cast<double>(kRate)}});
-            std::ignore               = drive(noisy, std::span<const CF>(noise(count, 0x2ff29ULL + static_cast<std::uint64_t>(product), kOffset)));
-            const double sigma        = std::sqrt(alpha / 2.0);
+            FrontEndCorrection<CF> noisy = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", product / static_cast<double>(kRate)}});
+            std::ignore                  = drive(noisy, std::span<const CF>(noise(count, 0x2ff29ULL + static_cast<std::uint64_t>(product), kOffset)));
+            const double sigma           = std::sqrt(alpha / 2.0);
             expect(lt(std::abs(noisy.dcEstimate().real() - kOffset), 4.0 * sigma)) << "and on unit-rms noise it lands inside four of its own standard deviations";
         }
     };
@@ -746,36 +832,34 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         const float      complement = 1.f - 1.f / (1.f + static_cast<float>(kProduct));
         expect(eq(complement, 1.f)) << "in float32 the pole lands on the unit circle here and the recursion integrates";
 
-        constexpr float     kRate = 96000.f;
-        DcOffsetCorrect<CF> block = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", kProduct / static_cast<double>(kRate)}});
+        constexpr float        kRate = 96000.f;
+        FrontEndCorrection<CF> block = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", kProduct / static_cast<double>(kRate)}});
         expect(neq(1.0 - block.alpha.value, 1.0)) << "in double it does not";
 
         const std::size_t     count = static_cast<std::size_t>(4.0 * kProduct);
-        const std::vector<CF> dc(1UZ << 16, CF(0.05f, 0.f));
-        std::vector<CF>       sink(dc.size());
-        for (std::size_t done = 0UZ; done < count; done += dc.size()) {
-            const std::size_t n = std::min(dc.size(), count - done);
-            std::ignore         = block.processBulk(std::span<const CF>(dc).first(n), std::span<CF>(sink).first(n));
+        const std::vector<CF> dc    = flat(1UZ << 20, CF(0.05f, 0.f));
+        for (std::size_t i = 0UZ; i < count; i += dc.size()) {
+            std::ignore = drive(block, std::span<const CF>(dc));
         }
         const double want = 0.05 * (1.0 - std::exp(-4.0));
         expect(approx(block.dcEstimate().real(), want, 0.1 * want)) << std::format("four time constants: {:.7f} against the float32 direct form's 0.2172", block.dcEstimate().real());
     };
 
     "the estimate survives a toggle and a tau change"_test = [] {
-        constexpr float     kRate    = 96000.f;
-        constexpr double    kProduct = 1000.0;
-        DcOffsetCorrect<CF> block    = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", kProduct / static_cast<double>(kRate)}});
+        constexpr float        kRate    = 96000.f;
+        constexpr double       kProduct = 1000.0;
+        FrontEndCorrection<CF> block    = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", kProduct / static_cast<double>(kRate)}});
 
         std::ignore            = drive(block, std::span<const CF>(flat(static_cast<std::size_t>(10.0 * kProduct), CF(0.05f, 0.f))));
         const double converged = block.dcEstimate().real();
         expect(approx(converged, 0.05, 1e-4));
 
-        apply(block, {{"enabled", false}});
+        apply(block, {{"enable_dc", false}});
         std::ignore = drive(block, std::span<const CF>(flat(static_cast<std::size_t>(10.0 * kProduct), CF(0.9f, 0.f))));
         expect(eq(block.dcEstimate().real(), converged)) << "a disabled block does not track";
 
-        apply(block, {{"enabled", true}});
-        const CF first = step(block, CF(0.05f, 0.f));
+        apply(block, {{"enable_dc", true}});
+        const CF first = one(block, CF(0.05f, 0.f));
         expect(lt(std::abs(static_cast<double>(first.real())), 1e-4)) << "so re-enabling nulls the spike at once rather than over tau";
 
         apply(block, {{"tau", 10.0 * kProduct / static_cast<double>(kRate)}});
@@ -783,7 +867,7 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         expect(approx(block.alpha.value, 1.0 / (1.0 + 10.0 * kProduct), 1e-12)) << "only how fast it chases";
     };
 
-    "the estimate and every output follow the per-sample form, bit for bit"_test = [] {
+    "the estimate and every output follow the per-sample form within one rounding, in any split into calls"_test = [] {
         const auto compare = []<typename T>(const char* type) {
             std::vector<T>        input(20000UZ);
             const std::vector<CF> x = noise(input.size(), 0x082efa98ec4e6c89ULL, 0.05);
@@ -796,24 +880,35 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
             }
             input[4321UZ]                     = std::numeric_limits<float>::quiet_NaN();
             input[9876UZ]                     = std::numeric_limits<float>::infinity();
-            const std::vector<Change> changes = {{3000UZ, {{"enabled", false}}}, {5000UZ, {{"enabled", true}}}, {8000UZ, {{"tau", 0.01}}}, {12000UZ, {}}, {15000UZ, {{"sample_rate", 1e6f}}}};
-            const auto [want, wantEstimate]   = runChanges<gr::blocks::basic::reference::DcOffsetCorrect<T>, T>(input, changes);
-            const auto [got, gotEstimate]     = runChanges<DcOffsetCorrect<T>, T>(input, changes);
-            expect(sameBits(std::span<const T>(got), std::span<const T>(want))) << type;
-            expect(gotEstimate == wantEstimate) << type << ": the same estimate at the end";
-            expect(neq(wantEstimate.real(), 0.0)) << type << ": the run ends with an estimate";
+            const std::vector<Change> changes = {{3000UZ, {{"enable_dc", false}}}, {5000UZ, {{"enable_dc", true}}}, {8000UZ, {{"tau", 0.01}}}, {12000UZ, {}}, {15000UZ, {{"sample_rate", 1e6f}}}};
+
+            // A change takes effect at the first call that starts at or past it, so the reference runs the same calls.
+            const std::array<std::size_t, 6UZ> mixed{1UZ, 9UZ, 64UZ, 1000UZ, 4096UZ, 3UZ};
+            const std::array<std::size_t, 1UZ> aligned{1000UZ};
+            const std::array<std::size_t, 1UZ> single{1UZ};
+            for (const auto& [name, windows] : {std::pair<const char*, std::span<const std::size_t>>{"mixed calls", mixed}, {"calls of 1000", aligned}, {"one sample a call", single}}) {
+                const auto [want, wantEstimate] = runChanges<gr::blocks::basic::reference::DcOffsetCorrect<T>, T>(input, changes, windows);
+                const auto [got, gotEstimate]   = runChanges<FrontEndCorrection<T>, T>(input, changes, windows);
+                expect(neq(wantEstimate.real(), 0.0)) << type << ", " << name << ": the run ends with an estimate";
+                expect(eq(outsideOneRounding(std::span<const T>(got), std::span<const T>(want)), 0UZ)) << type << ", " << name << ": every output lies within one rounding of the per-sample form's";
+                expect(lt(std::abs(gotEstimate - wantEstimate), 1e-12)) << type << ", " << name << ": the estimate ends within 1e-12 of the per-sample form's";
+                if (windows.size() == 1UZ && windows[0] == 1UZ) {
+                    // A call of one sample is the recursion itself.
+                    expect(std::ranges::equal(got, want, [](T a, T b) { return a == b || (std::isnan(std::real(a)) && std::isnan(std::real(b))); }) && gotEstimate == wantEstimate) << type << ": a call of one sample is the per-sample form's, value for value";
+                }
+            }
         };
         compare.template operator()<float>("float");
         compare.template operator()<CF>("complex<float>");
     };
 
-    "samples and tags leave as the per-sample form's while tags toggle the block and move tau"_test = [] {
+    "samples leave within one rounding of the per-sample form's and tags as its tags, while tags toggle the block and move tau"_test = [] {
         std::vector<gr::Tag> tags{{100UZ, {{"probe", gr::Size_t(1)}}}, {2500UZ, {{"enabled", false}}}, {2501UZ, {{"probe", gr::Size_t(2)}}}, {6000UZ, {{"enabled", true}}}, {9000UZ, {{"tau", 0.01}, {"probe", gr::Size_t(3)}}}, {19999UZ, {{"probe", gr::Size_t(4)}}}};
         const SinkRun        want = runCoupled<gr::blocks::basic::reference::DcOffsetCorrect<CF>>(tags);
-        const SinkRun        got  = runCoupled<DcOffsetCorrect<CF>>(tags);
+        const SinkRun        got  = runCoupled<FrontEndCorrection<CF>>(tags);
         expect(want.ran && got.ran);
         expect(eq(got.samples.size(), 20000UZ));
-        expect(sameBits(std::span<const CF>(got.samples), std::span<const CF>(want.samples)));
+        expect(eq(outsideOneRounding(std::span<const CF>(got.samples), std::span<const CF>(want.samples)), 0UZ));
         expect(ge(want.tags.size(), 6UZ)) << "the sink sees the tags";
         expect(got.tags == want.tags) << "the same tags on the same samples, in the same order";
     };
@@ -823,16 +918,22 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         const std::vector<CF> complexIn = noise(200000UZ, 0x452821e638d01377ULL, 0.05);
 
         for (const bool on : {false, true}) {
-            const gr::property_map settings{{"enabled", on}, {"sample_rate", kRate}, {"tau", 0.01}};
-            DcOffsetCorrect<CF>    complexBlock = make<DcOffsetCorrect<CF>>(settings);
-            DcOffsetCorrect<float> realBlock    = make<DcOffsetCorrect<float>>(settings);
+            const gr::property_map    settings{{"enable_dc", on}, {"sample_rate", kRate}, {"tau", 0.01}};
+            FrontEndCorrection<CF>    complexBlock = make<FrontEndCorrection<CF>>(settings);
+            FrontEndCorrection<float> realBlock    = make<FrontEndCorrection<float>>(settings);
+            // The imaginary component is zeroed, and the complex block's real lane sees the same arithmetic. Both
+            // estimates then update from the same values.
+            std::vector<CF>    realLane(complexIn.size());
+            std::vector<float> reals(complexIn.size());
             for (std::size_t i = 0UZ; i < complexIn.size(); ++i) {
-                // The imaginary component is zeroed, and the complex block's real lane sees the
-                // same arithmetic. Both estimates then update from the same values.
-                const CF    fromComplex = step(complexBlock, CF(complexIn[i].real(), 0.f));
-                const float fromReal    = step(realBlock, complexIn[i].real());
-                expect(eq(fromComplex.real(), fromReal)) << std::format("enabled={} sample {}", on, i);
-                if (fromComplex.real() != fromReal) {
+                realLane[i] = CF(complexIn[i].real(), 0.f);
+                reals[i]    = complexIn[i].real();
+            }
+            const std::vector<CF>    fromComplex = drive(complexBlock, std::span<const CF>(realLane));
+            const std::vector<float> fromReal    = drive(realBlock, std::span<const float>(reals));
+            for (std::size_t i = 0UZ; i < complexIn.size(); ++i) {
+                expect(eq(fromComplex[i].real(), fromReal[i])) << std::format("enabled={} sample {}", on, i);
+                if (fromComplex[i].real() != fromReal[i]) {
                     return;
                 }
             }
@@ -842,10 +943,10 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
     };
 
     "the real form nulls a constant"_test = [] {
-        DcOffsetCorrect<float> block = make<DcOffsetCorrect<float>>({{"enabled", true}, {"sample_rate", 96000.f}, {"tau", tauFor(0.1, 96000.0)}});
-        float                  last  = 1.f;
+        FrontEndCorrection<float> block = make<FrontEndCorrection<float>>({{"enable_dc", true}, {"sample_rate", 96000.f}, {"tau", tauFor(0.1, 96000.0)}});
+        float                     last  = 1.f;
         for (std::size_t i = 0UZ; i < 4096UZ; ++i) {
-            last = step(block, 1.f);
+            last = one(block, 1.f);
         }
         expect(lt(std::abs(static_cast<double>(last)), 1e-6)) << "H(1) = 0, so a constant envelope level is nulled";
     };
@@ -861,7 +962,7 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         std::ranges::sort(source._tags, std::ranges::less{}, &gr::Tag::index);
 
         auto& swap = graph.emplaceBlock<IqSwap<CF>>({{"enabled", true}});
-        auto& dc   = graph.emplaceBlock<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", 48000.f}, {"tau", 1.0}});
+        auto& dc   = graph.emplaceBlock<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", 48000.f}, {"tau", 1.0}});
         auto& sink = graph.emplaceBlock<TagSink<CF, ProcessFunction::USE_PROCESS_ONE>>({{"name", "TagSink"}});
 
         expect(graph.connect<"out", "in">(source, swap).has_value());
@@ -1027,21 +1128,21 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
     };
 
     "degenerate settings"_test = [] {
-        expect(throws([] { std::ignore = make<DcOffsetCorrect<CF>>({{"tau", 0.0}}); }));
-        expect(throws([] { std::ignore = make<DcOffsetCorrect<CF>>({{"tau", -1.0}}); }));
-        expect(throws([] { std::ignore = make<DcOffsetCorrect<CF>>({{"sample_rate", 0.f}}); }));
-        expect(throws([] { std::ignore = make<DcOffsetCorrect<CF>>({{"sample_rate", -96000.f}}); }));
-        expect(throws([] { std::ignore = make<DcOffsetCorrect<CF>>({{"sample_rate", std::numeric_limits<float>::quiet_NaN()}}); }));
-        expect(throws([] { std::ignore = make<DcOffsetCorrect<CF>>({{"sample_rate", std::numeric_limits<float>::infinity()}}); }));
+        expect(throws([] { std::ignore = make<FrontEndCorrection<CF>>({{"tau", 0.0}}); }));
+        expect(throws([] { std::ignore = make<FrontEndCorrection<CF>>({{"tau", -1.0}}); }));
+        expect(throws([] { std::ignore = make<FrontEndCorrection<CF>>({{"sample_rate", 0.f}}); }));
+        expect(throws([] { std::ignore = make<FrontEndCorrection<CF>>({{"sample_rate", -96000.f}}); }));
+        expect(throws([] { std::ignore = make<FrontEndCorrection<CF>>({{"sample_rate", std::numeric_limits<float>::quiet_NaN()}}); }));
+        expect(throws([] { std::ignore = make<FrontEndCorrection<CF>>({{"sample_rate", std::numeric_limits<float>::infinity()}}); }));
 
-        DcOffsetCorrect<CF> block = make<DcOffsetCorrect<CF>>({{"sample_rate", 96000.f}, {"tau", 1.0}});
+        FrontEndCorrection<CF> block = make<FrontEndCorrection<CF>>({{"sample_rate", 96000.f}, {"tau", 1.0}});
         expect(refused(block, {{"tau", 0.0}})) << "and on a live change, not only at construction";
         expect(refused(block, {{"sample_rate", -1.f}}));
         expect(eq(block.tau.value, 1.0) && eq(block.sample_rate.value, 96000.f)) << "the members keep the accepted values";
 
         for (const double seconds : {1e-9, 1e-3, 1.0, 1e6}) {
             for (const float rate : {1.f, 96000.f, 25e6f}) {
-                DcOffsetCorrect<CF> valid = make<DcOffsetCorrect<CF>>({{"sample_rate", rate}, {"tau", seconds}});
+                FrontEndCorrection<CF> valid = make<FrontEndCorrection<CF>>({{"sample_rate", rate}, {"tau", seconds}});
                 expect(gt(valid.alpha.value, 0.0) && le(valid.alpha.value, 1.0)) << std::format("alpha stays in (0, 1] at tau {} and fs {}", seconds, rate);
             }
         }
@@ -1051,9 +1152,9 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         // The reference sees only the accepted changes. After every refusal both blocks run the same samples, and the
         // outputs must agree bit for bit.
         const std::vector<CF>  x = noise(30000UZ, 0x3f84d5b5b5470917ULL, 0.05);
-        const gr::property_map initial{{"enabled", true}, {"sample_rate", 96000.f}, {"tau", 0.01}};
-        DcOffsetCorrect<CF>    block     = make<DcOffsetCorrect<CF>>(initial);
-        DcOffsetCorrect<CF>    reference = make<DcOffsetCorrect<CF>>(initial);
+        const gr::property_map initial{{"enable_dc", true}, {"sample_rate", 96000.f}, {"tau", 0.01}};
+        FrontEndCorrection<CF> block     = make<FrontEndCorrection<CF>>(initial);
+        FrontEndCorrection<CF> reference = make<FrontEndCorrection<CF>>(initial);
         const auto             same      = [&](std::size_t from, std::size_t count) {
             const std::span<const CF> part = std::span<const CF>(x).subspan(from, count);
             return std::ranges::equal(drive(block, part), drive(reference, part));
@@ -1072,14 +1173,14 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         expect(throws([&block] { apply(block, {{"tau", 1e304}}); })) << "the same value sent again is refused again";
         expect(same(10000UZ, 5000UZ)) << "after a refused product, the estimate keeps tracking at the accepted alpha";
 
-        std::ignore      = block.settings().setStaged({{"enabled", false}, {"tau", 0.0}});
+        std::ignore      = block.settings().setStaged({{"enable_dc", false}, {"tau", 0.0}});
         const auto mixed = block.settings().applyStagedParameters();
         expect(eq(mixed.failedParameters.size(), 1UZ) && mixed.failedParameters.contains(gr::property_map::key_type{"tau"})) << "the limits refuse tau alone";
-        expect(!block._enabled) << "and the toggle in the same application is accepted";
-        apply(reference, {{"enabled", false}});
+        expect(!block._dcEnabled) << "and the toggle in the same application is accepted";
+        apply(reference, {{"enable_dc", false}});
         expect(same(15000UZ, 2000UZ)) << "disabled";
-        apply(block, {{"enabled", true}});
-        apply(reference, {{"enabled", true}});
+        apply(block, {{"enable_dc", true}});
+        apply(reference, {{"enable_dc", true}});
 
         expect(throws([&block] { apply(block, {{"alpha", 0.5}}); })) << "alpha follows from tau and sample_rate and takes no write";
         expect(throws([&block] { apply(block, {{"corner_hz", 1.0}}); })) << "nor does corner_hz";
@@ -1097,11 +1198,11 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
     };
 
     "a block made from the settings saved from a configured block computes as that block"_test = [] {
-        DcOffsetCorrect<CF>    configured = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", 2.4e6f}, {"tau", 0.01}});
+        FrontEndCorrection<CF> configured = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", 2.4e6f}, {"tau", 0.01}});
         const gr::property_map stored     = savedSettings(configured);
         expect(stored.contains(gr::property_map::key_type{"alpha"}) && stored.contains(gr::property_map::key_type{"corner_hz"})) << "the saved settings carry the derived values";
 
-        const auto reloaded = loaded<DcOffsetCorrect<CF>>(stored);
+        const auto reloaded = loaded<FrontEndCorrection<CF>>(stored);
         expect(reloaded->state() == gr::lifecycle::State::INITIALISED) << "the block accepts the derived values it computes itself";
         expect(eq(reloaded->alpha.value, configured.alpha.value) && eq(reloaded->corner_hz.value, configured.corner_hz.value));
         const std::vector<CF> x = noise(4000UZ, 0x5be0cd19137e2179ULL, 0.05);
@@ -1109,7 +1210,7 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
 
         gr::property_map edited = stored;
         edited.insert_or_assign(gr::property_map::key_type{"alpha"}, 0.5);
-        expect(loaded<DcOffsetCorrect<CF>>(edited)->state() == gr::lifecycle::State::ERROR) << "a saved alpha other than the derived one is refused";
+        expect(loaded<FrontEndCorrection<CF>>(edited)->state() == gr::lifecycle::State::ERROR) << "a saved alpha other than the derived one is refused";
     };
 
     "a tau outside its limits on a tag mid-run leaves the run going on the accepted tau"_test = [] {
@@ -1126,33 +1227,47 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
     "a sample with a NaN or infinite component leaves the estimate where it was"_test = [] {
         constexpr float        kNan = std::numeric_limits<float>::quiet_NaN();
         constexpr float        kInf = std::numeric_limits<float>::infinity();
-        constexpr std::size_t  kAt  = 10000UZ;
+        constexpr std::size_t  kAt  = 10000UZ; // a multiple of eight, so both blocks solve the same samples together
         const std::vector<CF>  x    = noise(20000UZ, 0x7c9e3f2a1b5d4c86ULL, 0.05);
-        const gr::property_map settings{{"enabled", true}, {"sample_rate", 96000.f}, {"tau", 0.001}};
+        const gr::property_map settings{{"enable_dc", true}, {"sample_rate", 96000.f}, {"tau", 0.001}};
         const auto             sameFloat = [](float got, float want) { return (std::isnan(got) && std::isnan(want)) || got == want; };
 
         for (const CF bad : {CF(kNan, 0.1f), CF(0.1f, kInf), CF(-kInf, kNan)}) {
-            DcOffsetCorrect<CF> block           = make<DcOffsetCorrect<CF>>(settings);
-            DcOffsetCorrect<CF> reference       = make<DcOffsetCorrect<CF>>(settings);
+            FrontEndCorrection<CF> block        = make<FrontEndCorrection<CF>>(settings);
+            FrontEndCorrection<CF> reference    = make<FrontEndCorrection<CF>>(settings);
             std::ignore                         = drive(block, std::span<const CF>(x).first(kAt));
             const std::complex<double> estimate = block.dcEstimate();
-            const CF                   atBad    = step(block, bad);
+            const CF                   atBad    = one(block, bad);
             expect(block.dcEstimate() == estimate) << std::format("({}, {}) leaves the estimate where it was", bad.real(), bad.imag());
             expect(sameFloat(atBad.real(), static_cast<float>(static_cast<double>(bad.real()) - estimate.real())) && sameFloat(atBad.imag(), static_cast<float>(static_cast<double>(bad.imag()) - estimate.imag()))) << "the sample itself leaves less the held estimate";
 
             const std::vector<CF> after = drive(block, std::span<const CF>(x).subspan(kAt));
             const std::vector<CF> want  = drive(reference, std::span<const CF>(x));
             expect(std::ranges::equal(after, std::span<const CF>(want).subspan(kAt))) << "every later output is the one the stream without that sample gives";
+
+            FrontEndCorrection<CF> inBlock = make<FrontEndCorrection<CF>>(settings);
+            FrontEndCorrection<CF> skipped = make<FrontEndCorrection<CF>>(settings);
+            std::vector<CF>        withBad = std::ranges::to<std::vector>(std::span<const CF>(x).first(kAt + 8UZ));
+            withBad[kAt + 3UZ]             = bad;
+            const std::vector<CF> got      = drive(inBlock, std::span<const CF>(withBad));
+            std::ignore                    = drive(skipped, std::span<const CF>(x).first(kAt));
+            bool held                      = true;
+            for (std::size_t i = kAt; i < kAt + 8UZ; ++i) {
+                if (i != kAt + 3UZ) {
+                    held = held && got[i] == one(skipped, x[i]);
+                }
+            }
+            expect(held && inBlock.dcEstimate() == skipped.dcEstimate()) << "a non-finite sample inside a block of eight holds the estimate the same way";
         }
 
-        DcOffsetCorrect<float> block     = make<DcOffsetCorrect<float>>(settings);
-        DcOffsetCorrect<float> reference = make<DcOffsetCorrect<float>>(settings);
-        bool                   same      = true;
+        FrontEndCorrection<float> block     = make<FrontEndCorrection<float>>(settings);
+        FrontEndCorrection<float> reference = make<FrontEndCorrection<float>>(settings);
+        bool                      same      = true;
         for (std::size_t i = 0UZ; i < x.size(); ++i) {
             if (i == kAt) {
-                std::ignore = step(block, kNan);
+                std::ignore = one(block, kNan);
             }
-            same = same && step(block, x[i].real()) == step(reference, x[i].real());
+            same = same && one(block, x[i].real()) == one(reference, x[i].real());
         }
         expect(same) << "the real form holds its estimate the same way";
     };
@@ -1165,8 +1280,8 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         constexpr float       kRate  = 96000.f;
         constexpr std::size_t kZeros = 8000UZ;
 
-        DcOffsetCorrect<CF> block = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tauFor(0.1, static_cast<double>(kRate))}});
-        std::ignore               = drive(block, std::span<const CF>(flat(500UZ, CF(0.05f, 0.03f))));
+        FrontEndCorrection<CF> block = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", tauFor(0.1, static_cast<double>(kRate))}});
+        std::ignore                  = drive(block, std::span<const CF>(flat(500UZ, CF(0.05f, 0.03f))));
         expect(approx(block.dcEstimate().real(), 0.05, 1e-6) && approx(block.dcEstimate().imag(), 0.03, 1e-6)) << "both components are tracking before the silence starts";
 
         const std::vector<CF> got = drive(block, std::span<const CF>(flat(kZeros, CF{})));
@@ -1192,9 +1307,9 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         constexpr float       kRate = 96000.f;
         constexpr std::size_t kStep = 500UZ;
 
-        DcOffsetCorrect<CF> block = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tauFor(0.1, static_cast<double>(kRate))}});
-        const double        alpha = block._alpha; // the block's own coefficients, so only the flush can differ
-        const double        rest  = block._oneMinusAlpha;
+        FrontEndCorrection<CF> block = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", tauFor(0.1, static_cast<double>(kRate))}});
+        const double           alpha = block.alpha.value; // the block's own coefficients, so only the flush can differ
+        const double           rest  = 1.0 - block.alpha.value;
 
         double      real      = 0.0;
         double      imag      = 0.0;
@@ -1207,7 +1322,7 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
             real                = alpha * x + rest * real;
             imag                = alpha * y + rest * imag;
 
-            const CF made = step(block, sample);
+            const CF made = one(block, sample);
             identical     = block.dcEstimate().real() == real && block.dcEstimate().imag() == imag && made == CF(static_cast<float>(x - real), static_cast<float>(y - imag));
             ++compared;
         }
@@ -1216,63 +1331,379 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         expect(neq(block.dcEstimate().real(), 0.0) && neq(block.dcEstimate().imag(), 0.0)) << "with the flush still not fired, so none of it was flushed arithmetic";
     };
 
-    "a call flushes a subnormal estimate once, at its end"_test = [] {
-        // alpha = 0.1 after a step of 500 samples: the reference flushes the real component at zero number 6 696 and
-        // the imaginary one at 6 691. The block keeps the subnormal estimate for the rest of the call and sets it to
-        // zero when the call ends. The smallest subnormal does not decay further at this pole. A block without the
-        // flush at the end of the call leaves it in the estimate.
+    "a decay through the subnormal range ends in a call with the estimate at the per-sample form's value, an exact zero once flushed"_test = [] {
+        // alpha = 0.1 after a step of 500 samples: the per-sample form flushes the real component at zero number 6 696
+        // and the imaginary one at 6 691. The block flushes a component when it ends a group of eight samples, and a
+        // component below the smallest normal gives an output of zero in float well before. A block without the
+        // flush leaves the smallest subnormal in the estimate, which the per-sample form's does not decay below.
         constexpr float       kRate = 96000.f;
         constexpr std::size_t kStep = 500UZ;
         const double          tau   = tauFor(0.1, static_cast<double>(kRate));
 
-        const auto input = [&](std::size_t zeros) {
-            std::vector<CF> samples = flat(kStep, CF(0.05f, 0.03f));
-            samples.resize(kStep + zeros, CF{});
-            return samples;
-        };
-        const auto bits = [](CF a, CF b) { return std::bit_cast<std::uint32_t>(a.real()) == std::bit_cast<std::uint32_t>(b.real()) && std::bit_cast<std::uint32_t>(a.imag()) == std::bit_cast<std::uint32_t>(b.imag()); };
-
         for (const std::size_t zeros : {6600UZ, 7500UZ}) {
-            const std::vector<CF>                             x         = input(zeros);
-            DcOffsetCorrect<CF>                               block     = make<DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tau}});
+            std::vector<CF> x = flat(kStep, CF(0.05f, 0.03f));
+            x.resize(kStep + zeros, CF{});
+            FrontEndCorrection<CF>                            block     = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", tau}});
             gr::blocks::basic::reference::DcOffsetCorrect<CF> reference = make<gr::blocks::basic::reference::DcOffsetCorrect<CF>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tau}});
 
             const std::vector<CF> got = drive(block, std::span<const CF>(x));
             std::vector<CF>       want(x.size());
-            std::size_t           unlike  = 0UZ;
-            bool                  flushed = true; // a bit that differs sits where the reference has flushed a component: a zero of the other sign
             for (std::size_t i = 0UZ; i < x.size(); ++i) {
                 want[i] = reference.processOne(x[i]);
-                if (!bits(got[i], want[i])) {
-                    ++unlike;
-                    flushed = flushed && (reference.dcEstimate().real() == 0.0 || reference.dcEstimate().imag() == 0.0);
-                }
             }
 
-            expect(std::ranges::equal(got, want)) << std::format("{} zeros: every output equals the per-sample form's by value", zeros);
+            expect(eq(outsideOneRounding(std::span<const CF>(got), std::span<const CF>(want), 0.05), 0UZ)) << std::format("{} zeros: every output lies within one rounding of the per-sample form's", zeros);
             if (zeros == 6600UZ) {
-                expect(eq(unlike, 0UZ)) << "the estimate stayed normal and every output is the same bit for bit";
-                expect(block.dcEstimate() == reference.dcEstimate()) << "and so is the estimate";
-                expect(neq(block.dcEstimate().real(), 0.0)) << "which is not zero";
+                const std::complex<double> delta = block.dcEstimate() - reference.dcEstimate();
+                expect(neq(block.dcEstimate().real(), 0.0) && neq(block.dcEstimate().imag(), 0.0)) << "the estimate is still normal, and not zero";
+                expect(lt(std::abs(delta.real()), 1e-12 * std::abs(reference.dcEstimate().real())) && lt(std::abs(delta.imag()), 1e-12 * std::abs(reference.dcEstimate().imag()))) << "and follows the per-sample form's to a relative 1e-12";
             } else {
                 expect(eq(std::fpclassify(block.dcEstimate().real()), FP_ZERO) && eq(std::fpclassify(block.dcEstimate().imag()), FP_ZERO)) << "the call ended with both components zero";
                 expect(block.dcEstimate() == reference.dcEstimate()) << "as the per-sample form's";
-                expect(flushed) << "the outputs differ only as zeros of the other sign, and only once the reference has flushed";
+
+                // A group of eight decays a subnormal estimate to zero by its own arithmetic, since its pole to the eighth is below
+                // one half of the smallest subnormal. A call of one sample runs the recursion, which stays on the smallest
+                // subnormal, so the flush alone takes it to zero there.
+                FrontEndCorrection<CF> single = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", tau}});
+                for (std::size_t i = 0UZ; i < x.size(); ++i) {
+                    std::ignore = drive(single, std::span<const CF>(x).subspan(i, 1UZ));
+                }
+                expect(eq(std::fpclassify(single.dcEstimate().real()), FP_ZERO) && eq(std::fpclassify(single.dcEstimate().imag()), FP_ZERO)) << "and so does a run of calls of one sample, where only the flush does it";
             }
         }
 
         std::vector<float> real(kStep + 7500UZ, 0.f);
         std::fill_n(real.begin(), kStep, 0.05f);
-        DcOffsetCorrect<float>                               block     = make<DcOffsetCorrect<float>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tau}});
+        FrontEndCorrection<float>                            block     = make<FrontEndCorrection<float>>({{"enable_dc", true}, {"sample_rate", kRate}, {"tau", tau}});
         gr::blocks::basic::reference::DcOffsetCorrect<float> reference = make<gr::blocks::basic::reference::DcOffsetCorrect<float>>({{"enabled", true}, {"sample_rate", kRate}, {"tau", tau}});
-        std::vector<float>                                   got(real.size());
-        std::ignore = block.processBulk(std::span<const float>(real), std::span<float>(got));
-        bool same   = true;
+        const std::vector<float>                             got       = drive(block, std::span<const float>(real));
+        std::vector<float>                                   want(real.size());
         for (std::size_t i = 0UZ; i < real.size(); ++i) {
-            same = same && got[i] == reference.processOne(real[i]);
+            want[i] = reference.processOne(real[i]);
         }
-        expect(same) << "the real form's outputs equal the per-sample form's by value";
+        expect(eq(outsideOneRounding(std::span<const float>(got), std::span<const float>(want), 0.05), 0UZ)) << "the real form's outputs lie within one rounding of the per-sample form's";
         expect(eq(std::fpclassify(block.dcEstimate().real()), FP_ZERO) && block.dcEstimate() == reference.dcEstimate()) << "and it ends with the estimate at zero";
+    };
+
+    "the IQ part removes the image a receiver's gain and phase imbalance puts on every tone"_test = [] {
+        // Five tones of 0.2 on bins of the 2^16-sample window, positive only, each image on an empty bin, with
+        // noise of 0.01 rms a component and a DC offset, through 1 dB and 3 degrees: an image of -24 dBc. The estimate
+        // averages over iq_tau * sample_rate = 5e4 samples, and its scatter with these tones lies near -78 dBc. The
+        // noise in one bin lies near -71 dBc of a tone. A bound of -50 dBc leaves both far below it.
+        constexpr std::size_t                  kWindow = 1UZ << 16;
+        constexpr std::array<std::size_t, 5UZ> kBins{2621UZ, 7864UZ, 15073UZ, 20316UZ, 28836UZ};
+        std::vector<CF>                        x = noise(8UZ * kWindow, 0x6a09e667f3bcc908ULL);
+        for (CF& sample : x) {
+            sample *= 0.01f * std::numbers::sqrt2_v<float>;
+        }
+        for (const std::size_t k : kBins) {
+            addTone(x, 0.2, k, kWindow);
+        }
+        imbalance(x, 1.0, 3.0);
+        for (CF& sample : x) {
+            sample += CF(0.05f, -0.03f);
+        }
+        FrontEndCorrection<CF>    block  = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"enable_iq", true}, {"sample_rate", 1e6f}, {"tau", 0.01}, {"iq_tau", 0.05}});
+        const std::vector<CF>     y      = driveInCalls(block, std::span<const CF>(x), 1000UZ);
+        const std::span<const CF> before = std::span<const CF>(x).last(kWindow);
+        const std::span<const CF> after  = std::span<const CF>(y).last(kWindow);
+        double                    worst  = -std::numeric_limits<double>::infinity();
+        for (const std::size_t k : kBins) {
+            expect(approx(imageDbAt(before, k), imageDbOf(1.0, 3.0), 0.5)) << std::format("bin {}: the input's image is the imbalance's, {:.1f} dBc", k, imageDbOf(1.0, 3.0));
+            worst = std::max(worst, imageDbAt(after, k));
+        }
+        expect(lt(worst, -50.0)) << std::format("every tone's image after the block lies below -50 dBc, the worst at {:.1f}", worst);
+        expect(approx(block.iq_gain_db.value, 1.0, 0.05) && approx(block.iq_phase_deg.value, 3.0, 0.5)) << std::format("the block reads {} dB and {} deg", block.iq_gain_db.value, block.iq_phase_deg.value);
+    };
+
+    "an AM station tuned to the center leaves no image of its own"_test = [] {
+        // A carrier of 0.3 at 0 Hz, 30 % modulated at 1 kHz, real-valued along 30 degrees, beside a probe tone of 0.1
+        // on bin 6554 of 2^16 and noise of 0.01 rms a component, through 1 dB and 3 degrees, at 1 MS/s. The difference
+        // weighs the sidebands by 4 sin^2(pi * 1e-3): they put 1.6e-7 into it, against 3.8e-3 from the probe and 4e-4
+        // from the noise, a bias near -94 dBc. The noise in one bin lies near -65 dBc of the probe. A bound of
+        // -50 dBc on the probe's image holds the correction to its own scatter.
+        constexpr std::size_t kWindow = 1UZ << 16;
+        constexpr std::size_t kProbe  = 6554UZ;
+        std::vector<CF>       x       = noise(8UZ * kWindow, 0xbb67ae8584caa73bULL);
+        const double          along   = 30.0 * kPi / 180.0;
+        for (std::size_t n = 0UZ; n < x.size(); ++n) {
+            const double am = 0.3 * (1.0 + 0.3 * std::cos(2.0 * kPi * 1e-3 * static_cast<double>(n)));
+            x[n]            = x[n] * (0.01f * std::numbers::sqrt2_v<float>)+CF(static_cast<float>(am * std::cos(along)), static_cast<float>(am * std::sin(along)));
+        }
+        addTone(x, 0.1, kProbe, kWindow);
+        imbalance(x, 1.0, 3.0);
+        FrontEndCorrection<CF> block = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"enable_iq", true}, {"sample_rate", 1e6f}, {"tau", 0.01}, {"iq_tau", 0.05}});
+        const std::vector<CF>  y     = driveInCalls(block, std::span<const CF>(x), 1000UZ);
+        const double           was   = imageDbAt(std::span<const CF>(x).last(kWindow), kProbe);
+        const double           is    = imageDbAt(std::span<const CF>(y).last(kWindow), kProbe);
+        expect(approx(was, imageDbOf(1.0, 3.0), 0.5)) << std::format("the probe's image before the block is the imbalance's, {:.1f} dBc", was);
+        expect(lt(is, -50.0)) << std::format("and after it {:.1f} dBc", is);
+    };
+
+    "each part runs, holds or passes in all four states and across every change between them"_test = [] {
+        // The states in bit order, DC then IQ, visiting all twelve changes. The reference runs the same two algorithms
+        // the way each state asks: the DC average alone, the correction alone, the correction of the DC-removed stream,
+        // or nothing. Stretches and calls end inside runs of the imbalance estimate.
+        constexpr std::array<std::size_t, 13UZ> kStates{3UZ, 1UZ, 3UZ, 2UZ, 3UZ, 0UZ, 1UZ, 2UZ, 1UZ, 0UZ, 2UZ, 0UZ, 3UZ};
+        constexpr std::size_t                   kStretch = 2100UZ;
+        constexpr std::size_t                   kCall    = 700UZ;
+        std::vector<CF>                         x        = noise(kStates.size() * kStretch, 0x3c6ef372fe94f82bULL, 0.05);
+        imbalance(x, 1.0, 3.0);
+
+        FrontEndCorrection<CF>              block = make<FrontEndCorrection<CF>>({{"sample_rate", 1e6f}, {"tau", 0.002}, {"iq_tau", 0.004}});
+        gr::filter::SinglePoleAverage<CF>   dc;
+        gr::channel::IqImbalanceCorrector<> iq;
+        expect(fatal(dc.setAlpha(block.alpha.value) && iq.setTimeConstant(block.iq_tau.value * static_cast<double>(block.sample_rate.value))));
+
+        std::size_t mismatched = 0UZ;
+        std::size_t dcMovedOff = 0UZ;
+        std::size_t iqMovedOff = 0UZ;
+        std::size_t dcMovedOn  = 0UZ;
+        std::size_t iqMovedOn  = 0UZ;
+        std::size_t stale      = 0UZ;
+        for (std::size_t stretch = 0UZ; stretch < kStates.size(); ++stretch) {
+            const bool dcOn = (kStates[stretch] & 1UZ) != 0UZ;
+            const bool iqOn = (kStates[stretch] & 2UZ) != 0UZ;
+            apply(block, {{"enable_dc", dcOn}, {"enable_iq", iqOn}});
+            if (!iqOn) {
+                iq.markDiscontinuity();
+            }
+            for (std::size_t at = stretch * kStretch; at < (stretch + 1UZ) * kStretch; at += kCall) {
+                const std::complex<double> dcBefore    = block.dcEstimate();
+                const double               gainBefore  = block.iq_gain_db.value;
+                const double               phaseBefore = block.iq_phase_deg.value;
+                const std::span<const CF>  in          = std::span<const CF>(x).subspan(at, kCall);
+                const std::vector<CF>      got         = drive(block, in);
+                std::vector<CF>            want(kCall);
+                if (dcOn && iqOn) {
+                    std::ignore = iq.process(in, std::span<CF>(want), [&dc](std::span<const CF> raw, std::span<CF> base) { dc.subtract(raw, base); });
+                } else if (iqOn) {
+                    std::ignore = iq.process(in, std::span<CF>(want));
+                } else if (dcOn) {
+                    dc.subtract(in, std::span<CF>(want));
+                } else {
+                    std::ranges::copy(in, want.begin());
+                }
+                mismatched += got == want ? 0UZ : 1UZ;
+                const bool dcMoved = block.dcEstimate() != dcBefore;
+                const bool iqMoved = block.iq_gain_db.value != gainBefore || block.iq_phase_deg.value != phaseBefore;
+                (dcOn ? dcMovedOn : dcMovedOff) += dcMoved ? 1UZ : 0UZ;
+                (iqOn ? iqMovedOn : iqMovedOff) += iqMoved ? 1UZ : 0UZ;
+                const bool reportedOld = reported(block, "iq_gain_db") != block.iq_gain_db.value || reported(block, "iq_phase_deg") != block.iq_phase_deg.value;
+                stale += reportedOld ? 1UZ : 0UZ;
+            }
+        }
+        expect(eq(mismatched, 0UZ)) << "every call's output is what its state's parts give, bit for bit";
+        expect(eq(dcMovedOff, 0UZ) && eq(iqMovedOff, 0UZ)) << "an estimate holds while its part is off";
+        expect(gt(dcMovedOn, 0UZ) && gt(iqMovedOn, 0UZ)) << "and moves while it is on";
+        expect(eq(stale, 0UZ)) << "settings().get() returns the imbalance estimate the members hold after every call";
+        expect(neq(iq.scale(), 1.f)) << "the correction the states compare is not the identity";
+    };
+
+    "the exchange runs in all eight states and gives what exchanging, then removing DC, then correcting gives"_test = [] {
+        // Bit order swap, IQ, DC. A call of 700 samples ends inside the runs of the imbalance estimate and inside a
+        // group of the DC solver. The block must equal the same block without the exchange on the exchanged stream
+        // bit for bit. It must also equal the three steps run apart, within a few float roundings: the apart DC step
+        // groups its samples differently. The DC offset and the imbalance are asymmetric, so an exchange left out
+        // moves the output far beyond that bound.
+        constexpr std::size_t kCall  = 700UZ;
+        constexpr std::size_t kCalls = 8UZ;
+        std::vector<CF>       x      = noise(kCalls * kCall, 0x510e527fade682d1ULL, 0.05);
+        imbalance(x, 1.0, 3.0);
+        for (CF& sample : x) {
+            sample += CF(0.2f, -0.1f);
+        }
+        std::vector<CF> exchanged(x.size());
+        std::ranges::transform(x, exchanged.begin(), [](CF v) { return CF(v.imag(), v.real()); });
+
+        const gr::property_map           base{{"sample_rate", 1e6f}, {"tau", 0.002}, {"iq_tau", 0.004}};
+        std::array<std::vector<CF>, 8UZ> straight; // the output of each state without the exchange, on x
+        for (std::size_t state = 0UZ; state < 8UZ; ++state) {
+            const bool       swapOn   = (state & 4UZ) != 0UZ;
+            const bool       iqOn     = (state & 2UZ) != 0UZ;
+            const bool       dcOn     = (state & 1UZ) != 0UZ;
+            gr::property_map settings = base;
+            settings.insert_or_assign("enable_dc", dcOn);
+            settings.insert_or_assign("enable_iq", iqOn);
+            FrontEndCorrection<CF> block = make<FrontEndCorrection<CF>>(settings);
+            settings.insert_or_assign("swap_iq", swapOn);
+            FrontEndCorrection<CF> withSwap = make<FrontEndCorrection<CF>>(settings);
+            expect(eq(withSwap.swap_iq.value, swapOn));
+
+            gr::filter::SinglePoleAverage<CF>   dc;
+            gr::channel::IqImbalanceCorrector<> iq;
+            expect(fatal(dc.setAlpha(block.alpha.value) && iq.setTimeConstant(block.iq_tau.value * static_cast<double>(block.sample_rate.value))));
+
+            const std::span<const CF> fed       = swapOn ? std::span<const CF>(exchanged) : std::span<const CF>(x);
+            std::size_t               differing = 0UZ;
+            double                    worst     = 0.0;
+            std::vector<CF>           got(x.size());
+            for (std::size_t at = 0UZ; at < x.size(); at += kCall) {
+                const std::span<const CF> in   = std::span<const CF>(x).subspan(at, kCall);
+                const std::vector<CF>     made = drive(withSwap, in);
+                const std::vector<CF>     same = drive(block, fed.subspan(at, kCall));
+                differing += made == same ? 0UZ : 1UZ;
+                std::ranges::copy(made, got.begin() + static_cast<std::ptrdiff_t>(at));
+
+                std::vector<CF> step(fed.subspan(at, kCall).begin(), fed.subspan(at, kCall).end());
+                if (dcOn) {
+                    dc.subtract(std::span<const CF>(step), std::span<CF>(step));
+                }
+                std::vector<CF> want(kCall);
+                if (iqOn) {
+                    std::ignore = iq.process(std::span<const CF>(step), std::span<CF>(want));
+                } else {
+                    want = step;
+                }
+                for (std::size_t i = 0UZ; i < kCall; ++i) {
+                    worst = std::max({worst, static_cast<double>(std::abs(made[i].real() - want[i].real())), static_cast<double>(std::abs(made[i].imag() - want[i].imag()))});
+                }
+            }
+            expect(eq(differing, 0UZ)) << std::format("state {}: the fold of the exchange into the load equals running the block on the exchanged stream", state);
+            expect(lt(worst, 2e-5)) << std::format("state {}: and the three steps apart, to {:.2g}", state, worst);
+            if (dcOn) {
+                expect(lt(std::abs(withSwap.dcEstimate() - dc.estimate()), 1e-6)) << std::format("state {}: the DC estimate is the exchanged stream's", state);
+            }
+            straight[state] = state < 4UZ ? got : std::vector<CF>{};
+            if (swapOn) {
+                double                 apart       = 0.0;
+                const std::vector<CF>& unexchanged = straight[state & 3UZ];
+                for (std::size_t i = 0UZ; i < got.size(); ++i) {
+                    apart = std::max(apart, static_cast<double>(std::abs(got[i] - unexchanged[i])));
+                }
+                expect(gt(apart, 0.1)) << std::format("state {}: the exchange changes the output, by {:.2g}", state, apart);
+            }
+        }
+    };
+
+    "a change of swap_iq mid-stream moves the estimates to the stream the block now outputs"_test = [] {
+        // The toggle falls at sample 2100, 52 samples into a run of the imbalance estimate, on a call boundary. A
+        // block that has run exchanged from its first sample holds, at that point, the estimates that this block's
+        // exchange gives it: each component of the DC estimate and each arm of the imbalance estimate follows the
+        // exchanged stream by the same arithmetic. Every output from the toggle on must match that block bit for bit.
+        constexpr std::size_t kCall   = 700UZ;
+        constexpr std::size_t kToggle = 3UZ * kCall;
+        constexpr std::size_t kTotal  = 9UZ * kCall;
+        std::vector<CF>       x       = noise(kTotal, 0x1f83d9abfb41bd6bULL, 0.05);
+        imbalance(x, 1.0, 3.0);
+        for (CF& sample : x) {
+            sample += CF(0.2f, -0.1f);
+        }
+        for (const bool toOn : {true, false}) {
+            const gr::property_map settings{{"enable_dc", true}, {"enable_iq", true}, {"sample_rate", 1e6f}, {"tau", 0.002}, {"iq_tau", 0.004}};
+            gr::property_map       steady = settings;
+            steady.insert_or_assign("swap_iq", toOn);
+            gr::property_map first = settings;
+            first.insert_or_assign("swap_iq", !toOn);
+            FrontEndCorrection<CF> toggled   = make<FrontEndCorrection<CF>>(first);
+            FrontEndCorrection<CF> reference = make<FrontEndCorrection<CF>>(steady);
+
+            std::size_t mismatched = 0UZ;
+            std::size_t compared   = 0UZ;
+            for (std::size_t at = 0UZ; at < kTotal; at += kCall) {
+                if (at == kToggle) {
+                    const std::complex<double> dcBefore = toggled.dcEstimate();
+                    const double               gain     = toggled.iq_gain_db.value;
+                    const double               phase    = toggled.iq_phase_deg.value;
+                    apply(toggled, {{"swap_iq", toOn}});
+                    expect(toggled.dcEstimate() == std::complex<double>(dcBefore.imag(), dcBefore.real())) << "the DC estimate exchanges its components";
+                    expect(approx(toggled.iq_gain_db.value, -gain, 1e-12) && approx(toggled.iq_phase_deg.value, phase, 1e-12)) << "the gain of Q against I inverts and the quadrature error stays";
+                    expect(eq(reported(toggled, "iq_gain_db"), toggled.iq_gain_db.value)) << "and the settings carry it";
+                    expect(neq(gain, 0.0)) << "from an estimate that had moved";
+                }
+                const std::span<const CF> in   = std::span<const CF>(x).subspan(at, kCall);
+                const std::vector<CF>     got  = drive(toggled, in);
+                const std::vector<CF>     want = drive(reference, in);
+                if (at >= kToggle) {
+                    mismatched += got == want ? 0UZ : 1UZ;
+                    ++compared;
+                }
+            }
+            expect(eq(mismatched, 0UZ) && gt(compared, 0UZ)) << std::format("toggling {}: every call from the toggle on equals the block that ran so from the start", toOn ? "on" : "off");
+            expect(toggled.dcEstimate() == reference.dcEstimate()) << "and the DC estimates are the same";
+        }
+    };
+
+    "a change of swap_iq while a part is off exchanges that part's held estimate for when it comes on"_test = [] {
+        // Calls of 700 samples. The part runs for three calls and builds an estimate, goes off for the fourth, has
+        // swap_iq changed before the fifth, and comes on again before the seventh. A block that ran with the final
+        // swap_iq from its start, through the same switching, holds the estimate of the exchanged stream. Every
+        // output from the change on must match it bit for bit, in the calls with the part off and in those after.
+        constexpr std::size_t kCall  = 700UZ;
+        constexpr std::size_t kCalls = 10UZ;
+        std::vector<CF>       x      = noise(kCalls * kCall, 0x6c62272e07bb0142ULL, 0.05);
+        imbalance(x, 1.0, 3.0);
+        for (CF& sample : x) {
+            sample += CF(0.2f, -0.1f);
+        }
+        for (const bool dcPart : {true, false}) {
+            for (const bool toOn : {true, false}) {
+                const gr::property_map settings{{"enable_dc", true}, {"enable_iq", true}, {"sample_rate", 1e6f}, {"tau", 0.002}, {"iq_tau", 0.004}};
+                gr::property_map       steady = settings;
+                steady.insert_or_assign("swap_iq", toOn);
+                gr::property_map first = settings;
+                first.insert_or_assign("swap_iq", !toOn);
+                FrontEndCorrection<CF> toggled   = make<FrontEndCorrection<CF>>(first);
+                FrontEndCorrection<CF> reference = make<FrontEndCorrection<CF>>(steady);
+                const char*            part      = dcPart ? "enable_dc" : "enable_iq";
+
+                std::size_t mismatched = 0UZ;
+                std::size_t compared   = 0UZ;
+                for (std::size_t call = 0UZ; call < kCalls; ++call) {
+                    if (call == 3UZ || call == 6UZ) {
+                        apply(toggled, {{part, call == 6UZ}});
+                        apply(reference, {{part, call == 6UZ}});
+                    }
+                    if (call == 4UZ) {
+                        apply(toggled, {{"swap_iq", toOn}});
+                    }
+                    const std::span<const CF> in   = std::span<const CF>(x).subspan(call * kCall, kCall);
+                    const std::vector<CF>     got  = drive(toggled, in);
+                    const std::vector<CF>     want = drive(reference, in);
+                    if (call >= 4UZ) {
+                        mismatched += got == want ? 0UZ : 1UZ;
+                        ++compared;
+                    }
+                }
+                expect(eq(mismatched, 0UZ) && gt(compared, 0UZ)) << std::format("{} off while swap_iq goes {}: every call from the change on equals the block swapped from the start", part, toOn ? "on" : "off");
+                expect(toggled.dcEstimate() == reference.dcEstimate() && toggled.iq_gain_db.value == reference.iq_gain_db.value) << "and the estimates are the same";
+            }
+        }
+    };
+
+    "a real stream refuses swap_iq set to true and takes it set to false"_test = [] {
+        FrontEndCorrection<float> real = make<FrontEndCorrection<float>>({});
+        expect(throws([&real] { apply(real, {{"swap_iq", true}}); })) << "there is no Q to exchange";
+        expect(!real.swap_iq.value);
+        expect(!refused(real, {{"swap_iq", false}}));
+        expect(throws([] { std::ignore = make<FrontEndCorrection<float>>({{"swap_iq", true}}); }));
+        FrontEndCorrection<CF> complexBlock = make<FrontEndCorrection<CF>>({});
+        expect(!refused(complexBlock, {{"swap_iq", true}}));
+        expect(complexBlock.swap_iq.value);
+        const gr::property_map active = complexBlock.settings().get();
+        const auto             found  = active.find(gr::property_map::key_type{"swap_iq"});
+        expect(found != active.end() && found->second.get_if<bool>() != nullptr && *found->second.get_if<bool>()) << "and the setting reads back";
+    };
+
+    "a NaN or infinite sample leaves its run out of the imbalance estimate and every later output finite"_test = [] {
+        constexpr std::size_t kRun = gr::channel::IqImbalanceCorrector<>::kRun;
+        for (const float bad : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
+            std::vector<CF> x = noise(32UZ * kRun, 0xa54ff53a5f1d36f1ULL, 0.05);
+            imbalance(x, 1.0, 3.0);
+            FrontEndCorrection<CF> block = make<FrontEndCorrection<CF>>({{"enable_dc", true}, {"enable_iq", true}, {"sample_rate", 1e6f}, {"tau", 0.002}, {"iq_tau", 0.004}});
+            std::ignore                  = drive(block, std::span<const CF>(x).first(16UZ * kRun));
+            const double gain            = block.iq_gain_db.value;
+            const double phase           = block.iq_phase_deg.value;
+
+            x[16UZ * kRun + 300UZ] = CF(0.1f, bad);
+            std::ignore            = drive(block, std::span<const CF>(x).subspan(16UZ * kRun, kRun));
+            expect(block.iq_gain_db.value == gain && block.iq_phase_deg.value == phase) << "the run holding the sample leaves the imbalance estimate as it was";
+            expect(std::isfinite(block.dcEstimate().real()) && std::isfinite(block.dcEstimate().imag())) << "and the DC estimate finite";
+
+            const std::vector<CF> later = drive(block, std::span<const CF>(x).subspan(17UZ * kRun));
+            expect(std::ranges::all_of(later, [](CF v) { return std::isfinite(v.real()) && std::isfinite(v.imag()); })) << "every later output is finite";
+            expect(neq(block.iq_gain_db.value, gain)) << "and the estimate moves again";
+        }
     };
 };
 
