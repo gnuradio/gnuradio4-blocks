@@ -5,6 +5,7 @@
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/CircularBuffer.hpp>
 #include <gnuradio-4.0/DataSet.hpp>
+#include <gnuradio-4.0/Export.hpp>
 #include <gnuradio-4.0/HistoryBuffer.hpp>
 #include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/TriggerMatcher.hpp>
@@ -457,9 +458,21 @@ private:
     }
 };
 
+// The export attribute is load-bearing: this project builds with
+// CMAKE_CXX_VISIBILITY_PRESET=hidden and VISIBILITY_INLINES_HIDDEN=ON, which would otherwise
+// hide this inline function's local static (and its guard) in every shared object, giving each
+// plugin its own registry. Marking it default-visible lets the ELF flat namespace interpose a
+// single instance across the executable and all plugin .so files.
+//
+// NOTE: this does not hold on Windows, which has no symbol interposition -- every module that
+// includes this header gets its own DataSinkRegistry. Sinks instantiated inside a plugin DLL
+// are therefore invisible to a host application querying the registry. Consumers that keep
+// both sides in one binary (as the qa_DataSink tests do) are unaffected. Fixing this properly
+// requires moving the singleton out of line into a single exported shared library.
+//
 // The registry is never destroyed. A sink held by an object of static storage duration unregisters during exit, and
 // it may do so after every other function-local static is gone.
-__attribute__((visibility("default"))) inline DataSinkRegistry& globalDataSinkRegistry() {
+GNURADIO_EXPORT inline DataSinkRegistry& globalDataSinkRegistry() {
     static auto* const instance = new DataSinkRegistry;
     return *instance;
 }
