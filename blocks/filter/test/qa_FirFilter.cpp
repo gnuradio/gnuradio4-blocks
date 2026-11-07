@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <numeric>
 #include <span>
 #include <string>
 #include <vector>
@@ -223,12 +224,21 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         }
     } | std::tuple<std::pair<float, float>, std::pair<CF, float>, std::pair<float, CF>, std::pair<CF, CF>>{};
 
-    "chunk independence is bit-identical"_test = []<typename TPair>() {
+    // On a target with a fused multiply-add a pass and a lone output can fuse different products, so two chunkings
+    // can differ in their last bits. Each is within sqrt(2) gamma_2N sum |h x| of the exact sum,
+    // gamma_n = n u / (1 - n u).
+    "chunk independence to rounding"_test = []<typename TPair>() {
         using TSample = typename TPair::first_type;
         using TTap    = typename TPair::second_type;
 
         const std::vector<TTap>    h = noise<TTap>(37UZ, 0x94D049BB133111EBULL);
         const std::vector<TSample> x = noise<TSample>(40960UZ, 0x2545F4914F6CDD1DULL);
+
+        const double u         = static_cast<double>(std::numeric_limits<float>::epsilon()) / 2.0;
+        const double n         = 2.0 * static_cast<double>(h.size());
+        const double sumTaps   = std::accumulate(h.begin(), h.end(), 0.0, [](double sum, const TTap& v) { return sum + static_cast<double>(std::abs(v)); });
+        const double peakInput = static_cast<double>(std::abs(*std::ranges::max_element(x, {}, [](const TSample& v) { return std::abs(v); })));
+        const double bound     = 2.0 * std::numbers::sqrt2 * (n * u / (1.0 - n * u)) * sumTaps * peakInput;
 
         for (const gr::Size_t m : {1U, 10U}) {
             FirFilter<TSample, TTap> whole     = makeFir<TSample, TTap>({{"taps", h}, {"decimation", m}});
@@ -238,7 +248,11 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
                 FirFilter<TSample, TTap> block = makeFir<TSample, TTap>({{"taps", h}, {"decimation", m}});
                 const auto               got   = run(block, x, chunk);
                 expect(gt(got.samples.size(), 0UZ)) << "chunk " << chunk;
-                expect(std::ranges::equal(got.samples, std::span(reference.samples).first(got.samples.size()))) << std::format("M = {}, chunk {}: not bit-identical", m, chunk);
+                double worst = 0.0;
+                for (std::size_t k = 0UZ; k < got.samples.size(); ++k) {
+                    worst = std::max(worst, static_cast<double>(std::abs(got.samples[k] - reference.samples[k])));
+                }
+                expect(le(worst, bound)) << std::format("M = {}, chunk {}: {} against the rounding bound {}", m, chunk, worst, bound);
             }
         }
     } | std::tuple<std::pair<float, float>, std::pair<CF, float>, std::pair<float, CF>, std::pair<CF, CF>>{};

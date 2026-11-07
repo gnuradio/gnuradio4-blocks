@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <numbers>
 #include <numeric>
 #include <print>
@@ -39,8 +40,10 @@ struct Combo {
     [[nodiscard]] static constexpr const char* name() {
         if constexpr (std::is_same_v<S, float>) {
             return std::is_same_v<H, float> ? "ff" : "fc";
-        } else {
+        } else if constexpr (std::is_same_v<S, CF>) {
             return std::is_same_v<H, float> ? "cf" : "cc";
+        } else {
+            return std::is_same_v<H, double> ? "cf64" : "cc64";
         }
     }
 };
@@ -49,10 +52,11 @@ using Combos = std::tuple<Combo<float, float>, Combo<CF, float>, Combo<float, CF
 
 template<typename T>
 [[nodiscard]] constexpr T makeValue(float re, float im) {
-    if constexpr (std::is_same_v<T, float>) {
-        return re;
+    if constexpr (std::is_floating_point_v<T>) {
+        return static_cast<T>(re);
     } else {
-        return T{re, im};
+        using Part = typename T::value_type;
+        return T{static_cast<Part>(re), static_cast<Part>(im)};
     }
 }
 
@@ -85,10 +89,15 @@ template<typename T>
 
 [[nodiscard]] std::complex<double> widen(float v) { return {static_cast<double>(v), 0.0}; }
 [[nodiscard]] std::complex<double> widen(CF v) { return {static_cast<double>(v.real()), static_cast<double>(v.imag())}; }
+[[nodiscard]] std::complex<double> widen(double v) { return {v, 0.0}; }
+[[nodiscard]] std::complex<double> widen(std::complex<double> v) { return v; }
 
-template<typename Body>
+/// The four pairs and two of the double-precision ones, which take the portable vector path.
+using CombosWithDouble = std::tuple<Combo<float, float>, Combo<CF, float>, Combo<float, CF>, Combo<CF, CF>, Combo<std::complex<double>, double>, Combo<std::complex<double>, std::complex<double>>>;
+
+template<typename List = Combos, typename Body>
 void forEachCombo(Body&& body) {
-    std::apply([&](auto... combo) { (body(combo), ...); }, Combos{});
+    std::apply([&](auto... combo) { (body(combo), ...); }, List{});
 }
 
 /// One row of the default-design table: what the design surface is asserted to return for a ratio.
@@ -188,6 +197,44 @@ template<typename S, typename H>
         y[k] = acc;
     }
     return y;
+}
+
+/**
+ * @brief Output @p k of the `L/M` chain in double, `sum_i taps[i] * stuffed[k*M - i]`, and the sum of the magnitudes
+ * of its products.
+ *
+ * The zero-stuffed definition, as `byDefinition`, for every sample and tap type, the stuffed stream indexed rather
+ * than built. The magnitude sum bounds the rounding of any order of evaluation.
+ */
+template<typename S, typename H>
+[[nodiscard]] std::pair<std::complex<double>, double> resampledByDefinition(std::size_t l, std::size_t m, const std::vector<H>& taps, const std::vector<S>& x, std::size_t k) {
+    const std::size_t    at = k * m;
+    std::complex<double> acc{};
+    double               magnitudes = 0.0;
+    for (std::size_t i = 0UZ; i < taps.size() && i <= at; ++i) {
+        if ((at - i) % l == 0UZ && (at - i) / l < x.size()) {
+            const std::complex<double> h = widen(taps[i]);
+            const std::complex<double> v = widen(x[(at - i) / l]);
+            acc += h * v;
+            magnitudes += std::abs(h) * std::abs(v);
+        }
+    }
+    return {acc, magnitudes};
+}
+
+/**
+ * @brief The most an output computed in @p Value over @p branch taps may depart from `resampledByDefinition`.
+ *
+ * Any order of summing n real products departs from their exact sum by at most gamma_n times the sum of their
+ * magnitudes, gamma_n = n u / (1 - n u) with u the unit roundoff, fused or not. A part of an output sums at most
+ * 2 * branch products (complex taps on complex samples), and an output's complex error is at most sqrt(2) times its
+ * parts' worst. The reference in double carries its own gamma_n.
+ */
+template<typename Value>
+[[nodiscard]] double roundingBound(std::size_t branch, double magnitudes) {
+    const double n     = 2.0 * static_cast<double>(branch);
+    const auto   gamma = [n](double u) { return n * u / (1.0 - n * u); };
+    return std::numbers::sqrt2 * (gamma(static_cast<double>(std::numeric_limits<Value>::epsilon()) / 2.0) + gamma(std::numeric_limits<double>::epsilon() / 2.0)) * magnitudes;
 }
 
 /// One DFT bin of a real record, normalized so a unit-amplitude cosine at that bin reads 1.
@@ -553,7 +600,13 @@ const boost::ut::suite<"polyphase resampler"> polyphaseResamplerTests = [] {
             piecewise.resize(piecewise.size() + made);
             chunked.process(std::span<const CF>(x.data() + at, take), std::span<CF>(piecewise.data() + piecewise.size() - made, made));
         }
-        expect(that % (piecewise == y)) << "one call or many, bit for bit";
+        std::size_t outside = 0UZ;
+        for (std::size_t k = 0UZ; k < y.size(); ++k) {
+            const auto [want, magnitudes] = resampledByDefinition(3UZ, 2UZ, taps, x, k);
+            outside += std::abs(widen(piecewise[k]) - want) > roundingBound<float>(chunked.branchLength(), magnitudes) ? 1UZ : 0UZ;
+        }
+        expect(eq(piecewise.size(), y.size()));
+        expect(eq(outside, 0UZ)) << "one call or many, to rounding";
     };
 
     "taps are the impulse response"_test = [] {
@@ -609,17 +662,23 @@ const boost::ut::suite<"polyphase resampler"> polyphaseResamplerTests = [] {
         });
     };
 
-    "one call or many, bit for bit, whatever the tap type"_test = [] {
+    "one call or many, to rounding, whatever the tap type"_test = [] {
         forEachCombo([](auto c) {
-            using S   = typename decltype(c)::Sample;
-            using H   = typename decltype(c)::Tap;
-            using Out = typename PolyphaseResampler<S, H>::output_type;
+            using S     = typename decltype(c)::Sample;
+            using H     = typename decltype(c)::Tap;
+            using Out   = typename PolyphaseResampler<S, H>::output_type;
+            using Value = typename gr::filter::detail::PolyphaseTraits<S, H>::Value;
 
             const std::vector<H> taps = asStream<H>(noise(53UZ, 61U), noise(53UZ, 67U));
             const std::vector<S> x    = asStream<S>(noise(1UZ << 13, 71U), noise(1UZ << 13, 73U));
 
             for (const std::size_t m : {1UZ, 10UZ}) {
-                const std::vector<Out> whole = firWhole<S, H>(m, taps, x);
+                const std::vector<Out>                               whole = firWhole<S, H>(m, taps, x);
+                std::vector<std::pair<std::complex<double>, double>> reference(whole.size());
+                for (std::size_t k = 0UZ; k < whole.size(); ++k) {
+                    reference[k] = resampledByDefinition(1UZ, m, taps, x, k);
+                }
+
                 for (const std::size_t chunk : {1UZ, 3UZ, 17UZ, 4096UZ}) {
                     PolyphaseResampler<S, H> filter(1UZ, m, std::span<const H>(taps));
                     std::vector<Out>         y;
@@ -629,7 +688,102 @@ const boost::ut::suite<"polyphase resampler"> polyphaseResamplerTests = [] {
                         y.resize(y.size() + made);
                         filter.process(std::span<const S>(x.data() + at, take), std::span<Out>(y.data() + y.size() - made, made));
                     }
-                    expect(that % (y == whole)) << decltype(c)::name() << " at M=" << m << " in chunks of " << chunk;
+                    std::size_t outside = 0UZ;
+                    expect(eq(y.size(), whole.size()));
+                    for (std::size_t k = 0UZ; k < y.size(); ++k) {
+                        const auto& [want, magnitudes] = reference[k];
+                        outside += std::abs(widen(y[k]) - want) > roundingBound<Value>(taps.size(), magnitudes) ? 1UZ : 0UZ;
+                    }
+                    expect(eq(outside, 0UZ)) << decltype(c)::name() << " at M=" << m << " in chunks of " << chunk;
+                }
+            }
+        });
+    };
+
+    // On a target with a fused multiply-add a pass and a lone output can fuse different products, so two chunkings
+    // of one stream can differ in their last bits. On every target each output of any chunking is its definition to
+    // rounding.
+    "every output of any chunking is its definition to rounding"_test = [] {
+        forEachCombo<CombosWithDouble>([](auto c) {
+            using S     = typename decltype(c)::Sample;
+            using H     = typename decltype(c)::Tap;
+            using Out   = typename PolyphaseResampler<S, H>::output_type;
+            using Value = typename gr::filter::detail::PolyphaseTraits<S, H>::Value;
+
+            const std::vector<S> x = asStream<S>(noise(300UZ, 79U), noise(300UZ, 83U));
+            for (const Ratio& ratio : {Ratio{1UZ, 1UZ}, Ratio{1UZ, 10UZ}, Ratio{3UZ, 2UZ}, Ratio{4UZ, 1UZ}, Ratio{7UZ, 9UZ}}) {
+                // 1 tap a branch: no whole step in any type; 13: whole steps and a tail in every type; 128: passes of
+                // every size in every type, with no tail; 129: the same passes, each with a one-tap tail
+                for (const std::size_t kBranch : {1UZ, 13UZ, 128UZ, 129UZ}) {
+                    if (kBranch >= 128UZ && ratio.l != 1UZ && ratio.l != 7UZ) {
+                        continue; // rows of one branch and of several, within the sanitizer leg's time
+                    }
+                    const std::vector<H> taps = asStream<H>(noise(kBranch * ratio.l, 89U), noise(kBranch * ratio.l, 97U));
+
+                    const auto run = [&](std::size_t chunk) {
+                        PolyphaseResampler<S, H> resampler(ratio.l, ratio.m, std::span<const H>(taps));
+                        std::vector<Out>         y;
+                        for (std::size_t at = 0UZ; at < x.size(); at += chunk) {
+                            const std::size_t take = std::min(chunk, x.size() - at);
+                            const std::size_t made = resampler.outputsFor(take);
+                            y.resize(y.size() + made);
+                            resampler.process(std::span<const S>(x.data() + at, take), std::span<Out>(y.data() + y.size() - made, made));
+                        }
+                        return y;
+                    };
+
+                    std::vector<std::pair<std::complex<double>, double>> reference(ratio.l * x.size() / ratio.m + (ratio.l * x.size() % ratio.m != 0UZ ? 1UZ : 0UZ));
+                    for (std::size_t k = 0UZ; k < reference.size(); ++k) {
+                        reference[k] = resampledByDefinition(ratio.l, ratio.m, taps, x, k);
+                    }
+
+                    // Calls making one, two and seven outputs a row, then a call longer than the stream
+                    for (const std::size_t chunk : {ratio.m, 2UZ * ratio.m, 7UZ * ratio.m, 4096UZ}) {
+                        const std::vector<Out> y = run(chunk);
+
+                        std::size_t outside = 0UZ;
+                        double      worst   = 0.0;
+                        for (std::size_t k = 0UZ; k < y.size(); ++k) {
+                            const auto& [want, magnitudes] = reference[k];
+                            const double departure         = std::abs(widen(y[k]) - want);
+                            const double bound             = roundingBound<Value>(kBranch, magnitudes);
+                            outside += departure > bound ? 1UZ : 0UZ;
+                            worst = std::max(worst, magnitudes > 0.0 ? departure / bound : departure);
+                        }
+                        expect(eq(y.size(), reference.size()));
+                        expect(eq(outside, 0UZ)) << decltype(c)::name() << " " << ratio.l << "/" << ratio.m << ", " << kBranch << " taps a branch, chunks of " << chunk << ": worst departure " << worst << " of the rounding bound";
+                    }
+                }
+            }
+        });
+    };
+
+    "a call writes outputsFor() outputs and nothing past them"_test = [] {
+        forEachCombo([](auto c) {
+            using S   = typename decltype(c)::Sample;
+            using H   = typename decltype(c)::Tap;
+            using Out = typename PolyphaseResampler<S, H>::output_type;
+
+            const std::vector<S> x        = asStream<S>(noise(600UZ, 101U), noise(600UZ, 103U));
+            const Out            sentinel = makeValue<Out>(1234.5f, -1234.5f);
+            for (const Ratio& ratio : {Ratio{1UZ, 1UZ}, Ratio{1UZ, 10UZ}, Ratio{3UZ, 2UZ}, Ratio{4UZ, 1UZ}, Ratio{7UZ, 9UZ}}) {
+                const std::vector<H> taps = asStream<H>(noise(13UZ * ratio.l, 107U), noise(13UZ * ratio.l, 109U));
+                // room for a full group past the last output, where a write past outputsFor() would land
+                const std::size_t spare = gr::filter::detail::kPolyphaseOutputs<float> * ratio.l;
+
+                for (const std::size_t chunk : {1UZ, 7UZ, 100UZ, 4096UZ}) {
+                    PolyphaseResampler<S, H> resampler(ratio.l, ratio.m, std::span<const H>(taps));
+                    std::size_t              miscounted = 0UZ;
+                    std::size_t              written    = 0UZ;
+                    for (std::size_t at = 0UZ; at < x.size(); at += chunk) {
+                        const std::size_t take = std::min(chunk, x.size() - at);
+                        const std::size_t made = resampler.outputsFor(take);
+                        std::vector<Out>  y(made + spare, sentinel);
+                        miscounted += resampler.process(std::span<const S>(x.data() + at, take), std::span<Out>(y)) != made ? 1UZ : 0UZ;
+                        written += static_cast<std::size_t>(std::ranges::count_if(y.begin() + static_cast<std::ptrdiff_t>(made), y.end(), [&](const Out& v) { return v != sentinel; }));
+                    }
+                    expect(eq(miscounted, 0UZ)) << decltype(c)::name() << " " << ratio.l << "/" << ratio.m << " in chunks of " << chunk << ": calls returning other than outputsFor()";
+                    expect(eq(written, 0UZ)) << decltype(c)::name() << " " << ratio.l << "/" << ratio.m << " in chunks of " << chunk << ": outputs written past outputsFor()";
                 }
             }
         });
@@ -705,8 +859,8 @@ const boost::ut::suite<"polyphase resampler"> polyphaseResamplerTests = [] {
         using H   = float;
         using Out = PolyphaseResampler<S, H>::output_type;
 
-        const std::vector<H> taps = noise(11001UZ, 907U);
-        const std::vector<S> x    = asStream<S>(noise(11001UZ, 911U), noise(11001UZ, 913U));
+        const std::vector<H> taps = noise(3001UZ, 907U);
+        const std::vector<S> x    = asStream<S>(noise(3001UZ, 911U), noise(3001UZ, 913U));
 
         PolyphaseResampler<S, H> source(1UZ, 1UZ, std::span<const H>(taps));
         std::vector<Out>         seen(source.outputsFor(x.size()));

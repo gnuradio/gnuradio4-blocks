@@ -2,6 +2,8 @@
 #define GNURADIO_ALGORITHM_POLYPHASE_RESAMPLER_HPP
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +18,12 @@
 #include <vector>
 
 #include <gnuradio-4.0/algorithm/filter/FilterDesign.hpp>
+
+#include <vir/simd.h>
+
+#if defined(__AVX__) || defined(__FMA__)
+#include <immintrin.h>
+#endif
 
 /**
  * @brief An exact `L/M` rate change: `L` outputs for every `M` inputs.
@@ -47,42 +55,60 @@
  * does. The alternative, waiting for a full window, offsets the whole stream by the group delay and
  * breaks the tag map.
  *
- * Chunk independence is a correctness property. The values summed for output `k` are fixed by `k`
+ * Chunking must not change what a filter delivers. The values summed for output `k` are fixed by `k`
  * alone, but their order is not automatic: floating-point addition is not associative, so an
- * implementation that takes four outputs at a time when four are available and one otherwise
- * returns different last bits for the same input under different chunking. The dot product here
- * accumulates into a fixed number of lanes with a fixed tail and a fixed lane reduction, all three
- * determined by the branch length alone, whatever a call's length or span boundaries are.
+ * implementation that sums four outputs one way when four are available and one output another way
+ * otherwise returns different last bits for the same input under different chunking. Each output
+ * here accumulates into a fixed number of lanes with a fixed tail and a fixed lane reduction, all
+ * three determined by the branch length alone, whatever a call's length or span boundaries are.
+ * Without a fused multiply-add that gives the same bits under any chunking. With one, a pass and a
+ * lone output can fuse different products, so two chunkings can differ by the rounding below.
  *
- * This is hot path code. The inner loop is one contiguous-tap dot product over a contiguous input
- * run, which vectorizes with no gather; the branch table is stored branch-major, each branch
- * reversed, so selecting a branch is a pointer add and the samples are read forward. Allocation,
+ * This is hot path code. The branch table is stored branch-major, each branch reversed, so selecting
+ * a branch is a pointer add and the samples are read forward. A second copy holds each branch's taps
+ * in the lane order of the products they meet: a real tap against an interleaved complex sample is
+ * stored twice, `(h, h)`, so a step multiplies two contiguous runs with no lane shuffle. The copy
+ * holds each branch's whole steps in the wider of the sample and tap types: at most as many values
+ * as the table where the samples are real and twice as many where they are complex. Allocation,
  * locking and dispatch all happen at construction.
  *
- * Each output is a plain dot product. `HalfbandCascade`'s shape, sixteen outputs at a time so that a
- * tap becomes a scalar broadcast, suits a cascade whose consecutive outputs share a branch; here
- * they use different branches. Measured over `std::complex<float>` on one core with 65536 input
- * samples, relative to the cheapest row:
+ * One pass over a branch computes up to eight of its outputs: consecutive outputs at `L = 1`, and
+ * outputs `k, k + L, ...`, whose inputs lie `M` apart, at `L > 1`. A step loads its taps once and
+ * meets them with each output's samples in one `PolyphaseVector::multiplyAdd`. The eight outputs
+ * keep eight accumulator vectors in flight. One output alone keeps one vector, and its next add
+ * waits on the previous one. The loop is then bound by its sample loads, one per multiply-add.
+ * Where `native_simd` of the value type holds fewer than four lanes, `double` at the baseline ISA,
+ * a pass computes four outputs, which measured best or level there on most double-valued pairs
+ * against two and eight.
+ *
+ * Passes pay for themselves over many steps. A call making fewer outputs of a branch takes the
+ * passes that fit them, and a lone output or a pass of a few steps takes `polyphaseDot`, so a call
+ * costs what its outputs cost. Each output keeps its own accumulators, tail and reduction, so the
+ * outputs a pass shares do not change its bits. A target that fuses rounds differently from one that
+ * does not; on white noise the difference is about -122 dB of the output's rms.
+ *
+ * Measured over `std::complex<float>` samples and real taps on one core at the baseline `x86-64`
+ * ISA, built by GCC, 65536 input samples a call, relative to the cheapest row:
  *
  * ```
  *   L/M       taps/branch   multiplies per input sample   cost
- *   1/2            77                  38.5               1.16
- *   3/2            37                  55.5               1.94
+ *   1/2            77                  38.5               1.46
+ *   3/2            37                  55.5               2.80
  *   1/25          907                  36.3               1.00
- *   147/160        40                  36.8               1.22
+ *   147/160        40                  36.8               1.70
  * ```
  *
- * The cost tracks the multiplies per input sample (`N/M`) rather than the branch length: 907 taps a
- * branch at `1/25` is the cheapest row here. Time per complex multiply-accumulate is flat to within
- * 1.3x across the four at the baseline `x86-64` ISA, and a further 1.25x to 1.4x is available
- * where the wider ISA is allowed.
+ * The time per multiply-accumulate falls with the branch length, 1.8x from 37 taps a branch to 907:
+ * an output pays its lane reduction and tail once a pass, which a long branch spreads over more
+ * taps. At `x86-64-v3`, with the fused multiply-add and 256-bit registers, the four rows run 1.51x
+ * to 1.93x faster.
  *
  * The tap type costs `4 : 2 : 2 : 1` in real multiplies (complex taps on complex samples, either
- * mixed pair, two reals) and delivers it: measured per tap and output at the baseline ISA, the
- * first costs about 4.5x the last and the mixed pairs about 2.4x. A real-valued tap set carried in
- * a complex container therefore costs exactly double for the same arithmetic, and a downconverter
- * that rotates first and filters with a real prototype is the cheaper of the two routes to a
- * translating filter.
+ * mixed pair, two reals). Measured per tap and output at the baseline ISA on branches of 200 taps or
+ * more, the first costs 2.9x to 3.8x the last and the mixed pairs 1.6x to 2.2x. A real-valued tap
+ * set carried in a complex container therefore costs twice the arithmetic and 1.7x to 1.9x the time,
+ * and a downconverter that rotates first and filters with a real prototype is the cheaper of the two
+ * routes to a translating filter.
  *
  * Two cases belong elsewhere. `L = M = 1` after reduction is a pass-through, which `designResampler`
  * answers with a single unit tap rather than a filter. `L = 1` with `M` a power of two is handled by
@@ -208,6 +234,264 @@ template<typename TSample, typename TTap>
         return Output{sum[0] - sum[3], sum[1] + sum[2]};
     }
 }
+
+// Clang 17 to 20 warn that returning a vector wider than the target's registers changes the ABI. Every function
+// below that returns one is forced inline and leaves no call.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpsabi"
+#endif
+
+/**
+ * @brief The vector of a polyphase step and its operations, each in the form its compiler needs.
+ *
+ * Under Clang the vector is the compiler's own vector extension: Clang's vectorizer regroups vir's own `vir::stdx`, an
+ * array of scalars, across a pass's outputs rather than along their lanes, which measured up to 2.3 times the time of
+ * computing the outputs one at a time. Built by GCC with libstdc++ on x86, an eight-float vector that is one native
+ * register takes the instruction directly: the library's `fma` is a per-element fallback there, and its lane generator
+ * is assembled from scalar loads in some instantiations. Every other vector and target takes `vir::stdx`. All are
+ * forced inline: left as a call, a vector of several registers goes through memory every step, at over twice the time.
+ */
+struct PolyphaseVector {
+    /// @brief Whether the target evaluates a fused multiply-add of `float` in hardware.
+    static constexpr bool kHardwareFmaFloat =
+#if defined(FP_FAST_FMAF) || defined(__FMA__) || defined(__ARM_FEATURE_FMA)
+        true;
+#else
+        false;
+#endif
+
+    /// @brief The same for `double`, which a core with a single-precision unit only leaves to a library call.
+    static constexpr bool kHardwareFmaDouble =
+#if defined(FP_FAST_FMA) || defined(__FMA__) || (defined(__ARM_FEATURE_FMA) && defined(__ARM_FP) && (__ARM_FP & 8))
+        true;
+#else
+        false;
+#endif
+
+    template<typename T>
+    static constexpr bool kHardwareFma = std::is_same_v<T, float> ? kHardwareFmaFloat : kHardwareFmaDouble;
+
+    /// @brief `kLanes` values of @p Value as one vector.
+#if defined(__clang__)
+    template<typename Value, std::size_t kLanes>
+    using Of = Value __attribute__((vector_size(kLanes * sizeof(Value))));
+    template<typename V>
+    using Element = std::remove_cvref_t<decltype(std::declval<V&>()[0])>;
+#else
+    template<typename Value, std::size_t kLanes>
+    using Of = vir::stdx::simd<Value, vir::stdx::simd_abi::deduce_t<Value, kLanes>>;
+    template<typename V>
+    using Element = typename V::value_type;
+#endif
+
+    template<typename V>
+    [[nodiscard, gnu::always_inline]] static V zero() noexcept {
+#if defined(__clang__)
+        return V{};
+#else
+        return V(Element<V>{});
+#endif
+    }
+
+    /// @brief The vector's lanes from @p p, each converted to the vector's value type.
+    template<typename V, typename T>
+    [[nodiscard, gnu::always_inline]] static V load(const T* p) noexcept {
+        V v;
+#if defined(__clang__)
+        if constexpr (std::is_same_v<T, Element<V>>) {
+            __builtin_memcpy(&v, p, sizeof(V));
+        } else {
+            for (std::size_t i = 0UZ; i < sizeof(V) / sizeof(Element<V>); ++i) {
+                v[i] = static_cast<Element<V>>(p[i]);
+            }
+        }
+#else
+        v.copy_from(p, vir::stdx::element_aligned);
+#endif
+        return v;
+    }
+
+    template<typename V>
+    [[gnu::always_inline]] static void store(const V& v, Element<V>* p) noexcept {
+#if defined(__clang__)
+        __builtin_memcpy(p, &v, sizeof(V));
+#else
+        v.copy_to(p, vir::stdx::element_aligned);
+#endif
+    }
+
+    /**
+     * @brief `a * b + c`, never a library call.
+     *
+     * A scalar, a Clang vector, and an eight-float vector on x86 built by GCC with libstdc++ are fused where the target
+     * has a fused multiply-add in hardware. Any other vector is a multiply and an add, which the compiler fuses where its
+     * contraction setting allows.
+     */
+    template<typename V>
+    [[nodiscard, gnu::always_inline]] static V multiplyAdd(const V& a, const V& b, const V& c) noexcept {
+        if constexpr (std::is_arithmetic_v<V>) {
+            if constexpr (kHardwareFma<V>) {
+                return std::fma(a, b, c);
+            } else {
+                return a * b + c;
+            }
+        } else {
+#if defined(__clang__) && __has_builtin(__builtin_elementwise_fma)
+            if constexpr (kHardwareFma<Element<V>>) {
+                return __builtin_elementwise_fma(a, b, c);
+            }
+#elif defined(__FMA__) && defined(__GLIBCXX__)
+            if constexpr (requires {
+                              static_cast<__m256>(a);
+                              V(__m256{});
+                          }) {
+                return V(_mm256_fmadd_ps(static_cast<__m256>(a), static_cast<__m256>(b), static_cast<__m256>(c)));
+            }
+#endif
+            return a * b + c;
+        }
+    }
+
+    /// @brief The four values at @p p twice over, `p[0..3], p[0..3]`, as one eight-lane vector.
+    template<typename V, typename T>
+    [[nodiscard, gnu::always_inline]] static V repeatedRun(const T* p) noexcept {
+#if defined(__clang__)
+        V v;
+        for (std::size_t i = 0UZ; i < 8UZ; ++i) {
+            v[i] = static_cast<Element<V>>(p[i % 4UZ]);
+        }
+        return v;
+#else
+#if defined(__AVX__) && defined(__GLIBCXX__)
+        if constexpr (std::is_same_v<T, float> && std::is_same_v<typename V::value_type, float> && requires { V(__m256{}); }) {
+            const __m128 run = _mm_loadu_ps(p);
+            return V(_mm256_insertf128_ps(_mm256_castps128_ps256(run), run, 1));
+        }
+#endif
+        return V([&](auto i) { return static_cast<typename V::value_type>(p[i % 4UZ]); });
+#endif
+    }
+};
+
+/**
+ * @brief The lane map of a polyphase step: which tap and which sample each of its eight lanes multiplies.
+ *
+ * The lanes are `polyphaseDot`'s accumulators reordered so that a step's samples are one contiguous run. With real
+ * taps the run is eight sample values, lane for lane. With complex taps it is four values, met once by the real parts
+ * of the taps and once by the imaginary parts. Each lane sums the same products in the same order as its
+ * `polyphaseDot` accumulator.
+ */
+template<typename TSample, typename TTap>
+struct PolyphaseLanes {
+    using Traits = PolyphaseTraits<TSample, TTap>;
+
+    static constexpr std::size_t kSampleLanes = Traits::kSampleLanes;
+    static constexpr std::size_t kTapLanes    = Traits::kTapLanes;
+    static constexpr std::size_t kBlock       = Traits::kBlock;
+    static constexpr std::size_t kLanes       = kBlock * Traits::kAcc;
+    static constexpr std::size_t kRun         = kLanes / kTapLanes; /// sample values a step reads
+
+    /// @brief The offset of lane @p i's tap value from the step's first tap value.
+    [[nodiscard]] static constexpr std::size_t tap(std::size_t i) noexcept { return kTapLanes * ((i % kRun) / kSampleLanes) + i / kRun; }
+    /// @brief The lane holding `polyphaseDot`'s accumulator `b * kAcc + u`.
+    [[nodiscard]] static constexpr std::size_t lane(std::size_t b, std::size_t u) noexcept { return (u / kSampleLanes) * kRun + b * kSampleLanes + u % kSampleLanes; }
+};
+
+/**
+ * @brief The most outputs of a branch one pass computes: eight where `native_simd<Value>` holds four lanes or more, else four.
+ *
+ * Eight outputs of `double` at `x86-64-v3` keep some accumulators in memory, but four leave real pairs on branches of
+ * about 40 taps below `kPolyphasePassWork`, at up to 1.5 times the time.
+ */
+template<typename Value>
+inline constexpr std::size_t kPolyphaseOutputs = vir::stdx::native_simd<Value>::size() >= 4UZ ? 8UZ : 4UZ;
+
+/// @brief The size of a pass that repays its call against `polyphaseDot`, as outputs times steps times `kAcc`.
+inline constexpr std::size_t kPolyphasePassWork = 32UZ;
+
+/**
+ * @brief @p kOutputs dot products of one branch, against the sample runs at @p x, in `polyphaseDot`'s tree.
+ *
+ * A step loads `kLanes` taps once from @p arranged, the branch's taps in lane order, and meets them with each output's
+ * samples in one multiply-add. The tail of fewer than `kBlock` taps reads @p h, the branch as stored.
+ *
+ * Kept out of line, so that its register allocation does not depend on its caller; inlined, it measured the same.
+ */
+template<typename TSample, typename TTap, std::size_t kOutputs>
+[[gnu::noinline]] void polyphaseDotLanes(const typename PolyphaseTraits<TSample, TTap>::TapValue* h, const typename PolyphaseTraits<TSample, TTap>::Value* arranged, const typename PolyphaseTraits<TSample, TTap>::SampleValue* const* x, std::size_t n, typename PolyphaseTraits<TSample, TTap>::Output* out) noexcept {
+    using Traits = PolyphaseTraits<TSample, TTap>;
+    using Lanes  = PolyphaseLanes<TSample, TTap>;
+    using Value  = typename Traits::Value;
+    using Output = typename Traits::Output;
+    using V      = PolyphaseVector::Of<Value, Lanes::kLanes>;
+
+    constexpr std::size_t kSampleLanes = Traits::kSampleLanes;
+    constexpr std::size_t kTapLanes    = Traits::kTapLanes;
+    constexpr std::size_t kAcc         = Traits::kAcc;
+    constexpr std::size_t kBlock       = Traits::kBlock;
+
+    // Each accumulator has a constant index, which lets the compiler keep it in a register where the target has enough.
+    // The index lambdas are forced inline: Clang otherwise calls one every step, with the accumulators in memory.
+    std::array<V, kOutputs> acc;
+    const auto              each = [&]<typename F> [[gnu::always_inline]] (F&& f) { [&]<std::size_t... K> [[gnu::always_inline]] (std::index_sequence<K...>) { (f(std::integral_constant<std::size_t, K>{}), ...); }(std::make_index_sequence<kOutputs>{}); };
+    each([&] [[gnu::always_inline]] (auto k) { acc[k] = PolyphaseVector::zero<V>(); });
+
+    const std::size_t bulk = n - (n % kBlock);
+    const Value*      next = arranged;
+    for (std::size_t r = 0UZ; r < bulk; r += kBlock) {
+        const V w = PolyphaseVector::load<V>(next);
+        next += Lanes::kLanes;
+        each([&] [[gnu::always_inline]] (auto k) {
+            const auto* run = x[k] + kSampleLanes * r;
+            V           s;
+            if constexpr (Lanes::kRun == Lanes::kLanes) {
+                s = PolyphaseVector::load<V>(run);
+            } else {
+                static_assert(Lanes::kRun == 4UZ);
+                s = PolyphaseVector::repeatedRun<V>(run);
+            }
+            acc[k] = PolyphaseVector::multiplyAdd(w, s, acc[k]);
+        });
+    }
+
+    std::array<Value, kOutputs * Lanes::kLanes> lanes;
+    each([&] [[gnu::always_inline]] (auto k) { PolyphaseVector::store(acc[k], lanes.data() + k * Lanes::kLanes); });
+
+    for (std::size_t k = 0UZ; k < kOutputs; ++k) {
+        Value tail[kAcc]{};
+        for (std::size_t r = bulk; r < n; ++r) {
+            for (std::size_t t = 0UZ; t < kTapLanes; ++t) {
+                const Value w = static_cast<Value>(h[kTapLanes * r + t]);
+                for (std::size_t s = 0UZ; s < kSampleLanes; ++s) {
+                    Value& a = tail[t * kSampleLanes + s];
+                    a        = PolyphaseVector::multiplyAdd(w, static_cast<Value>(x[k][kSampleLanes * r + s]), a);
+                }
+            }
+        }
+
+        Value sum[kAcc];
+        for (std::size_t u = 0UZ; u < kAcc; ++u) {
+            Value s = lanes[k * Lanes::kLanes + Lanes::lane(0UZ, u)];
+            for (std::size_t b = 1UZ; b < kBlock; ++b) {
+                s += lanes[k * Lanes::kLanes + Lanes::lane(b, u)];
+            }
+            sum[u] = s + tail[u];
+        }
+
+        if constexpr (kAcc == 1UZ) {
+            out[k] = sum[0];
+        } else if constexpr (kAcc == 2UZ) {
+            out[k] = Output{sum[0], sum[1]};
+        } else {
+            out[k] = Output{sum[0] - sum[3], sum[1] + sum[2]};
+        }
+    }
+}
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 } // namespace detail
 
@@ -672,11 +956,14 @@ template<typename TSample, typename TTap = float>
 requires PolyphaseSample<TSample> && PolyphaseTap<TTap>
 class PolyphaseResampler {
     using Traits      = detail::PolyphaseTraits<TSample, TTap>;
+    using Lanes       = detail::PolyphaseLanes<TSample, TTap>;
     using SampleValue = typename Traits::SampleValue;
     using TapValue    = typename Traits::TapValue;
+    using Value       = typename Traits::Value;
 
     static constexpr std::size_t kSampleLanes = Traits::kSampleLanes;
     static constexpr std::size_t kTapLanes    = Traits::kTapLanes;
+    static constexpr std::size_t kOutputs     = detail::kPolyphaseOutputs<Value>;
 
 public:
     using sample_type = TSample;
@@ -693,7 +980,7 @@ public:
      * only makes the stored vector asymmetric, which affects a naive group-delay formula alone. The
      * zero taps do cost multiplies, and a length already a multiple of `L` costs none.
      */
-    PolyphaseResampler(std::size_t interpolation, std::size_t decimation, std::span<const TTap> taps) : _interpolation(interpolation), _decimation(decimation) {
+    PolyphaseResampler(std::size_t interpolation, std::size_t decimation, std::span<const TTap> taps) : _interpolation(interpolation), _decimation(decimation), _stepWhole(interpolation == 0UZ ? 0UZ : decimation / interpolation), _stepRest(interpolation == 0UZ ? 0UZ : decimation % interpolation) {
         if (interpolation == 0UZ || decimation == 0UZ) {
             throw std::invalid_argument("PolyphaseResampler: interpolation and decimation must both be at least one");
         }
@@ -712,6 +999,21 @@ public:
             }
         }
         _window.assign(2UZ * (_branchLength - 1UZ), TSample{});
+
+        // Each branch's whole steps again, in the lane order of the products they meet. The tail stays in _branch.
+        const std::size_t     steps = _branchLength / Traits::kBlock;
+        const TapValue* const flat  = reinterpret_cast<const TapValue*>(_branch.data());
+        _arranged.assign(interpolation * steps * Lanes::kLanes, Value{});
+        for (std::size_t pass = kOutputs; pass >= 2UZ && pass * steps * Traits::kAcc >= detail::kPolyphasePassWork; pass /= 2UZ) {
+            _smallestPass = pass;
+        }
+        for (std::size_t p = 0UZ; p < interpolation; ++p) {
+            for (std::size_t q = 0UZ; q < steps; ++q) {
+                for (std::size_t i = 0UZ; i < Lanes::kLanes; ++i) {
+                    _arranged[(p * steps + q) * Lanes::kLanes + i] = static_cast<Value>(flat[kTapLanes * (p * _branchLength + q * Traits::kBlock) + Lanes::tap(i)]);
+                }
+            }
+        }
     }
 
     /// @brief Forget the history and the phase: the next process() starts a new stream on silence.
@@ -725,7 +1027,7 @@ public:
     /**
      * @brief The `B-1` samples preceding the next call, oldest first: the whole of what a tap change has to carry.
      *
-     * A tap set is fixed at construction: the branch table is built once, branch-major and reversed,
+     * A tap set is fixed at construction: the branch table and its lane-ordered copy are built once,
      * which is where the dot product's speed comes from, so a new tap set is a new kernel and the
      * only thing the old one holds that the new one needs is this window. Reading it, rather than
      * replaying the history through the new kernel and discarding the outputs, is the difference
@@ -786,8 +1088,9 @@ public:
      * @brief Consume all of @p in and write `outputsFor(in.size())` samples to @p out.
      *
      * The stream produced is the one a single call over the whole input would have produced, to the
-     * bit. @p out is sized by the caller through `outputsFor`; this never truncates, and throws once
-     * per call rather than risking a write past the end.
+     * bit without a fused multiply-add and to rounding with one. @p out is sized by the caller through
+     * `outputsFor`; this never truncates, and throws once per call rather than risking a write past
+     * the end.
      */
     std::size_t process(std::span<const TSample> in, std::span<output_type> out) {
         const std::size_t made = outputsFor(in.size());
@@ -807,17 +1110,55 @@ public:
         const SampleValue* const windowF = reinterpret_cast<const SampleValue*>(_window.data());
         const SampleValue* const inF     = reinterpret_cast<const SampleValue*>(in.data());
 
-        std::size_t anchor = _skip;
-        for (std::size_t k = 0UZ; k < made; ++k) {
-            const SampleValue* x = (anchor < history) ? windowF + kSampleLanes * anchor : inF + kSampleLanes * (anchor - history);
-            out[k]               = detail::polyphaseDot<TSample, TTap>(branch + kTapLanes * _phase * _branchLength, x, _branchLength);
+        const std::size_t steps = _branchLength / Traits::kBlock;
+        const auto        at    = [&](std::size_t a) { return (a < history) ? windowF + kSampleLanes * a : inF + kSampleLanes * (a - history); };
 
-            _phase += _decimation;
-            while (_phase >= _interpolation) {
-                _phase -= _interpolation;
-                ++anchor;
+        // Output `k + i + j*L` of a group uses row `i`'s branch and input anchor `anchor_i + j*M`, so the outputs of
+        // one row share one branch. The rows are walked, because a division per row costs a short branch about as
+        // much as its multiplies.
+        std::size_t rowPhase  = _phase;
+        std::size_t rowAnchor = _skip;
+        const auto  nextRow   = [&] {
+            rowPhase += _stepRest;
+            rowAnchor += _stepWhole;
+            if (rowPhase >= _interpolation) {
+                rowPhase -= _interpolation;
+                ++rowAnchor;
             }
+        };
+
+        const std::size_t fullGroup = _interpolation * kOutputs;
+        for (std::size_t k = 0UZ; k < made;) {
+            const std::size_t group = std::min(made - k, fullGroup);
+            if (group < _interpolation * _smallestPass) { // no row reaches a pass
+                for (std::size_t i = 0UZ; i < group; ++i) {
+                    out[k + i] = detail::polyphaseDot<TSample, TTap>(branch + kTapLanes * rowPhase * _branchLength, at(rowAnchor), _branchLength);
+                    nextRow();
+                }
+                k += group;
+                continue;
+            }
+
+            const std::size_t whole = group == fullGroup ? kOutputs : group / _interpolation;
+            const std::size_t rest  = group - whole * _interpolation;
+
+            std::size_t nextPhase  = rowPhase;
+            std::size_t nextAnchor = rowAnchor;
+            for (std::size_t i = 0UZ; i < _interpolation; ++i) {
+                if (i == rest) { // the next group starts on this row
+                    nextPhase  = rowPhase;
+                    nextAnchor = rowAnchor;
+                }
+                computeRow<kOutputs>(branch + kTapLanes * rowPhase * _branchLength, _arranged.data() + rowPhase * steps * Lanes::kLanes, at, rowAnchor, whole + (i < rest ? 1UZ : 0UZ), out.data() + k + i);
+                nextRow();
+            }
+
+            // `L` outputs advance the input by exactly `M` and return to the same branch
+            rowPhase  = nextPhase;
+            rowAnchor = nextAnchor + whole * _decimation;
+            k += group;
         }
+        _phase = rowPhase;
 
         if (history > 0UZ) {
             if (in.size() >= history) {
@@ -826,16 +1167,52 @@ public:
                 std::copy_n(_window.begin() + static_cast<std::ptrdiff_t>(in.size()), history, _window.begin());
             }
         }
-        _skip = anchor - in.size();
+        _skip = rowAnchor - in.size();
         _produced += made;
         return made;
     }
 
 private:
+    /**
+     * @brief A row's @p count outputs, `out[j * L]`: the largest pass that fits and repays its call, then smaller ones,
+     * then `polyphaseDot`.
+     */
+    template<std::size_t kPass>
+    [[gnu::always_inline]] void computeRow(const TapValue* h, const Value* arranged, const auto& at, std::size_t anchor, std::size_t count, output_type* out) const noexcept {
+        if constexpr (kPass == 1UZ) {
+            for (std::size_t j = 0UZ; j < count; ++j) {
+                out[j * _interpolation] = detail::polyphaseDot<TSample, TTap>(h, at(anchor + j * _decimation), _branchLength);
+            }
+        } else {
+            if (count >= kPass && kPass >= _smallestPass) {
+                std::array<const SampleValue*, kPass> xs{};
+                std::array<output_type, kPass>        ys{};
+                for (std::size_t j = 0UZ; j < kPass; ++j) {
+                    xs[j] = at(anchor + j * _decimation);
+                }
+                detail::polyphaseDotLanes<TSample, TTap, kPass>(h, arranged, xs.data(), _branchLength, ys.data());
+                for (std::size_t j = 0UZ; j < kPass; ++j) {
+                    out[j * _interpolation] = ys[j];
+                }
+                if (count == kPass) {
+                    return;
+                }
+                anchor += kPass * _decimation;
+                count -= kPass;
+                out += kPass * _interpolation;
+            }
+            computeRow<kPass / 2UZ>(h, arranged, at, anchor, count, out);
+        }
+    }
+
     std::size_t          _interpolation;
     std::size_t          _decimation;
+    std::size_t          _stepWhole;                     /// `M / L`, the inputs every output advances
+    std::size_t          _stepRest;                      /// `M % L`, the branches it advances
+    std::size_t          _smallestPass = 2UZ * kOutputs; /// the outputs of the smallest pass worth its call; twice `kOutputs` for none
     std::size_t          _branchLength = 0UZ;
     std::vector<TTap>    _branch;         /// branch-major, each branch reversed
+    std::vector<Value>   _arranged;       /// each branch's whole steps, in lane order
     std::vector<TSample> _window;         /// the B-1 samples before the call, then room for the head of it
     std::size_t          _phase    = 0UZ; /// the commutator's `ctr`
     std::size_t          _skip     = 0UZ; /// inputs the next output's anchor sits ahead of the next unconsumed sample
