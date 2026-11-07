@@ -8,6 +8,7 @@
 #include <cstring>
 #include <deque>
 #include <format>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <print>
@@ -147,9 +148,17 @@ honest reading.
 Everything else is the record sink's contract, for the same reasons: `pub` by default because a `push` sink splits a
 stream between two consumers with no error anywhere, and `drop_oldest` by default because a slow subscriber must not
 stall the graph.
+
+For an indexed upstream stream, set `initial_position` to the exact first input index, `stream_origin` to its true
+origin, and `stream_id` to an execution identity. These are fixed for a run and repeated in the existing metadata
+frame, so a late subscriber does not depend on receiving an origin tag. Defaults retain the local zero-based count.
 )"">;
 
     PortIn<T> in;
+
+    Annotated<std::uint64_t, "initial_position", Doc<"absolute upstream position of the first input sample; fixed for a run">> initial_position = 0ULL;
+    Annotated<std::uint64_t, "stream_origin", Doc<"true origin of the upstream stream, at or before initial_position">>        stream_origin    = 0ULL;
+    Annotated<std::string, "stream_id", Doc<"identity of this upstream execution; change it when the producer restarts">>      stream_id        = std::string("");
 
     Annotated<std::string, "endpoint", Visible, Doc<"libzmq endpoint, e.g. tcp://127.0.0.1:5555; required, there is no default">> endpoint{};
     Annotated<bool, "bind", Doc<"bind the endpoint rather than connect to it; the producer is normally the stable end">>          bind              = true;
@@ -164,7 +173,7 @@ stall the graph.
     Annotated<std::uint64_t, "max_message_bytes", Unit<"byte">, Doc<"a chunk whose envelope would exceed this is refused">>       max_message_bytes = 16777216ULL;
     Annotated<std::int32_t, "linger_ms", Unit<"ms">, Doc<"ZMQ_LINGER; 0 discards pending messages immediately on close">>         linger_ms         = 0;
 
-    GR_MAKE_REFLECTABLE(StreamPacketSink, in, endpoint, bind, pattern, topic, max_items, sample_rate, overflow, queue_messages, queue_bytes, send_hwm, max_message_bytes, linger_ms);
+    GR_MAKE_REFLECTABLE(StreamPacketSink, in, endpoint, bind, pattern, topic, max_items, sample_rate, overflow, queue_messages, queue_bytes, send_hwm, max_message_bytes, linger_ms, initial_position, stream_origin, stream_id);
 
     /// @brief The block's counters and its transport's, as one set.
     ///
@@ -206,6 +215,9 @@ stall the graph.
     std::uint64_t _maxMessageBytes = 16777216ULL;
     std::uint64_t _queueBytes      = 16777216ULL; ///< frozen beside the transport's copy, which start() configures
     std::size_t   _maxItems        = 0UZ;
+    std::uint64_t _initialPosition = 0ULL;
+    std::uint64_t _streamOrigin    = 0ULL;
+    std::string   _streamId;
 
     detail::zmqenvelope::SocketConfig _frozen{}; ///< the socket settings, read once when the socket opens
     detail::zmqenvelope::SendQueue    _sender{}; ///< joins its own thread however the block dies
@@ -217,8 +229,11 @@ stall the graph.
         _frozen     = frozenSocketConfig();
         _queueBytes = queue_bytes.value;
         _sender.configure(static_cast<std::size_t>(queue_messages.value), _queueBytes, _backpressure);
-        _sequence       = 0ULL; // a restarted sink restarts its stream, which the far end reads as a producer reset
-        _streamPosition = 0ULL;
+        _sequence        = 0ULL; // a restarted sink restarts its stream, which the far end reads as a producer reset
+        _initialPosition = initial_position.value;
+        _streamOrigin    = stream_origin.value;
+        _streamId        = stream_id.value;
+        _streamPosition  = _initialPosition;
         _sampleRate.reset();
         _sender.start(_frozen, this->name.value);
         _socketOpen = true;
@@ -258,6 +273,9 @@ stall the graph.
         std::size_t       nextTag    = 0UZ; // _spanTags is ordered by offset, so one cursor walks it
         while (consumed < available) {
             const std::size_t items = std::min(chunkItems, available - consumed);
+            if (_streamPosition > std::numeric_limits<std::uint64_t>::max() - items || _sequence == std::numeric_limits<std::uint64_t>::max()) {
+                throw gr::exception("StreamPacket position or sequence exhausted; start a new stream identity");
+            }
             const std::size_t first = nextTag;
             while (nextTag < _spanTags.size() && _spanTags[nextTag].offset < consumed + items) {
                 ++nextTag;
@@ -309,6 +327,9 @@ stall the graph.
 
 private:
     void validate() {
+        if (stream_origin.value > initial_position.value) {
+            throw gr::exception("stream_origin exceeds initial_position");
+        }
         if (endpoint.value.empty()) {
             throw gr::exception("endpoint is empty; a transport sink has no default endpoint and will not bind to nothing");
         }
@@ -336,6 +357,15 @@ private:
     /// is a teardown race; the graph rebuild the framework already supports is the supported way to move an endpoint.
     void refuseFrozenChange() const {
         const auto refuse = [](std::string_view setting) { throw gr::exception(std::format("setting '{}' is read once when the socket opens and cannot change while the block is running; rebuild the graph instead", setting)); };
+        if (initial_position.value != _initialPosition) {
+            refuse("initial_position");
+        }
+        if (stream_origin.value != _streamOrigin) {
+            refuse("stream_origin");
+        }
+        if (stream_id.value != _streamId) {
+            refuse("stream_id");
+        }
         const auto wanted = frozenSocketConfig();
         if (wanted.endpoint != _frozen.endpoint) {
             refuse("endpoint");
@@ -382,6 +412,11 @@ private:
         property_map map;
         map.insert_or_assign(property_map::key_type("sequence"), pmt::Value(_sequence));
         map.insert_or_assign(property_map::key_type(detail::streampacket::kStreamPositionKey), pmt::Value(_streamPosition));
+        if (!_streamId.empty() || _initialPosition != 0ULL || _streamOrigin != 0ULL) {
+            map["stream_id"]        = _streamId;
+            map["initial_position"] = _initialPosition;
+            map["stream_origin"]    = _streamOrigin;
+        }
         // the stream's own statement wins over the setting: a tag is the more local truth, and the setting exists
         // for the producers that carry their rate in their settings alone and never tag it
         if (const std::optional<float> rate = _sampleRate.has_value() ? _sampleRate : _statedRate; rate.has_value()) {
@@ -443,6 +478,7 @@ GR_REGISTER_BLOCK(gr::blocks::network::StreamPacketSource, [T], [ uint8_t, int16
 template<typename T>
 requires gr::network::EnvelopeItem<T>
 struct StreamPacketSource : Block<StreamPacketSource<T>, NoTagPropagation> {
+    friend struct StreamPacketTestAccess;
     using Description = Doc<R""(
 @brief Receives the stream pair's packets and republishes the samples and the tags standing in them.
 
@@ -474,9 +510,23 @@ bounded and drops its oldest packet when the graph falls behind, which for a liv
 Unlike the record source this block tracks one stream, not one per `source_id`. Two producers on one endpoint
 interleave two sample streams into one edge, which no gap tag can describe; a graph that wants two streams uses two
 sources.
+
+With `publish_positions`, each packet's first sample carries a nested `stream_packet` map: position, sequence,
+sample_count, stream_id, stream_origin, initial_position, sample_rate when known, tags_malformed and event.
+Events are initial, source_reset, contiguous, gap, sequence_reset, stream_rewind and stream_changed. On a gap,
+missing_begin/missing_end describe the exact half-open interval with uint64 precision (including zero-sample
+sequence gaps). Legacy n_dropped_samples saturates at Size_t's maximum. Initial unavailable_before describes
+unobserved history, not measured packet loss. A rewind/reset changes placement and must never be treated as loss.
+No terminal envelope or disconnect-cause detector is provided: a silent wire alone cannot prove a final missing
+interval. Applications may obtain an authoritative terminal index through their existing control plane.
 )"">;
 
     PortOut<T> out;
+
+    // Opt-in preserves the legacy tag surface. Each packet starts with a nested
+    // stream_packet tag; its position always names a retained sample, whereas
+    // the legacy top-level stream_position on a gap names the first MISSING one.
+    Annotated<bool, "publish_positions", Doc<"publish exact packet placement, identity and discontinuity as stream_packet tags">> publish_positions = false;
 
     Annotated<std::string, "endpoint", Visible, Doc<"libzmq endpoint; required, there is no default">>                                   endpoint{};
     Annotated<bool, "bind", Doc<"bind the endpoint rather than connect to it; a consumer normally connects">>                            bind              = false;
@@ -488,7 +538,7 @@ sources.
     Annotated<gr::Size_t, "recv_hwm", Doc<"ZMQ_RCVHWM, libzmq's own inbound queue bound">>                                               recv_hwm          = 16U;
     Annotated<std::int32_t, "linger_ms", Unit<"ms">, Doc<"ZMQ_LINGER; 0 discards pending messages immediately on close">>                linger_ms         = 0;
 
-    GR_MAKE_REFLECTABLE(StreamPacketSource, out, endpoint, bind, pattern, topic, max_message_bytes, queue_messages, queue_bytes, recv_hwm, linger_ms);
+    GR_MAKE_REFLECTABLE(StreamPacketSource, out, endpoint, bind, pattern, topic, max_message_bytes, queue_messages, queue_bytes, recv_hwm, linger_ms, publish_positions);
 
     /// @brief The counters as one set, taken under the lock the reader thread writes most of them behind.
     struct Counters {
@@ -546,6 +596,10 @@ sources.
         std::uint64_t                                 streamPosition = 0ULL;
         std::optional<float>                          sampleRate{};
         std::uint64_t                                 bytes = 0ULL;
+        std::string                                   streamId;
+        std::uint64_t                                 initialPosition = 0ULL;
+        std::uint64_t                                 streamOrigin    = 0ULL;
+        std::uint64_t                                 tagsMalformed   = 0ULL;
     };
 
     mutable std::mutex         _mutex; ///< guards the queue and the counters the reader thread writes
@@ -561,6 +615,9 @@ sources.
     std::uint64_t          _lastSequence = 0ULL;
     std::uint64_t          _streamEnd    = 0ULL; ///< where the last published packet ended, in the sender's count
     std::optional<float>   _publishedRate{};     ///< the last rate republished as a tag
+    std::string            _publishedStreamId;
+    bool                   _everStarted     = false;
+    bool                   _sourceRestarted = false;
 
     bool                              _socketOpen    = false;
     std::size_t                       _queueMessages = 1024UZ; ///< frozen with the socket, since the reader reads them
@@ -575,9 +632,11 @@ sources.
 
     void start() {
         validate();
-        _frozen        = frozenSocketConfig();
-        _queueMessages = static_cast<std::size_t>(queue_messages.value);
-        _queueBytes    = queue_bytes.value;
+        _sourceRestarted = _everStarted;
+        _everStarted     = true;
+        _frozen          = frozenSocketConfig();
+        _queueMessages   = static_cast<std::size_t>(queue_messages.value);
+        _queueBytes      = queue_bytes.value;
         {
             std::lock_guard lock(_mutex);
             _queue.clear();
@@ -591,6 +650,7 @@ sources.
         _lastSequence = 0ULL;
         _streamEnd    = 0ULL;
         _publishedRate.reset();
+        _publishedStreamId.clear();
         _receiver.start(_frozen, this->name.value, [this](std::span<zmq::message_t> parts, std::size_t partCount, std::uint64_t bytes) { handleMessage(parts, partCount, bytes); });
         _socketOpen = true;
     }
@@ -700,7 +760,6 @@ private:
             _queue.pop_front();
             _queuedBytes -= arrival.bytes;
         }
-        notePlacement(arrival);
         if (arrival.sampleRate.has_value() && arrival.sampleRate != _publishedRate) {
             // stated on every packet by the sink, republished only when it changes; for a subscriber that joined
             // mid-stream that is its first sample, which is the case the rate has to cross for
@@ -718,6 +777,7 @@ private:
             }
             return false;
         }
+        notePlacement(arrival);
         _current       = std::move(arrival);
         _currentOffset = 0UZ;
         return true;
@@ -725,29 +785,54 @@ private:
 
     /// @brief Count the discontinuity between the last published packet and @p arrival, and say it in the prologue.
     void notePlacement(const Arrival& arrival) {
+        property_map placement{{"position", arrival.streamPosition}, {"sequence", arrival.sequence}, {"sample_count", std::uint64_t(arrival.samples.size())}, {"stream_id", arrival.streamId}, {"initial_position", arrival.initialPosition}, {"stream_origin", arrival.streamOrigin}, {"tags_malformed", arrival.tagsMalformed}};
+        std::string  event = "contiguous";
         if (!_haveHistory) {
-            _haveHistory = true; // a subscriber has no history and may legitimately join mid-stream: never a gap
+            _haveHistory                    = true; // a subscriber has no history and may legitimately join mid-stream: never a gap
+            event                           = _sourceRestarted ? "source_reset" : "initial";
+            placement["unavailable_before"] = arrival.streamPosition > arrival.streamOrigin || arrival.sequence != 0ULL;
+        } else if (arrival.streamId != _publishedStreamId) {
+            event = "stream_changed";
+            std::lock_guard lock(_mutex);
+            ++nSequenceResets;
         } else if (arrival.sequence <= _lastSequence) {
+            event = "sequence_reset";
             std::lock_guard lock(_mutex);
             ++nSequenceResets; // a producer restarted; not loss, because it is not
         } else if (arrival.streamPosition < _streamEnd) {
+            event = "stream_rewind";
             std::lock_guard lock(_mutex);
             ++nStreamRewinds; // the samples overlap what was already published; a gap tag would misdescribe it
         } else if (arrival.sequence > _lastSequence + 1ULL || arrival.streamPosition > _streamEnd) {
+            event                           = "gap";
             const std::uint64_t lostPackets = arrival.sequence - _lastSequence - 1ULL;
             const std::uint64_t lostSamples = arrival.streamPosition - _streamEnd;
+            placement["missing_begin"]      = _streamEnd;
+            placement["missing_end"]        = arrival.streamPosition;
+            placement["packets_lost"]       = lostPackets;
             {
                 std::lock_guard lock(_mutex);
                 ++nSequenceGaps;
                 nPacketsLost += lostPackets;
                 nSamplesLost += lostSamples;
             }
-            gr::tag::put(_prologue, gr::tag::N_DROPPED_SAMPLES, static_cast<gr::Size_t>(lostSamples));
+            gr::tag::put(_prologue, gr::tag::N_DROPPED_SAMPLES, static_cast<gr::Size_t>(std::min(lostSamples, std::uint64_t(std::numeric_limits<gr::Size_t>::max()))));
             _prologue.insert_or_assign(property_map::key_type(detail::streampacket::kPacketsLostKey), pmt::Value(lostPackets));
             _prologue.insert_or_assign(property_map::key_type(detail::streampacket::kStreamPositionKey), pmt::Value(_streamEnd));
         }
-        _lastSequence = arrival.sequence;
-        _streamEnd    = arrival.streamPosition + static_cast<std::uint64_t>(arrival.samples.size());
+        placement["event"] = event;
+        if (event == "stream_changed" || event == "sequence_reset" || event == "stream_rewind") {
+            placement["unavailable_before"] = arrival.streamPosition > arrival.streamOrigin || arrival.sequence != 0ULL;
+        }
+        if (arrival.sampleRate) {
+            placement["sample_rate"] = *arrival.sampleRate;
+        }
+        if (publish_positions.value) {
+            _prologue["stream_packet"] = std::move(placement);
+        }
+        _publishedStreamId = arrival.streamId;
+        _lastSequence      = arrival.sequence;
+        _streamEnd         = arrival.streamPosition + static_cast<std::uint64_t>(arrival.samples.size());
     }
 
     /// @brief Copy as much of the current packet as fits, with the tags that fall in what was copied.
@@ -765,15 +850,24 @@ private:
                 continue;
             }
             const std::size_t offset = at + tag.offset - _currentOffset;
+            // A stream may have crossed another transport already. Its carried
+            // placement tags must not impersonate this boundary's placement.
+            property_map carried = tag.map;
+            if (publish_positions.value) {
+                carried.erase("stream_packet");
+            }
             if (tag.offset == 0UZ && !_prologue.empty()) {
                 property_map merged = _prologue; // one tag rather than two at one sample: what is said there is one statement
-                for (const auto& [key, value] : tag.map) {
+                for (const auto& [key, value] : carried) {
                     merged.insert_or_assign(key, value);
                 }
                 _prologue.clear();
                 outSpan.publishTag(merged, offset);
             } else {
-                outSpan.publishTag(tag.map, offset);
+                if (carried.empty()) {
+                    continue;
+                }
+                outSpan.publishTag(carried, offset);
             }
             ++tagsOut;
         }
@@ -902,7 +996,29 @@ private:
         arrival.sequence       = *sequence;
         arrival.streamPosition = *position;
         arrival.sampleRate     = detail::streampacket::sampleRateOf(map);
-        arrival.bytes          = partBytes;
+        if (const auto it = map.find("stream_id"); it != map.end()) {
+            const auto* id = it->second.template get_if<std::pmr::string>();
+            if (!id) {
+                refuse(nMissingStreamKeys);
+                return;
+            }
+            arrival.streamId = *id;
+        }
+        for (auto [key, target] : {std::pair{"initial_position", &arrival.initialPosition}, std::pair{"stream_origin", &arrival.streamOrigin}}) {
+            if (const auto it = map.find(key); it != map.end()) {
+                const auto* value = it->second.template get_if<std::uint64_t>();
+                if (!value) {
+                    refuse(nMissingStreamKeys);
+                    return;
+                }
+                *target = *value;
+            }
+        }
+        if (arrival.streamOrigin > arrival.initialPosition || arrival.initialPosition > arrival.streamPosition || arrival.streamPosition > std::numeric_limits<std::uint64_t>::max() - header->item_count) {
+            refuse(nMissingStreamKeys);
+            return;
+        }
+        arrival.bytes = partBytes;
         arrival.samples.resize(header->item_count);
         if (header->payload_bytes != 0U) {
             std::memcpy(arrival.samples.data(), parts[3UZ].data(), header->payload_bytes);
@@ -910,6 +1026,7 @@ private:
 
         const std::uint64_t mistyped  = detail::countMistypedKeys(map);
         const std::uint64_t malformed = decodeTags(map, arrival);
+        arrival.tagsMalformed         = malformed;
         {
             std::lock_guard lock(_mutex);
             nMetaKeysMistyped += mistyped;

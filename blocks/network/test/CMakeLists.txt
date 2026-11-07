@@ -78,3 +78,12 @@ if(GR4_NETWORK_HAVE_LIBZMQ)
     set_tests_properties(qa_NetworkExportedInclude PROPERTIES FIXTURES_REQUIRED gr4_network_consumer)
   endif()
 endif()
+
+if(GR4_NETWORK_HAVE_LIBZMQ)
+  add_executable(qa_StreamPacketPlacement qa_StreamPacketPlacement.cpp)
+  target_link_libraries(
+    qa_StreamPacketPlacement PRIVATE gr-network
+                                     $<LINK_GROUP:RESCAN,gnuradio4::gnuradio-core,gnuradio4::gnuradio-blocklib-core>)
+  add_test(NAME qa_StreamPacketPlacement COMMAND qa_StreamPacketPlacement)
+  set_tests_properties(qa_StreamPacketPlacement PROPERTIES TIMEOUT 30)
+endif()
