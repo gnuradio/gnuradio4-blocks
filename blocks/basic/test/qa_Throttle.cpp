@@ -209,6 +209,29 @@ const boost::ut::suite<"Throttle"> throttleTests = [] {
         expect(ge(interrupted, 0.9 * kPaced)) << "and the samples it made overdue still wait for their own deadlines: " << interrupted << " s";
     };
 
+    "resuming preserves the sample count and clears a pre-pause backlog"_test = [] {
+        Throttle<float>          block = makeThrottle<float>({{"sample_rate", 10000.f}});
+        const std::vector<float> input(1000UZ, 0.f);
+        std::vector<float>       output(input.size());
+        expect(block.changeStateTo(gr::lifecycle::State::INITIALISED).has_value());
+        expect(block.changeStateTo(gr::lifecycle::State::RUNNING).has_value());
+
+        std::ignore = pump<float>(block, std::span<const float>(input), std::span<float>(output), 1000UZ);
+        expect(eq(block.paced(), 1000ULL));
+
+        // A stall before the pause leaves more samples overdue than the next chunk contains.
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        expect(block.changeStateTo(gr::lifecycle::State::REQUESTED_PAUSE).has_value());
+        expect(block.changeStateTo(gr::lifecycle::State::PAUSED).has_value());
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        expect(block.changeStateTo(gr::lifecycle::State::RUNNING).has_value());
+        expect(eq(block.paced(), 1000ULL)) << "resuming keeps the samples already paced";
+
+        const double elapsed = timed<float>([&] { std::ignore = pump<float>(block, std::span<const float>(input), std::span<float>(output), 1000UZ); });
+        expect(ge(elapsed, 0.09)) << "the next chunk is paced from resume, without catching up: " << elapsed << " s";
+        expect(eq(block.paced(), 2000ULL));
+    };
+
     "max_items_per_chunk bounds what one invocation handles"_test = [] {
         Throttle<float>          block = makeThrottle<float>({{"sample_rate", 1e9f}, {"max_items_per_chunk", 64U}});
         const std::vector<float> input(2000UZ, 0.f);
