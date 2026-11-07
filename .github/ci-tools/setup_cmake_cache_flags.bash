@@ -42,7 +42,7 @@ printf '::group::S3 setup\n'
   add_mask "${AWS_SECRET_ACCESS_KEY}"
   add_mask "${AWS_ACCESS_KEY_ID}"
 }
-printf '::endgroup::'
+printf '::endgroup::\n'
 if [[ "${use_default}" = "true" ]] ; then
   gh_message "sccache bucket config" "using default cache bucket, read-only!"
 fi;
