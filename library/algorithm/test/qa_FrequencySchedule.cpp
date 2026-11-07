@@ -433,4 +433,60 @@ const boost::ut::suite<"FrequencySchedule"> frequencyScheduleTests = [] {
     };
 };
 
+const suite<"fractional_frequency_events"> fractional_events = [] {
+    "fractional events integrate left and right limits on a rational clock"_test = [] {
+        constexpr std::int64_t          epoch = 1767225600000000000LL;
+        const std::vector<std::int64_t> times{epoch - 100, epoch, epoch, epoch + 1000, epoch + 2000};
+        const std::vector<double>       fractions{.25, .25, .75, .25, .5}, right{100, 200, -300, 400, 500}, left{-50, 100, 100, -300, 700};
+        FrequencySchedule               schedule(times, right, fractions, left);
+        const auto                      clock = gr::timing::clockForRateHz(3e6, 0, epoch - 1000).value();
+        std::vector<double>             actual(24), split(24);
+        schedule.phaseIncrementsFor(clock, 0, actual);
+        for (std::size_t n = 0; n < 24; n += 3) {
+            schedule.phaseIncrementsFor(clock, n, std::span<double>(split).subspan(n, 3));
+        }
+        expect(actual == split);
+        std::vector<long double> t{-99.75L, .25L, .75L, 1000.25L, 2000.5L};
+        // Independent antiderivative over the intersection of each physical segment.
+        for (std::size_t n = 0; n < actual.size(); ++n) {
+            const long double a = -1000.L + n * 1e9L / 3000000.L, b = -1000.L + (n + 1) * 1e9L / 3000000.L;
+            long double       area = std::max(0.L, std::min(b, t.front()) - a) * left.front();
+            area += std::max(0.L, b - std::max(a, t.back())) * right.back();
+            for (std::size_t k = 0; k + 1 < t.size(); ++k) {
+                const auto lo = std::max(a, t[k]), hi = std::min(b, t[k + 1]);
+                if (hi > lo) {
+                    const long double slope = (left[k + 1] - right[k]) / (t[k + 1] - t[k]);
+                    area += right[k] * (hi - lo) + slope * ((hi - t[k]) * (hi - t[k]) - (lo - t[k]) * (lo - t[k])) / 2;
+                }
+            }
+            const double expected = double(area * 1e-9L * 2 * std::numbers::pi_v<long double>);
+            expect(std::abs(actual[n] - expected) < 1e-14);
+        }
+        expect(schedule.offsetAt(epoch, .25) == 200.);
+        expect(schedule.offsetAt(epoch, .75) == -300.);
+        expect(schedule.offsetAt(epoch - 1000, 0.) == -50.);
+        expect(schedule.offsetAt(epoch + 3000, 0.) == 500.);
+    };
+    "malformed fractional events are refused"_test = [] {
+        const std::vector<std::int64_t> t{0, 0, 1};
+        const std::vector<double>       r{1, 2, 3};
+        for (const auto& f : std::vector<std::vector<double>>{{0}, {0, 0, 0}, {0, 1, 0}, {0, -.1, 0}, {0, std::numeric_limits<double>::quiet_NaN(), 0}}) {
+            bool refused = false;
+            try {
+                FrequencySchedule bad(t, r, f, {});
+            } catch (const gr::exception&) {
+                refused = true;
+            }
+            expect(refused);
+        }
+        bool refused = false;
+        try {
+            FrequencySchedule bad(t, r, std::vector<double>{0, .5, 0}, std::vector<double>{1});
+        } catch (const gr::exception&) {
+            refused = true;
+        }
+        expect(refused);
+    };
+};
+
 int main() { /* not needed for UT */ }

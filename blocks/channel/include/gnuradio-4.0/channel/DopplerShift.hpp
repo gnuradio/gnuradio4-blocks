@@ -96,6 +96,7 @@ struct TableSettings {
     std::vector<std::int64_t> times{};
     std::vector<double>       values{};
     std::string               file{};
+    std::vector<double>       fractions{}, leftValues{};
 
     [[nodiscard]] bool operator==(const TableSettings&) const = default;
 };
@@ -156,6 +157,11 @@ that sample's interval. The schedule is linear between its `(time, offset)` knot
 them. `gr::timing::offsetFor(v_radial, f_carrier)` converts a radial velocity to an offset, and a closing source
 reads high. One sample comes out for each sample in.
 
+Optional `schedule_fractions_ns` adds a [0,1) ns component to each integer knot.
+Optional `schedule_left_offsets_hz` defines the incoming limits; offsets are right-continuous.
+Open segments interpolate from the starting right limit to the ending left limit.
+Events split the sample integral without resetting phase. File tables keep their current format.
+
 The knots come from `schedule_times_ns` and `schedule_offsets_hz`, or from the `offset_hz` or `range_rate_m_s` column of
 a `#!gr4-trajectory 1` file named in `schedule_file`. Setting both is refused. With neither, the stream passes through.
 Every offset must stay under half of `sample_rate` in magnitude, and the refusal names the knot. `direction` 'apply'
@@ -189,7 +195,10 @@ tags whose time is unreadable or past the anchor's bound. Each reads from any th
     Annotated<std::string, "anchor_source", Doc<detail::kAnchorSourceDoc>>                                                                        anchor_source        = std::string("setting");
     Annotated<bool, "honor_trigger_offset", Doc<detail::kHonorTriggerOffsetDoc>>                                                                  honor_trigger_offset = true;
 
-    GR_MAKE_REFLECTABLE(DopplerShift, in, out, schedule_times_ns, schedule_offsets_hz, schedule_file, direction, sample_rate, anchor_index, anchor_ns, anchor_source, honor_trigger_offset);
+    Annotated<std::vector<double>, "schedule_fractions_ns", Unit<"ns">, Doc<"optional fractional knot components in [0,1), paired with integer ns">>      schedule_fractions_ns{};
+    Annotated<std::vector<double>, "schedule_left_offsets_hz", Unit<"Hz">, Doc<"optional left frequency limits; schedule_offsets_hz gives right limits">> schedule_left_offsets_hz{};
+
+    GR_MAKE_REFLECTABLE(DopplerShift, in, out, schedule_fractions_ns, schedule_left_offsets_hz, schedule_times_ns, schedule_offsets_hz, schedule_file, direction, sample_rate, anchor_index, anchor_ns, anchor_source, honor_trigger_offset);
 
     // The accepted settings. A refused change leaves all of them as they were.
     std::shared_ptr<const gr::timing::FrequencySchedule> _table{};         ///< the knots as configured, before the direction's sign
@@ -221,9 +230,9 @@ tags whose time is unreadable or past the anchor's bound. Each reads from any th
 
         const float                    rate = moved("sample_rate", sample_rate.value != _rate) ? sample_rate.value : _rate;
         const detail::DopplerDirection seat = moved("direction", direction.value != detail::dopplerDirectionName(_direction)) ? detail::parseDopplerDirection(direction.value, "DopplerShift") : _direction;
-        const detail::TableSettings    tableNamed{schedule_times_ns.value, schedule_offsets_hz.value, schedule_file.value};
+        const detail::TableSettings    tableNamed{schedule_times_ns.value, schedule_offsets_hz.value, schedule_file.value, schedule_fractions_ns.value, schedule_left_offsets_hz.value};
         const bool                     tableDiffers = tableNamed != _tableSettings;
-        const bool                     tableMoved   = moved("schedule_times_ns", tableDiffers) || moved("schedule_offsets_hz", tableDiffers) || moved("schedule_file", tableDiffers);
+        const bool                     tableMoved   = moved("schedule_times_ns", tableDiffers) || moved("schedule_offsets_hz", tableDiffers) || moved("schedule_file", tableDiffers) || moved("schedule_fractions_ns", tableDiffers) || moved("schedule_left_offsets_hz", tableDiffers);
         const auto                     table        = tableMoved ? loadTable() : _table;
         const bool                     anchorMoved  = moved("anchor_source", anchor_source.value != gr::timing::anchorSourceName(_anchorSettings.source)) || moved("anchor_index", anchor_index.value != _anchorSettings.index) || moved("anchor_ns", anchor_ns.value != _anchorSettings.ns) || moved("honor_trigger_offset", honor_trigger_offset.value != _anchorSettings.honorOffset);
         detail::AnchorSettings         anchorConfig = _anchorSettings;
@@ -232,6 +241,7 @@ tags whose time is unreadable or past the anchor's bound. Each reads from any th
         }
         if (table) {
             requireBelowNyquist(table->offsets(), rate);
+            requireBelowNyquist(table->leftOffsets(), rate);
         }
 
         const gr::timing::ScheduleAnchor anchor = anchorMoved ? gr::timing::ScheduleAnchor(anchorConfig.source, anchorConfig.index, anchorConfig.ns, anchorConfig.honorOffset) : _anchor;
@@ -357,7 +367,7 @@ private:
     [[nodiscard]] std::shared_ptr<const gr::timing::FrequencySchedule> loadTable() const {
         const std::vector<std::int64_t>& times   = schedule_times_ns.value;
         const std::vector<double>&       offsets = schedule_offsets_hz.value;
-        if (!schedule_file.value.empty() && !(times.empty() && offsets.empty())) {
+        if (!schedule_file.value.empty() && !(times.empty() && offsets.empty() && schedule_fractions_ns.value.empty() && schedule_left_offsets_hz.value.empty())) {
             throw gr::exception("DopplerShift: 'schedule_file' and 'schedule_times_ns'/'schedule_offsets_hz' are both set; set one");
         }
         if (!schedule_file.value.empty()) {
@@ -370,8 +380,11 @@ private:
             }
             return std::make_shared<const gr::timing::FrequencySchedule>(std::move(*loaded->frequency));
         }
-        if (times.empty() && offsets.empty()) {
+        if (times.empty() && offsets.empty() && schedule_fractions_ns.value.empty() && schedule_left_offsets_hz.value.empty()) {
             return nullptr;
+        }
+        if (!schedule_fractions_ns.value.empty() || !schedule_left_offsets_hz.value.empty()) {
+            return std::make_shared<const gr::timing::FrequencySchedule>(std::span<const std::int64_t>(times), std::span<const double>(offsets), std::span<const double>(schedule_fractions_ns.value), std::span<const double>(schedule_left_offsets_hz.value));
         }
         return std::make_shared<const gr::timing::FrequencySchedule>(std::span<const std::int64_t>(times), std::span<const double>(offsets));
     }
@@ -395,12 +408,19 @@ private:
         for (double& value : negated) {
             value = -value;
         }
+        if (!table->fractionsNs().empty()) {
+            std::vector<double> left(table->leftOffsets().begin(), table->leftOffsets().end());
+            for (auto& value : left) {
+                value = -value;
+            }
+            return std::make_shared<const gr::timing::FrequencySchedule>(table->times(), std::span<const double>(negated), table->fractionsNs(), std::span<const double>(left));
+        }
         return std::make_shared<const gr::timing::FrequencySchedule>(table->times(), std::span<const double>(negated));
     }
 
     /// The schedule's offset at sample @p index, in the direction's sign. An unarmed block or one without a table
     /// shifts nothing.
-    [[nodiscard]] double offsetAt(std::uint64_t index) const noexcept { return _schedule && _anchor.armed() ? _schedule->offsetAt(_clock.timeOf(index)) : 0.; }
+    [[nodiscard]] double offsetAt(std::uint64_t index) const noexcept { return _schedule && _anchor.armed() ? _schedule->offsetAt(_clock, index) : 0.; }
 
     /// Where sample @p index stands against the schedule's span.
     [[nodiscard]] SchedulePosition positionAt(std::uint64_t index) const noexcept {
@@ -411,6 +431,17 @@ private:
             return SchedulePosition::After;
         }
         const std::int64_t now = _clock.timeOf(index);
+        if (!_schedule->fractionsNs().empty()) {
+            const auto   walk     = _clock.walkFrom(index);
+            const double fraction = static_cast<double>(walk.rem) / static_cast<double>(walk.modulus);
+            if (now < _schedule->firstTime() || (now == _schedule->firstTime() && fraction < _schedule->fractionsNs().front())) {
+                return SchedulePosition::Before;
+            }
+            if (now > _schedule->lastTime() || (now == _schedule->lastTime() && fraction > _schedule->fractionsNs().back())) {
+                return SchedulePosition::After;
+            }
+            return SchedulePosition::Inside;
+        }
         if (now < _schedule->firstTime()) {
             return SchedulePosition::Before;
         }

@@ -116,7 +116,7 @@ public:
     }
 
 protected:
-    PiecewiseLinearSchedule(std::span<const std::int64_t> timesNs, std::span<const double> values, const ScheduleNaming& naming) : _times(timesNs.begin(), timesNs.end()), _values(values.begin(), values.end()) {
+    PiecewiseLinearSchedule(std::span<const std::int64_t> timesNs, std::span<const double> values, const ScheduleNaming& naming, bool allowEqualWholeTimes = false) : _times(timesNs.begin(), timesNs.end()), _values(values.begin(), values.end()) {
         if (timesNs.size() != values.size()) {
             throw gr::exception(std::format("{}: {} times against {} {} — the two must be paired", naming.type, timesNs.size(), values.size(), naming.plural));
         }
@@ -129,7 +129,7 @@ protected:
             }
         }
         for (std::size_t i = 1UZ; i < _times.size(); ++i) {
-            if (_times[i] <= _times[i - 1UZ]) {
+            if (_times[i] < _times[i - 1UZ] || (!allowEqualWholeTimes && _times[i] == _times[i - 1UZ])) {
                 throw gr::exception(std::format("{}: knot {} is at {} ns, at or before knot {} at {} ns — times must strictly increase", naming.type, i, _times[i], i - 1UZ, _times[i - 1UZ]));
             }
         }
@@ -137,7 +137,7 @@ protected:
         // One slope per segment, computed once. A point then costs a multiply and not a divide.
         _slopes.resize(_times.size() - 1UZ);
         for (std::size_t i = 0UZ; i + 1UZ < _times.size(); ++i) {
-            _slopes[i] = (_values[i + 1UZ] - _values[i]) / static_cast<double>(_times[i + 1UZ] - _times[i]);
+            _slopes[i] = _times[i + 1UZ] == _times[i] ? 0. : (_values[i + 1UZ] - _values[i]) / static_cast<double>(static_cast<__int128_t>(_times[i + 1UZ]) - _times[i]);
         }
     }
 
@@ -195,11 +195,86 @@ public:
 
     FrequencySchedule(std::span<const std::int64_t> timesNs, std::span<const double> offsetsHz) : PiecewiseLinearSchedule(timesNs, offsetsHz, ScheduleNaming{"gr::timing::FrequencySchedule", "offsets", "offset", "a finite frequency"}) {}
 
+    /** Optional event representation. Each coordinate is integer ns plus a fraction
+     * in [0,1). offsetsHz is the right limit, leftOffsetsHz the left limit.
+     * Empty left limits mean continuity. Empty fractions mean integer events.
+     * Integer epochs are never converted to floating point before subtraction.
+     * The legacy constructor retains its existing evaluation/integration path. */
+    FrequencySchedule(std::span<const std::int64_t> timesNs, std::span<const double> offsetsHz, std::span<const double> fractionsNs, std::span<const double> leftOffsetsHz) : PiecewiseLinearSchedule(timesNs, offsetsHz, {"gr::timing::FrequencySchedule", "offsets", "offset", "a finite frequency"}, true), _fractions(fractionsNs.begin(), fractionsNs.end()), _leftOffsets(leftOffsetsHz.begin(), leftOffsetsHz.end()) {
+        if (_fractions.empty()) {
+            _fractions.assign(size(), 0.);
+        }
+        if (_leftOffsets.empty()) {
+            _leftOffsets.assign(offsetsHz.begin(), offsetsHz.end());
+        }
+        if (_fractions.size() != size() || _leftOffsets.size() != size()) {
+            throw gr::exception("FrequencySchedule: event components must pair with every knot");
+        }
+        for (std::size_t k = 0; k < size(); ++k) {
+            if (!std::isfinite(_fractions[k]) || _fractions[k] < 0. || _fractions[k] >= 1. || !std::isfinite(_leftOffsets[k])) {
+                throw gr::exception("FrequencySchedule: finite left limits and fractions in [0,1) required");
+            }
+            if (k && !before(event(k - 1), event(k))) {
+                throw gr::exception("FrequencySchedule: event coordinates must strictly increase");
+            }
+        }
+        _eventSlopes.resize(size() - 1);
+        for (std::size_t k = 0; k + 1 < size(); ++k) {
+            _eventSlopes[k] = (_leftOffsets[k + 1] - _values[k]) / distance(event(k), event(k + 1));
+            if (!std::isfinite(_eventSlopes[k])) {
+                throw gr::exception("FrequencySchedule: nonfinite event slope");
+            }
+        }
+    }
+    [[nodiscard]] std::span<const double> fractionsNs() const noexcept { return _fractions; }
+    [[nodiscard]] std::span<const double> leftOffsets() const noexcept { return _leftOffsets.empty() ? offsets() : std::span<const double>(_leftOffsets); }
+    [[nodiscard]] double                  offsetAt(std::int64_t ns, double fraction) const noexcept {
+        if (_fractions.empty()) {
+            return evaluateAt(locate(ns), {ns, fraction});
+        }
+        const Instant x{ns, fraction};
+        return eventValue(x, eventSegment(x));
+    }
+    [[nodiscard]] double offsetAt(const SampleClock& clock, std::uint64_t index) const noexcept {
+        if (_fractions.empty()) {
+            return offsetAt(clock.timeOf(index));
+        }
+        const auto x = instantOf(clock.walkFrom(index));
+        return eventValue(x, eventSegment(x));
+    }
+
+    [[nodiscard]] double valueAt(std::int64_t ns) const noexcept { return _fractions.empty() ? PiecewiseLinearSchedule::valueAt(ns) : offsetAt(ns, 0.); }
+    void                 valuesFor(const SampleClock& clock, std::uint64_t firstIndex, std::span<double> out) const noexcept {
+        if (_fractions.empty()) {
+            PiecewiseLinearSchedule::valuesFor(clock, firstIndex, out);
+            return;
+        }
+        auto walk    = clock.walkFrom(firstIndex);
+        auto segment = eventSegment(instantOf(walk));
+        for (auto& value : out) {
+            const auto x    = instantOf(walk);
+            auto       next = segment == size() ? 0 : segment + 1;
+            while (next < size() && !before(x, event(next))) {
+                segment = next;
+                ++next;
+            }
+            value = eventValue(x, segment);
+            walk.advance();
+        }
+    }
+    [[nodiscard]] double segmentSlopePerSecond(std::int64_t ns) const noexcept {
+        if (_fractions.empty()) {
+            return PiecewiseLinearSchedule::segmentSlopePerSecond(ns);
+        }
+        const auto segment = eventSegment({ns, 0.});
+        return segment >= size() - 1 ? 0. : _eventSlopes[segment] * 1e9;
+    }
+
     /// The knot values, in hertz. `values()` returns the same values under a name without the unit.
     [[nodiscard]] std::span<const double> offsets() const noexcept { return _values; }
 
     /// The offset at a time, in hertz. This is `valueAt` under a name that carries the unit.
-    [[nodiscard]] double offsetAt(std::int64_t t_ns) const noexcept { return valueAt(t_ns); }
+    [[nodiscard]] double offsetAt(std::int64_t t_ns) const noexcept { return _fractions.empty() ? valueAt(t_ns) : offsetAt(t_ns, 0.); }
 
     /**
      * @brief The radian increments for `out.size()` samples starting at `firstIndex` on `clock`.
@@ -214,19 +289,18 @@ public:
 
         SampleClock::NsWalk walk    = clock.walkFrom(firstIndex);
         Instant             start   = instantOf(walk);
-        std::size_t         segment = locate(start.ns);
+        std::size_t         segment = _fractions.empty() ? locate(start.ns) : eventSegment(start);
         for (double& increment : out) {
             walk.advance();
             const Instant end = instantOf(walk);
-            increment         = kTwoPi * integrateCycles(start, end, segment);
+            increment         = kTwoPi * (_fractions.empty() ? integrateCycles(start, end, segment) : integrateEventCycles(start, end, segment));
             start             = end;
         }
     }
 
 private:
     /// A sample's time: the whole nanosecond `timeOf` gives and the position within it, in [0, 1). A knot sits on
-    /// a whole nanosecond. A knot is therefore at or before an instant exactly when it is at or before
-    /// `ns`.
+    /// a whole nanosecond in the legacy path; event knots also carry a canonical fractional component.
     struct Instant {
         std::int64_t ns{0LL};
         double       fraction{0.};
@@ -235,6 +309,48 @@ private:
     [[nodiscard]] static Instant instantOf(const SampleClock::NsWalk& walk) noexcept { return Instant{walk.t_ns, static_cast<double>(walk.rem) / static_cast<double>(walk.modulus)}; }
 
     [[nodiscard]] static bool before(Instant a, Instant b) noexcept { return a.ns < b.ns || (a.ns == b.ns && a.fraction < b.fraction); }
+
+    std::vector<double>         _fractions, _leftOffsets, _eventSlopes;
+    [[nodiscard]] Instant       event(std::size_t k) const noexcept { return {_times[k], _fractions[k]}; }
+    [[nodiscard]] static double distance(Instant a, Instant b) noexcept { return static_cast<double>(static_cast<__int128_t>(b.ns) - a.ns) + (b.fraction - a.fraction); }
+    // size() denotes the held prehistory. Otherwise this is the last event <= x.
+    [[nodiscard]] std::size_t eventSegment(Instant x) const noexcept {
+        std::size_t lo = 0, hi = size();
+        while (lo < hi) {
+            const auto mid = lo + (hi - lo) / 2;
+            if (before(x, event(mid))) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        return lo ? lo - 1 : size();
+    }
+    [[nodiscard]] double eventValue(Instant x, std::size_t segment) const noexcept {
+        if (segment == size()) {
+            return _leftOffsets.front();
+        }
+        if (segment + 1 == size()) {
+            return _values.back();
+        }
+        return _values[segment] + _eventSlopes[segment] * distance(event(segment), x);
+    }
+    [[nodiscard]] double integrateEventCycles(Instant x, Instant end, std::size_t& segment) const noexcept {
+        double cycles = 0.;
+        while (before(x, end)) {
+            const std::size_t next    = segment == size() ? 0 : segment + 1;
+            const bool        crosses = next < size() && !before(end, event(next));
+            const Instant     stop    = crosses ? event(next) : end;
+            // Use the left limit at the end of this segment, not the next right limit.
+            const double right = crosses ? _leftOffsets[next] : eventValue(stop, segment);
+            cycles += .5 * (eventValue(x, segment) + right) * distance(x, stop) * 1e-9;
+            x = stop;
+            if (crosses) {
+                segment = next;
+            }
+        }
+        return cycles;
+    }
 
     /// The offset at an instant already known to lie in `segment`, held at the end values outside the table.
     [[nodiscard]] double evaluateAt(std::size_t segment, Instant x) const noexcept {

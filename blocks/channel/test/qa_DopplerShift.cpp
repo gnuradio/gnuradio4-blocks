@@ -494,4 +494,24 @@ const boost::ut::suite<"doppler shift"> dopplerShiftTests = [] {
     };
 };
 
+const boost::ut::suite<"fractional_doppler_settings"> event_settings = [] {
+    using namespace boost::ut;
+    "event settings validate both limits and keep the mixer position"_test = [] {
+        const gr::property_map settings{{"sample_rate", 3e6f}, {"schedule_times_ns", std::vector<std::int64_t>{0, 1000, 10000}}, {"schedule_offsets_hz", std::vector<double>{100., -100., -100.}}, {"schedule_fractions_ns", std::vector<double>{0., .25, 0.}}, {"schedule_left_offsets_hz", std::vector<double>{100., 100., -100.}}};
+        auto                   block = configured<DopplerShift<C>>(settings);
+        auto                   first = runChunked(*block, ones(5), 3);
+        expect(block->position() == 5ULL);
+        expect(!refusedLive(*block, {{"schedule_fractions_ns", std::vector<double>{0., .75, 0.}}}));
+        expect(block->position() == 5ULL);
+        const auto   next   = runChunked(*block, ones(1), 1);
+        const double cycles = 100. * (2 * 1000.25e-9 - 5. / 3e6);
+        expect(std::abs(std::complex<double>(next[0]) - std::polar(1., kTwoPi * cycles)) < 1e-7) << "updating a past event preserves the actual accumulated phase";
+        expect(block->position() == 6ULL);
+        expect(refusedLive(*block, {{"schedule_left_offsets_hz", std::vector<double>{100., 2e6, -100.}}}));
+        expect(block->position() == 6ULL);
+        expect(!refusedLive(*block, {{"schedule_left_offsets_hz", std::vector<double>{100., 100., -100.}}}));
+        expect(refusedLive(*block, {{"schedule_fractions_ns", std::vector<double>{0., 1., 0.}}}));
+    };
+};
+
 int main() { /* not needed for UT */ }
