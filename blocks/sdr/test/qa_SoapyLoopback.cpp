@@ -1,9 +1,11 @@
 #include <boost/ut.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <complex>
 #include <format>
+#include <numbers>
 #include <string>
 #include <thread>
 #include <vector>
@@ -689,6 +691,87 @@ const boost::ut::suite<"RxOnlyDevice"> rxOnlyTests = [] {
             maxAbs = std::max(maxAbs, std::abs(s));
         }
         expect(approx(maxAbs, 1.f, 0.01f)) << "should produce unit-amplitude tone";
+
+        dev.deactivateStream(rxStream);
+    };
+
+    "tone keeps frequency and phase across calls of any size and across a retune"_test = [] {
+        constexpr double kFs    = 1e6;
+        constexpr double kTwoPi = 2.0 * std::numbers::pi;
+        LoopbackDevice   dev(SoapySDR::Kwargs{{"device_mode", "rx_only"}});
+        dev.setSampleRate(SOAPY_SDR_RX, 0, kFs);
+        dev.setFrequency(SOAPY_SDR_RX, 0, 123456.0);
+        auto* rxStream = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32);
+        dev.activateStream(rxStream);
+
+        double phase        = 0.0; // the phase of the next sample, from the frequency and the sample count alone
+        double freq         = 123456.0;
+        double worst        = 0.0;
+        auto   readAndCheck = [&](std::size_t n) {
+            std::vector<CF32> rxData(n);
+            void*             rxBufs[] = {rxData.data()};
+            int               flags    = 0;
+            long long         timeNs   = 0;
+            expect(eq(dev.readStream(rxStream, rxBufs, n, flags, timeNs), static_cast<int>(n)));
+            for (const auto& s : rxData) {
+                const std::complex<double> expected{std::cos(phase), std::sin(phase)};
+                worst = std::max(worst, std::abs(std::complex<double>(s) - expected));
+                phase = std::remainder(phase + kTwoPi * freq / kFs, kTwoPi);
+            }
+        };
+        for (std::size_t n : {1UZ, 7UZ, 4096UZ, 1UZ, 7UZ, 4096UZ}) {
+            readAndCheck(n);
+        }
+        freq = 250000.0 / 3.0; // retune: the phase runs on at the new rate
+        dev.setFrequency(SOAPY_SDR_RX, 0, freq);
+        for (std::size_t n : {7UZ, 1UZ, 4096UZ}) {
+            readAndCheck(n);
+        }
+        expect(lt(worst, 1e-5)) << "samples follow phase = sum of 2*pi*f/fs over every sample so far";
+
+        dev.deactivateStream(rxStream);
+    };
+
+    "two channels keep their own phase across calls and a retune of one"_test = [] {
+        constexpr double kFs    = 1e6;
+        constexpr double kTwoPi = 2.0 * std::numbers::pi;
+        LoopbackDevice   dev(SoapySDR::Kwargs{{"device_mode", "rx_only"}, {"num_channels", "2"}});
+        dev.setSampleRate(SOAPY_SDR_RX, 0, kFs);
+        dev.setSampleRate(SOAPY_SDR_RX, 1, kFs);
+        dev.setFrequency(SOAPY_SDR_RX, 0, 123456.0);
+        dev.setFrequency(SOAPY_SDR_RX, 1, 71000.0);
+        auto* rxStream = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32, {0, 1});
+        dev.activateStream(rxStream);
+
+        std::array<double, 2> phase{0.0, 0.0}; // each channel's next phase, from its frequency and the sample count alone
+        std::array<double, 2> freq{123456.0, 71000.0};
+        std::array<double, 2> worst{0.0, 0.0};
+        auto                  readAndCheck = [&](std::size_t n) {
+            std::vector<CF32> rx0(n);
+            std::vector<CF32> rx1(n);
+            void*             rxBufs[] = {rx0.data(), rx1.data()};
+            int               flags    = 0;
+            long long         timeNs   = 0;
+            expect(eq(dev.readStream(rxStream, rxBufs, n, flags, timeNs), static_cast<int>(n)));
+            const std::array<const std::vector<CF32>*, 2> rx{&rx0, &rx1};
+            for (std::size_t ch = 0UZ; ch < 2UZ; ++ch) {
+                for (const auto& s : *rx[ch]) {
+                    const std::complex<double> expected{std::cos(phase[ch]), std::sin(phase[ch])};
+                    worst[ch] = std::max(worst[ch], std::abs(std::complex<double>(s) - expected));
+                    phase[ch] = std::remainder(phase[ch] + kTwoPi * freq[ch] / kFs, kTwoPi);
+                }
+            }
+        };
+        for (std::size_t n : {1UZ, 7UZ, 4096UZ, 1UZ, 7UZ, 4096UZ}) {
+            readAndCheck(n);
+        }
+        freq[1] = 250000.0 / 3.0; // retune channel 1 only: channel 0 must run on unchanged
+        dev.setFrequency(SOAPY_SDR_RX, 1, freq[1]);
+        for (std::size_t n : {7UZ, 1UZ, 4096UZ}) {
+            readAndCheck(n);
+        }
+        expect(lt(worst[0], 1e-5)) << "channel 0 follows its own summed phase";
+        expect(lt(worst[1], 1e-5)) << "channel 1 follows its own summed phase through the retune";
 
         dev.deactivateStream(rxStream);
     };
