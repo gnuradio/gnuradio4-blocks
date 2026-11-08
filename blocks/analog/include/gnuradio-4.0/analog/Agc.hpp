@@ -130,6 +130,44 @@ The block is 1:1. Every input tag leaves at its own offset with the values it ar
         _updatePhase = 0UZ;
     }
 
+    static constexpr std::size_t kSubBlock = 512UZ;
+
+    // Advances the gain in dB through `count` squared-magnitude levels given as log2, writing the exponent of the
+    // linear gain for each. With g' = (1 - a) g + a (reference - level) both candidate updates are one fma, and the
+    // sign of the error is a compare of g against reference - level, so the serial chain is fma, select, max, min;
+    // the coefficients depend only on the level and are computed ahead without a dependence between iterations.
+    [[nodiscard]] double runLoop(double gainDb, const float* level, float* exponent, std::size_t count) const noexcept {
+        const double reference = reference_db;
+        const double gate      = gate_threshold_db;
+        const double minGain   = min_gain_db;
+        const double maxGain   = max_gain_db;
+        const double attack    = _alphaAttack;
+        const double decay     = _alphaDecay;
+
+        alignas(64) double keepAttack[kSubBlock];
+        alignas(64) double pullAttack[kSubBlock];
+        alignas(64) double keepDecay[kSubBlock];
+        alignas(64) double pullDecay[kSubBlock];
+        alignas(64) double threshold[kSubBlock];
+        for (std::size_t i = 0UZ; i < count; ++i) {
+            const double levelDb = detail::kDecibelPerHalfLog2 * static_cast<double>(level[i]);
+            const double open    = levelDb < gate ? 0.0 : 1.0;
+            const double target  = reference - levelDb;
+            threshold[i]         = target;
+            keepAttack[i]        = 1.0 - open * attack;
+            pullAttack[i]        = open * attack * target;
+            keepDecay[i]         = 1.0 - open * decay;
+            pullDecay[i]         = open * decay * target;
+        }
+        for (std::size_t i = 0UZ; i < count; ++i) {
+            const double attacked = std::fma(gainDb, keepAttack[i], pullAttack[i]);
+            const double decayed  = std::fma(gainDb, keepDecay[i], pullDecay[i]);
+            gainDb                = detail::clampOrdered(gainDb > threshold[i] ? attacked : decayed, minGain, maxGain);
+            exponent[i]           = static_cast<float>(gainDb * detail::kLog2PerDecibel);
+        }
+        return gainDb;
+    }
+
     [[nodiscard]] work::Status processBulk(std::span<const T> input, std::span<T> output) noexcept {
         const std::size_t nSamples = std::min(input.size(), output.size());
 
@@ -142,41 +180,54 @@ The block is 1:1. Every input tag leaves at its own offset with the values it ar
             return work::Status::OK;
         }
 
-        const double reference = reference_db;
-        const double gate      = gate_threshold_db;
-        const double minGain   = min_gain_db;
-        const double maxGain   = max_gain_db;
-        const double attack    = _alphaAttack;
-        const double decay     = _alphaDecay;
-
-        const auto stepGain = [=](double gain, float magnitudeSquaredValue) noexcept {
-            const double level = detail::kDecibelPerHalfLog2 * static_cast<double>(detail::fastLog2(std::max(magnitudeSquaredValue, detail::kMagnitudeFloorSquared)));
-            const double error = level + gain - reference;
-            const double alpha = level < gate ? 0.0 : (error > 0.0 ? attack : decay);
-            return detail::clampOrdered(gain - alpha * error, minGain, maxGain);
-        };
-
         double gainDb = _gainDb;
         if (update_decimation == 1U) {
-            for (std::size_t i = 0UZ; i < nSamples; ++i) {
-                const T sample = input[i];
-                gainDb         = stepGain(gainDb, magnitudeSquared(sample));
-                output[i]      = sample * detail::fastExp2(static_cast<float>(gainDb * detail::kLog2PerDecibel));
+            float level[kSubBlock];
+            float exponent[kSubBlock];
+            for (std::size_t base = 0UZ; base < nSamples; base += kSubBlock) {
+                const std::size_t count = std::min(kSubBlock, nSamples - base);
+                const T*          x     = input.data() + base;
+                T*                y     = output.data() + base;
+                for (std::size_t i = 0UZ; i < count; ++i) {
+                    level[i] = detail::fastLog2(std::max(magnitudeSquared(x[i]), detail::kMagnitudeFloorSquared));
+                }
+                gainDb = runLoop(gainDb, level, exponent, count);
+                for (std::size_t i = 0UZ; i < count; ++i) {
+                    y[i] = x[i] * detail::fastExp2(exponent[i]);
+                }
             }
         } else {
             const std::size_t stride = static_cast<std::size_t>(update_decimation.value);
-            for (std::size_t i = 0UZ; i < nSamples;) {
-                if (_updatePhase == 0UZ) {
-                    gainDb       = stepGain(gainDb, magnitudeSquared(input[i]));
-                    _appliedGain = detail::fastExp2(static_cast<float>(gainDb * detail::kLog2PerDecibel));
-                }
-                const std::size_t count = std::min(stride - _updatePhase, nSamples - i);
-                for (std::size_t k = 0UZ; k < count; ++k) {
-                    output[i + k] = input[i + k] * _appliedGain;
-                }
-                i += count;
-                _updatePhase = (_updatePhase + count) % stride;
+            // the first sample of this call that starts a hold interval, then every stride-th after it
+            const std::size_t first   = _updatePhase == 0UZ ? 0UZ : std::min(stride - _updatePhase, nSamples);
+            const std::size_t updates = first < nSamples ? (nSamples - 1UZ - first) / stride + 1UZ : 0UZ;
+
+            for (std::size_t i = 0UZ; i < first; ++i) {
+                output[i] = input[i] * _appliedGain;
             }
+            float level[kSubBlock];
+            float exponent[kSubBlock];
+            float gain[kSubBlock];
+            for (std::size_t firstUpdate = 0UZ; firstUpdate < updates; firstUpdate += kSubBlock) {
+                const std::size_t count = std::min(kSubBlock, updates - firstUpdate);
+                const std::size_t start = first + firstUpdate * stride;
+                for (std::size_t j = 0UZ; j < count; ++j) {
+                    level[j] = detail::fastLog2(std::max(magnitudeSquared(input[start + j * stride]), detail::kMagnitudeFloorSquared));
+                }
+                gainDb = runLoop(gainDb, level, exponent, count);
+                for (std::size_t j = 0UZ; j < count; ++j) {
+                    gain[j] = detail::fastExp2(exponent[j]);
+                }
+                for (std::size_t j = 0UZ; j < count; ++j) {
+                    const std::size_t from = start + j * stride;
+                    const std::size_t to   = std::min(from + stride, nSamples);
+                    for (std::size_t i = from; i < to; ++i) {
+                        output[i] = input[i] * gain[j];
+                    }
+                }
+                _appliedGain = gain[count - 1UZ];
+            }
+            _updatePhase = (_updatePhase + nSamples) % stride;
         }
 
         _gainDb = gainDb;

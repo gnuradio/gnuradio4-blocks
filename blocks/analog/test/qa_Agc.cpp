@@ -138,6 +138,74 @@ template<typename TIn, typename TOut, typename TBlock>
 static_assert(Agc<float>::keepsTagOffsets(), "keeps tag offsets: no Resampling<> or Stride<>, no asynchronous port, no tag policy and no forwardTags() override");
 static_assert(Agc<std::complex<float>>::keepsTagOffsets());
 
+// The gain loop evaluated one sample at a time in the direct form: the recurrence the vector passes must reproduce bit for bit.
+template<typename T>
+struct SerialAgc {
+    const Agc<T>& block;
+    double        gainDb;
+    float         applied = 1.f;
+    std::size_t   phase   = 0UZ;
+
+    void process(std::span<const T> input, std::span<T> output) {
+        const double reference = block.reference_db, gate = block.gate_threshold_db, minGain = block.min_gain_db, maxGain = block.max_gain_db;
+        const double attack = block._alphaAttack, decay = block._alphaDecay;
+        const auto   step = [&](double gain, float magnitudeSquared) {
+            const double level = gr::blocks::analog::detail::kDecibelPerHalfLog2 * static_cast<double>(gr::blocks::analog::detail::fastLog2(std::max(magnitudeSquared, gr::blocks::analog::detail::kMagnitudeFloorSquared)));
+            const double error = level + gain - reference;
+            const double alpha = level < gate ? 0.0 : (error > 0.0 ? attack : decay);
+            return gr::blocks::analog::detail::clampOrdered(gain - alpha * error, minGain, maxGain);
+        };
+        const std::size_t stride = block.update_decimation.value;
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            if (stride == 1UZ || phase == 0UZ) {
+                gainDb  = step(gainDb, Agc<T>::magnitudeSquared(input[i]));
+                applied = gr::blocks::analog::detail::fastExp2(static_cast<float>(gainDb * gr::blocks::analog::detail::kLog2PerDecibel));
+            }
+            output[i] = input[i] * applied;
+            phase     = (phase + 1UZ) % stride;
+        }
+    }
+};
+
+// a tone whose level swings between -50 and 0 dB at fadeHz, with a 20 dB step down at the middle
+template<typename T>
+std::vector<T> fadingTone(std::size_t nSamples, double sampleRate, double fadeHz) {
+    std::vector<T> signal(nSamples);
+    for (std::size_t i = 0UZ; i < nSamples; ++i) {
+        const double t     = static_cast<double>(i) / sampleRate;
+        const double db    = -25.0 - 25.0 * std::cos(2.0 * kPi * fadeHz * t) - (i > nSamples / 2UZ ? 20.0 : 0.0);
+        const double mag   = std::pow(10.0, db / 20.0);
+        const double phase = 2.0 * kPi * 1000.0 * t;
+        if constexpr (std::same_as<T, float>) {
+            signal[i] = static_cast<float>(mag * std::cos(phase));
+        } else {
+            signal[i] = T(static_cast<float>(mag * std::cos(phase)), static_cast<float>(mag * std::sin(phase)));
+        }
+    }
+    return signal;
+}
+
+// The direct form and the vector passes round the double recurrence differently, which moves an output by at most
+// a float rounding step: a relative 1e-6 is a few ulp, far below any wrong gain.
+constexpr double kSerialLoopTolerance = 1e-6;
+
+template<typename T>
+double serialLoopDeviation(gr::Size_t decimation, double fadeHz, std::size_t chunk) {
+    const std::vector<T> input = fadingTone<T>(96000UZ, 48000.0, fadeHz);
+    std::vector<T>       expected(input.size()), actual(input.size());
+    Agc<T>               agc = makeAgc<T>({{"sample_rate", 48000.f}, {"update_decimation", decimation}});
+    SerialAgc<T>         serial{agc, agc._gainDb};
+    serial.process(input, expected);
+    runAgc(agc, std::span<const T>(input), std::span<T>(actual), chunk);
+    double worst = 0.0;
+    for (std::size_t i = 0UZ; i < expected.size(); ++i) {
+        const double reference  = static_cast<double>(std::abs(expected[i]));
+        const double difference = static_cast<double>(std::abs(actual[i] - expected[i]));
+        worst                   = std::max(worst, reference > 0.0 ? difference / reference : (difference > 0.0 ? 1.0 : 0.0));
+    }
+    return worst;
+}
+
 } // namespace
 
 const boost::ut::suite<"Agc"> agcTests = [] {
@@ -316,6 +384,17 @@ const boost::ut::suite<"Agc"> agcTests = [] {
         const std::size_t        oneTau     = static_cast<std::size_t>(decaySeconds * 48000.0);
         expect(gt(peakDecibel(std::span<const float>(steppedOut).subspan(oneTau, oneCycle)), -10.0)) << "most of the 20 dB step must be recovered within one decay_s";
         expect(lt(std::abs(peakDecibel(std::span<const float>(steppedOut).subspan(3UZ * oneTau, oneCycle)) - peakDecibel(loudTail)), 1.0)) << "the peak must be back at the reference by three decay_s";
+    };
+
+    "the vector passes match the serial loop within float rounding"_test = [] {
+        for (const gr::Size_t decimation : {1U, 5U}) {
+            for (const double fadeHz : {0.25, 2.0, 20.0}) {
+                for (const std::size_t chunk : {1UZ, 7UZ, 1000UZ, 4096UZ}) {
+                    expect(serialLoopDeviation<float>(decimation, fadeHz, chunk) <= kSerialLoopTolerance) << "float, decimation" << decimation << "fade" << fadeHz << "chunk" << chunk;
+                    expect(serialLoopDeviation<std::complex<float>>(decimation, fadeHz, chunk) <= kSerialLoopTolerance) << "complex, decimation" << decimation << "fade" << fadeHz << "chunk" << chunk;
+                }
+            }
+        }
     };
 
     "unusable parameters are rejected at settings time"_test = [] {
