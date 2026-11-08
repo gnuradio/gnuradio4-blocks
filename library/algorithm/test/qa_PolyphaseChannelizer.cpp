@@ -783,6 +783,35 @@ const boost::ut::suite<"PolyphaseChannelizer configuration"> polyphaseChannelize
     };
 };
 
+const boost::ut::suite<"PolyphaseChannelizer twiddle table"> polyphaseChannelizerTwiddleTests = [] {
+    using namespace boost::ut;
+
+    "a bank's table holds the unit-circle points its channel count spaces, and a new channel count rebuilds it"_test = [] {
+        PolyphaseChannelizer<float> analysis;
+        PolyphaseSynthesizer<float> synthesis;
+
+        for (const std::size_t channels : {16UZ, 64UZ, 2UZ}) { // a smaller count last: a stale table would be too long
+            const auto prototype = kaiserPrototype(channels);
+            boost::ut::expect(analysis.configure(channels, prototype).has_value());
+            boost::ut::expect(synthesis.configure(channels, prototype).has_value());
+            expect(eq(analysis._twiddle.size(), channels));
+            expect(eq(synthesis._twiddle.size(), channels));
+            if (analysis._twiddle.size() != channels || synthesis._twiddle.size() != channels) {
+                continue; // a table of the wrong size is never indexed
+            }
+
+            double worst = 0.;
+            for (std::size_t m = 0UZ; m < channels; ++m) {
+                const double angle = 2. * std::numbers::pi * static_cast<double>(m) / static_cast<double>(channels);
+                worst              = std::max(worst, std::abs(widen(analysis._twiddle[m]) - std::polar(1., -angle)));
+                worst              = std::max(worst, std::abs(widen(synthesis._twiddle[m]) - std::polar(1., angle)));
+                expect(lt(std::abs(std::abs(widen(analysis._twiddle[m])) - 1.), 1e-6)) << std::format("M {} entry {} is off the unit circle", channels, m);
+            }
+            expect(lt(worst, 1e-6)) << std::format("M {}: an entry departs from exp(+-j*2*pi*m/M) by {:g}", channels, worst);
+        }
+    };
+};
+
 const boost::ut::suite<"PolyphaseChannelizer prototype design"> polyphaseChannelizerDesignTests = [] {
     using namespace boost::ut;
 
