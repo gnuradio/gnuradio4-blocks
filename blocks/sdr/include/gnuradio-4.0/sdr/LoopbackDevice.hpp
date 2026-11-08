@@ -39,6 +39,7 @@
 
 #include <gnuradio-4.0/algorithm/rng/GaussianNoise.hpp>
 #include <gnuradio-4.0/algorithm/rng/Xoshiro256pp.hpp>
+#include <gnuradio-4.0/algorithm/signal/Phasor.hpp>
 
 namespace gr::blocks::sdr::loopback {
 
@@ -276,7 +277,9 @@ class LoopbackDevice : public SoapySDR::Device {
         std::complex<double>          iqBalance{1.0, 0.0};
         std::string                   antenna = "RX";
         ChannelModel                  model   = ChannelModel::passthrough();
-        double                        rxPhase = 0.0; // phase accumulator for rxOnly tone generator
+        gr::signal::Phasor<float>     rxTone;                 // rxOnly tone generator; its phase runs on across calls and retunes
+        double                        rxToneFrequency  = 0.0; // frequency the tone's increment was last computed for
+        double                        rxToneSampleRate = 0.0; // sample rate the tone's increment was last computed for
         RxBuffer                      rxBuffer;
         RxWriter                      rxWriter;
         RxReader                      rxReader;
@@ -1170,12 +1173,13 @@ private:
     }
 
     static void generateTone(ChannelState& state, std::span<CF32> out) {
-        double phaseInc = 2.0 * std::numbers::pi * state.frequency / state.sampleRate;
-        for (auto& sample : out) {
-            sample = CF32{static_cast<float>(std::cos(state.rxPhase)), static_cast<float>(std::sin(state.rxPhase))};
-            state.rxPhase += phaseInc;
+        if (state.frequency != state.rxToneFrequency || state.sampleRate != state.rxToneSampleRate) {
+            const double increment = 2.0 * std::numbers::pi * state.frequency / state.sampleRate;
+            state.rxTone.setIncrement(std::isfinite(increment) ? increment : 0.0);
+            state.rxToneFrequency  = state.frequency;
+            state.rxToneSampleRate = state.sampleRate;
         }
-        state.rxPhase = std::fmod(state.rxPhase, 2.0 * std::numbers::pi);
+        state.rxTone.fill(out);
     }
 
     int readStreamRxOnly(void* const* buffs, std::size_t numElems) {
