@@ -228,6 +228,20 @@ struct ChannelizerDesignKey {
  * Channel `k` is centered at `k*fs/M`, with indices above `M/2` reading as the negative frequencies in the usual
  * transform order.
  */
+namespace detail {
+/// exp(sign*j*2*pi*m/M) for m in [0, M), each entry rounded once from double
+template<std::floating_point F>
+[[nodiscard]] inline std::vector<std::complex<F>> twiddleTable(std::size_t nChannels, double sign) {
+    constexpr double             twoPi = 2. * std::numbers::pi_v<double>;
+    std::vector<std::complex<F>> table(nChannels);
+    for (std::size_t m = 0UZ; m < nChannels; ++m) {
+        const double angle = sign * twoPi * static_cast<double>(m) / static_cast<double>(nChannels);
+        table[m]           = std::complex<F>(static_cast<F>(std::cos(angle)), static_cast<F>(std::sin(angle)));
+    }
+    return table;
+}
+} // namespace detail
+
 template<std::floating_point F>
 struct PolyphaseChannelizer {
     using Complex = std::complex<F>;
@@ -238,6 +252,7 @@ struct PolyphaseChannelizer {
     std::vector<float>   _prototype{}; ///< zero-padded to a whole number of branches
     std::vector<Complex> _history{};   ///< the last N input samples, newest first, stored twice
     std::vector<Complex> _branch{};    ///< v_r for the current step
+    std::vector<Complex> _twiddle{};   ///< exp(-j*2*pi*m/M), built when the bank is configured
     std::size_t          _channels   = 1UZ;
     std::size_t          _oversample = 1UZ;
     std::size_t          _length     = 1UZ; ///< N, the padded prototype length
@@ -275,6 +290,7 @@ struct PolyphaseChannelizer {
         _length     = _prototype.size();
         _history.assign(2UZ * _length, Complex{});
         _branch.assign(nChannels, Complex{});
+        _twiddle = detail::twiddleTable<F>(nChannels, -1.);
         _inverse = {};
         reset();
         return {};
@@ -329,11 +345,13 @@ struct PolyphaseChannelizer {
                     out[k] = -out[k]; // exp(-j*pi*k) is (-1)^k, so the odd channels change sign
                 }
             } else {
-                constexpr double twoPi = 2. * std::numbers::pi_v<double>;
+                std::size_t index = 0UZ; // k*_phase mod M, stepped by _phase
                 for (std::size_t k = 0UZ; k < nChannels; ++k) {
-                    const double angle = -twoPi * static_cast<double>(k * _phase % nChannels) / static_cast<double>(nChannels);
-                    const auto   turn  = Complex(static_cast<F>(std::cos(angle)), static_cast<F>(std::sin(angle)));
-                    out[k] *= turn;
+                    out[k] *= _twiddle[index];
+                    index += _phase;
+                    if (index >= nChannels) {
+                        index -= nChannels;
+                    }
                 }
             }
         }
@@ -358,6 +376,7 @@ struct PolyphaseSynthesizer {
     std::vector<float>   _prototype{};
     std::vector<Complex> _channelIn{};   ///< the step's channel samples, phase undone
     std::vector<Complex> _branch{};      ///< u_r for the current step
+    std::vector<Complex> _twiddle{};     ///< exp(+j*2*pi*m/M), built when the bank is configured
     std::vector<Complex> _accumulator{}; ///< the overlap-add line, oldest first
     std::size_t          _channels   = 1UZ;
     std::size_t          _oversample = 1UZ;
@@ -387,6 +406,7 @@ struct PolyphaseSynthesizer {
         _length     = _prototype.size();
         _channelIn.assign(nChannels, Complex{});
         _branch.assign(nChannels, Complex{});
+        _twiddle = detail::twiddleTable<F>(nChannels, 1.);
         _accumulator.assign(_length, Complex{});
         _forward = {};
         reset();
@@ -417,10 +437,13 @@ struct PolyphaseSynthesizer {
         if (_phase == 0UZ) {
             std::ranges::copy(channelsIn.first(nChannels), _channelIn.begin());
         } else {
-            constexpr double twoPi = 2. * std::numbers::pi_v<double>;
+            std::size_t index = 0UZ; // k*_phase mod M, stepped by _phase
             for (std::size_t k = 0UZ; k < nChannels; ++k) {
-                const double angle = twoPi * static_cast<double>(k * _phase % nChannels) / static_cast<double>(nChannels);
-                _channelIn[k]      = channelsIn[k] * Complex(static_cast<F>(std::cos(angle)), static_cast<F>(std::sin(angle)));
+                _channelIn[k] = channelsIn[k] * _twiddle[index];
+                index += _phase;
+                if (index >= nChannels) {
+                    index -= nChannels;
+                }
             }
         }
         _forward.compute(_channelIn, _branch);
