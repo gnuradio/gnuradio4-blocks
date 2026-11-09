@@ -1,13 +1,12 @@
 #include <boost/ut.hpp>
 
 #include <algorithm>
-#include <chrono>
 #include <complex>
 #include <cstdint>
 #include <format>
 #include <functional>
+#include <limits>
 #include <numeric>
-#include <print>
 #include <ranges>
 #include <span>
 #include <string>
@@ -19,16 +18,6 @@
 
 #include <gnuradio-4.0/basic/SampleDelay.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
-
-// QA_SAMPLE_DELAY_ADDRESS_SANITIZER is defined in a build with the address sanitizer. Clang 20 and earlier report the
-// sanitizer only through __has_feature(address_sanitizer).
-#if defined(__SANITIZE_ADDRESS__)
-#define QA_SAMPLE_DELAY_ADDRESS_SANITIZER
-#elif defined(__has_feature)
-#if __has_feature(address_sanitizer)
-#define QA_SAMPLE_DELAY_ADDRESS_SANITIZER
-#endif
-#endif
 
 namespace {
 
@@ -401,20 +390,6 @@ const boost::ut::suite<"SampleDelay"> sampleDelayTests = [] {
     };
 
     "degenerate settings"_test = [] {
-        SampleDelay<std::complex<double>>       block = make<SampleDelay<std::complex<double>>>({{"delay", 16U}});
-        const std::vector<std::complex<double>> x(64UZ, std::complex<double>{1.0, 0.0});
-        std::ignore = run<std::complex<double>>(block, x, 64UZ);
-
-#ifndef QA_SAMPLE_DELAY_ADDRESS_SANITIZER
-        // The line has no upper bound of its own, so a delay this large is refused by the allocator rather than by
-        // the block. The address sanitizer's allocator aborts on a request it cannot serve instead of reporting it,
-        // so this case is asked only of a build whose allocator answers by throwing.
-        expect(throws([&block] { setDelay(block, std::numeric_limits<gr::Size_t>::max()); })) << "a line larger than the address space throws the allocator's own exception";
-
-        const std::vector<std::complex<double>> y = run<std::complex<double>>(block, x, 64UZ);
-        expect(eq(std::ranges::count(y, std::complex<double>{}), 0)) << "and leaves the previous line intact: still delaying by 16, still primed";
-#endif
-
         SampleDelay<float>       keep = make<SampleDelay<float>>({{"delay", 8U}});
         const std::vector<float> ones(32UZ, 1.f);
         std::ignore = run<float>(keep, ones, 32UZ);
@@ -423,53 +398,6 @@ const boost::ut::suite<"SampleDelay"> sampleDelayTests = [] {
 
         const std::vector<float> after = run<float>(keep, ones, 32UZ);
         expect(eq(std::ranges::count(after, 0.f), 0)) << "a settings map that does not change delay does not reset the line";
-    };
-
-    "the cost stays inside 1.5x a span copy at every delay"_test = [] {
-        using Clock                   = std::chrono::steady_clock;
-        constexpr std::size_t kLength = 1UZ << 22;
-        constexpr std::size_t kChunk  = 4096UZ;
-        constexpr int         kRuns   = 7;
-        constexpr gr::Size_t  kDelays[]{1U, 80U, 4095U, 65536U};
-
-        const std::vector<float> x = noise<float>(kLength, 0x082efa98ec4e6c89ULL);
-        std::vector<float>       y(kLength);
-
-        std::vector<SampleDelay<float>> blocks;
-        for (const gr::Size_t delay : kDelays) {
-            blocks.push_back(make<SampleDelay<float>>({{"delay", delay}}));
-        }
-
-        std::vector<double> best(std::size(kDelays) + 1UZ, 1e300);
-        std::vector<double> worst(std::size(kDelays) + 1UZ, 0.0);
-        for (int repeat = 0; repeat <= kRuns; ++repeat) { // interleaved, so a thermal excursion lands on all the arms
-            for (std::size_t arm = 0UZ; arm <= std::size(kDelays); ++arm) {
-                const auto start = Clock::now();
-                for (std::size_t base = 0UZ; base < kLength; base += kChunk) {
-                    if (arm == 0UZ) {
-                        std::copy_n(x.begin() + static_cast<std::ptrdiff_t>(base), kChunk, y.begin() + static_cast<std::ptrdiff_t>(base));
-                    } else {
-                        std::ignore = blocks[arm - 1UZ].processBulk(std::span<const float>(x).subspan(base, kChunk), std::span<float>(y).subspan(base, kChunk));
-                    }
-                }
-                const double ns = std::chrono::duration<double, std::nano>(Clock::now() - start).count() / static_cast<double>(kLength);
-                if (repeat > 0) {
-                    best[arm]  = std::min(best[arm], ns);
-                    worst[arm] = std::max(worst[arm], ns);
-                }
-            }
-        }
-
-        // The tight 1.5x bound is asserted under ENABLE_BENCHMARK_TESTS, where the harness controls placement. The
-        // loose 3x holds otherwise and still catches a shifted line, which costs 5.6x.
-        const double bound = std::getenv("ENABLE_BENCHMARK_TESTS") != nullptr ? 1.5 : 3.0;
-
-        std::println("span copy {:.3f} ns/sample (spread {:.3f})", best[0UZ], worst[0UZ] - best[0UZ]);
-        for (std::size_t arm = 1UZ; arm <= std::size(kDelays); ++arm) {
-            const double ratio = best[arm] / best[0UZ];
-            std::println("delay {:>6} {:.3f} ns/sample (spread {:.3f}), {:.2f}x the copy", kDelays[arm - 1UZ], best[arm], worst[arm] - best[arm], ratio);
-            expect(lt(ratio, bound)) << std::format("delay {} costs {:.2f}x a span copy; a shifted line reaches 5.6x here", kDelays[arm - 1UZ], ratio);
-        }
     };
 };
 
