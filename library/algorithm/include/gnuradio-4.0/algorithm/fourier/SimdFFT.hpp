@@ -222,13 +222,13 @@ inline constexpr unordered_t unordered{};
 
 namespace details { // forward declaration, implementations below
 
-template<Direction direction, std::floating_point T>
+template<Direction direction, std::floating_point T, int W = 4>
 static NEVER_INLINE(void) complexRadix2(std::size_t stride, std::size_t nGroups, std::span<const T> input, std::span<T> output, std::span<const T> twiddles);
-template<Direction direction, std::floating_point T>
+template<Direction direction, std::floating_point T, int W = 4>
 static NEVER_INLINE(void) complexRadix3(std::size_t stride, std::size_t nGroups, std::span<const T> input, std::span<T> output, std::span<const T> twiddles1, std::span<const T> twiddles2);
-template<Direction direction, std::floating_point T>
+template<Direction direction, std::floating_point T, int W = 4>
 static NEVER_INLINE(void) complexRadix4(std::size_t stride, std::size_t nGroups, std::span<const T> input, std::span<T> output, std::span<const T> twiddles1, std::span<const T> twiddles2, std::span<const T> twiddles3);
-template<Direction direction, std::floating_point T>
+template<Direction direction, std::floating_point T, int W = 4>
 static NEVER_INLINE(void) complexRadix5(std::size_t stride, std::size_t nGroups, std::span<const T> input, std::span<T> output, std::span<const T> twiddles1, std::span<const T> twiddles2, std::span<const T> twiddles3, std::span<const T> twiddles4);
 
 template<std::floating_point T>
@@ -248,10 +248,10 @@ template<Direction direction, std::floating_point T>
 template<std::array<std::size_t, 5UZ> ntryh>
 static constexpr std::size_t decompose(std::size_t n, std::span<std::size_t> radixPlan);
 
-template<Direction dir, Transform transform, std::floating_point T>
+template<Direction dir, Transform transform, std::floating_point T, int W = 4>
 void dispatchRadix(std::size_t radix, std::size_t stride, std::size_t nGroups, std::span<T> in, std::span<T> out, std::span<const T> twiddles, std::size_t offset);
 
-template<Direction dir, Transform transform, std::floating_point T>
+template<Direction dir, Transform transform, std::floating_point T, int W = 4>
 static NEVER_INLINE(std::span<T>) fftStages(std::size_t nVectors, std::span<const T> input, std::span<T> workBuffer1, std::span<T> workBuffer2, std::span<const T> twiddles, std::span<const std::size_t, 15> radixPlan);
 
 template<std::floating_point T>
@@ -709,9 +709,9 @@ namespace details {
 /********************************** complex FFT processing C2C ************************************************/
 /**************************************************************************************************************/
 
-template<Direction direction, std::floating_point T>
+template<Direction direction, std::floating_point T, int W>
 static NEVER_INLINE(void) complexRadix2(std::size_t stride, std::size_t nGroups, std::span<const T> input, std::span<T> output, std::span<const T> twiddles) {
-    using V                    = vec<T, 4>;
+    using V                    = vec<T, W>;
     constexpr std::size_t L    = V::size();
     constexpr T           sign = direction == Direction::Forward ? T{1} : T{-1};
 
@@ -767,9 +767,9 @@ static NEVER_INLINE(void) complexRadix2(std::size_t stride, std::size_t nGroups,
     }
 }
 
-template<Direction direction, std::floating_point T>
+template<Direction direction, std::floating_point T, int W>
 static NEVER_INLINE(void) complexRadix3(std::size_t stride, std::size_t nGroups, std::span<const T> input, std::span<T> output, std::span<const T> twiddles1, std::span<const T> twiddles2) {
-    using V                      = vec<T, 4>;
+    using V                      = vec<T, W>;
     constexpr std::size_t L      = V::size();
     constexpr T           sign   = direction == Direction::Forward ? T{1} : T{-1};
     constexpr T           cos120 = T{-0.5};                                  // cos(2π/3)
@@ -833,9 +833,9 @@ static NEVER_INLINE(void) complexRadix3(std::size_t stride, std::size_t nGroups,
     }
 }
 
-template<Direction direction, std::floating_point T>
+template<Direction direction, std::floating_point T, int W>
 static NEVER_INLINE(void) complexRadix4(std::size_t stride, std::size_t nGroups, std::span<const T> input, std::span<T> output, std::span<const T> twiddles1, std::span<const T> twiddles2, std::span<const T> twiddles3) {
-    using V                    = vec<T, 4>;
+    using V                    = vec<T, W>;
     constexpr std::size_t L    = V::size();
     constexpr T           sign = direction == Direction::Forward ? T{1} : T{-1};
 
@@ -945,9 +945,9 @@ static NEVER_INLINE(void) complexRadix4(std::size_t stride, std::size_t nGroups,
     }
 }
 
-template<Direction direction, std::floating_point T>
+template<Direction direction, std::floating_point T, int W>
 static NEVER_INLINE(void) complexRadix5(std::size_t stride, std::size_t nGroups, std::span<const T> input, std::span<T> output, std::span<const T> twiddles1, std::span<const T> twiddles2, std::span<const T> twiddles3, std::span<const T> twiddles4) {
-    using V                      = vec<T, 4>;
+    using V                      = vec<T, W>;
     constexpr std::size_t L      = V::size();
     constexpr T           sign   = direction == Direction::Forward ? T{1} : T{-1};
     constexpr T           cos72  = static_cast<T>(0.3090169943749474241022934171828191L);        // cos(2π/5)
@@ -1951,7 +1951,7 @@ static constexpr std::size_t decompose(std::size_t n, std::span<std::size_t> rad
     return numStages;
 }
 
-template<Direction dir, Transform transform, std::floating_point T>
+template<Direction dir, Transform transform, std::floating_point T, int W>
 void dispatchRadix(std::size_t radix, std::size_t stride, std::size_t nGroups, std::span<T> in, std::span<T> out, std::span<const T> twiddles, std::size_t offset) {
     constexpr auto getRadixFn = []<std::size_t R>() {
         if constexpr (transform == Transform::Real) {
@@ -1966,13 +1966,13 @@ void dispatchRadix(std::size_t radix, std::size_t stride, std::size_t nGroups, s
             }
         } else {
             if constexpr (R == 2) {
-                return &complexRadix2<dir, T>;
+                return &complexRadix2<dir, T, W>;
             } else if constexpr (R == 3) {
-                return &complexRadix3<dir, T>;
+                return &complexRadix3<dir, T, W>;
             } else if constexpr (R == 4) {
-                return &complexRadix4<dir, T>;
+                return &complexRadix4<dir, T, W>;
             } else if constexpr (R == 5) {
-                return &complexRadix5<dir, T>;
+                return &complexRadix5<dir, T, W>;
             }
         }
     };
@@ -1998,7 +1998,7 @@ void dispatchRadix(std::size_t radix, std::size_t stride, std::size_t nGroups, s
     }
 }
 
-template<Direction dir, Transform transform, std::floating_point T>
+template<Direction dir, Transform transform, std::floating_point T, int W>
 static NEVER_INLINE(std::span<T>) fftStages(std::size_t nVectors, std::span<const T> input, std::span<T> workBuffer1, std::span<T> workBuffer2, std::span<const T> twiddles, std::span<const std::size_t, 15> radixPlan) {
     assert(isAligned<64>(input.data()));
     assert(isAligned<64>(workBuffer1.data()));
@@ -2040,7 +2040,7 @@ static NEVER_INLINE(std::span<T>) fftStages(std::size_t nVectors, std::span<cons
             twiddleOffset -= (radix - 1) * effectiveStride;
         }
 
-        dispatchRadix<dir, transform>(radix, effectiveStride, isRealForward ? nextGroupSize : groupSize, bufferIn, bufferOut, twiddles, twiddleOffset);
+        dispatchRadix<dir, transform, T, W>(radix, effectiveStride, isRealForward ? nextGroupSize : groupSize, bufferIn, bufferOut, twiddles, twiddleOffset);
 
         groupSize = nextGroupSize;
 
