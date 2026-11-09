@@ -60,6 +60,10 @@ SOFTWARE.
 #include <span>
 #include <type_traits>
 
+#if defined(__AVX__)
+#include <immintrin.h>
+#endif
+
 #include <gnuradio-4.0/MemoryAllocators.hpp>
 #include <gnuradio-4.0/Message.hpp>
 
@@ -236,6 +240,23 @@ constexpr void complexFinalise(std::size_t Ncvec, std::span<T> input, std::span<
 template<std::floating_point T>
 constexpr void complexPreprocess(std::size_t Ncvec, std::span<const T> input, std::span<T> output, std::span<const T> butterflyTwiddles);
 
+/// true where the compiler targets AVX (x86-64-v3 and above), which the eight-lane kernels need
+#if defined(__AVX__)
+inline constexpr bool kWideKernels = true;
+#else
+inline constexpr bool kWideKernels = false;
+#endif
+/// sizes of the eight-lane form: multiples of 64, so that the vectors fill an 8 x 8 transpose
+[[nodiscard]] constexpr bool takesWidePath(std::size_t n) noexcept { return n >= 64UZ && n % 64UZ == 0UZ; }
+
+// eight-lane complex float form
+inline void complexFinalize8(std::size_t Ncvec, const float* RESTRICT input, float* RESTRICT output, const float* RESTRICT butterflyTwiddles) noexcept;
+inline void complexPreprocess8(std::size_t Ncvec, const float* RESTRICT input, float* RESTRICT output, const float* RESTRICT butterflyTwiddles) noexcept;
+inline void splitComplexVectors8(std::size_t Ncvec, const float* input, float* output) noexcept;
+inline void joinComplexVectors8(std::size_t Ncvec, const float* input, float* output) noexcept;
+template<Direction direction>
+inline void reorderComplex8(std::size_t Ncvec, const float* RESTRICT input, float* RESTRICT output) noexcept;
+
 template<Direction dir, std::floating_point T>
 [[maybe_unused]] static NEVER_INLINE(void) realRadix2(std::size_t stride, std::size_t nGroups, std::span<T> input, std::span<T> output, std::span<const T> twiddles);
 template<Direction dir, std::floating_point T>
@@ -279,6 +300,11 @@ constexpr void realPreprocess(std::size_t Ncvec, std::span<const T> inputSpan, s
  * Supports mixed-radix {2,3,4,5} factorizations. Real transforms use Hermitian symmetry.
  * Transforms are unnormalized: backward(forward(x)) = N*x (scale by 1/N for identity).
  *
+ * Vector width: complex float transforms of a multiple of 64 points (64, 128, 192, 320, ..., 16384) run on eight-lane
+ * vectors when the build targets AVX (x86-64-v3 and above). The choice is made when the code is compiled. Every other
+ * build, type, transform and size runs on four lanes. The unordered layout of the two forms differs, and the ordered
+ * output differs only in rounding.
+ *
  * @example
  * SimdFFT<float, Transform::Real, 1024> fft;
  * // alt: SimdFFT<float, Transform::Real> fft(1025);
@@ -298,16 +324,27 @@ struct SimdFFT {
     using IsRealValued = std::conditional_t<fftTransform == Transform::Real, std::true_type, std::false_type>;
     using IsDynamic    = std::conditional_t<N == std::dynamic_extent, std::true_type, std::false_type>;
 
+    /// Complex float transforms whose size is a multiple of 64 run on eight-lane vectors when the target has them: the
+    /// compiler defines `__AVX__` and `native_simd<float>` holds eight lanes (x86-64-v3 and above). The choice is made at
+    /// compile time. Every other target, type, transform and size keeps the four-lane form, and so does its output.
+    static constexpr bool        kWideCapable = details::kWideKernels && (fftTransform == Transform::Complex) && std::same_as<T, float> && (stdx::native_simd<float>::size() >= 8UZ);
+
+private:
+    static constexpr std::size_t kMaxLanes = kWideCapable ? 8UZ : V::size(); // the largest lane count a plan of this type can take; sizes the static storage
+
+public:
+
     static constexpr std::size_t kAlignment = 64UZ;
     static constexpr std::size_t ceil_div(std::size_t x, std::size_t y) { return (x + y - 1) / y; }
-    static constexpr std::size_t kTwiddleCount = 2 * (V::size() - 1) * V::size() * ceil_div((IsRealValued::value ? (N / 2) : N) / V::size(), V::size());
+    static constexpr std::size_t kTwiddleCount = 2 * (kMaxLanes - 1) * kMaxLanes * ceil_div((IsRealValued::value ? (N / 2) : N) / kMaxLanes, kMaxLanes);
 
     using WorkStorage             = std::conditional_t<IsDynamic::value, std::vector<T, gr::allocator::Aligned<T, kAlignment>>, std::array<T, IsRealValued::value ? N : 2 * N>>;
     using StageTwiddleStorage     = std::conditional_t<IsDynamic::value, std::vector<T, gr::allocator::Aligned<T, kAlignment>>, std::array<T, kTwiddleCount>>;
-    using ButterflyTwiddleStorage = std::conditional_t<IsDynamic::value, std::vector<T, gr::allocator::Aligned<T, kAlignment>>, std::array<T, 2 * (V::size() - 1) * ((IsRealValued::value ? (N / 2) : N) / V::size())>>; // 2*(L-1)*SV
+    using ButterflyTwiddleStorage = std::conditional_t<IsDynamic::value, std::vector<T, gr::allocator::Aligned<T, kAlignment>>, std::array<T, 2 * (kMaxLanes - 1) * ((IsRealValued::value ? (N / 2) : N) / kMaxLanes)>>; // 2*(L-1)*SV
 
-    std::size_t                   _N = N;
-    std::array<std::size_t, 15UZ> _radixPlan{}; // [0]: unused (FFTPACK legacy), [1]: number of stages nf, [2 .. 1 + nf] stage radices in execution ordering (2,3,4,5,...)
+    std::size_t                   _N     = N;
+    std::size_t                   _lanes = V::size(); // 4, or 8 for the eight-lane form (see kWideCapable)
+    std::array<std::size_t, 15UZ> _radixPlan{};       // [0]: unused (FFTPACK legacy), [1]: number of stages nf, [2 .. 1 + nf] stage radices in execution ordering (2,3,4,5,...)
 
     alignas(64) WorkStorage _scratch{};                       // used as local data storage
     alignas(64) StageTwiddleStorage _stageTwiddles{};         // stage-level twiddles
@@ -387,7 +424,7 @@ struct SimdFFT {
         return (R == N_min); // Must reduce exactly to minimum size!
     }
     [[nodiscard]] constexpr std::size_t simdVectorSize() const noexcept {
-        return (IsRealValued::value ? (size() / 2) : size()) / simdSize(); // simdVectorSize = number of complex SIMD vectors (N/4 if complex, N/8 if real for lanes=4)
+        return (IsRealValued::value ? (size() / 2) : size()) / _lanes; // simdVectorSize = number of vectors of _lanes complex values (N/_lanes complex, N/(2*_lanes) real)
     }
 
     [[nodiscard]] std::span<const T> butterflyTwiddles() const noexcept { return _butterflyTwiddles; }
@@ -397,8 +434,9 @@ struct SimdFFT {
 
     void computeTwiddles() {
         // not too performance critical, computed usually only once
-        constexpr std::size_t L       = simdSize();
-        const std::size_t     nScalar = ceil_div(size(), L);
+        _lanes                    = (kWideCapable && details::takesWidePath(size()) && canProcessSize(size())) ? 8UZ : V::size();
+        const std::size_t L       = _lanes;
+        const std::size_t nScalar = ceil_div(size(), L);
         if constexpr (IsDynamic::value) {
             constexpr std::size_t kGuard = 2UZ;
             _stageTwiddles.resize(2UZ * nScalar + kGuard);
@@ -480,7 +518,7 @@ struct SimdFFT {
         }
         if (prod != nScalar) {
             throw gr::exception(std::format("{} transform (N={}) factorization mismatch: prod(radices={})={} != size()/SIMD_width={} (N={}, SIMD_width={})", //
-                fftTransform, size(), _radixPlan, prod, nScalar, size(), vector_type::size()));
+                fftTransform, size(), _radixPlan, prod, nScalar, size(), L));
         }
     }
 
@@ -525,7 +563,13 @@ struct SimdFFT {
             throw gr::exception(std::format("output is not {}-bytes aligned", kAlignment), loc);
         }
 
-        transformInternal<direction, ordering>(inputSpan, outputSpan, scratch());
+        if constexpr (kWideCapable) {
+            if (_lanes == 8UZ) {
+                transformInternal<8, direction, ordering>(inputSpan, outputSpan, scratch());
+                return;
+            }
+        }
+        transformInternal<4, direction, ordering>(inputSpan, outputSpan, scratch());
     }
 
     /// @brief reorder between SIMD-tiled and canonical interleaved format
@@ -589,6 +633,13 @@ struct SimdFFT {
             return;
         }
 
+        if constexpr (kWideCapable) {
+            if (_lanes == 8UZ) {
+                details::reorderComplex8<direction>(Ncvec, reinterpret_cast<const float*>(input.data()), reinterpret_cast<float*>(output.data()));
+                return;
+            }
+        }
+
         // Complex FFT - this part was already correct
         const T* inP  = input.data();
         T*       outP = output.data();
@@ -613,7 +664,7 @@ struct SimdFFT {
     }
 
 private:
-    template<Direction direction, Order ordering>
+    template<int W, Direction direction, Order ordering>
     constexpr void transformInternal(std::span<const T> inputSpan, std::span<T> outputSpan, std::span<T> scratch) {
         if constexpr (fftTransform == Transform::Real) {
             inputSpan  = std::span{inputSpan.data(), size()};
@@ -630,8 +681,8 @@ private:
         const std::size_t nVecs = IsRealValued::value ? (Ncvec * 2) : Ncvec;
 
         // complex-valued FFT inverts the stage direction
-        constexpr Direction stagesDir           = (IsRealValued::value == (direction == Direction::Forward)) ? Direction::Forward : Direction::Backward;
-        auto                processInterleaving = [&](auto operation, std::span<const T> src, std::span<T> dst) {
+        constexpr Direction   stagesDir           = (IsRealValued::value == (direction == Direction::Forward)) ? Direction::Forward : Direction::Backward;
+        [[maybe_unused]] auto processInterleaving = [&](auto operation, std::span<const T> src, std::span<T> dst) {
             assert(details::isAligned<64>(src.data()));
             assert(details::isAligned<64>(dst.data()));
             const T* RESTRICT pSrc = std::assume_aligned<64>(src.data());
@@ -650,15 +701,21 @@ private:
             ib                             = !ib;
             std::span<const T> stagesInput = inputSpan; // default to input
             if constexpr (!IsRealValued::value) {
-                processInterleaving(details::uninterleave<V>, inputSpan, buff[ib]);
+                if constexpr (W == 8) {
+                    details::splitComplexVectors8(Ncvec, reinterpret_cast<const float*>(inputSpan.data()), reinterpret_cast<float*>(buff[ib].data()));
+                } else {
+                    processInterleaving(details::uninterleave<V>, inputSpan, buff[ib]);
+                }
                 stagesInput = buff[ib];
             }
-            std::span<T> outp = details::fftStages<stagesDir, fftTransform, T>(nVecs, stagesInput, buff[ib], buff[!ib], stageTwiddles(), _radixPlan);
+            std::span<T> outp = details::fftStages<stagesDir, fftTransform, T, W>(nVecs, stagesInput, buff[ib], buff[!ib], stageTwiddles(), _radixPlan);
             ib                = (outp.data() == buff[0].data()) ? 0 : 1;
 
             // finalise: butterfly twiddle application
             if constexpr (IsRealValued::value) {
                 details::realFinalise<T>(Ncvec, buff[ib], buff[!ib], butterflyTwiddles());
+            } else if constexpr (W == 8) {
+                details::complexFinalize8(Ncvec, reinterpret_cast<const float*>(buff[ib].data()), reinterpret_cast<float*>(buff[!ib].data()), reinterpret_cast<const float*>(butterflyTwiddles().data()));
             } else {
                 details::complexFinalise(Ncvec, buff[ib], buff[!ib], butterflyTwiddles());
             }
@@ -683,20 +740,26 @@ private:
             // preprocess: inverse butterfly twiddles
             if constexpr (IsRealValued::value) {
                 details::realPreprocess<T>(Ncvec, inputSpan, buff[ib], butterflyTwiddles());
+            } else if constexpr (W == 8) {
+                details::complexPreprocess8(Ncvec, reinterpret_cast<const float*>(inputSpan.data()), reinterpret_cast<float*>(buff[ib].data()), reinterpret_cast<const float*>(butterflyTwiddles().data()));
             } else {
                 details::complexPreprocess(Ncvec, inputSpan, buff[ib], butterflyTwiddles());
             }
 
-            std::span<T> outp = details::fftStages<stagesDir, fftTransform, T>(nVecs, buff[ib], buff[0], buff[1], stageTwiddles(), _radixPlan);
+            std::span<T> outp = details::fftStages<stagesDir, fftTransform, T, W>(nVecs, buff[ib], buff[0], buff[1], stageTwiddles(), _radixPlan);
             ib                = (outp.data() == buff[0].data()) ? 0 : 1;
 
             if constexpr (!IsRealValued::value) {
-                processInterleaving(details::interleave<V>, buff[ib], buff[ib]);
+                if constexpr (W == 8) {
+                    details::joinComplexVectors8(Ncvec, reinterpret_cast<const float*>(buff[ib].data()), reinterpret_cast<float*>(buff[ib].data()));
+                } else {
+                    processInterleaving(details::interleave<V>, buff[ib], buff[ib]);
+                }
             }
         }
 
         if (buff[ib].data() != outputSpan.data()) { // final copy -- only if needed
-            std::memcpy(std::assume_aligned<64>(outputSpan.data()), std::assume_aligned<64>(buff[ib].data()), Ncvec * 2 * V::size() * sizeof(T));
+            std::memcpy(std::assume_aligned<64>(outputSpan.data()), std::assume_aligned<64>(buff[ib].data()), Ncvec * 2 * W * sizeof(T));
             ib = !ib;
         }
         assert(buff[ib].data() == outputSpan.data());
@@ -1200,6 +1263,210 @@ constexpr void complexPreprocess(std::size_t Ncvec, std::span<const T> input, st
         store_unchecked(im3, pOutput + baseIdx + 7 * L, stdx::vector_aligned);
     }
 }
+
+/**************************************************************************************************************/
+/********************** eight-lane complex float kernels (butterfly step, reorder, interleave) ****************/
+/**************************************************************************************************************/
+
+// Only AVX targets define these. SimdFFT::kWideCapable keeps every other target on the four-lane form, so nothing
+// instantiates a call to them there.
+#if defined(__AVX__)
+using F8 = __m256;
+ALWAYS_INLINE(F8) load8(const float* p) noexcept { return _mm256_load_ps(p); }
+ALWAYS_INLINE(void) store8(float* p, F8 v) noexcept { _mm256_store_ps(p, v); }
+ALWAYS_INLINE(F8) load8u(const float* p) noexcept { return _mm256_loadu_ps(p); }
+ALWAYS_INLINE(void) store8u(float* p, F8 v) noexcept { _mm256_storeu_ps(p, v); }
+ALWAYS_INLINE(F8) splat8(float x) noexcept { return _mm256_set1_ps(x); }
+
+// 8x8 transpose of float lanes
+ALWAYS_INLINE(void) transpose8(F8 (&x)[8]) noexcept {
+    const F8 t0 = _mm256_unpacklo_ps(x[0], x[1]), t1 = _mm256_unpackhi_ps(x[0], x[1]);
+    const F8 t2 = _mm256_unpacklo_ps(x[2], x[3]), t3 = _mm256_unpackhi_ps(x[2], x[3]);
+    const F8 t4 = _mm256_unpacklo_ps(x[4], x[5]), t5 = _mm256_unpackhi_ps(x[4], x[5]);
+    const F8 t6 = _mm256_unpacklo_ps(x[6], x[7]), t7 = _mm256_unpackhi_ps(x[6], x[7]);
+    const F8 u0 = _mm256_shuffle_ps(t0, t2, 0x44), u1 = _mm256_shuffle_ps(t0, t2, 0xEE);
+    const F8 u2 = _mm256_shuffle_ps(t1, t3, 0x44), u3 = _mm256_shuffle_ps(t1, t3, 0xEE);
+    const F8 u4 = _mm256_shuffle_ps(t4, t6, 0x44), u5 = _mm256_shuffle_ps(t4, t6, 0xEE);
+    const F8 u6 = _mm256_shuffle_ps(t5, t7, 0x44), u7 = _mm256_shuffle_ps(t5, t7, 0xEE);
+    x[0] = _mm256_permute2f128_ps(u0, u4, 0x20);
+    x[1] = _mm256_permute2f128_ps(u1, u5, 0x20);
+    x[2] = _mm256_permute2f128_ps(u2, u6, 0x20);
+    x[3] = _mm256_permute2f128_ps(u3, u7, 0x20);
+    x[4] = _mm256_permute2f128_ps(u0, u4, 0x31);
+    x[5] = _mm256_permute2f128_ps(u1, u5, 0x31);
+    x[6] = _mm256_permute2f128_ps(u2, u6, 0x31);
+    x[7] = _mm256_permute2f128_ps(u3, u7, 0x31);
+}
+
+// eight interleaved complex values in a, b (four each) -> eight real and eight imaginary parts
+ALWAYS_INLINE(void) splitComplex8(F8 a, F8 b, F8& re, F8& im) noexcept {
+    const F8 p = _mm256_permute2f128_ps(a, b, 0x20), q = _mm256_permute2f128_ps(a, b, 0x31);
+    re = _mm256_shuffle_ps(p, q, 0x88);
+    im = _mm256_shuffle_ps(p, q, 0xDD);
+}
+
+ALWAYS_INLINE(void) joinComplex8(F8 re, F8 im, F8& a, F8& b) noexcept {
+    const F8 lo = _mm256_unpacklo_ps(re, im), hi = _mm256_unpackhi_ps(re, im);
+    a = _mm256_permute2f128_ps(lo, hi, 0x20);
+    b = _mm256_permute2f128_ps(lo, hi, 0x31);
+}
+
+// 8-point DFT over the eight vectors, one transform per lane: two 4-point DFTs and the combining twiddles
+template<bool Inverse>
+ALWAYS_INLINE(void)
+dft8(F8 (&re)[8], F8 (&im)[8]) noexcept {
+    auto dft4 = [](F8& r0, F8& i0, F8& r1, F8& i1, F8& r2, F8& i2, F8& r3, F8& i3) {
+        const F8 sR02 = r0 + r2, dR02 = r0 - r2, sR13 = r1 + r3, dR13 = r1 - r3;
+        const F8 sI02 = i0 + i2, dI02 = i0 - i2, sI13 = i1 + i3, dI13 = i1 - i3;
+        r0 = sR02 + sR13;
+        i0 = sI02 + sI13;
+        r2 = sR02 - sR13;
+        i2 = sI02 - sI13;
+        if constexpr (Inverse) {
+            r1 = dR02 - dI13;
+            i1 = dI02 + dR13;
+            r3 = dR02 + dI13;
+            i3 = dI02 - dR13;
+        } else {
+            r1 = dR02 + dI13;
+            i1 = dI02 - dR13;
+            r3 = dR02 - dI13;
+            i3 = dI02 + dR13;
+        }
+    };
+    dft4(re[0], im[0], re[2], im[2], re[4], im[4], re[6], im[6]); // even inputs: E[0..3] in slots 0, 2, 4, 6
+    dft4(re[1], im[1], re[3], im[3], re[5], im[5], re[7], im[7]); // odd inputs:  O[0..3] in slots 1, 3, 5, 7
+
+    const F8 c = splat8(0.70710678118654752f);
+    F8       o1r, o1i, o2r, o2i, o3r, o3i; // O[m] * exp(-+ 2 pi i m / 8)
+    const F8 a1 = re[3], b1 = im[3], a2 = re[5], b2 = im[5], a3 = re[7], b3 = im[7];
+    if constexpr (Inverse) {
+        o1r = (a1 - b1) * c;
+        o1i = (a1 + b1) * c;
+        o2r = F8(splat8(0.f)) - b2;
+        o2i = a2;
+        o3r = (F8(splat8(0.f)) - a3 - b3) * c;
+        o3i = (a3 - b3) * c;
+    } else {
+        o1r = (a1 + b1) * c;
+        o1i = (b1 - a1) * c;
+        o2r = b2;
+        o2i = F8(splat8(0.f)) - a2;
+        o3r = (b3 - a3) * c;
+        o3i = (F8(splat8(0.f)) - a3 - b3) * c;
+    }
+    const F8 e0r = re[0], e0i = im[0], e1r = re[2], e1i = im[2], e2r = re[4], e2i = im[4], e3r = re[6], e3i = im[6];
+    const F8 o0r = re[1], o0i = im[1];
+    re[0] = e0r + o0r;
+    im[0] = e0i + o0i;
+    re[4] = e0r - o0r;
+    im[4] = e0i - o0i;
+    re[1] = e1r + o1r;
+    im[1] = e1i + o1i;
+    re[5] = e1r - o1r;
+    im[5] = e1i - o1i;
+    re[2] = e2r + o2r;
+    im[2] = e2i + o2i;
+    re[6] = e2r - o2r;
+    im[6] = e2i - o2i;
+    re[3] = e3r + o3r;
+    im[3] = e3i + o3i;
+    re[7] = e3r - o3r;
+    im[7] = e3i - o3i;
+}
+
+// stage output (vector q holds the length N/8 transform at q for the eight interleaved decimations) -> the final 8-point butterflies
+inline void complexFinalize8(std::size_t Ncvec, const float* RESTRICT input, float* RESTRICT output, const float* RESTRICT butterflyTwiddles) noexcept {
+    for (std::size_t block = 0; block < Ncvec / 8; ++block) {
+        const float* ip = std::assume_aligned<64>(input + 128 * block);
+        float*       op = std::assume_aligned<64>(output + 128 * block);
+        const float* tw = std::assume_aligned<64>(butterflyTwiddles + 112 * block);
+        F8           re[8], im[8];
+        for (int i = 0; i < 8; ++i) {
+            re[i] = load8(ip + 16 * i);
+            im[i] = load8(ip + 16 * i + 8);
+        }
+        transpose8(re);
+        transpose8(im);
+        for (int l = 1; l < 8; ++l) {
+            const F8 br = load8(tw + 16 * (l - 1)), bi = load8(tw + 16 * (l - 1) + 8);
+            const F8 t = re[l] * bi;
+            re[l]      = re[l] * br - im[l] * bi;
+            im[l]      = im[l] * br + t;
+        }
+        dft8<false>(re, im);
+        for (int i = 0; i < 8; ++i) {
+            store8(op + 16 * i, re[i]);
+            store8(op + 16 * i + 8, im[i]);
+        }
+    }
+}
+
+inline void complexPreprocess8(std::size_t Ncvec, const float* RESTRICT input, float* RESTRICT output, const float* RESTRICT butterflyTwiddles) noexcept {
+    for (std::size_t block = 0; block < Ncvec / 8; ++block) {
+        const float* ip = std::assume_aligned<64>(input + 128 * block);
+        float*       op = std::assume_aligned<64>(output + 128 * block);
+        const float* tw = std::assume_aligned<64>(butterflyTwiddles + 112 * block);
+        F8           re[8], im[8];
+        for (int i = 0; i < 8; ++i) {
+            re[i] = load8(ip + 16 * i);
+            im[i] = load8(ip + 16 * i + 8);
+        }
+        dft8<true>(re, im);
+        for (int l = 1; l < 8; ++l) {
+            const F8 br = load8(tw + 16 * (l - 1)), bi = load8(tw + 16 * (l - 1) + 8);
+            const F8 t = re[l] * bi;
+            re[l]      = re[l] * br + im[l] * bi;
+            im[l]      = im[l] * br - t;
+        }
+        transpose8(re);
+        transpose8(im);
+        for (int i = 0; i < 8; ++i) {
+            store8(op + 16 * i, re[i]);
+            store8(op + 16 * i + 8, im[i]);
+        }
+    }
+}
+
+// interleaved complex -> vector pairs (re, im) of eight lanes; the output may alias the input
+inline void splitComplexVectors8(std::size_t Ncvec, const float* input, float* output) noexcept {
+    for (std::size_t k = 0; k < Ncvec; ++k) {
+        F8 re, im;
+        splitComplex8(load8(input + 16 * k), load8(input + 16 * k + 8), re, im);
+        store8(output + 16 * k, re);
+        store8(output + 16 * k + 8, im);
+    }
+}
+
+inline void joinComplexVectors8(std::size_t Ncvec, const float* input, float* output) noexcept {
+    for (std::size_t k = 0; k < Ncvec; ++k) {
+        F8 a, b;
+        joinComplex8(load8(input + 16 * k), load8(input + 16 * k + 8), a, b);
+        store8(output + 16 * k, a);
+        store8(output + 16 * k + 8, b);
+    }
+}
+
+// vector position k <-> natural position (k / 8) + (k % 8) * Ncvec / 8, with the interleave; input and output must not alias.
+// Unaligned access: the public simdReordering asks no more alignment of its buffers than the four-lane form does.
+template<Direction direction>
+inline void reorderComplex8(std::size_t Ncvec, const float* RESTRICT input, float* RESTRICT output) noexcept {
+    for (std::size_t k = 0; k < Ncvec; ++k) {
+        const std::size_t kk = (k / 8) + (k % 8) * (Ncvec / 8);
+        if constexpr (direction == Direction::Forward) {
+            F8 lo, hi;
+            joinComplex8(load8u(input + 16 * k), load8u(input + 16 * k + 8), lo, hi);
+            store8u(output + 16 * kk, lo);
+            store8u(output + 16 * kk + 8, hi);
+        } else {
+            F8 re, im;
+            splitComplex8(load8u(input + 16 * kk), load8u(input + 16 * kk + 8), re, im);
+            store8u(output + 16 * k, re);
+            store8u(output + 16 * k + 8, im);
+        }
+    }
+}
+#endif // __AVX__
 
 /**************************************************************************************************************/
 /********************************** real-valued FFT R2C & C2R *************************************************/
