@@ -561,4 +561,142 @@ boost::ut::suite<"SimdFFT real against a direct DFT"> _realVsDirectDft = [] {
     };
 };
 
+/// The complex transform against a direct DFT in double, for the lengths that run eight lanes wide on an AVX build
+/// (multiples of 64) and for the ones that stay on four lanes. The input is a mix of tones and noise, so that a wrong
+/// twiddle or a misplaced lane changes many bins.
+struct ComplexDftReference {
+    std::vector<std::complex<double>> signal{};
+    std::vector<std::complex<double>> spectrum{}; // sum x[i] exp(-2 pi i k / N), unnormalized
+};
+
+ComplexDftReference complexDftReference(std::size_t n) {
+    ComplexDftReference                    reference;
+    std::mt19937                           rng(static_cast<unsigned>(n));
+    std::uniform_real_distribution<double> noise(-0.25, 0.25);
+    reference.signal.resize(n);
+    for (std::size_t i = 0UZ; i < n; ++i) {
+        const double t      = static_cast<double>(i) / static_cast<double>(n);
+        reference.signal[i] = {std::cos(2. * std::numbers::pi * 5. * t) + 0.5 * std::sin(2. * std::numbers::pi * 23. * t + 0.3) + noise(rng), 0.75 * std::sin(2. * std::numbers::pi * 11. * t) + noise(rng)};
+    }
+    std::vector<std::complex<double>> twiddle(n);
+    for (std::size_t j = 0UZ; j < n; ++j) {
+        twiddle[j] = std::polar(1., -2. * std::numbers::pi * static_cast<double>(j) / static_cast<double>(n));
+    }
+    reference.spectrum.resize(n);
+    for (std::size_t k = 0UZ; k < n; ++k) {
+        std::complex<double> sum{};
+        for (std::size_t i = 0UZ; i < n; ++i) {
+            sum += reference.signal[i] * twiddle[(i * k) % n]; // the angle index is exact rather than accumulated
+        }
+        reference.spectrum[k] = sum;
+    }
+    return reference;
+}
+
+using AlignedFloats = std::vector<float, gr::allocator::Aligned<float>>;
+
+/// relative RMS distance between an interleaved float result and a double reference
+double relativeError(const AlignedFloats& got, const std::vector<std::complex<double>>& want, double scale = 1.) {
+    double numerator   = 0.;
+    double denominator = 0.;
+    for (std::size_t k = 0UZ; k < want.size(); ++k) {
+        const std::complex<double> w = want[k] * scale;
+        const std::complex<double> g{static_cast<double>(got[2UZ * k]), static_cast<double>(got[2UZ * k + 1UZ])};
+        numerator += std::norm(g - w);
+        denominator += std::norm(w);
+    }
+    return std::sqrt(numerator / denominator);
+}
+
+AlignedFloats toFloats(const std::vector<std::complex<double>>& values) {
+    AlignedFloats result(2UZ * values.size());
+    for (std::size_t k = 0UZ; k < values.size(); ++k) {
+        result[2UZ * k]       = static_cast<float>(values[k].real());
+        result[2UZ * k + 1UZ] = static_cast<float>(values[k].imag());
+    }
+    return result;
+}
+
+/// Each direction is checked against the reference and not through the other: the forward one bin by bin, the backward
+/// one on the reference spectrum against N times the signal it came from. The tolerance is the real cases' float one.
+/// The unordered output goes through simdReordering to the canonical order before the comparison.
+template<class Fft>
+void checkComplexAgainstDft(Fft& plan, std::size_t n, const ComplexDftReference& reference, std::string_view what) {
+    using namespace boost::ut;
+    using namespace gr::algorithm;
+    constexpr double tolerance = 1e-4;
+
+    const AlignedFloats signal   = toFloats(reference.signal);
+    const AlignedFloats spectrum = toFloats(reference.spectrum);
+    AlignedFloats       out(2UZ * n);
+    AlignedFloats       canonical(2UZ * n);
+
+    plan.template transform<Direction::Forward, Order::Ordered>(signal, out);
+    const double orderedForward = relativeError(out, reference.spectrum);
+    expect(lt(orderedForward, tolerance)) << std::format("{} N = {} ordered forward {:.3e}", what, n, orderedForward);
+
+    plan.template transform<Direction::Backward, Order::Ordered>(spectrum, out);
+    const double orderedBackward = relativeError(out, reference.signal, static_cast<double>(n));
+    expect(lt(orderedBackward, tolerance)) << std::format("{} N = {} ordered backward {:.3e}", what, n, orderedBackward);
+
+    plan.template transform<Direction::Forward, Order::Unordered>(signal, out);
+    plan.template simdReordering<Direction::Forward>(out, canonical);
+    const double unorderedForward = relativeError(canonical, reference.spectrum);
+    expect(lt(unorderedForward, tolerance)) << std::format("{} N = {} unordered forward {:.3e}", what, n, unorderedForward);
+
+    plan.template simdReordering<Direction::Backward>(spectrum, canonical);
+    plan.template transform<Direction::Backward, Order::Unordered>(canonical, out);
+    const double unorderedBackward = relativeError(out, reference.signal, static_cast<double>(n));
+    expect(lt(unorderedBackward, tolerance)) << std::format("{} N = {} unordered backward {:.3e}", what, n, unorderedBackward);
+
+    // in place, both directions, ordered: the output is the input buffer
+    AlignedFloats inPlace = signal;
+    plan.template transform<Direction::Forward, Order::Ordered>(inPlace, inPlace);
+    const double inPlaceForward = relativeError(inPlace, reference.spectrum);
+    expect(lt(inPlaceForward, tolerance)) << std::format("{} N = {} in place forward {:.3e}", what, n, inPlaceForward);
+    plan.template transform<Direction::Backward, Order::Ordered>(inPlace, inPlace);
+    const double roundTrip = relativeError(inPlace, reference.signal, static_cast<double>(n)); // forward then backward is N times the input
+    expect(lt(roundTrip, tolerance)) << std::format("{} N = {} in place round trip {:.3e}", what, n, roundTrip);
+
+    // in place, both directions, unordered: the transform reads and writes one buffer, reordering goes through a second one
+    inPlace = signal;
+    plan.template transform<Direction::Forward, Order::Unordered>(inPlace, inPlace);
+    plan.template simdReordering<Direction::Forward>(inPlace, canonical);
+    const double inPlaceUnorderedForward = relativeError(canonical, reference.spectrum);
+    expect(lt(inPlaceUnorderedForward, tolerance)) << std::format("{} N = {} in place unordered forward {:.3e}", what, n, inPlaceUnorderedForward);
+    plan.template simdReordering<Direction::Backward>(spectrum, inPlace);
+    plan.template transform<Direction::Backward, Order::Unordered>(inPlace, inPlace);
+    const double inPlaceUnorderedBackward = relativeError(inPlace, reference.signal, static_cast<double>(n));
+    expect(lt(inPlaceUnorderedBackward, tolerance)) << std::format("{} N = {} in place unordered backward {:.3e}", what, n, inPlaceUnorderedBackward);
+
+    std::println("N = {:5} {:<9}: ordered {:.2e} / {:.2e}, unordered {:.2e} / {:.2e}, in place {:.2e}, round trip {:.2e}", n, what, orderedForward, orderedBackward, unorderedForward, unorderedBackward, inPlaceForward, roundTrip);
+}
+
+/// 64 to 4096 take the wide path where the build has it, 16 to 48 never do
+boost::ut::suite<"SimdFFT complex against a direct DFT"> _complexVsDirectDft = [] {
+    using namespace boost::ut;
+    using namespace gr::algorithm;
+    using Fft = SimdFFT<float, Transform::Complex>;
+
+    "which sizes take the wide path"_test = [](std::size_t n) {
+        Fft        plan(n);
+        const bool wide = Fft::kWideCapable && n >= 64UZ && n % 64UZ == 0UZ; // restated here so that the size rule is pinned
+        expect(eq(plan._lanes, wide ? 8UZ : 4UZ)) << std::format("N = {}", n);
+    } | std::array{16UZ, 32UZ, 48UZ, 64UZ, 80UZ, 96UZ, 128UZ, 192UZ, 320UZ, 576UZ, 960UZ, 1024UZ, 1600UZ, 4096UZ};
+
+    "dynamic size"_test = [](std::size_t n) {
+        const ComplexDftReference reference = complexDftReference(n);
+        Fft                       plan(n);
+        checkComplexAgainstDft(plan, n, reference, "dynamic");
+    } | std::array{16UZ, 32UZ, 48UZ, 64UZ, 128UZ, 192UZ, 320UZ, 576UZ, 960UZ, 1024UZ, 1600UZ, 4096UZ}; // 576 = 64 * 3^2 and 1600 = 64 * 5^2 give n / 8 a squared radix
+
+    "static extent"_test = []<typename Size> {
+        constexpr std::size_t                 n         = Size::value;
+        const ComplexDftReference             reference = complexDftReference(n);
+        SimdFFT<float, Transform::Complex, n> plan;
+        expect(eq(plan.size(), n));
+        checkComplexAgainstDft(plan, n, reference, "static");
+    } | std::tuple<std::integral_constant<std::size_t, 48UZ>, std::integral_constant<std::size_t, 64UZ>, std::integral_constant<std::size_t, 192UZ>, std::integral_constant<std::size_t, 1024UZ>>{};
+};
+
 int main() { /* tests are auto-registered */ }
