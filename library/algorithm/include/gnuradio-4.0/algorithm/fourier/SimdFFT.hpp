@@ -327,13 +327,12 @@ struct SimdFFT {
     /// Complex float transforms whose size is a multiple of 64 run on eight-lane vectors when the target has them: the
     /// compiler defines `__AVX__` and `native_simd<float>` holds eight lanes (x86-64-v3 and above). The choice is made at
     /// compile time. Every other target, type, transform and size keeps the four-lane form, and so does its output.
-    static constexpr bool        kWideCapable = details::kWideKernels && (fftTransform == Transform::Complex) && std::same_as<T, float> && (stdx::native_simd<float>::size() >= 8UZ);
+    static constexpr bool kWideCapable = details::kWideKernels && (fftTransform == Transform::Complex) && std::same_as<T, float> && (stdx::native_simd<float>::size() >= 8UZ);
 
 private:
     static constexpr std::size_t kMaxLanes = kWideCapable ? 8UZ : V::size(); // the largest lane count a plan of this type can take; sizes the static storage
 
 public:
-
     static constexpr std::size_t kAlignment = 64UZ;
     static constexpr std::size_t ceil_div(std::size_t x, std::size_t y) { return (x + y - 1) / y; }
     static constexpr std::size_t kTwiddleCount = 2 * (kMaxLanes - 1) * kMaxLanes * ceil_div((IsRealValued::value ? (N / 2) : N) / kMaxLanes, kMaxLanes);
