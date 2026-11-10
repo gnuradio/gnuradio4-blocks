@@ -23,6 +23,7 @@ The public C++23 library is header-oriented and includes:
 - uncertainty-aware numeric values and propagated mathematical operations
 - file I/O helpers for native and Emscripten builds
 - burst tapering, sample-rate estimation, and Schmitt-trigger utilities
+- an arctangent over spans, `scaledAtan2`, with one implementation per compiler and type
 - plotting data models for canvases, charts, and graphs
 
 `third_party/` carries the ExprTk expression library, built as the static
