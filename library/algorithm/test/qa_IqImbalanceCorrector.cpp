@@ -354,9 +354,24 @@ const boost::ut::suite<"IqImbalanceCorrector"> iqImbalanceCorrectorTests = [] {
         expect(neq(gain, 0.0));
         std::ignore = switched.processExchanged(std::span<const C>(x).subspan(toggle), std::span<C>(y).subspan(toggle));
         std::ignore = steady.processExchanged(std::span<const C>(x), std::span<C>(z));
-        expect(std::equal(y.begin() + static_cast<std::ptrdiff_t>(toggle), y.end(), z.begin() + static_cast<std::ptrdiff_t>(toggle))) << "every output after it equals that of a corrector that ran exchanged from the start";
         // The call split differs at the toggle, so the float lanes add in another order: the estimates agree to a
-        // rounding of a run's sums, not bit for bit.
+        // rounding of a run's sums, not bit for bit. The outputs agree to a few float epsilons of the terms the
+        // coefficients multiply. The bound is 1e-5 of the sum of the output's and the input's magnitudes; the sum
+        // covers the cancellation in `scale*q + shear*i`.
+        std::size_t apart = 0UZ;
+        std::size_t first = 0UZ;
+        float       firstBound{};
+        for (std::size_t i = toggle; i < y.size(); ++i) {
+            const float bound = 1e-5f * (std::abs(z[i]) + std::abs(x[i]));
+            if (!(std::abs(y[i] - z[i]) <= bound)) { // a NaN output counts as apart
+                if (apart == 0UZ) {
+                    first      = i;
+                    firstBound = bound;
+                }
+                ++apart;
+            }
+        }
+        expect(eq(apart, 0UZ)) << "every output after it agrees with that of a corrector that ran exchanged from the start; first apart at sample " << first << ": y " << y[first] << ", z " << z[first] << ", bound " << firstBound;
         expect(approx(switched.gainDb(), steady.gainDb(), 1e-3) && approx(switched.phaseDeg(), steady.phaseDeg(), 1e-2)) << "and the estimates agree";
     };
 };
