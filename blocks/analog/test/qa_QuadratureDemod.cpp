@@ -19,11 +19,16 @@
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
-// The tolerances below are set by float rounding of the complex product, not by the arctangent.
+// The tolerances of the cases that compare against a reference vector are set by float rounding of the complex
+// product, not by the arctangent.
 // A reference vector produced by a 256-entry interpolated arctangent table carries that table's error
 // against an exact atan2, 6.1e-7 rad mean and 1.31e-6 rad maximum, so comparing against one needs a
 // per-sample tolerance of gain * 3e-6. Asserting a tighter agreement would be asserting that this
 // block reproduced the table, which it must not.
+//
+// The arctangent itself is gr::math::scaledAtan2, within 4 ulp of the exact result (a bit-equal match to std::atan2
+// is not promised; qa_Atan2 pins the primitive). The cases at the end measure the block against a long double
+// reference on inputs whose products are exact in the sample type, split streams and the FM residual.
 
 namespace {
 
@@ -60,6 +65,61 @@ std::vector<float> demodulate(const std::vector<std::complex<float>>& input, flo
     std::vector<float>     output(input.size());
     demodulateInto(demod, input, output, chunkSize);
     return output;
+}
+
+/// @brief |value - reference| in units of the spacing of T at the reference; zero when both are the same zero.
+template<typename T>
+double errorInUlp(T value, long double reference) {
+    const T rounded = static_cast<T>(reference);
+    if (rounded == T(0)) {
+        return value == T(0) ? 0.0 : std::numeric_limits<double>::infinity();
+    }
+    const T spacing = std::nextafter(std::abs(rounded), std::numeric_limits<T>::infinity()) - std::abs(rounded);
+    return static_cast<double>(std::fabs(static_cast<long double>(value) - reference) / static_cast<long double>(spacing));
+}
+
+/// @brief The block's per-sample form: std::atan2 on the same products.
+std::vector<float> demodulateWithStdAtan2(const std::vector<std::complex<float>>& input) {
+    std::vector<float>  output(input.size());
+    std::complex<float> previous{};
+    for (std::size_t i = 0UZ; i < input.size(); ++i) {
+        const float real = input[i].real() * previous.real() + input[i].imag() * previous.imag();
+        const float imag = input[i].imag() * previous.real() - input[i].real() * previous.imag();
+        output[i]        = std::atan2(imag, real);
+        previous         = input[i];
+    }
+    return output;
+}
+
+/// @brief 20 log10 of the residual's rms over the reference's rms.
+double residualDb(const std::vector<float>& measured, const std::vector<double>& reference) {
+    double residual = 0.0;
+    double signal   = 0.0;
+    for (std::size_t i = 1UZ; i < reference.size(); ++i) {
+        const double error = static_cast<double>(measured[i]) - reference[i];
+        residual += error * error;
+        signal += reference[i] * reference[i];
+    }
+    return 10.0 * std::log10(residual / signal);
+}
+
+/// @brief Frequency modulation of one tone, rounded to float as a receiver's input is; @p reference is the instantaneous
+/// frequency recovered in double from those float samples.
+std::vector<std::complex<float>> fmTone(std::size_t nSamples, double sampleRate, double deviation, double toneHz, std::vector<double>& reference) {
+    std::vector<std::complex<float>> signal(nSamples);
+    reference.assign(nSamples, 0.0);
+    double phase = 0.0;
+    for (std::size_t i = 0UZ; i < nSamples; ++i) {
+        phase += 2.0 * kPi * deviation / sampleRate * std::sin(2.0 * kPi * toneHz * static_cast<double>(i) / sampleRate);
+        signal[i] = std::complex<float>(static_cast<float>(std::cos(phase)), static_cast<float>(std::sin(phase)));
+    }
+    for (std::size_t i = 1UZ; i < nSamples; ++i) {
+        const std::complex<double> a(static_cast<double>(signal[i].real()), static_cast<double>(signal[i].imag()));
+        const std::complex<double> b(static_cast<double>(signal[i - 1UZ].real()), static_cast<double>(signal[i - 1UZ].imag()));
+        const std::complex<double> product = a * std::conj(b);
+        reference[i]                       = std::atan2(product.imag(), product.real());
+    }
+    return signal;
 }
 
 /// @brief Where a tag key outside the `gr:` domain lands after @p TBlock, as the sink sees it.
@@ -286,6 +346,91 @@ const boost::ut::suite<"QuadratureDemod"> quadratureDemodTests = [] {
     "a non-reserved tag key rides through at its own offset"_test = [] {
         const std::vector<std::size_t> offsets = privateTagOffsets<std::complex<float>, float, QuadratureDemod<float>>({{"gain", 1.0f}});
         expect(that % (offsets == std::vector<std::size_t>{7UZ, 300UZ, 1000UZ})) << "the default forwarder keeps a key outside the gr: domain";
+    };
+
+    "the block's arctangent on exact products stays within 4 ulp across scales"_test = [] {
+        std::mt19937                       rng(777);
+        std::uniform_int_distribution<int> digit(-1023, 1023);
+        for (const int scaleExponent : {0, 30, -40, -70}) {
+            const float                          scale = std::ldexp(1.0f, scaleExponent);
+            std::vector<std::complex<float>>     input(4096UZ);
+            std::vector<std::complex<long long>> exact(input.size());
+            for (std::size_t i = 0UZ; i < input.size(); ++i) {
+                exact[i] = {digit(rng), digit(rng)};
+                input[i] = {static_cast<float>(exact[i].real()) * scale, static_cast<float>(exact[i].imag()) * scale};
+            }
+            input[100] = {0.0f, 0.0f}; // the axes and zero
+            exact[100] = {0, 0};
+            input[200] = {scale, 0.0f};
+            exact[200] = {1, 0};
+            input[201] = {scale, 0.0f};
+            exact[201] = {1, 0};
+            input[202] = {-scale, 0.0f};
+            exact[202] = {-1, 0};
+            input[203] = {0.0f, scale};
+            exact[203] = {0, 1};
+
+            const std::vector<float> output = demodulate(input, 1.0f);
+            double                   worst  = 0.0;
+            for (std::size_t i = 1UZ; i < input.size(); ++i) {
+                const long long productReal = exact[i].real() * exact[i - 1UZ].real() + exact[i].imag() * exact[i - 1UZ].imag();
+                const long long productImag = exact[i].imag() * exact[i - 1UZ].real() - exact[i].real() * exact[i - 1UZ].imag();
+                if (productReal == 0 && productImag == 0) { // a zero product has a sign the integers lack
+                    continue;
+                }
+                worst = std::max(worst, errorInUlp(output[i], std::atan2(static_cast<long double>(productImag), static_cast<long double>(productReal))));
+            }
+            boost::ut::log << "exact products at scale 2^" << scaleExponent << ": largest error " << worst << " ulp\n";
+            expect(le(worst, 4.0)) << "largest error in ulp at sample scale 2^" << scaleExponent;
+        }
+    };
+
+    "a split stream gives the values of one call"_test = [] {
+        std::mt19937                     rng(4242);
+        std::normal_distribution<float>  noise(0.0f, 1.0f);
+        std::vector<std::complex<float>> input = tone(3001UZ, 137.0, 8000.0);
+        for (auto& sample : input) {
+            sample += std::complex<float>(0.3f * noise(rng), 0.3f * noise(rng));
+        }
+        const std::vector<float> whole = demodulate(input, 1.5f);
+        for (const std::size_t chunkSize : {1UZ, 7UZ, 256UZ, 257UZ, 1000UZ}) {
+            expect(std::ranges::equal(demodulate(input, 1.5f, chunkSize), whole)) << "chunk size " << chunkSize << " must be bit-identical";
+        }
+
+        QuadratureDemod<double> demod({{"gain", 1.5}});
+        demod.settings().init();
+        std::ignore = demod.settings().applyStagedParameters();
+        std::vector<std::complex<double>> wide(input.begin(), input.end());
+        std::vector<double>               wholeWide(wide.size());
+        std::ignore = demod.processBulk(wide, wholeWide);
+        for (const std::size_t chunkSize : {1UZ, 7UZ, 256UZ, 257UZ, 1000UZ}) {
+            QuadratureDemod<double> chunked({{"gain", 1.5}});
+            chunked.settings().init();
+            std::ignore = chunked.settings().applyStagedParameters();
+            std::vector<double> pieces(wide.size());
+            for (std::size_t base = 0UZ; base < wide.size(); base += chunkSize) {
+                const std::size_t count = std::min(chunkSize, wide.size() - base);
+                std::ignore             = chunked.processBulk(std::span<const std::complex<double>>(wide).subspan(base, count), std::span<double>(pieces).subspan(base, count));
+            }
+            expect(std::ranges::equal(pieces, wholeWide)) << "double, chunk size " << chunkSize << " must be bit-identical";
+        }
+    };
+
+    "an FM tone's residual against the double reference is far below the tone"_test = [] {
+        struct Case {
+            const char* name;
+            double      sampleRate;
+            double      deviation;
+            double      toneHz;
+        };
+        for (const Case& fm : {Case{"narrowband", 48000.0, 5000.0, 1000.0}, Case{"wideband", 240000.0, 75000.0, 15000.0}}) {
+            std::vector<double>                    reference;
+            const std::vector<std::complex<float>> input   = fmTone(48000UZ, fm.sampleRate, fm.deviation, fm.toneHz, reference);
+            const double                           changed = residualDb(demodulate(input, 1.0f), reference);
+            const double                           before  = residualDb(demodulateWithStdAtan2(input), reference);
+            boost::ut::log << fm.name << " FM residual: " << before << " dB with std::atan2, " << changed << " dB with scaledAtan2\n";
+            expect(le(changed, -120.0)) << fm.name << ": residual below the tone";
+        }
     };
 };
 
