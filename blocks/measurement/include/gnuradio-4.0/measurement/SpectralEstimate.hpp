@@ -18,6 +18,7 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/DataSet.hpp>
+#include <gnuradio-4.0/MemoryAllocators.hpp>
 #include <gnuradio-4.0/Port.hpp>
 #include <gnuradio-4.0/algorithm/fourier/SpectralCalibration.hpp>
 #include <gnuradio-4.0/algorithm/fourier/fft.hpp>
@@ -77,11 +78,11 @@ struct SegmentAccumulator {
     gr::algorithm::fft::SpectralScale<Real> scale{};
     gr::algorithm::FFT<Windowed, Spectrum>  transform{};
 
-    std::vector<T>        pending{};  ///< input samples held until they fill a segment
-    std::vector<Windowed> windowed{}; ///< one windowed segment, the transform's input
-    std::vector<Spectrum> spectrum{}; ///< the transform's output
-    std::vector<Real>     accumulator{};
-    std::vector<Real>     hold{}; ///< one segment's density, compared bin by bin in max_hold mode
+    std::vector<T>                                          pending{};  ///< input samples held until they fill a segment
+    std::vector<Windowed, gr::allocator::Aligned<Windowed>> windowed{}; ///< one windowed segment, the transform's input; aligned to 64 bytes so `FFT::compute` takes its zero-copy path on the input
+    std::vector<Spectrum, gr::allocator::Aligned<Spectrum>> spectrum{}; ///< the transform's output
+    std::vector<Real>                                       accumulator{};
+    std::vector<Real>                                       hold{}; ///< one segment's density, compared bin by bin in max_hold mode
 
     std::size_t   segments      = 0UZ;  ///< segments in the accumulator, reported as `n_averaged`
     std::size_t   skipping      = 0UZ;  ///< samples to skip before the next segment starts, when hop > fftSize
@@ -169,20 +170,29 @@ struct SegmentAccumulator {
         restart();
     }
 
-    /// @brief Folds the first whole segment of `pending` into the accumulator and adds its cost to `costSeconds`.
-    void accumulateFront() {
+    /// @brief Writes `count` samples of `src`, windowed from window index `at`, to `windowed` from the same index.
+    void windowRun(const T* src, std::size_t at, std::size_t count) {
+        for (std::size_t k = 0UZ; k < count; ++k) {
+            if constexpr (kRealInput) {
+                windowed[at + k] = src[k] * window[at + k];
+            } else {
+                windowed[at + k] = Spectrum(src[k].real() * window[at + k], src[k].imag() * window[at + k]);
+            }
+        }
+    }
+
+    /// @brief Folds one segment into the accumulator and adds its cost to `costSeconds`. The segment is the first
+    /// `fftSize` samples of `first` followed by `second`, so a segment that straddles two buffers needs no copy.
+    /// The caller advances the grid with `advanceGrid`.
+    void accumulateSegment(std::span<const T> first, std::span<const T> second) {
         const auto started = std::chrono::steady_clock::now();
         if (segments == 0UZ) {
             recordStartAt = streamAt;
             costSeconds   = 0.;
         }
-        for (std::size_t k = 0UZ; k < fftSize; ++k) {
-            if constexpr (kRealInput) {
-                windowed[k] = pending[k] * window[k];
-            } else {
-                windowed[k] = Spectrum(pending[k].real() * window[k], pending[k].imag() * window[k]);
-            }
-        }
+        const std::size_t head = std::min(first.size(), fftSize);
+        windowRun(first.data(), 0UZ, head);
+        windowRun(second.data(), head, fftSize - head);
         transform.compute(windowed, std::span<Spectrum>(spectrum));
 
         if (maxHold) {
@@ -197,14 +207,17 @@ struct SegmentAccumulator {
         }
         ++segments;
 
-        // The grid advances by one hop. The part of the hop beyond the buffered samples becomes `skipping`, and the
-        // caller consumes it without copying.
-        const std::size_t advance = std::min(hop, pending.size());
-        pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(advance));
+        costSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    }
+
+    /// @brief Advances the grid by one hop from a segment that was folded with `held` samples on hand. The part of
+    /// the hop beyond them becomes `skipping`, and the caller consumes it without copying. Returns the samples the
+    /// grid moved over.
+    std::size_t advanceGrid(std::size_t held) noexcept {
+        const std::size_t advance = std::min(hop, held);
         streamAt += advance;
         skipping = hop - advance;
-
-        costSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        return advance;
     }
 
     /// @brief The segments no record carries yet: the segments in the accumulator, and the whole segments that
@@ -243,27 +256,51 @@ struct Progress {
 /**
  * @brief Folds the input span into the accumulator and writes each record it completes to the output span.
  *
- * A sample is consumed once it is copied into `pending` or skipped as part of a gap. While the output span has no free
- * slot, the sample that completes a record stays in the input span. The last sample of the span stays as well when the
- * accumulator holds a segment or that sample completes one. The end of the stream then finds a free slot for the
- * partial record. With `oneRecordPerCall` set, the call returns after its first record.
+ * A sample is consumed once it is taken for a segment or skipped as part of a gap. A segment inside the span is
+ * windowed straight from it. `pending` ends the call holding the consumed samples the next segment still needs. While
+ * the output span has no free slot, the sample that completes a record stays in the input span. The last sample of the
+ * span stays as well when the accumulator holds a segment or that sample completes one. The end of the stream then
+ * finds a free slot for the partial record. With `oneRecordPerCall` set, the call returns after its first record.
  */
 template<typename T, typename Emit>
 [[nodiscard]] Progress foldSegments(SegmentAccumulator<T>& core, InputSpanLike auto& inSpan, OutputSpanLike auto& outSpan, bool oneRecordPerCall, Emit&& emit) {
     Progress          progress{};
-    const std::size_t offer = inSpan.size();
+    const std::size_t offer    = inSpan.size();
+    const std::size_t buffered = core.pending.size(); // the samples that come before the span
+    const T*          input    = inSpan.data();
+    std::size_t       from     = 0UZ; // the next segment's first sample, counted over `pending` and the span together
+
+    // `pending` becomes the consumed samples from `from` on.
+    const auto settle = [&] {
+        const T* tail = input + (from > buffered ? from - buffered : 0UZ);
+        if (from < buffered) {
+            core.pending.erase(core.pending.begin(), core.pending.begin() + static_cast<std::ptrdiff_t>(from));
+            core.pending.insert(core.pending.end(), input, input + progress.taken);
+        } else {
+            core.pending.assign(tail, input + progress.taken);
+        }
+    };
+
     for (;;) {
-        const bool full = progress.made == outSpan.size();
-        if (core.pending.size() >= core.fftSize) {
+        const bool        full = progress.made == outSpan.size();
+        const std::size_t held = buffered + progress.taken - from;
+        if (held >= core.fftSize) {
             if (full && core.completesRecord()) {
                 progress.outputFull = true;
+                settle();
                 return progress;
             }
-            core.accumulateFront();
+            if (from < buffered) {
+                core.accumulateSegment(std::span<const T>(core.pending.data() + from, buffered - from), std::span<const T>(input, progress.taken));
+            } else {
+                core.accumulateSegment({}, std::span<const T>(input + (from - buffered), progress.taken - (from - buffered)));
+            }
+            from += core.advanceGrid(held);
             if (core.segments >= core.nAverages) {
                 outSpan[progress.made] = emit();
                 ++progress.made;
                 if (oneRecordPerCall) {
+                    settle();
                     return progress;
                 }
             }
@@ -272,6 +309,7 @@ template<typename T, typename Emit>
         const std::size_t limit = (full && core.segments > 0UZ && offer > 0UZ) ? offer - 1UZ : offer;
         if (progress.taken >= limit) {
             progress.outputFull = progress.taken < offer;
+            settle();
             return progress;
         }
         if (core.skipping > 0UZ) {
@@ -281,17 +319,17 @@ template<typename T, typename Emit>
             core.skipping -= drop;
             core.streamAt += drop;
             progress.taken += drop;
+            from += drop;
             continue;
         }
-        std::size_t take = std::min(core.fftSize - core.pending.size(), limit - progress.taken);
-        if (full && core.pending.size() + take == core.fftSize && (core.completesRecord() || progress.taken + take == offer)) {
+        std::size_t take = std::min(core.fftSize - held, limit - progress.taken);
+        if (full && held + take == core.fftSize && (core.completesRecord() || progress.taken + take == offer)) {
             --take;
             progress.outputFull = true;
         }
-        const auto first = inSpan.begin() + static_cast<std::ptrdiff_t>(progress.taken);
-        core.pending.insert(core.pending.end(), first, first + static_cast<std::ptrdiff_t>(take));
         progress.taken += take;
         if (progress.outputFull) {
+            settle();
             return progress;
         }
     }

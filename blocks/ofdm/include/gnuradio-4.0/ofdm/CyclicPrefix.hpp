@@ -17,6 +17,7 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/DataSet.hpp>
+#include <gnuradio-4.0/MemoryAllocators.hpp>
 #include <gnuradio-4.0/Port.hpp>
 #include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/annotated.hpp>
@@ -322,11 +323,11 @@ struct CpRemove : Block<CpRemove, NoTagPropagation> {
 
     gr::algorithm::FFT<Complex, Complex, gr::algorithm::Direction::Forward> _forward{};
 
-    Accepted                  _accepted = settingsAfter(Accepted{}, [](std::string_view) { return true; });
-    std::vector<Complex>      _cut{};         ///< the samples of the cut collected so far
-    std::vector<Complex>      _spectrum{};    ///< the transform's output
-    std::vector<int>          _binCarriers{}; ///< the signed carrier each bin holds, which is the record's axis
-    detail::SymbolRecordShape _shape{};       ///< the invariant part of a record
+    Accepted                                              _accepted = settingsAfter(Accepted{}, [](std::string_view) { return true; });
+    std::vector<Complex, gr::allocator::Aligned<Complex>> _cut{};         ///< the samples of the cut collected so far
+    std::vector<Complex, gr::allocator::Aligned<Complex>> _spectrum{};    ///< the transform's output
+    std::vector<int>                                      _binCarriers{}; ///< the signed carrier each bin holds, which is the record's axis
+    detail::SymbolRecordShape                             _shape{};       ///< the invariant part of a record
 
     bool          _collecting    = false; ///< inside a frame, and discarding when false
     std::uint64_t _symbolStart   = 0ULL;  ///< absolute index of the current symbol's first prefix sample
