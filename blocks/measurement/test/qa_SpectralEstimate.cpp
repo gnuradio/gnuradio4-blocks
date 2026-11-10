@@ -1,9 +1,11 @@
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstdint>
 #include <format>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <numbers>
@@ -465,6 +467,42 @@ template<typename TBlock>
     return {elapsed > 0. ? static_cast<double>(sink.seen) / elapsed : 0., sink.seen};
 }
 
+/// @brief Expects `chunked` to hold the records of `reference`: the same count, stream indices, averages and values.
+inline void sameRecords(const std::vector<gr::DataSet<float>>& reference, const std::vector<gr::DataSet<float>>& chunked, std::size_t chunk, std::size_t hop, const char* what) {
+    using namespace boost::ut;
+    expect(!reference.empty()) << what << " hop " << hop << " makes records";
+    expect(eq(reference.size(), chunked.size())) << what << " hop " << hop << " chunk " << chunk << ": the record count does not depend on the chunking";
+    for (std::size_t r = 0UZ; r < std::min(reference.size(), chunked.size()); ++r) {
+        expect(eq(metaNumber(reference[r], "sample_start"), metaNumber(chunked[r], "sample_start"))) << what << " hop " << hop << " chunk " << chunk << " record " << r << " moved in the stream";
+        expect(eq(metaNumber(reference[r], "grid_start"), metaNumber(chunked[r], "grid_start")));
+        expect(eq(metaNumber(reference[r], "n_averaged"), metaNumber(chunked[r], "n_averaged")));
+        expect(reference[r].signal_values == chunked[r].signal_values) << what << " hop " << hop << " chunk " << chunk << " record " << r << " differs from the one-call run";
+    }
+}
+
+/// @brief Feeds `samples` to a started block in calls of at most `chunk` samples, with the transform length cut to a
+/// quarter once `split` samples are in. Returns the records.
+template<typename TBlock, typename T>
+[[nodiscard]] std::vector<gr::DataSet<float>> runShrinking(const gr::property_map& settings, const std::vector<T>& samples, std::size_t split, std::size_t chunk) {
+    TBlock block(settings);
+    startBlock(block);
+    std::vector<gr::DataSet<float>> records;
+    const auto                      feed = [&](std::size_t from, std::size_t to) {
+        for (std::size_t at = from; at < to;) {
+            auto [made, taken] = workCall(block, std::span<const T>(samples).subspan(at, std::min(chunk, to - at)), 64UZ);
+            if (taken == 0UZ && made.empty()) {
+                return;
+            }
+            records.insert(records.end(), std::make_move_iterator(made.begin()), std::make_move_iterator(made.end()));
+            at += taken;
+        }
+    };
+    feed(0UZ, split);
+    applyLive(block, {{"fft_size", gr::Size_t{kFft / 4UZ}}});
+    feed(split, samples.size());
+    return records;
+}
+
 } // namespace qa_spectral
 
 const boost::ut::suite<"SpectralEstimate"> spectralTests = [] {
@@ -675,6 +713,72 @@ const boost::ut::suite<"SpectralEstimate"> spectralTests = [] {
             expect(eq(metaNumber(wide[r], "sample_start"), metaNumber(narrow[r], "sample_start"))) << "record " << r << " moved in the stream";
             for (std::size_t k = 0UZ; k < wide[r].signal_values.size(); ++k) {
                 expect(wide[r].signal_values[k] == narrow[r].signal_values[k]) << "record " << r << " bin " << k << " differs between chunkings";
+            }
+        }
+    };
+
+    "chunk independence holds from one sample to several segments a call, below and above the transform length"_test = [] {
+        // A noise-like stream, so a sample read from the wrong place changes the spectrum. With `one_record_per_call` off
+        // the span of a call grows with the chunk. At hop 1.5 x the transform length and at hop 0.5 the one-call span
+        // holds whole segments, so the one-call run reads them from the span, and each other chunking makes some
+        // segments straddle two calls. The capped run leaves the setting at
+        // its default, which holds every span to a hop, so no segment at hop 0.5 lies in a span, and it has to give the
+        // same records.
+        std::vector<CF>    noise(kFft * 24UZ);
+        std::vector<float> real(noise.size());
+        std::uint32_t      state = 12345U;
+        const auto         next  = [&state] {
+            state = state * 1664525U + 1013904223U;
+            return static_cast<float>(state >> 8U) / static_cast<float>(1U << 24U) - 0.5f;
+        };
+        for (std::size_t k = 0UZ; k < noise.size(); ++k) {
+            noise[k] = CF{next(), next()};
+            real[k]  = noise[k].real();
+        }
+        const std::array<std::size_t, 7UZ> chunkings{1UZ, 7UZ, 511UZ, 512UZ, 513UZ, kFft, 3UZ * kFft + 1UZ};
+
+        for (const char* mode : {"mean", "max_hold"}) {
+            for (const std::size_t hop : {kFft / 2UZ, 3UZ * kFft / 2UZ}) {
+                const gr::property_map settings{{"fft_size", gr::Size_t{kFft}}, {"n_averages", gr::Size_t{3U}}, {"hop", static_cast<gr::Size_t>(hop)}, {"sample_rate", kSampleRate}, {"mode", std::string(mode)}, {"one_record_per_call", false}};
+                gr::property_map       capped = settings;
+                capped.erase("one_record_per_call");
+
+                const auto oneCall     = collect<WelchPsd<CF>, CF>(settings, noise, noise.size());
+                const auto oneCallReal = collect<WelchPsd<float>, float>(settings, real, real.size());
+                sameRecords(oneCall, collect<WelchPsd<CF>, CF>(capped, noise, noise.size()), noise.size(), hop, "cf32 capped");
+                sameRecords(oneCallReal, collect<WelchPsd<float>, float>(capped, real, real.size()), real.size(), hop, "f32 capped");
+                for (const std::size_t chunk : chunkings) {
+                    sameRecords(oneCall, collect<WelchPsd<CF>, CF>(settings, noise, chunk), chunk, hop, "cf32");
+                    sameRecords(oneCallReal, collect<WelchPsd<float>, float>(settings, real, chunk), chunk, hop, "f32");
+                }
+            }
+        }
+    };
+
+    "chunk independence holds when the transform length shrinks below the samples a call left pending"_test = [] {
+        // The first phase ends with 198 samples pending (two segments of three folded, the third started), and the
+        // transform then shrinks to 64, so the next call finds more than a segment on hand. Every chunking of both
+        // phases must give the records of the two-call run.
+        constexpr std::size_t kSplit = 3UZ * kFft / 2UZ + 70UZ;
+        std::vector<CF>       noise(kFft * 12UZ);
+        std::vector<float>    real(noise.size());
+        std::uint32_t         state = 987U;
+        const auto            next  = [&state] {
+            state = state * 1664525U + 1013904223U;
+            return static_cast<float>(state >> 8U) / static_cast<float>(1U << 24U) - 0.5f;
+        };
+        for (std::size_t k = 0UZ; k < noise.size(); ++k) {
+            noise[k] = CF{next(), next()};
+            real[k]  = noise[k].real();
+        }
+
+        for (const char* mode : {"mean", "max_hold"}) {
+            const gr::property_map settings{{"fft_size", gr::Size_t{kFft}}, {"n_averages", gr::Size_t{3U}}, {"hop", gr::Size_t{kFft / 2U}}, {"sample_rate", kSampleRate}, {"mode", std::string(mode)}, {"one_record_per_call", false}};
+            const auto             oneCall     = runShrinking<WelchPsd<CF>>(settings, noise, kSplit, noise.size());
+            const auto             oneCallReal = runShrinking<WelchPsd<float>>(settings, real, kSplit, real.size());
+            for (const std::size_t chunk : {1UZ, 7UZ, 63UZ, 64UZ, 65UZ, 511UZ, 2000UZ}) {
+                sameRecords(oneCall, runShrinking<WelchPsd<CF>>(settings, noise, kSplit, chunk), chunk, kFft / 2UZ, mode);
+                sameRecords(oneCallReal, runShrinking<WelchPsd<float>>(settings, real, kSplit, chunk), chunk, kFft / 2UZ, mode);
             }
         }
     };

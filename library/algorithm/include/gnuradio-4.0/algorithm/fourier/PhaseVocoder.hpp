@@ -12,6 +12,7 @@
 #include <span>
 #include <vector>
 
+#include <gnuradio-4.0/MemoryAllocators.hpp>
 #include <gnuradio-4.0/Message.hpp>
 #include <gnuradio-4.0/algorithm/fourier/fft.hpp>
 
@@ -168,8 +169,9 @@ private:
     std::vector<float>               _accWindow;
     bool                             _primed = false;
 
-    FFT<std::complex<float>>         _fft;
-    std::vector<std::complex<float>> _scratch, _spectrum, _synth, _frameOut;
+    FFT<std::complex<float>>                                                      _fft;
+    std::vector<std::complex<float>, gr::allocator::Aligned<std::complex<float>>> _scratch, _spectrum;
+    std::vector<std::complex<float>>                                              _synth, _frameOut;
 };
 
 } // namespace gr::algorithm
