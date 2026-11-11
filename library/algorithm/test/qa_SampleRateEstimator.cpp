@@ -1,7 +1,11 @@
 #include <boost/ut.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <format>
 #include <random>
+#include <tuple>
+#include <vector>
 
 #include <gnuradio-4.0/algorithm/SampleRateEstimator.hpp>
 
@@ -320,9 +324,11 @@ const boost::ut::suite<"Drift Compensator"> driftCompensatorTests = [] {
 
         auto n = comp.compensateSource(std::span(buf), N, 48000.0, 48000.0, 1U); // ratio = 1.0 exactly
         expect(eq(n, N)) << "ratio=1.0 should produce same count";
-        // output should be close to the original ramp
+        // the cubic needs two frames beyond a position, so the stream lags its input by two frames: the first two
+        // outputs repeat the first input frame, then the ramp follows
         for (std::size_t i = 0U; i < std::min(n, N); ++i) {
-            expect(approx(buf[i], static_cast<float>(i), 1.0f)) << std::format("sample {} should be near {}", i, i);
+            const float expected = i < 2U ? 0.f : static_cast<float>(i - 2U);
+            expect(approx(buf[i], expected, 1e-4f)) << std::format("sample {} should be near {}", i, expected);
         }
     };
 
@@ -340,6 +346,119 @@ const boost::ut::suite<"Drift Compensator"> driftCompensatorTests = [] {
         // sink with ratio ~1.0 should pass through
         auto n = comp.compensateSink(std::span<const float>(input), std::span(adjusted), N, 48000.0, 48000.0, 1U);
         expect(eq(n, N)) << "ratio=1.0 sink should produce same count";
+    };
+
+    "AdaptiveResampling carries the fraction across calls"_test = [] {
+        constexpr std::size_t nCalls = 1000U;
+        for (const std::size_t n : {480UZ, 1024UZ}) {
+            for (const double ppm : {-500.0, -100.0, 100.0, 500.0}) {
+                const double ratio = 1.0 + ppm * 1e-6; // estimated over nominal
+                const double exact = static_cast<double>(nCalls * n) / ratio;
+
+                DriftCompensator<float> source;
+                DriftCompensator<float> sink;
+                source.mode = gr::algorithm::DriftCorrection::AdaptiveResampling;
+                sink.mode   = gr::algorithm::DriftCorrection::AdaptiveResampling;
+                std::vector<float> in(n, 1.f);
+                std::vector<float> buf(n + 8U), adjusted(n + 8U);
+                std::size_t        totalSource = 0U;
+                std::size_t        totalSink   = 0U;
+                for (std::size_t c = 0U; c < nCalls; ++c) {
+                    std::ranges::copy(in, buf.begin());
+                    totalSource += source.compensateSource(std::span(buf), n, 48000.0 * ratio, 48000.0, 1U);
+                    totalSink += sink.compensateSink(std::span<const float>(in), std::span(adjusted), n, 48000.0 * ratio, 48000.0, 1U);
+                }
+                expect(le(std::abs(static_cast<double>(totalSource) - exact), 1.0 + 1e-6)) << std::format("source n={} ppm={}: {} frames, exact {}", n, ppm, totalSource, exact);
+                expect(le(std::abs(static_cast<double>(totalSink) - exact), 1.0 + 1e-6)) << std::format("sink n={} ppm={}: {} frames, exact {}", n, ppm, totalSink, exact);
+            }
+        }
+    };
+
+    "AdaptiveResampling output does not depend on how the stream is split into calls"_test = [] {
+        constexpr std::size_t total = 4800U;
+        constexpr double      ratio = 1.0007; // estimated over nominal
+        std::vector<double>   tone(total);
+        for (std::size_t i = 0U; i < total; ++i) {
+            tone[i] = std::sin(0.05 * static_cast<double>(i));
+        }
+
+        auto resample = [&](std::size_t callSize) {
+            DriftCompensator<double> comp;
+            comp.mode = gr::algorithm::DriftCorrection::AdaptiveResampling;
+            std::vector<double> out;
+            std::vector<double> buf(callSize + 8U);
+            for (std::size_t first = 0U; first < total; first += callSize) {
+                const std::size_t n = std::min(callSize, total - first);
+                std::copy_n(tone.begin() + static_cast<std::ptrdiff_t>(first), static_cast<std::ptrdiff_t>(n), buf.begin());
+                const std::size_t got = comp.compensateSource(std::span(buf), n, 48000.0 * ratio, 48000.0, 1U);
+                out.insert(out.end(), buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(got));
+            }
+            return out;
+        };
+
+        const auto whole = resample(total);
+        for (const std::size_t callSize : {97UZ, 480UZ, 1024UZ}) {
+            const auto split = resample(callSize);
+            expect(eq(split.size(), whole.size())) << std::format("call size {}", callSize);
+            double worst = 0.0;
+            for (std::size_t i = 0U; i < std::min(split.size(), whole.size()); ++i) {
+                worst = std::max(worst, std::abs(split[i] - whole[i]));
+            }
+            expect(le(worst, 1e-9)) << std::format("call size {}: split and single call differ by {}", callSize, worst);
+        }
+
+        // and the one-call result is the tone, two frames late, within the cubic's error
+        double worst = 0.0;
+        for (std::size_t k = 2U; k < whole.size(); ++k) {
+            const double position = static_cast<double>(k) * ratio - 2.0;
+            worst                 = std::max(worst, std::abs(whole[k] - std::sin(0.05 * position)));
+        }
+        expect(le(worst, 1e-3)) << "resampled tone strays from the tone: " << worst;
+    };
+
+    "AdaptiveResampling ramp has one slope across call boundaries"_test = [] {
+        DriftCompensator<double> comp;
+        comp.mode                   = gr::algorithm::DriftCorrection::AdaptiveResampling;
+        constexpr std::size_t n     = 480U;
+        constexpr double      ratio = 1.003;
+        std::vector<double>   out;
+        std::vector<double>   buf(n + 8U);
+        for (std::size_t c = 0U; c < 50U; ++c) {
+            for (std::size_t i = 0U; i < n; ++i) {
+                buf[i] = static_cast<double>(c * n + i);
+            }
+            const std::size_t got = comp.compensateSource(std::span(buf), n, 48000.0 * ratio, 48000.0, 1U);
+            out.insert(out.end(), buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(got));
+        }
+        double worstJump = 0.0;
+        for (std::size_t k = 6U; k < out.size(); ++k) { // past the start-up, where the first frame is repeated
+            worstJump = std::max(worstJump, std::abs((out[k] - out[k - 1]) - (out[k - 1] - out[k - 2])));
+        }
+        expect(le(worstJump, 1e-9)) << "the ramp's slope changed by " << worstJump;
+    };
+
+    "AdaptiveResampling reset starts clean"_test = [] {
+        auto run = [](DriftCompensator<float>& comp) {
+            std::vector<float> buf(60U, 0.f);
+            for (std::size_t i = 0U; i < 50U; ++i) {
+                buf[i] = static_cast<float>(100U + i);
+            }
+            const std::size_t got = comp.compensateSource(std::span(buf), 50U, 48000.0 * 1.003, 48000.0, 1U);
+            buf.resize(got);
+            return buf;
+        };
+        DriftCompensator<float> fresh;
+        fresh.mode           = gr::algorithm::DriftCorrection::AdaptiveResampling;
+        const auto reference = run(fresh);
+
+        DriftCompensator<float> used;
+        used.mode   = gr::algorithm::DriftCorrection::AdaptiveResampling;
+        std::ignore = run(used);
+        std::ignore = run(used);
+        expect(neq(used.resamplerPhase, 0.0)) << "two calls leave a phase to carry";
+        used.reset();
+        expect(eq(used.resamplerPhase, 0.0));
+        expect(run(used) == reference) << "after reset() the first call matches a new compensator";
     };
 
     "all modes produce valid output for stereo"_test = [] {
