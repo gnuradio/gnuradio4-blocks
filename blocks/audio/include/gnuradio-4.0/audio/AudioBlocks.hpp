@@ -198,12 +198,20 @@ private:
     [[nodiscard]] std::size_t backendBufferFrames() const { return std::max<std::size_t>(8192UZ, ioBufferSamples()); }
 
     // the backend ring holds io_buffer_size seconds (240k samples at the 5 s default) against a far
-    // smaller port ring, so the take is clamped to what the port ring can accept
+    // smaller port ring, so the take is clamped to what the port ring can accept. The take leaves one frame
+    // of room for the insert modes. Under AdaptiveResampling it is at most 8/9 of the room less four frames,
+    // so that the chunk and the eighth the resampler may add to it fit the reserved span.
     void publishSamples(auto& writer, std::size_t nFrameAligned, std::size_t channelCount) {
-        const std::size_t headroom  = channelCount;
-        const std::size_t available = writer.available();
-        const std::size_t capacity  = available > headroom ? detail::wholeFrameSamples(available - headroom, channelCount) : 0UZ;
-        const std::size_t nToTake   = std::min(nFrameAligned, capacity);
+        // The resampler may return more frames than it gets: the estimate is clamped to +-10 %, so a chunk grows by
+        // at most 1/0.9 (a ninth), and one eighth plus a few frames is room for it. The other modes add one frame.
+        const bool        resampling      = _driftCompensator.mode == algorithm::DriftCorrection::AdaptiveResampling;
+        const auto        headroomOf      = [&](std::size_t nSamples) { return resampling ? (nSamples / channelCount / 8UZ + 4UZ) * channelCount : channelCount; };
+        const std::size_t available       = writer.available();
+        const std::size_t availableFrames = available / channelCount;
+        const std::size_t capacityFrames  = resampling ? (availableFrames > 4UZ ? (availableFrames - 4UZ) * 8UZ / 9UZ : 0UZ) : (availableFrames > 1UZ ? availableFrames - 1UZ : 0UZ);
+        const std::size_t capacity        = capacityFrames * channelCount;
+        const std::size_t nToTake         = std::min(nFrameAligned, capacity);
+        const std::size_t headroom        = headroomOf(nToTake);
 
         if (nToTake == 0UZ) {
             // drop only what would overflow the backend ring, keeping the rest for the next call
@@ -236,13 +244,17 @@ private:
 
         if (nProduced > 0U) {
             const std::uint64_t tNowNs     = detail::wallClockNs();
-            const std::int64_t  tCaptureNs = captureTimeNs(firstFrame, nProduced / channelCount, channelCount);
+            std::int64_t        tCaptureNs = captureTimeNs(firstFrame, nProduced / channelCount, channelCount);
             _rateEstimator.update(static_cast<double>(tNowNs) * 1e-9, nProduced / channelCount);
 
             const double nomRate       = static_cast<double>(sample_rate.value);
             const double estimatedRate = _rateEstimator.estimatedRate();
             const double clampedRate   = std::clamp(estimatedRate, nomRate * 0.9, nomRate * 1.1);
             if (clampedRate > 0.0) {
+                // the resampled chunk starts at the carried position, not at its first input frame
+                if (_driftCompensator.mode == algorithm::DriftCorrection::AdaptiveResampling) {
+                    tCaptureNs += static_cast<std::int64_t>(std::llround(_driftCompensator.nextOutputPhase() * 1e9 / nomRate));
+                }
                 nProduced = _driftCompensator.compensateSource(std::span<T>(outSpan.data(), outSpan.size()), nProduced, clampedRate, nomRate, channelCount);
             }
 
@@ -746,10 +758,16 @@ private:
 
             // apply drift compensation
             const std::size_t nFrameAligned = detail::wholeFrameSamples(readSpan.size(), channelCount);
-            if (_driftAdjustedBuffer.size() < nFrameAligned + channelCount) {
-                _driftAdjustedBuffer.resize(nFrameAligned + channelCount);
+            // The chunk may come back with more frames than it has: the resampler reads it at servoRatio input frames
+            // per output frame and returns up to ceil(n / servoRatio) of them. The insert modes add one frame. A few
+            // frames more cover the rounding.
+            const double      framesIn          = static_cast<double>(nFrameAligned / channelCount);
+            const auto        framesOut         = static_cast<std::size_t>(std::ceil(framesIn / std::max(servoRatio, 0.1)));
+            const std::size_t nAdjustedCapacity = (std::max(framesOut, nFrameAligned / channelCount) + 4UZ) * channelCount;
+            if (_driftAdjustedBuffer.size() < nAdjustedCapacity) {
+                _driftAdjustedBuffer.resize(nAdjustedCapacity);
             }
-            const std::size_t nAdjusted = _driftCompensator.compensateSink(std::span<const T>(readSpan.begin(), nFrameAligned), std::span<T>(_driftAdjustedBuffer.data(), nFrameAligned + channelCount), nFrameAligned, nominalRate * servoRatio, nominalRate, channelCount);
+            const std::size_t nAdjusted = _driftCompensator.compensateSink(std::span<const T>(readSpan.begin(), nFrameAligned), std::span<T>(_driftAdjustedBuffer.data(), nAdjustedCapacity), nFrameAligned, nominalRate * servoRatio, nominalRate, channelCount);
 
             const std::size_t nBackendWritten = _backendImpl._state.writeFromInput(std::span<const T>(_driftAdjustedBuffer.data(), nAdjusted), channelCount);
             _totalIoWrittenSamples += nBackendWritten;
