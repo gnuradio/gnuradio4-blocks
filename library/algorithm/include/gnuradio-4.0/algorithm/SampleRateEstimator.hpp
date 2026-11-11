@@ -141,10 +141,15 @@ template<typename T>
 requires std::is_arithmetic_v<T>
 struct DriftCompensator {
     static constexpr double kMaxAccumulator = 2.0;
+    static constexpr double kStartPhase     = -2.0; // AdaptiveResampling: the first output frame, in frames from the first input frame
 
     DriftCorrection mode{DriftCorrection::Linear};
     double          fractionalAccumulator{0.0};
     double          resamplerPhase{0.0}; // AdaptiveResampling: position of the next output frame, in input frames from the next call's first
+
+    // AdaptiveResampling: where the next call's first output frame lies, in input frames from that call's first
+    // (the stream starts two frames early, see resampleStream)
+    [[nodiscard]] double nextOutputPhase() const { return _primed ? resamplerPhase : kStartPhase; }
 
     void reset() {
         fractionalAccumulator = 0.0;
@@ -303,7 +308,7 @@ private:
             for (std::size_t f = 0U; f < kHistory; ++f) {
                 std::copy_n(input.begin(), static_cast<std::ptrdiff_t>(channelCount), _work.begin() + static_cast<std::ptrdiff_t>(f * channelCount));
             }
-            resamplerPhase = -2.0;
+            resamplerPhase = kStartPhase;
             _primed        = true;
         } else {
             std::copy_n(_history.begin(), static_cast<std::ptrdiff_t>(histLen), _work.begin());
