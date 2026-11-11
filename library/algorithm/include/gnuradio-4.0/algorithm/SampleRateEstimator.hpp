@@ -2,9 +2,11 @@
 #define GNURADIO_SAMPLE_RATE_ESTIMATOR_HPP
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <span>
 #include <type_traits>
+#include <vector>
 
 #include <gnuradio-4.0/algorithm/filter/FilterTool.hpp>
 
@@ -142,11 +144,13 @@ struct DriftCompensator {
 
     DriftCorrection mode{DriftCorrection::Linear};
     double          fractionalAccumulator{0.0};
-    double          resamplerPhase{0.0}; // fractional position for AdaptiveResampling mode
+    double          resamplerPhase{0.0}; // AdaptiveResampling: position of the next output frame, in input frames from the next call's first
 
     void reset() {
         fractionalAccumulator = 0.0;
         resamplerPhase        = 0.0;
+        _primed               = false;
+        _history.clear();
     }
 
     std::size_t compensateSource(std::span<T> output, std::size_t nProduced, double estimatedRate, double nominalRate, std::size_t channelCount) {
@@ -275,82 +279,67 @@ private:
         return toSample(prev + (curr - prev) * t);
     }
 
-    // continuous variable-rate resampling in-place (source): resample nProduced frames
-    // at ratio close to 1.0, output may be nProduced ± 1 frame
-    std::size_t resampleInPlace(std::span<T> output, std::size_t nProduced, double ratio, std::size_t channelCount) {
-        const std::size_t nInputFrames = nProduced / channelCount;
-        if (nInputFrames < 2U) {
-            return nProduced;
+    // continuous variable-rate resampling in-place (source): the call's frames are read at `ratio` input frames per
+    // output frame; the grid carries on from the previous call (see resampleStream)
+    std::size_t resampleInPlace(std::span<T> output, std::size_t nProduced, double ratio, std::size_t channelCount) { return resampleStream(std::span<const T>(output.data(), nProduced), output, nProduced / channelCount, ratio, channelCount); }
+
+    // continuous variable-rate resampling for sink: input -> adjusted at given ratio (output frames per input frame)
+    std::size_t resampleSink(std::span<const T> input, std::span<T> adjusted, std::size_t nAvailable, double ratio, std::size_t channelCount) { return resampleStream(input, adjusted, nAvailable / channelCount, 1.0 / ratio, channelCount); }
+
+    // One resampling grid across calls. Output frame k reads the input stream at `resamplerPhase + k * step`, in
+    // frames from the call's first one; what is left over (position and the last kHistory input frames) is carried to
+    // the next call, so the output count follows the exact ratio and the cubic sees the true neighbors at a call
+    // boundary. A cubic at position p needs frames floor(p)-1 .. floor(p)+2, so output stops at p < nFrames - 2 and
+    // the stream lags its input by two frames. `input` may alias `output`: it is copied before the first write.
+    std::size_t resampleStream(std::span<const T> input, std::span<T> output, std::size_t nFrames, double step, std::size_t channelCount) {
+        constexpr std::size_t kHistory = 3U;
+        const std::size_t     histLen  = kHistory * channelCount;
+        if (nFrames == 0U) {
+            return 0U;
         }
 
-        // compute how many output frames we should produce
-        const double exactOutputFrames = static_cast<double>(nInputFrames) / ratio;
-        const auto   nOutputFrames     = static_cast<std::size_t>(exactOutputFrames + 0.5);
-        if (nOutputFrames * channelCount > output.size() || nOutputFrames == 0U) {
-            return nProduced;
-        }
-
-        // work backwards to avoid overwriting unread input when expanding
-        // use a small stack buffer for the resampled output
-        thread_local std::vector<double> tempBuf;
-        tempBuf.resize(nOutputFrames * channelCount);
-
-        const double step = static_cast<double>(nInputFrames - 1U) / static_cast<double>(std::max<std::size_t>(1U, nOutputFrames - 1U));
-
-        for (std::size_t outFrame = 0U; outFrame < nOutputFrames; ++outFrame) {
-            const double pos     = static_cast<double>(outFrame) * step;
-            const auto   intPos  = static_cast<std::size_t>(pos);
-            const double fracPos = pos - static_cast<double>(intPos);
-
-            for (std::size_t ch = 0U; ch < channelCount; ++ch) {
-                const double y0                       = intPos >= 1U ? getSample(output, intPos - 1U, ch, channelCount) : getSample(output, 0U, ch, channelCount);
-                const double y1                       = getSample(output, intPos, ch, channelCount);
-                const double y2                       = intPos + 1U < nInputFrames ? getSample(output, intPos + 1U, ch, channelCount) : y1;
-                const double y3                       = intPos + 2U < nInputFrames ? getSample(output, intPos + 2U, ch, channelCount) : y2;
-                tempBuf[outFrame * channelCount + ch] = cubicHermite(y0, y1, y2, y3, fracPos);
+        _work.resize(histLen + nFrames * channelCount);
+        if (!_primed) { // the first call: the stream's start is the first frame, repeated
+            for (std::size_t f = 0U; f < kHistory; ++f) {
+                std::copy_n(input.begin(), static_cast<std::ptrdiff_t>(channelCount), _work.begin() + static_cast<std::ptrdiff_t>(f * channelCount));
             }
+            resamplerPhase = -2.0;
+            _primed        = true;
+        } else {
+            std::copy_n(_history.begin(), static_cast<std::ptrdiff_t>(histLen), _work.begin());
+        }
+        std::copy_n(input.begin(), static_cast<std::ptrdiff_t>(nFrames * channelCount), _work.begin() + static_cast<std::ptrdiff_t>(histLen));
+
+        const double limit      = static_cast<double>(nFrames) - 2.0;
+        double       pos        = resamplerPhase;
+        std::size_t  nOutFrames = 0U;
+        while (pos < limit) {
+            if ((nOutFrames + 1U) * channelCount > output.size()) {
+                pos = limit; // no room: the frames still due are dropped, not carried as a debt
+                break;
+            }
+            const double      floorPos = std::floor(pos);
+            const double      fracPos  = pos - floorPos;
+            const std::size_t base     = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(floorPos) + static_cast<std::ptrdiff_t>(kHistory)); // frame of y1 in _work
+            for (std::size_t ch = 0U; ch < channelCount; ++ch) {
+                const double y0                        = static_cast<double>(_work[(base - 1U) * channelCount + ch]);
+                const double y1                        = static_cast<double>(_work[base * channelCount + ch]);
+                const double y2                        = static_cast<double>(_work[(base + 1U) * channelCount + ch]);
+                const double y3                        = static_cast<double>(_work[(base + 2U) * channelCount + ch]);
+                output[nOutFrames * channelCount + ch] = toSample(cubicHermite(y0, y1, y2, y3, fracPos));
+            }
+            ++nOutFrames;
+            pos = resamplerPhase + static_cast<double>(nOutFrames) * step;
         }
 
-        for (std::size_t i = 0U; i < nOutputFrames * channelCount; ++i) {
-            output[i] = toSample(tempBuf[i]);
-        }
-
-        return nOutputFrames * channelCount;
+        resamplerPhase = pos - static_cast<double>(nFrames);
+        _history.assign(_work.end() - static_cast<std::ptrdiff_t>(histLen), _work.end());
+        return nOutFrames * channelCount;
     }
 
-    // continuous variable-rate resampling for sink: input → adjusted at given ratio
-    std::size_t resampleSink(std::span<const T> input, std::span<T> adjusted, std::size_t nAvailable, double ratio, std::size_t channelCount) {
-        const std::size_t nInputFrames = nAvailable / channelCount;
-        if (nInputFrames < 2U) {
-            std::copy_n(input.begin(), static_cast<std::ptrdiff_t>(nAvailable), adjusted.begin());
-            return nAvailable;
-        }
-
-        const double exactOutputFrames = static_cast<double>(nInputFrames) * ratio;
-        const auto   nOutputFrames     = static_cast<std::size_t>(exactOutputFrames + 0.5);
-        if (nOutputFrames * channelCount > adjusted.size() || nOutputFrames == 0U) {
-            std::copy_n(input.begin(), static_cast<std::ptrdiff_t>(nAvailable), adjusted.begin());
-            return nAvailable;
-        }
-
-        const double step = static_cast<double>(nInputFrames - 1U) / static_cast<double>(std::max<std::size_t>(1U, nOutputFrames - 1U));
-
-        for (std::size_t outFrame = 0U; outFrame < nOutputFrames; ++outFrame) {
-            const double pos     = static_cast<double>(outFrame) * step;
-            const auto   intPos  = static_cast<std::size_t>(pos);
-            const double fracPos = pos - static_cast<double>(intPos);
-
-            for (std::size_t ch = 0U; ch < channelCount; ++ch) {
-                const double y0                        = intPos >= 1U ? getSample(input, intPos - 1U, ch, channelCount) : getSample(input, 0U, ch, channelCount);
-                const double y1                        = getSample(input, intPos, ch, channelCount);
-                const double y2                        = intPos + 1U < nInputFrames ? getSample(input, intPos + 1U, ch, channelCount) : y1;
-                const double y3                        = intPos + 2U < nInputFrames ? getSample(input, intPos + 2U, ch, channelCount) : y2;
-                adjusted[outFrame * channelCount + ch] = toSample(cubicHermite(y0, y1, y2, y3, fracPos));
-            }
-        }
-
-        return nOutputFrames * channelCount;
-    }
+    bool           _primed{false};
+    std::vector<T> _history; // the last input frames of the previous call
+    std::vector<T> _work;    // history and the current call's input
 };
 
 } // namespace gr::algorithm
