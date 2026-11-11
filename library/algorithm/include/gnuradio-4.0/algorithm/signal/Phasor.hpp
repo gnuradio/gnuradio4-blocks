@@ -115,14 +115,21 @@ struct Phasor {
 
     /// out[k] = exp(j*(phase + k*increment)); leaves the phase advanced by out.size() increments
     void fill(std::span<Complex> out) noexcept {
+        if (out.empty()) {
+            return;
+        }
         leaveChirp();
         _lane.fill(out);
     }
 
     /// out[k] = in[k] * exp(j*(phase + k*increment)); leaves the phase advanced by the sample count
     void mix(std::span<const Complex> in, std::span<Complex> out) noexcept {
+        const std::size_t nSamples = std::min(in.size(), out.size());
+        if (nSamples == 0UZ) {
+            return;
+        }
         leaveChirp();
-        _lane.mix(in.first(std::min(in.size(), out.size())), out);
+        _lane.mix(in.first(nSamples), out);
     }
 
     /// out[k] = exp(j*phase_k) with phase_{k+1} = phase_k + increments[k] — the CPM/FM entry point
@@ -223,6 +230,9 @@ private:
             nSamples = std::min(nSamples, in.size());
         }
 
+        if (nSamples == 0UZ) {
+            return;
+        }
         constexpr double twoPi = 2. * std::numbers::pi_v<double>;
         leaveChirp();
         double value = _lane.phase();
