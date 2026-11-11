@@ -7,12 +7,14 @@
 #include <concepts>
 #include <cstddef>
 #include <format>
+#include <functional>
 #include <limits>
 #include <numbers>
 #include <print>
 #include <span>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <gnuradio-4.0/algorithm/fourier/fft.hpp>
@@ -308,6 +310,55 @@ const boost::ut::suite<"Phasor"> phasorTests = [] {
                 most = std::max(most, std::abs(std::complex<double>(split[k]) - std::complex<double>(reference[k])));
             }
             expect(lt(most, 4. * static_cast<double>(std::numeric_limits<F>::epsilon()))) << std::format("fillChirp in {}-sample calls is {:.3e} from one call", chunk, most);
+        }
+    } | kFloatingTypes;
+
+    "a call that produces no sample leaves a chirp running"_test = []<std::floating_point F> {
+        constexpr std::size_t kBefore = 37UZ;
+        constexpr std::size_t kAfter  = 300UZ;
+        constexpr double      kStart  = 0.2;
+        constexpr double      kStep   = 0.001;
+
+        using Cx             = std::complex<F>;
+        const auto makeChirp = [&] {
+            Phasor<F> phasor;
+            phasor.configure(kStart, 0.3);
+            return phasor;
+        };
+
+        std::vector<Cx> reference(kBefore + kAfter);
+        {
+            Phasor<F> phasor = makeChirp();
+            phasor.fillChirp(kStep, std::span<Cx>(reference));
+        }
+
+        const std::vector<float> someIncrements(4UZ, 0.1f);
+        const std::vector<Cx>    someSamples(4UZ, Cx(F(1), F(0)));
+        std::vector<Cx>          someOut(4UZ);
+
+        const std::array<std::pair<const char*, std::function<void(Phasor<F>&)>>, 8UZ> emptyCalls{{
+            {"fill", [&](Phasor<F>& p) { p.fill({}); }},
+            {"mix, no input", [&](Phasor<F>& p) { p.mix({}, std::span<Cx>(someOut)); }},
+            {"mix, no output", [&](Phasor<F>& p) { p.mix(std::span<const Cx>(someSamples), {}); }},
+            {"fillModulated, no increments", [&](Phasor<F>& p) { p.fillModulated(std::span<const float>{}, std::span<Cx>(someOut)); }},
+            {"fillModulated, no output", [&](Phasor<F>& p) { p.fillModulated(std::span<const float>(someIncrements), {}); }},
+            {"mixModulated, no increments", [&](Phasor<F>& p) { p.mixModulated(std::span<const float>{}, std::span<const Cx>(someSamples), std::span<Cx>(someOut)); }},
+            {"mixModulated, no input", [&](Phasor<F>& p) { p.mixModulated(std::span<const float>(someIncrements), {}, std::span<Cx>(someOut)); }},
+            {"mixModulated, no output", [&](Phasor<F>& p) { p.mixModulated(std::span<const float>(someIncrements), std::span<const Cx>(someSamples), {}); }},
+        }};
+
+        for (const auto& [name, call] : emptyCalls) {
+            Phasor<F>       phasor = makeChirp();
+            std::vector<Cx> out(kBefore + kAfter);
+            phasor.fillChirp(kStep, std::span<Cx>(out.data(), kBefore));
+            call(phasor);
+            phasor.fillChirp(kStep, std::span<Cx>(out.data() + kBefore, kAfter));
+
+            double worst = 0.;
+            for (std::size_t k = 0UZ; k < out.size(); ++k) {
+                worst = std::max(worst, std::abs(std::complex<double>(out[k]) - std::complex<double>(reference[k])));
+            }
+            expect(lt(worst, 4. * static_cast<double>(std::numeric_limits<F>::epsilon()))) << std::format("a chirp resumed after an empty {} is {:.3e} from the uninterrupted chirp", name, worst);
         }
     } | kFloatingTypes;
 
