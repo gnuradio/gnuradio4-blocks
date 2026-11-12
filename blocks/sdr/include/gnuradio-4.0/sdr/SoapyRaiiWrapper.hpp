@@ -18,11 +18,14 @@
 #pragma GCC diagnostic pop
 #endif
 
+#include <atomic>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <expected>
 #include <format>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -207,6 +210,7 @@ struct DeviceRegistry {
 
     struct DeviceState {
         std::weak_ptr<SoapySDRDevice>                device;
+        std::shared_ptr<std::atomic<int>> releaseStatus;
         std::size_t                                  pendingUsers = 0UZ;
         std::map<std::size_t, std::function<void()>> activationCallbacks;
     };
@@ -221,6 +225,14 @@ struct DeviceRegistry {
     }
 
     class Registration {
+        // Ready callbacks leave the registry mutex before invocation. A separate
+        // lifetime gate lets reset cancel an extracted callback or wait for one
+        // already executing, without holding the registry lock across driver I/O.
+        struct Activation {
+            std::recursive_mutex mutex;
+            std::function<void()> callback;
+        };
+        std::shared_ptr<Activation> _activation;
         Kwargs      _args{};
         std::size_t _token{0UZ};
         bool        _registered{false};
@@ -231,10 +243,11 @@ struct DeviceRegistry {
         explicit Registration(Kwargs args) : _args(std::move(args)), _token(DeviceRegistry::addPendingUser(_args)), _registered(true), _pending(true) {}
         Registration(const Registration&)            = delete;
         Registration& operator=(const Registration&) = delete;
-        Registration(Registration&& other) noexcept : _args(std::move(other._args)), _token(other._token), _registered(std::exchange(other._registered, false)), _pending(std::exchange(other._pending, false)) {}
+        Registration(Registration&& other) noexcept : _activation(std::move(other._activation)), _args(std::move(other._args)), _token(other._token), _registered(std::exchange(other._registered, false)), _pending(std::exchange(other._pending, false)) {}
         Registration& operator=(Registration&& other) noexcept {
             if (this != &other) {
                 reset();
+                _activation = std::move(other._activation);
                 _args       = std::move(other._args);
                 _token      = other._token;
                 _registered = std::exchange(other._registered, false);
@@ -249,37 +262,50 @@ struct DeviceRegistry {
             if (!_pending) {
                 return;
             }
+            auto activation = std::make_shared<Activation>();
+            activation->callback = std::move(callback);
+            _activation = activation;
             _pending = false;
-            DeviceRegistry::settlePendingUser(_args, _token, std::move(callback));
+            DeviceRegistry::settlePendingUser(_args, _token, [activation] {
+                const auto lock = std::lock_guard(activation->mutex);
+                if (auto ready = std::exchange(activation->callback, {})) { ready(); }
+            });
         }
 
         void reset() {
+            if (_activation) {
+                const auto lock = std::lock_guard(_activation->mutex);
+                _activation->callback = {};
+            }
             if (_registered) {
                 DeviceRegistry::removeUser(_args, _token, _pending);
             }
             _registered = false;
             _pending    = false;
+            _activation.reset();
         }
     };
 
-    static std::shared_ptr<SoapySDRDevice> findOrCreate(const Kwargs& args) {
+    static std::shared_ptr<SoapySDRDevice> findOrCreate(const Kwargs& args, std::shared_ptr<std::atomic<int>>& releaseStatus) {
         auto  lock  = std::lock_guard(mutex());
         auto& state = devices()[args];
         if (auto existing = state.device.lock()) {
+            releaseStatus = state.releaseStatus;
             return existing;
         }
         KwargsWrapper cArgs(args);
         if (!cArgs.valid()) {
             return nullptr;
         }
+        auto status = std::make_shared<std::atomic<int>>(std::numeric_limits<int>::min());
         SoapySDRDevice* raw = SoapySDRDevice_make(cArgs);
         if (!raw) {
             return nullptr;
         }
-        auto device  = std::shared_ptr<SoapySDRDevice>(raw, [](SoapySDRDevice* dev) {
-            if (dev) {
-                SoapySDRDevice_unmake(dev);
-            }
+        releaseStatus = std::move(status);
+        state.releaseStatus = releaseStatus;
+        auto device = std::shared_ptr<SoapySDRDevice>(raw, [releaseStatus](SoapySDRDevice* dev) {
+            if (dev) { releaseStatus->store(SoapySDRDevice_unmake(dev), std::memory_order_release); }
         });
         state.device = device;
         return device;
@@ -392,6 +418,7 @@ private:
  */
 class Device {
     std::shared_ptr<SoapySDRDevice> _device{nullptr};
+    std::shared_ptr<std::atomic<int>> _releaseStatus;
 
 public:
     static KwargsList enumerate(const Kwargs& args = Kwargs()) {
@@ -421,30 +448,74 @@ public:
         if (std::string_view(SOAPY_SDR_ABI_VERSION) != std::string_view(SoapySDR_getABIVersion())) {
             return std::unexpected(gr::Error(std::format("SoapySDR ABI mismatch: this {} vs. library {}", SOAPY_SDR_ABI_VERSION, SoapySDR_getABIVersion())));
         }
-        auto shared = detail::DeviceRegistry::findOrCreate(args);
+        Device dev;
+        auto shared = detail::DeviceRegistry::findOrCreate(args, dev._releaseStatus);
         if (!shared) {
             auto driverIt = args.find("driver");
             auto hint     = (driverIt != args.end()) ? std::format(" (driver '{}' — check SOAPY_SDR_PLUGIN_PATH if using a custom module)", driverIt->second) : "";
             return std::unexpected(gr::Error(std::format("device creation failed for {}{}", args, hint)));
         }
-        Device dev;
         dev._device = std::move(shared);
         return dev;
     }
 
-    Device(const Device& other) : _device(other._device) {}
-    Device(Device&& other) noexcept : _device(std::move(other._device)) { other._device = nullptr; }
+    Device(const Device& other) : _device(other._device), _releaseStatus(other._releaseStatus) {}
+    Device(Device&& other) noexcept : _device(std::move(other._device)), _releaseStatus(std::move(other._releaseStatus)) { other._device = nullptr; }
     Device& operator=(Device&& other) noexcept {
         if (this == &other) {
             return *this;
         }
         _device       = std::move(other._device);
+        _releaseStatus = std::move(other._releaseStatus);
         other._device = nullptr;
         return *this;
     }
 
-    void            reset() { _device.reset(); }
+    // true: last reference in this GR4 registry entry unmade successfully;
+    // false: another reference (for example TX) retains it. Not a physical-stop claim.
+    std::expected<bool, gr::Error> close() {
+        _device.reset();
+        if (!_releaseStatus) { return true; }
+        const int result = _releaseStatus->load(std::memory_order_acquire);
+        if (result == std::numeric_limits<int>::min()) { return false; }
+        if (result != 0) { return std::unexpected(gr::Error(std::format("SoapySDR unmake failed ({})", result))); }
+        return true;
+    }
+    void            reset() { std::ignore = close(); }
     SoapySDRDevice* get() const { return _device.get(); }
+
+    // Unlike the legacy scalar getters, these retain C API failures. A successful
+    // call is still only driver-reported readback, never proof of RF settling.
+    template<typename F>
+    static auto readback(F&& read) -> std::expected<decltype(read()), gr::Error> {
+        auto value = read();
+        if (SoapySDRDevice_lastStatus() != 0) {
+            return std::unexpected(gr::Error(SoapySDRDevice_lastError()));
+        }
+        return value;
+    }
+
+    Kwargs hardwareInfo() const {
+        auto info = SoapySDRDevice_getHardwareInfo(_device.get());
+        Kwargs result;
+        for (std::size_t i = 0; i < info.size; ++i) { result[info.keys[i]] = info.vals[i]; }
+        SoapySDRKwargs_clear(&info);
+        return result;
+    }
+
+    std::string hardwareKey() const {
+        char* value = SoapySDRDevice_getHardwareKey(_device.get());
+        std::string result(value ? value : "");
+        free(value);
+        return result;
+    }
+
+    std::expected<std::int64_t, gr::Error> hardwareTime() const {
+        if (!SoapySDRDevice_hasHardwareTime(_device.get(), "")) {
+            return std::unexpected(gr::Error("device has no readable hardware clock"));
+        }
+        return readback([&] { return static_cast<std::int64_t>(SoapySDRDevice_getHardwareTime(_device.get(), "")); });
+    }
 
     std::vector<std::string> listAvailableAntennas(int direction, std::size_t channel) const {
         std::size_t length   = 0UZ;
@@ -819,18 +890,25 @@ public:
     template<typename TValueType, int direction>
     class Stream {
         std::shared_ptr<SoapySDRDevice> _device{nullptr};
-        std::shared_ptr<SoapySDRStream> _stream{nullptr};
+        // Stream is move-only. Keep its sole raw handle beside the device
+        // reference instead of allocating a second shared ownership/control block.
+        SoapySDRStream* _stream = nullptr;
+        int _closeResult = 0;
+
+        void release() noexcept {
+            if (auto* stream = std::exchange(_stream, nullptr)) {
+                const int result = SoapySDRDevice_closeStream(_device.get(), stream);
+                if (result != 0) {
+                    _closeResult = result;
+                    std::fprintf(stderr, "[SoapySDR] closeStream failed (%d)\n", result);
+                }
+            }
+            _device.reset();
+        }
 
     protected:
-        Stream(std::shared_ptr<SoapySDRDevice> device, SoapySDRStream* cStream)
-            : _device(device), _stream(cStream, [device](SoapySDRStream* stream) {
-                  if (device.get() == nullptr || stream == nullptr) {
-                      return;
-                  }
-                  if (int ret = SoapySDRDevice_closeStream(device.get(), stream); ret) {
-                      std::println(stderr, "[SoapySDR] error({}) closing stream: '{}'", ret, SoapySDR_errToStr(ret));
-                  }
-              }) {}
+        Stream(std::shared_ptr<SoapySDRDevice> device, SoapySDRStream* stream) noexcept
+            : _device(std::move(device)), _stream(stream) {}
         friend class Device;
 
     public:
@@ -838,6 +916,7 @@ public:
         constexpr static std::size_t Direction = direction;
 
         Stream() noexcept                = default;
+        ~Stream() { release(); }
         Stream(const Stream&)            = delete;
         Stream& operator=(const Stream&) = delete;
         Stream(Stream&& other) noexcept : Stream() {
@@ -854,16 +933,24 @@ public:
         friend void swap(Stream& first, Stream& second) noexcept {
             using std::swap;
             swap(first._stream, second._stream);
+            swap(first._closeResult, second._closeResult);
             swap(first._device, second._device);
         }
 
-        void reset() {
-            _device.reset();
-            _stream.reset();
+        // A failed close remains failed on repeated cleanup. The raw driver handle
+        // has uncertain disposition and must not be used or retried.
+        [[nodiscard]] std::expected<void, gr::Error> close() {
+            release();
+            if (_closeResult != 0) {
+                return std::unexpected(gr::Error(std::format("SoapySDR closeStream failed ({})", _closeResult)));
+            }
+            return {};
         }
 
+        void reset() noexcept { release(); }
+
         std::expected<void, gr::Error> activate(int flags = 0, long long timeNs = 0, std::size_t numElems = 0UZ) {
-            int ret = SoapySDRDevice_activateStream(_device.get(), _stream.get(), flags, timeNs, numElems);
+            int ret = SoapySDRDevice_activateStream(_device.get(), _stream, flags, timeNs, numElems);
             if (ret != 0) {
                 return std::unexpected(gr::Error(std::format("activate(flags={}, timeNs={}, numElems={}) error({}): {}", flags, timeNs, numElems, ret, SoapySDR_errToStr(ret))));
             }
@@ -871,7 +958,7 @@ public:
         }
 
         std::expected<void, gr::Error> deactivate(int flags = 0, long long timeNs = 0) {
-            int ret = SoapySDRDevice_deactivateStream(_device.get(), _stream.get(), flags, timeNs);
+            int ret = SoapySDRDevice_deactivateStream(_device.get(), _stream, flags, timeNs);
             if (ret != 0) {
                 return std::unexpected(gr::Error(std::format("deactivate(flags={}, timeNs={}) error({}): {}", flags, timeNs, ret, SoapySDR_errToStr(ret))));
             }
@@ -880,25 +967,25 @@ public:
 
         // the driver's transfer unit in samples, or 0 without a stream
         [[nodiscard]] std::size_t mtu() const {
-            if (_device.get() == nullptr || _stream.get() == nullptr) {
+            if (_device.get() == nullptr || _stream == nullptr) {
                 return 0UZ;
             }
-            return SoapySDRDevice_getStreamMTU(_device.get(), _stream.get());
+            return SoapySDRDevice_getStreamMTU(_device.get(), _stream);
         }
 
         template<typename... TBuffers>
         requires(Direction == SOAPY_SDR_RX && sizeof...(TBuffers) > 0UZ)
         [[maybe_unused]] int readStream(int& flags, long long& timeNs, std::uint32_t timeOutUs, TBuffers&&... ioBuffers) {
-            if (_device.get() == nullptr || _stream.get() == nullptr) {
+            if (_device.get() == nullptr || _stream == nullptr) {
                 return SOAPY_SDR_TIMEOUT;
             }
             if constexpr (sizeof...(TBuffers) == 1UZ) {
                 auto&& buffer          = std::get<0>(std::tie(ioBuffers...));
                 void*  ioBufferPointer = static_cast<void*>(buffer.data());
-                return SoapySDRDevice_readStream(_device.get(), _stream.get(), &ioBufferPointer, buffer.size(), &flags, &timeNs, static_cast<long>(timeOutUs));
+                return SoapySDRDevice_readStream(_device.get(), _stream, &ioBufferPointer, buffer.size(), &flags, &timeNs, static_cast<long>(timeOutUs));
             } else {
                 std::array<void*, sizeof...(ioBuffers)> ioBufferPointers = {static_cast<void*>(ioBuffers.data())...};
-                return SoapySDRDevice_readStream(_device.get(), _stream.get(), ioBufferPointers.data(), std::get<0>(std::tie(ioBuffers...)).size(), &flags, &timeNs, timeOutUs);
+                return SoapySDRDevice_readStream(_device.get(), _stream, ioBufferPointers.data(), std::get<0>(std::tie(ioBuffers...)).size(), &flags, &timeNs, timeOutUs);
             }
         }
 
@@ -910,22 +997,22 @@ public:
             for (auto& ioBuffer : ioBuffers) {
                 ioBufferPointers.emplace_back(ioBuffer.data());
             }
-            return SoapySDRDevice_readStream(_device.get(), _stream.get(), ioBufferPointers.data(), ioBuffers.front().size(), &flags, &timeNs, timeOutUs);
+            return SoapySDRDevice_readStream(_device.get(), _stream, ioBufferPointers.data(), ioBuffers.front().size(), &flags, &timeNs, timeOutUs);
         }
 
         template<typename... TBuffers>
         requires(Direction == SOAPY_SDR_TX && sizeof...(TBuffers) > 0UZ)
         [[maybe_unused]] int writeStream(int& flags, long long timeNs, long timeOutUs, TBuffers&&... ioBuffers) {
-            if (_device.get() == nullptr || _stream.get() == nullptr) {
+            if (_device.get() == nullptr || _stream == nullptr) {
                 return SOAPY_SDR_STREAM_ERROR;
             }
             if constexpr (sizeof...(TBuffers) == 1UZ) {
                 auto&&      buffer          = std::get<0>(std::tie(ioBuffers...));
                 const void* ioBufferPointer = static_cast<const void*>(buffer.data());
-                return SoapySDRDevice_writeStream(_device.get(), _stream.get(), &ioBufferPointer, buffer.size(), &flags, timeNs, timeOutUs);
+                return SoapySDRDevice_writeStream(_device.get(), _stream, &ioBufferPointer, buffer.size(), &flags, timeNs, timeOutUs);
             } else {
                 std::array<const void*, sizeof...(ioBuffers)> ioBufferPointers = {static_cast<const void*>(ioBuffers.data())...};
-                return SoapySDRDevice_writeStream(_device.get(), _stream.get(), ioBufferPointers.data(), std::get<0>(std::tie(ioBuffers...)).size(), &flags, timeNs, timeOutUs);
+                return SoapySDRDevice_writeStream(_device.get(), _stream, ioBufferPointers.data(), std::get<0>(std::tie(ioBuffers...)).size(), &flags, timeNs, timeOutUs);
             }
         }
 
@@ -937,11 +1024,11 @@ public:
             for (auto& ioBuffer : ioBuffers) {
                 ioBufferPointers.emplace_back(ioBuffer.data());
             }
-            return SoapySDRDevice_writeStream(_device.get(), _stream.get(), ioBufferPointers.data(), ioBuffers.front().size(), &flags, timeNs, timeOutUs);
+            return SoapySDRDevice_writeStream(_device.get(), _stream, ioBufferPointers.data(), ioBuffers.front().size(), &flags, timeNs, timeOutUs);
         }
 
         // SoapySDR::Stream
-        SoapySDRStream* get() const { return _stream.get(); }
+        SoapySDRStream* get() const { return _stream; }
     };
 
     std::vector<std::string> getStreamFormats(int direction, std::size_t channel) const {

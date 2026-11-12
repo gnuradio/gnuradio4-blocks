@@ -122,6 +122,20 @@ if(TARGET SoapySDR)
   endif()
 
   if(SOAPY_CXX_ABI_COMPATIBLE)
+    # The deterministic radio is registered in the executable, so no fixture module
+    # or physical device is needed. Its C++ API still requires a matching stdlib.
+    foreach(_acquisition_test qa_SoapyAcquisition qa_SoapyAcquisitionNoLease)
+      add_executable(${_acquisition_test} qa_SoapyAcquisition.cpp)
+      target_link_libraries(${_acquisition_test} PRIVATE gnuradio-options gnuradio-core
+                            gnuradio-blocklib-core gr-sdr gr-testing ut)
+      add_test(NAME ${_acquisition_test} COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
+                                               ${CMAKE_CURRENT_BINARY_DIR}/${_acquisition_test})
+      set_tests_properties(${_acquisition_test} PROPERTIES
+                           ENVIRONMENT "SOAPY_SDR_ROOT=${SOAPY_EMPTY_ROOT};SOAPY_SDR_PLUGIN_PATH=${SOAPY_EMPTY_ROOT};ASAN_OPTIONS=detect_leaks=0"
+                           TIMEOUT 120)
+    endforeach()
+    target_compile_definitions(qa_SoapyAcquisitionNoLease PRIVATE GR_SDR_DISABLE_RECEIVE_LEASE=1)
+
     # C++ API test: directly uses SoapySDR::Device, ArgInfo, Kwargs — requires matching stdlib
     add_executable(qa_SoapyLoopback qa_SoapyLoopback.cpp)
     target_link_libraries(

@@ -1659,7 +1659,7 @@ const boost::ut::suite<"SoapySource device configuration"> configurationTests = 
     // the device refuses while that AGC is on.
     constexpr const char* kSdrplayLike = "device_mode=rx_only,gain_elements=IFGR:20:59|RFGR:0:9,agc_default=on,refuse_under_agc=IFGR";
 
-    auto runSource = [](const std::string& driver, const std::string& parameters, property_map extraSettings) {
+    auto runSource = [](const std::string& driver, const std::string& parameters, property_map extraSettings, bool succeeds = true) {
         auto probe = soapy::Device::make(loopbackKwargs(driver, parameters));
         expect(probe.has_value()) << "the probe must open the device the block will open";
         std::ignore = probe->writeSetting("call_log", "");
@@ -1678,7 +1678,7 @@ const boost::ut::suite<"SoapySource device configuration"> configurationTests = 
         Sched         sched;
         expect(sched.exchange(std::move(flow)).has_value());
         expect(sched.msgOut.connect(fromScheduler).has_value());
-        expect(runWithWatchdog(sched).has_value());
+        expect(eq(runWithWatchdog(sched).has_value(), succeeds));
         auto calls = callLog(*probe);
         return std::make_pair(std::move(*probe), std::move(calls));
     };
@@ -1792,17 +1792,17 @@ const boost::ut::suite<"SoapySource device configuration"> configurationTests = 
     };
 
     "a gain element the device does not have is refused"_test = [&] {
-        auto [device, calls] = runSource("loopback", kSdrplayLike, {{"gain_mode", false}, {"rx_gain_elements", property_map{{"LNA", 3.0}}}});
+        auto [device, calls] = runSource("loopback", kSdrplayLike, {{"gain_mode", false}, {"rx_gain_elements", property_map{{"LNA", 3.0}}}}, false);
         expect(!sawCall(calls, "setGain(")) << "nothing is written when the element is unknown";
     };
 
     "a gain outside the element's range is refused"_test = [&] {
-        auto [device, calls] = runSource("loopback", kSdrplayLike, {{"gain_mode", false}, {"rx_gain_elements", property_map{{"RFGR", 40.0}}}});
+        auto [device, calls] = runSource("loopback", kSdrplayLike, {{"gain_mode", false}, {"rx_gain_elements", property_map{{"RFGR", 40.0}}}}, false);
         expect(!sawCall(calls, "setGain(RX,0,RFGR,")) << "40 is outside the element's 0..9";
     };
 
     "a device setting the device does not have is refused"_test = [&] {
-        auto [device, calls] = runSource("loopback", kSdrplayLike, {{"device_settings", std::string("bogus_key=1")}});
+        auto [device, calls] = runSource("loopback", kSdrplayLike, {{"device_settings", std::string("bogus_key=1")}}, false);
         expect(!sawCall(calls, "writeSetting(bogus_key")) << "an unknown key is not written";
     };
 
@@ -1844,7 +1844,7 @@ const boost::ut::suite<"SoapySource device configuration"> configurationTests = 
     };
 
     "an antenna the device does not have is refused"_test = [&] {
-        auto [device, calls] = runSource("loopback", "device_mode=rx_only,antennas=A|B", {{"rx_antennae", std::vector<std::string>{"Hi-Z"}}});
+        auto [device, calls] = runSource("loopback", "device_mode=rx_only,antennas=A|B", {{"rx_antennae", std::vector<std::string>{"Hi-Z"}}}, false);
         expect(!sawCall(calls, "setAntenna(")) << "nothing is written when the antenna is unknown";
         expect(eq(device.getAntenna(SOAPY_SDR_RX, 0), std::string("A"))) << "the device kept the antenna it started with";
     };
