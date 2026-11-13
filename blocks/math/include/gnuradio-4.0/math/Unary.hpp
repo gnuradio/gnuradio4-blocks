@@ -15,6 +15,7 @@
 
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
+#include <gnuradio-4.0/algorithm/math/Atan2.hpp>
 #include <gnuradio-4.0/meta/simd_math.hpp>
 #include <gnuradio-4.0/meta/utils.hpp>
 
@@ -127,20 +128,23 @@ struct ports_of<op, Derived, T, R> {
  * - optionally `kChangesFrequency`, true when the operation changes the frequency of a complex carrier;
  * - optionally `template<typename Derived, typename T, typename R> using ports`, the ports and the
  *   settings of its blocks, `Ports` when absent. A `ports` type passes `DroppedKeys<op, R>` to `Block`;
- * - optionally `lanes(re, im)`, the function of the real and the imaginary parts of a complex sample on simd vectors
- *   of float lanes, with `kSpanLoop<op>` set (below).
+ * - optionally, with `kSpanLoop<op>` set (below), either `lanes(re, im)`, the function of the real and the imaginary
+ *   parts of a complex sample on simd vectors of float lanes, or `tile(re, im, out)`, the same function on spans of the
+ *   parts of at most 256 samples. The span loop calls `tile` when there is one and `lanes` otherwise.
  */
 
 /// the float lanes of the span loop of an operation with `lanes`
 using FloatVector = vir::stdx::native_simd<float>;
 
-/// true for an operation whose `std::complex<float>` blocks run `op::lanes` over the whole span; set for the operation
-/// type alone, so an operation derived from it keeps the per-sample path
+/// true for an operation whose `std::complex<float>` blocks run `op::tile` or `op::lanes` over the whole span; set for
+/// the operation type alone, so an operation derived from it keeps the per-sample path until it sets `kSpanLoop` for itself
 template<typename op>
 inline constexpr bool kSpanLoop = false;
 
 /// `output[i] = op::lanes(re, im)` of `input[i]`, the parts taken apart a tile at a time. The last vector of a span is
 /// padded with zeros and only its filled lanes are stored, so each output is the same at any span length and offset.
+/// An operation with `tile` takes the span in its place and must give each sample the same value at any length and
+/// offset.
 template<typename op>
 void overParts(std::span<const std::complex<float>> input, std::span<float> output) noexcept {
     constexpr std::size_t kWidth = FloatVector::size();
@@ -156,16 +160,20 @@ void overParts(std::span<const std::complex<float>> input, std::span<float> outp
             re[i] = input[base + i].real();
             im[i] = input[base + i].imag();
         }
-        std::fill(re.begin() + static_cast<std::ptrdiff_t>(count), re.begin() + static_cast<std::ptrdiff_t>(padded), 0.f);
-        std::fill(im.begin() + static_cast<std::ptrdiff_t>(count), im.begin() + static_cast<std::ptrdiff_t>(padded), 0.f);
-        for (std::size_t i = 0UZ; i < padded; i += kWidth) {
-            const FloatVector result = op::lanes(FloatVector(re.data() + i, vir::stdx::element_aligned), FloatVector(im.data() + i, vir::stdx::element_aligned));
-            if (i + kWidth <= count) {
-                result.copy_to(output.data() + base + i, vir::stdx::element_aligned);
-            } else {
-                std::array<float, kWidth> last;
-                result.copy_to(last.data(), vir::stdx::element_aligned);
-                std::copy_n(last.begin(), count - i, output.begin() + static_cast<std::ptrdiff_t>(base + i));
+        if constexpr (requires(std::span<const float> parts, std::span<float> result) { op::tile(parts, parts, result); }) {
+            op::tile(std::span<const float>(re).first(count), std::span<const float>(im).first(count), output.subspan(base, count));
+        } else {
+            std::fill(re.begin() + static_cast<std::ptrdiff_t>(count), re.begin() + static_cast<std::ptrdiff_t>(padded), 0.f);
+            std::fill(im.begin() + static_cast<std::ptrdiff_t>(count), im.begin() + static_cast<std::ptrdiff_t>(padded), 0.f);
+            for (std::size_t i = 0UZ; i < padded; i += kWidth) {
+                const FloatVector result = op::lanes(FloatVector(re.data() + i, vir::stdx::element_aligned), FloatVector(im.data() + i, vir::stdx::element_aligned));
+                if (i + kWidth <= count) {
+                    result.copy_to(output.data() + base + i, vir::stdx::element_aligned);
+                } else {
+                    std::array<float, kWidth> last;
+                    result.copy_to(last.data(), vir::stdx::element_aligned);
+                    std::copy_n(last.begin(), count - i, output.begin() + static_cast<std::ptrdiff_t>(base + i));
+                }
             }
         }
     }
@@ -600,9 +608,9 @@ struct MagnitudeSquared {
 struct Phase {
     using Description = Doc<R""(@brief Outputs the phase of each complex sample, in radians.
 
-For `std::complex<float>` the phase is `gr::meta::atan2` of the parts on simd vectors of float lanes, within 2 ulp
-of the exact value. Zeros, infinities and NaN give the C library's results: a zero sample gives 0 with the sign of its
-imaginary part, or +-pi when its real part is -0.
+For `std::complex<float>` the phase is `gr::math::scaledAtan2` of the parts: within 2 ulp of the exact value with g++
+and within 4 ulp with clang. Zeros, infinities and NaN give the C library's results: a zero sample gives 0 with the
+sign of its imaginary part, or +-pi when its real part is -0.
 )"">;
     template<typename T>
     using result                = meta::fundamental_base_value_type_t<T>;
@@ -611,7 +619,8 @@ imaginary part, or +-pi when its real part is -0.
     [[nodiscard]] static meta::fundamental_base_value_type_t<V> apply(const V& x, const B& /*block*/) noexcept {
         return narrow<meta::fundamental_base_value_type_t<V>>(std::arg(x));
     }
-    [[nodiscard]] static FloatVector lanes(const FloatVector& re, const FloatVector& im) noexcept { return gr::meta::atan2(im, re); }
+    /// one call over the parts of up to 256 samples: simd lanes with g++, a loop that clang vectorizes
+    static void tile(std::span<const float> re, std::span<const float> im, std::span<float> out) noexcept { gr::math::scaledAtan2<float>(im, re, out, 1.f); }
 };
 
 template<>
@@ -651,8 +660,9 @@ struct Imag {
  * `Abs` and the scale and offset step wrap in the type: the lowest value of a signed type negates to itself. No
  * other operation is registered for an integer type.
  *
- * `Magnitude` and `Phase` of `std::complex<float>` run over the whole span in simd lanes, with `processBulk` and no
- * `processOne`, so neither can be a member of a `Merge`.
+ * `Magnitude` and `Phase` of `std::complex<float>`, and the `Abs` and `Arg` blocks of `gr::blocks::basic` on that type,
+ * run over the whole span, in simd lanes or a vectorized loop, with `processBulk` and no `processOne`, so none can be a
+ * member of a `Merge`.
  *
  * The float blocks of `Exp`, `Log`, `Log10`, `Log2`, `Sin`, `Cos`, `Tan`, `Atan`, `Sinh`, `Cosh` and `Tanh` take simd
  * vectors and are within 2 ulp of the exact value, with the C library's special values. Their double blocks call the C

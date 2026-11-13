@@ -1,7 +1,7 @@
 # the math headers without the expression library, for a module that uses Unary.hpp alone
 add_library(gr-math-headers INTERFACE)
 add_library(gnuradio4::gr-math-headers ALIAS gr-math-headers)
-target_link_libraries(gr-math-headers INTERFACE gnuradio4::gnuradio-core)
+target_link_libraries(gr-math-headers INTERFACE gnuradio4::gnuradio-core gnuradio4::gnuradio-algorithm)
 target_include_directories(gr-math-headers INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
                                                      $<INSTALL_INTERFACE:include/>)
 install(TARGETS gr-math-headers EXPORT gnuradio4Targets)

@@ -4,6 +4,7 @@
 #include <gnuradio-4.0/basic/NullSources.hpp>
 #include <gnuradio-4.0/basic/VectorSink.hpp>
 #include <gnuradio-4.0/basic/VectorSource.hpp>
+#include <gnuradio-4.0/math/Unary.hpp>
 
 #include <array>
 #include <bit>
@@ -13,6 +14,8 @@
 #include <format>
 #include <iostream>
 #include <limits>
+#include <random>
+#include <span>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -233,15 +236,17 @@ const boost::ut::suite<"complex To/From conversion tests"> complexConversion = [
 
     "std::complex<T> to ..."_test = []<typename T>(T /*noop*/) {
         "std::abs([complex<T>, T])"_test = [] {
-            static_assert(HasConstProcessOneFunction<Abs<std::complex<T>>>);
             static_assert(HasConstProcessOneFunction<Abs<T>>);
-            expect(HasConstProcessOneFunction<Abs<std::complex<T>>>);
             expect(HasConstProcessOneFunction<Abs<T>>);
 
-            Abs<std::complex<T>> complexConverter;
-            expect(eq(complexConverter.processOne(std::complex<T>{1, 0}), T(1)));
-            expect(eq(complexConverter.processOne(std::complex<T>{0, 1}), T(1)));
-            expect(eq(complexConverter.processOne(std::complex<T>{1, 1}), T(std::sqrt(2))));
+            if constexpr (!std::same_as<T, float>) { // the float blocks have processBulk only, tested below
+                Abs<std::complex<T>> complexConverter;
+                static_assert(HasConstProcessOneFunction<Abs<std::complex<T>>>);
+                expect(HasConstProcessOneFunction<Abs<std::complex<T>>>);
+                expect(eq(complexConverter.processOne(std::complex<T>{1, 0}), T(1)));
+                expect(eq(complexConverter.processOne(std::complex<T>{0, 1}), T(1)));
+                expect(eq(complexConverter.processOne(std::complex<T>{1, 1}), T(std::sqrt(2))));
+            }
 
             Abs<T> converter;
             expect(eq(converter.processOne(T(1)), T(1)));
@@ -278,15 +283,17 @@ const boost::ut::suite<"complex To/From conversion tests"> complexConversion = [
         };
 
         "std::arg([complex<T>, T])"_test = [] {
-            static_assert(HasConstProcessOneFunction<Arg<std::complex<T>>>);
             static_assert(HasConstProcessOneFunction<Arg<T>>);
-            expect(HasConstProcessOneFunction<Arg<std::complex<T>>>);
             expect(HasConstProcessOneFunction<Arg<T>>);
 
-            Arg<std::complex<T>> complexConverter;
-            expect(eq(complexConverter.processOne(std::complex<T>{1, 0}), T(0.0) * std::numbers::pi_v<T>));
-            expect(eq(complexConverter.processOne(std::complex<T>{0, 1}), T(0.5) * std::numbers::pi_v<T>));
-            expect(eq(complexConverter.processOne(std::complex<T>{1, 1}), T(0.25) * std::numbers::pi_v<T>));
+            if constexpr (!std::same_as<T, float>) { // the float blocks have processBulk only, tested below
+                Arg<std::complex<T>> complexConverter;
+                static_assert(HasConstProcessOneFunction<Arg<std::complex<T>>>);
+                expect(HasConstProcessOneFunction<Arg<std::complex<T>>>);
+                expect(eq(complexConverter.processOne(std::complex<T>{1, 0}), T(0.0) * std::numbers::pi_v<T>));
+                expect(eq(complexConverter.processOne(std::complex<T>{0, 1}), T(0.5) * std::numbers::pi_v<T>));
+                expect(eq(complexConverter.processOne(std::complex<T>{1, 1}), T(0.25) * std::numbers::pi_v<T>));
+            }
 
             Arg<T> converter;
             expect(eq(converter.processOne(T(1)), T(0)));
@@ -576,3 +583,149 @@ const boost::ut::suite<"conversion range and rounding"> conversionRange = [] {
 };
 
 int main() { /* not needed for UT */ }
+
+namespace {
+
+using CF = std::complex<float>;
+
+/// @brief True for two equal values of the same sign and for two NaNs.
+[[nodiscard]] bool sameValue(float a, float b) { return (std::isnan(a) && std::isnan(b)) || (a == b && std::signbit(a) == std::signbit(b)); }
+
+/// @brief Every pair of parts from the signed zeros, the smallest subnormal, the smallest and largest normals, one, the
+/// infinities and a NaN, then random bit patterns and Gaussian noise.
+[[nodiscard]] std::vector<CF> complexInput() {
+    using L                             = std::numeric_limits<float>;
+    const std::array<float, 13UZ> parts = {0.f, -0.f, L::denorm_min(), -L::denorm_min(), L::min(), -L::min(), 1.f, -1.f, L::max(), -L::max(), L::infinity(), -L::infinity(), L::quiet_NaN()};
+    std::vector<CF>               input;
+    for (const float re : parts) {
+        for (const float im : parts) {
+            input.emplace_back(re, im);
+        }
+    }
+    std::mt19937                                 rng(20261113U);
+    std::uniform_int_distribution<std::uint32_t> bits;
+    std::normal_distribution<float>              noise(0.f, 0.3f);
+    for (std::size_t i = 0UZ; i < 4096UZ; ++i) {
+        input.emplace_back(std::bit_cast<float>(bits(rng)), std::bit_cast<float>(bits(rng)));
+        input.emplace_back(noise(rng), noise(rng));
+    }
+    return input;
+}
+
+template<typename TBlock>
+void applySettings(TBlock& block) {
+    block.settings().init();
+    std::ignore = block.settings().applyStagedParameters();
+}
+
+/// @brief The output of `processBulk` over `input` in calls of `chunk` samples.
+template<typename TBlock>
+[[nodiscard]] std::vector<float> spanPath(const TBlock& block, std::span<const CF> input, std::size_t chunk) {
+    std::vector<float> output(input.size());
+    for (std::size_t base = 0UZ; base < input.size(); base += chunk) {
+        const std::size_t count = std::min(chunk, input.size() - base);
+        std::ignore             = block.processBulk(input.subspan(base, count), std::span<float>(output).subspan(base, count));
+    }
+    return output;
+}
+
+/// @brief The number of samples, over calls of the chunk sizes below, that are not `whole`'s value.
+template<typename TBlock>
+[[nodiscard]] std::size_t chunkMismatches(const TBlock& block, std::span<const CF> input, const std::vector<float>& whole) {
+    std::size_t mismatches = 0UZ;
+    for (const std::size_t chunk : {1UZ, 3UZ, 255UZ, 257UZ}) {
+        const std::vector<float> chunked = spanPath(block, input, chunk);
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            mismatches += static_cast<std::size_t>(!sameValue(chunked[i], whole[i]));
+        }
+    }
+    return mismatches;
+}
+
+/// @brief The spacing of float values at the magnitude of `value`.
+[[nodiscard]] double floatUlp(double value) {
+    using L       = std::numeric_limits<float>;
+    const int exp = std::max(std::ilogb(value), L::min_exponent - 1);
+    return std::ldexp(1.0, exp - (L::digits - 1));
+}
+
+/// @brief True when `value` is within `ulps` steps of the exact `reference`; a zero or NaN reference is matched exactly.
+[[nodiscard]] bool withinUlps(float value, double reference, double ulps) {
+    if (std::isnan(reference) || reference == 0.0) {
+        return sameValue(value, static_cast<float>(reference));
+    }
+    return std::abs(static_cast<double>(value) - reference) <= ulps * floatUlp(reference);
+}
+
+} // namespace
+
+const boost::ut::suite<"basic Abs and Arg complex span loops"> basicComplexSpans = [] {
+    using namespace boost::ut;
+    namespace math = gr::blocks::math;
+    using namespace gr::blocks::basic;
+
+    // the span path: Magnitude, Phase, Abs and Arg of complex<float>; none of the other blocks
+    static_assert(math::Magnitude<CF>::kSpanPath && math::Phase<CF>::kSpanPath);
+    static_assert(Abs<CF>::kSpanPath && Arg<CF>::kSpanPath);
+    static_assert(!Real<CF>::kSpanPath && !Imag<CF>::kSpanPath && !Abs<float>::kSpanPath && !Abs<std::int16_t>::kSpanPath && !Arg<float>::kSpanPath);
+    static_assert(!math::Abs<float>::kSpanPath && !math::MagnitudeSquared<CF>::kSpanPath && !math::Negate<CF>::kSpanPath);
+    static_assert(Abs<float>::kSimdPath && Abs<std::int16_t>::kSimdPath);
+
+    // the bound of Arg and Phase against the exact value: gr::math::scaledAtan2's, 2 ulp with g++ and 4 ulp with clang
+#if defined(__clang__)
+    constexpr double kArgUlps = 4.0;
+#else
+    constexpr double kArgUlps = 2.0;
+#endif
+
+    "Abs of complex<float> is Magnitude's, the double hypot rounded once and std::abs, at every chunk size"_test = [] {
+        Abs<CF>             block;
+        math::Magnitude<CF> reference;
+        applySettings(block);
+        applySettings(reference);
+        const std::vector<CF>     input = complexInput();
+        const std::span<const CF> in(input);
+        const std::vector<float>  whole    = spanPath(block, in, in.size());
+        const std::vector<float>  expected = spanPath(reference, in, in.size());
+
+        std::size_t mismatches = 0UZ;
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            mismatches += static_cast<std::size_t>(!sameValue(whole[i], expected[i]));
+            mismatches += static_cast<std::size_t>(!sameValue(whole[i], static_cast<float>(std::hypot(static_cast<double>(input[i].real()), static_cast<double>(input[i].imag())))));
+            mismatches += static_cast<std::size_t>(!sameValue(whole[i], std::abs(input[i])));
+        }
+        expect(eq(mismatches, 0UZ)) << "samples whose magnitude differs from Magnitude's, the double hypot or std::abs";
+        expect(eq(chunkMismatches(block, in, whole), 0UZ)) << "chunked outputs that differ from one call";
+    };
+
+    "Arg of complex<float> is Phase's and within the bound of std::atan2 of the parts, with C's zeros and NaN, at every chunk size"_test = [] {
+        Arg<CF>         block;
+        math::Phase<CF> phase;
+        applySettings(block);
+        applySettings(phase);
+        const std::vector<CF>     input = complexInput();
+        const std::span<const CF> in(input);
+        const std::vector<float>  whole    = spanPath(block, in, in.size());
+        const std::vector<float>  expected = spanPath(phase, in, in.size());
+
+        std::size_t outside = 0UZ;
+        for (std::size_t i = 0UZ; i < input.size(); ++i) {
+            outside += static_cast<std::size_t>(!sameValue(whole[i], expected[i]));
+            outside += static_cast<std::size_t>(!withinUlps(whole[i], std::atan2(static_cast<double>(input[i].imag()), static_cast<double>(input[i].real())), kArgUlps));
+        }
+        expect(eq(outside, 0UZ)) << "samples whose argument differs from Phase's or lies outside the bound";
+        expect(eq(chunkMismatches(block, in, whole), 0UZ)) << "chunked outputs that differ from one call";
+    };
+
+    "a scale and offset apply to the Abs and Arg of complex<float>"_test = [] {
+        Abs<CF> absBlock({{"scale", 2.f}, {"offset", 0.5f}});
+        Arg<CF> argBlock({{"scale", 2.f}, {"offset", 0.5f}});
+        applySettings(absBlock);
+        applySettings(argBlock);
+        const std::vector<CF>    input{{3.f, 4.f}, {0.f, 0.f}};
+        const std::vector<float> absOut = spanPath(absBlock, std::span<const CF>(input), input.size());
+        const std::vector<float> argOut = spanPath(argBlock, std::span<const CF>(input), input.size());
+        expect(eq(absOut[0], 10.5f) && eq(absOut[1], 0.5f));
+        expect(approx(argOut[0], 2.f * std::atan2(4.f, 3.f) + 0.5f, 1e-6f) && eq(argOut[1], 0.5f));
+    };
+};
