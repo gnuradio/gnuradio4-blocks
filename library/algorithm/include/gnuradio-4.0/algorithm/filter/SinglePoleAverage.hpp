@@ -28,7 +28,9 @@ namespace gr::filter {
  * one group to the next is serial. The estimate carried between groups differs from the recursion's by about ten
  * `double` roundings of the signal. A `float` output differs from the recursion's by less than one float rounding of
  * the signal, and where the stream is split into calls can change which outputs differ. Where `(1 - alpha)^8` lies
- * below `2^-256` the kernel runs the recursion one sample at a time.
+ * below `2^-256` the kernel runs the recursion one sample at a time. So it does for a group of `double` or
+ * `complex<double>` samples that holds a NaN or infinite sample, or in which the carried estimate plus a weighted sum
+ * passes the largest `double` although the estimate fits.
  *
  * `subtractExchanged()` is `subtract()` on the stream with the two components of every sample exchanged, reading the
  * samples in place of a separate pass. A sample with a NaN or infinite component leaves the estimate unchanged, and
@@ -170,16 +172,40 @@ private:
         for (std::size_t j = kWidth; j < kCount; ++j) {
             sum[j] += sum[j - kWidth];
         }
-        if (!std::isfinite(sum[kCount - kWidth]) || !std::isfinite(sum[kCount - 1UZ])) { // a NaN or infinite sample holds the estimate
-            for (std::size_t k = 0UZ; k < kBlock; ++k) {
-                output[k] = step<kResidual, kExchange>(input[k]);
+        if constexpr (std::same_as<Real, double>) {
+            // Nothing is written until every value of the group is known to be finite: the carried estimate plus a sum can
+            // pass the largest double where the scaled total would not, in any value of the group. That group runs one
+            // sample at a time, as does one with a NaN or infinite sample.
+            const std::array<double, 2UZ> start{_real, _imag};
+            bool                          finite = true;
+            for (std::size_t j = 0UZ; j < kCount; ++j) {
+                sum[j] = _decay[j / kWidth] * (start[j % kWidth] + sum[j]);
+                finite &= std::abs(sum[j]) <= std::numeric_limits<double>::max(); // false for a NaN
             }
-            return;
-        }
-        const std::array<double, 2UZ> start{_real, _imag};
-        for (std::size_t j = 0UZ; j < kCount; ++j) {
-            sum[j] = _decay[j / kWidth] * (start[j % kWidth] + sum[j]);
-            y[j]   = static_cast<Real>(kResidual ? value[j] - sum[j] : sum[j]);
+            if (!finite) {
+                for (std::size_t k = 0UZ; k < kBlock; ++k) {
+                    output[k] = step<kResidual, kExchange>(input[k]);
+                }
+                return;
+            }
+            for (std::size_t j = 0UZ; j < kCount; ++j) {
+                y[j] = static_cast<Real>(kResidual ? value[j] - sum[j] : sum[j]);
+            }
+        } else {
+            // The sums of float samples stay below 2^384 and the estimate, a mean of float samples, below 2^128, so the
+            // estimate plus a sum cannot overflow. The last sum of each component shows a NaN or infinite sample, which
+            // holds the estimate.
+            if (!std::isfinite(sum[kCount - kWidth]) || !std::isfinite(sum[kCount - 1UZ])) {
+                for (std::size_t k = 0UZ; k < kBlock; ++k) {
+                    output[k] = step<kResidual, kExchange>(input[k]);
+                }
+                return;
+            }
+            const std::array<double, 2UZ> start{_real, _imag};
+            for (std::size_t j = 0UZ; j < kCount; ++j) {
+                sum[j] = _decay[j / kWidth] * (start[j % kWidth] + sum[j]);
+                y[j]   = static_cast<Real>(kResidual ? value[j] - sum[j] : sum[j]);
+            }
         }
         _real = flushed(sum[kCount - kWidth]);
         if constexpr (kWidth == 2UZ) {

@@ -118,6 +118,142 @@ const boost::ut::suite<"SinglePoleAverage"> singlePoleAverageTests = [] {
         }
     } | std::tuple<float, std::complex<float>, double, std::complex<double>>{};
 
+    "an estimate near the top of the double range stays finite where the estimate plus the weighted sum passes it"_test = []<typename T>() {
+        using R               = RealOf<T>;
+        constexpr double kTop = 0.999 * std::numeric_limits<double>::max();
+        const auto       make = [](double re, double im) {
+            if constexpr (std::floating_point<T>) {
+                return static_cast<T>(re);
+            } else {
+                return T(static_cast<R>(re), static_cast<R>(im));
+            }
+        };
+        const auto sample  = [&](double v) { return make(v, -0.5 * v); };
+        const auto closeTo = [](double got, double want, double scale) { return std::isfinite(want) ? std::abs(got - want) <= 1e-12 * scale : got == want; };
+        for (const bool residual : {true, false}) {
+            for (const int shape : {0, 1}) { // 0: the same sample again and a group of zeros, 1: a group alternating in sign
+                SinglePoleAverage<T> average;
+                expect(fatal(average.setAlpha(1.0)));
+                double         real = 0.0;
+                double         imag = 0.0;
+                std::vector<T> got;
+                std::vector<T> want;
+                // Runs @p x through the kernel and through the recursion one sample at a time.
+                const auto run = [&](const std::vector<T>& x, double alpha) {
+                    const std::size_t    calls[] = {8UZ};
+                    const std::vector<T> y       = drive(average, std::span<const T>(x), std::span<const std::size_t>(calls), residual);
+                    got.insert(got.end(), y.begin(), y.end());
+                    for (const T& v : x) {
+                        const double xr = static_cast<double>(std::real(v));
+                        const double xi = static_cast<double>(std::imag(v));
+                        real            = alpha * xr + (1.0 - alpha) * real;
+                        imag            = alpha * xi + (1.0 - alpha) * imag;
+                        want.push_back(residual ? make(xr - real, xi - imag) : make(real, imag));
+                    }
+                };
+                const std::size_t outputsBefore = got.size();
+                run(std::vector<T>(1UZ, sample(kTop)), 1.0);
+                expect(fatal(average.setAlpha(0.001)));
+                if (shape == 0) {
+                    run(std::vector<T>(8UZ, sample(kTop)), 0.001);
+                } else {
+                    std::vector<T> alternating;
+                    for (std::size_t i = 0UZ; i < 8UZ; ++i) {
+                        alternating.push_back(sample(i % 2UZ == 0UZ ? kTop : -kTop));
+                    }
+                    run(alternating, 0.001);
+                }
+                bool allClose  = true;
+                bool allFinite = true;
+                for (std::size_t i = outputsBefore; i < got.size(); ++i) {
+                    const double scale = kTop;
+                    allClose           = allClose && closeTo(static_cast<double>(std::real(got[i])), static_cast<double>(std::real(want[i])), scale) && closeTo(static_cast<double>(std::imag(got[i])), static_cast<double>(std::imag(want[i])), scale);
+                    allFinite          = allFinite && std::isfinite(std::real(got[i])) && std::isfinite(std::imag(got[i]));
+                }
+                const auto estimate = std::complex<double>(average.estimate());
+                expect(allClose) << std::format("{} shape {}: every output is the recursion's", residual ? "subtract" : "average", shape);
+                expect(allFinite || (residual && shape == 1)) << "and finite, a residual of opposite signs apart";
+                expect(std::isfinite(estimate.real()) && std::isfinite(estimate.imag())) << "the estimate is finite";
+                expect(closeTo(estimate.real(), real, kTop) && closeTo(estimate.imag(), imag, kTop)) << "and the recursion's";
+
+                if (shape == 0) { // the estimate decays as the recursion's does
+                    run(std::vector<T>(8UZ, T{}), 0.001);
+                    const auto after = std::complex<double>(average.estimate());
+                    expect(closeTo(after.real(), real, std::abs(real)) && closeTo(after.imag(), imag, std::abs(imag)) && std::abs(after.real()) < std::abs(estimate.real())) << "a group of zeros takes the estimate down as the recursion does";
+                }
+            }
+        }
+    } | std::tuple<double, std::complex<double>>{};
+
+    "an aliased output, either component near the top and the exchanged stream give the recursion's results"_test = []<typename T>() {
+        using R               = RealOf<T>;
+        constexpr double kTop = 0.999 * std::numeric_limits<double>::max();
+        enum class Call { subtract, average, exchanged };
+        const auto make = [](double re, double im) {
+            if constexpr (std::floating_point<T>) {
+                return static_cast<T>(re);
+            } else {
+                return T(static_cast<R>(re), static_cast<R>(im));
+            }
+        };
+        const auto closeTo = [](double got, double want) { return std::isfinite(want) ? std::abs(got - want) <= 1e-12 * kTop : got == want; };
+        for (const Call call : {Call::subtract, Call::average, Call::exchanged}) {
+            if (call == Call::exchanged && std::floating_point<T>) {
+                continue; // exchanging components needs a complex stream
+            }
+            for (const bool aliased : {false, true}) {
+                for (const bool imagTop : {false, true}) { // the component that overflows
+                    if (imagTop && std::floating_point<T>) {
+                        continue;
+                    }
+                    const auto           sample = [&](double v) { return imagTop ? make(-0.5 * v, v) : make(v, -0.5 * v); };
+                    SinglePoleAverage<T> average;
+                    double               real = 0.0;
+                    double               imag = 0.0;
+                    bool                 same = true;
+                    // Runs one group of samples through the kernel, in place when @p aliased, and through the recursion.
+                    const auto run = [&](const std::vector<T>& x, double alpha) {
+                        expect(fatal(average.setAlpha(alpha)));
+                        std::vector<T> buffer = x;
+                        std::vector<T> out(aliased ? 0UZ : x.size());
+                        std::span<T>   to   = aliased ? std::span<T>(buffer) : std::span<T>(out);
+                        const auto     from = std::span<const T>(buffer);
+                        if (call == Call::exchanged) {
+                            if constexpr (!std::floating_point<T>) {
+                                average.subtractExchanged(from, to);
+                            }
+                        } else if (call == Call::subtract) {
+                            average.subtract(from, to);
+                        } else {
+                            average.average(from, to);
+                        }
+                        for (std::size_t i = 0UZ; i < x.size(); ++i) {
+                            double xr = static_cast<double>(std::real(x[i]));
+                            double xi = static_cast<double>(std::imag(x[i]));
+                            if (call == Call::exchanged) {
+                                std::swap(xr, xi);
+                            }
+                            real         = alpha * xr + (1.0 - alpha) * real;
+                            imag         = alpha * xi + (1.0 - alpha) * imag;
+                            const T want = call == Call::average ? make(real, imag) : make(xr - real, xi - imag);
+                            same         = same && closeTo(static_cast<double>(std::real(to[i])), static_cast<double>(std::real(want))) && closeTo(static_cast<double>(std::imag(to[i])), static_cast<double>(std::imag(want)));
+                        }
+                    };
+                    run(std::vector<T>(1UZ, sample(kTop)), 1.0);
+                    run(std::vector<T>(8UZ, sample(kTop)), 0.001);
+                    std::vector<T> alternating;
+                    for (std::size_t i = 0UZ; i < 8UZ; ++i) {
+                        alternating.push_back(sample(i % 2UZ == 0UZ ? kTop : -kTop));
+                    }
+                    run(alternating, 0.001);
+                    const auto estimate = std::complex<double>(average.estimate());
+                    expect(same) << std::format("call {} aliased {} imaginary {}: every output is the recursion's", static_cast<int>(call), aliased, imagTop);
+                    expect(closeTo(estimate.real(), real) && closeTo(estimate.imag(), imag)) << "and the estimate";
+                }
+            }
+        }
+    } | std::tuple<double, std::complex<double>>{};
+
     "a NaN or infinite sample holds the estimate, inside a group of eight and on its own"_test = []<typename T>() {
         using R                      = RealOf<T>;
         constexpr std::size_t kAt    = 1000UZ; // a multiple of eight: both averages solve the same groups
