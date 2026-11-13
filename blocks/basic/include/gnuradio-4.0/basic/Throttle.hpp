@@ -73,6 +73,10 @@ The block is 1:1. Every input tag leaves at its own offset with the values it ar
 
     void reset() { restart(); }
 
+    // Re-anchor the schedule to the samples already paced, so neither paused time nor an earlier stall causes a
+    // catch-up burst after resuming. The next sample waits one full period.
+    void resume() { _origin = Clock::now() - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(_period * static_cast<double>(_total))); }
+
     void restart() noexcept {
         _origin = Clock::now();
         _total  = 0ULL;
