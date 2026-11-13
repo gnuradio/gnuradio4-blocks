@@ -60,10 +60,12 @@ struct Phasor {
     Lane _lane{};
 
     /// The chirp's own phase frame, live while `_chirpActive`: the exact phase and increment at the start of the
-    /// current interval and the samples since then, in [0, kReseedInterval). A chirp's increment is not
-    /// constant, so the lane machinery does not serve it.
+    /// current interval, the step the increment grows by per sample, and the samples since the interval began, in
+    /// [0, kReseedInterval]. A chirp's increment is not constant, so the lane machinery does not serve it.
+    /// phase() and increment() answer the frame's values at `_position`.
     double      _seedPhase{0.};
     double      _increment{0.};
+    double      _step{0.};
     std::size_t _position{0UZ};
     bool        _chirpActive{false};
 
@@ -103,8 +105,16 @@ struct Phasor {
         _lane.setPhase(newPhase);
     }
 
-    [[nodiscard]] double phase() const noexcept { return _chirpActive ? wrapPhase(_seedPhase + static_cast<double>(_position) * _increment) : _lane.phase(); }
-    [[nodiscard]] double increment() const noexcept { return _chirpActive ? _increment : _lane.increment(); }
+    /// While a chirp runs these are the phase and increment of the next sample: the interval's seed plus what the
+    /// sweep has added over `_position` samples, `step * p * (p - 1) / 2` of phase and `p * step` of increment.
+    [[nodiscard]] double phase() const noexcept {
+        if (!_chirpActive) {
+            return _lane.phase();
+        }
+        const double p = static_cast<double>(_position);
+        return wrapPhase(_seedPhase + p * _increment + _step * p * (p - 1.) * 0.5);
+    }
+    [[nodiscard]] double increment() const noexcept { return _chirpActive ? _increment + static_cast<double>(_position) * _step : _lane.increment(); }
 
     /// Moves the phase by nSamples increments and re-anchors the generation grid there.
     void advance(std::ptrdiff_t nSamples) noexcept {
@@ -149,8 +159,8 @@ struct Phasor {
     ///
     /// The schedule a linear frequency sweep produces is arithmetic, so the phasor needs no transcendental per
     /// sample: it is multiplied by a rotator which is itself multiplied by a constant. Set the starting increment
-    /// with `setIncrement` before the first call; a chirp and a plain fill are two state machines over the same
-    /// phase, so a given Phasor runs one or the other, not both at once.
+    /// with `setIncrement` before the first call. A fixed-increment call after a chirp continues from the phase
+    /// and increment the chirp has reached; `phase()` and `increment()` report them while it runs.
     void fillChirp(double incrementStep, std::span<Complex> out) noexcept { chirp<false>(incrementStep, {}, out); }
 
     /// @brief Multiplies `in` by that chirp into `out`, over `min(in.size(), out.size())` samples.
@@ -161,20 +171,28 @@ private:
     /// calls continue from where it stopped.
     void leaveChirp() noexcept {
         if (_chirpActive) {
-            _lane.configure(_increment, phase());
+            _lane.configure(increment(), phase());
             _chirpActive = false;
         }
     }
 
-    /// Starts the chirp frame at the lane stream's phase and increment.
-    void enterChirp() noexcept {
+    /// Starts the chirp frame at the lane stream's phase and increment, or, when the step differs from the running
+    /// chirp's, at the exact phase and increment that chirp has reached.
+    void enterChirp(double incrementStep) noexcept {
         if (!_chirpActive) {
             _seedPhase   = _lane.phase();
             _increment   = _lane.increment();
-            _position    = 0UZ;
             _chirpActive = true;
-            _chirpValid  = false;
+        } else if (incrementStep != _step) {
+            const double newPhase = phase();
+            _increment            = increment();
+            _seedPhase            = newPhase;
+        } else {
+            return;
         }
+        _step       = incrementStep;
+        _position   = 0UZ;
+        _chirpValid = false;
     }
 
     /// Seeds the chirp pair at offset 0 of the current interval, where the exact phase is `_seedPhase` and the
@@ -201,7 +219,7 @@ private:
         if (nSamples == 0UZ) {
             return;
         }
-        enterChirp();
+        enterChirp(incrementStep);
         if (!_chirpValid) {
             seedChirp();
         }
