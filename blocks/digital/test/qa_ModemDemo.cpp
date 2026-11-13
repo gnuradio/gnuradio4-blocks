@@ -104,7 +104,7 @@ struct Payload {
     boost::ut::expect(graph.connect<"out", "in">(timing, costas).has_value());
     boost::ut::expect(graph.connect<"out", "in">(costas, sink).has_value());
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     const auto run = scheduler.runAndWait();
     boost::ut::expect(run.has_value()) << (run.has_value() ? std::string{} : run.error().message);

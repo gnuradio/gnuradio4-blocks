@@ -203,7 +203,7 @@ struct Run {
     if (!graph.connect<"out", "spectra">(source, block).has_value() || !graph.connect<"measurements", "in">(block, sink).has_value()) {
         return {};
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     if (!scheduler.exchange(std::move(graph)).has_value()) {
         return {};
     }
@@ -855,7 +855,7 @@ const boost::ut::suite<"SpectralKurtosis"> spectralKurtosisTests = [] {
             expect(fatal(graph.connect<"out", "in">(source, welch).has_value()));
             expect(fatal(graph.connect<"out", "spectra">(welch, block).has_value()));
             expect(fatal(graph.connect<"measurements", "in">(block, sink).has_value()));
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(fatal(scheduler.exchange(std::move(graph)).has_value()));
             expect(scheduler.runAndWait().has_value());
 
@@ -1171,7 +1171,7 @@ const boost::ut::suite<"SpectralKurtosis"> spectralKurtosisTests = [] {
         Rng       rng(0x3f84d5b5b5470917ULL);
         source.records = noiseRows(rng, 16UZ, 8UZ, 1UZ);
         expect(fatal(graph.connect<"out", "spectra">(source, block).has_value()));
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(fatal(scheduler.exchange(std::move(graph)).has_value()));
         expect(scheduler.runAndWait().has_value()) << "the graph runs with the record port unconnected";
         expect(eq(block.nRecords(), std::uint64_t{2ULL})) << "and the block measures every accumulation";

@@ -298,7 +298,7 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         expect(graph.connect<"out", "in">(source, filter).has_value());
         expect(graph.connect<"out", "in">(filter, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -340,7 +340,7 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
         expect(graph.connect<"out", "in">(source, filter).has_value());
         expect(graph.connect<"out", "in">(filter, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -554,7 +554,7 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
             expect(graph.connect<"out", "in">(source, filter).has_value());
             expect(fatal(sinks.has_value()));
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
 
@@ -579,7 +579,7 @@ const boost::ut::suite<"fir filter"> firFilterTests = [] {
 
         expect(graph.connect<"out", "in">(source, filter).has_value());
         expect(fatal(sinks.has_value()));
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 

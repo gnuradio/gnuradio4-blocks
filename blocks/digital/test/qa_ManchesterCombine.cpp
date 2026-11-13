@@ -181,7 +181,7 @@ struct Combined {
     boost::ut::expect(flow.connect<"chip_phase", "in">(block, phase).has_value());
     boost::ut::expect(flow.connect<"confidence", "in">(block, confidence).has_value());
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(flow)).has_value()) << boost::ut::fatal;
     boost::ut::expect(scheduler.runAndWait().has_value()) << boost::ut::fatal;
 

@@ -49,7 +49,7 @@ std::vector<CenterAt> centersThroughHeldRotator(const std::vector<CenterAt>& tag
     expect(flow.connect<"out", "in">(source, rotator).has_value()) << fatal;
     expect(flow.connect<"out", "in">(rotator, sink).has_value()) << fatal;
 
-    gr::scheduler::Simple sched;
+    gr::scheduler::Simple<> sched;
     expect(sched.exchange(std::move(flow)).has_value()) << fatal;
     expect(sched.runAndWait().has_value()) << "the run ends without an error";
     expect(eq(sink._samples.size(), static_cast<std::size_t>(kTagSamples))) << "every sample leaves";
@@ -206,7 +206,7 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         expect(flow.connect<"out", "in">(source, rotator).has_value());
         expect(flow.connect<"out", "in">(rotator, sink).has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         expect(sched.exchange(std::move(flow)).has_value());
         expect(sched.runAndWait().has_value());
 
@@ -272,7 +272,7 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
         expect(flow.connect<"out", "in">(source, rotator).has_value()) << fatal;
         expect(flow.connect<"out", "in">(rotator, sink).has_value()) << fatal;
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         expect(sched.exchange(std::move(flow)).has_value()) << fatal;
         const auto result = sched.runAndWait();
         expect(result.has_value()) << (result.has_value() ? std::string() : std::string(result.error().message));
@@ -294,7 +294,7 @@ const boost::ut::suite<"basic math tests"> basicMath = [] {
             expect(flow.connect<"out", "in">(source, rotator).has_value()) << fatal;
             expect(flow.connect<"out", "in">(rotator, sink).has_value()) << fatal;
 
-            gr::scheduler::Simple sched;
+            gr::scheduler::Simple<> sched;
             expect(sched.exchange(std::move(flow)).has_value()) << fatal;
             expect(sched.runAndWait().has_value()) << "the run ends without an error";
 

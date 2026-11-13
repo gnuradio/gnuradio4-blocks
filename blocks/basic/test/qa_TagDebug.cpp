@@ -78,8 +78,8 @@ struct Run {
     boost::ut::expect(graph.connect<"out", "in">(source, debug).has_value());
     boost::ut::expect(graph.connect<"out", "in">(debug, sink).has_value());
 
-    Run                   run;
-    gr::scheduler::Simple scheduler; // owns the blocks once it holds the graph
+    Run                     run;
+    gr::scheduler::Simple<> scheduler; // owns the blocks once it holds the graph
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     {
         CoutCapture capture;
