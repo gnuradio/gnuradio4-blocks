@@ -85,16 +85,18 @@ struct OutSpan : std::span<T> {
     void publishTag(const gr::property_map& tagData, std::size_t tagOffset = 0UZ) { sink->push_back(gr::Tag{streamIndex + tagOffset, tagData}); }
 };
 
+// not `Result`: MSVC resolves the function-local `Result` in core's Graph::connect() to a namespace-scope template of
+// that name
 template<typename T>
-struct Result {
+struct DriveResult {
     std::vector<T>       samples{};
     std::vector<gr::Tag> tags{};
 };
 
 /// @brief Drive @p block over @p input in chunks of @p chunkSize, calling @p before with the absolute offset of each.
 template<typename T, typename FBefore>
-[[nodiscard]] Result<T> drive(SampleDelay<T>& block, std::span<const T> input, std::size_t chunkSize, std::span<const gr::Tag> tags, FBefore&& before) {
-    Result<T>         result;
+[[nodiscard]] DriveResult<T> drive(SampleDelay<T>& block, std::span<const T> input, std::size_t chunkSize, std::span<const gr::Tag> tags, FBefore&& before) {
+    DriveResult<T>    result;
     const std::size_t stride = chunkSize == 0UZ ? std::max(input.size(), 1UZ) : chunkSize;
     std::vector<T>    scratch(stride);
 
@@ -365,7 +367,7 @@ const boost::ut::suite<"SampleDelay"> sampleDelayTests = [] {
         const std::vector<float>   x = ramp<float>(120UZ);
 
         SampleDelay<float>       lengthen = make<SampleDelay<float>>({{"delay", 24U}});
-        const Result<float>      up       = drive<float>(lengthen, x, 4UZ, std::span<const gr::Tag>(tags), [&lengthen](std::size_t base) {
+        const DriveResult<float> up       = drive<float>(lengthen, x, 4UZ, std::span<const gr::Tag>(tags), [&lengthen](std::size_t base) {
             if (base == 32UZ) {
                 setDelay(lengthen, 32U);
             }
@@ -376,8 +378,8 @@ const boost::ut::suite<"SampleDelay"> sampleDelayTests = [] {
         }
         expect(that % (where == std::vector<std::size_t>{42UZ, 62UZ})) << "a pending tag comes out D_new after its sample, not D_old";
 
-        SampleDelay<float>  shorten = make<SampleDelay<float>>({{"delay", 24U}});
-        const Result<float> down    = drive<float>(shorten, x, 4UZ, std::span<const gr::Tag>(tags), [&shorten](std::size_t base) {
+        SampleDelay<float>       shorten = make<SampleDelay<float>>({{"delay", 24U}});
+        const DriveResult<float> down    = drive<float>(shorten, x, 4UZ, std::span<const gr::Tag>(tags), [&shorten](std::size_t base) {
             if (base == 32UZ) {
                 setDelay(shorten, 8U);
             }

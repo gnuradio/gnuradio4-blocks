@@ -38,7 +38,7 @@ enum class ProcessFunction {
     USE_PROCESS_ONE  = 1  ///
 };
 
-inline constexpr void print_tag(const Tag& tag, std::string_view prefix = {}) noexcept {
+inline void print_tag(const Tag& tag, std::string_view prefix = {}) noexcept {
     if (tag.map.empty()) {
         std::print("{} @index= {}: map: {{ <empty map> }}\n", prefix, tag.index);
         return;
@@ -47,7 +47,7 @@ inline constexpr void print_tag(const Tag& tag, std::string_view prefix = {}) no
 }
 
 template<typename MapType>
-inline constexpr void map_diff_report(const MapType& map1, const MapType& map2, const std::string& name1, const std::string& name2, const std::optional<std::vector<std::string>>& ignoreKeys = std::nullopt) {
+inline void map_diff_report(const MapType& map1, const MapType& map2, const std::string& name1, const std::string& name2, const std::optional<std::vector<std::string>>& ignoreKeys = std::nullopt) {
     const auto skipKey = [&](const auto& key) { return ignoreKeys != std::nullopt && std::ranges::find(ignoreKeys.value(), convert_string_domain(key)) != ignoreKeys.value().end(); };
 
     for (const auto& [key, value] : map1) {
@@ -71,7 +71,7 @@ inline constexpr void map_diff_report(const MapType& map1, const MapType& map2, 
 }
 
 template<typename IterType>
-inline constexpr void mismatch_report(const IterType& mismatchedTag1, const IterType& mismatchedTag2, const IterType& tags1_begin, const std::optional<std::vector<std::string>>& ignoreKeys = std::nullopt) {
+inline void mismatch_report(const IterType& mismatchedTag1, const IterType& mismatchedTag2, const IterType& tags1_begin, const std::optional<std::vector<std::string>>& ignoreKeys = std::nullopt) {
     const auto index = static_cast<std::size_t>(std::distance(tags1_begin, mismatchedTag1));
     std::print("mismatch at index {}", index);
     if (mismatchedTag1->index != mismatchedTag2->index) {
@@ -85,7 +85,7 @@ inline constexpr void mismatch_report(const IterType& mismatchedTag1, const Iter
     }
 }
 
-inline constexpr bool equal_tag_lists(const std::vector<Tag>& tags1, const std::vector<Tag>& tags2, const std::optional<std::vector<std::string>>& ignoreKeys = std::nullopt, std::ptrdiff_t indexTolerance = 0) {
+inline bool equal_tag_lists(const std::vector<Tag>& tags1, const std::vector<Tag>& tags2, const std::optional<std::vector<std::string>>& ignoreKeys = std::nullopt, std::ptrdiff_t indexTolerance = 0) {
     if (tags1.size() != tags2.size()) {
         std::println("vectors have different sizes ({} vs {})\n", tags1.size(), tags2.size());
         return false;
