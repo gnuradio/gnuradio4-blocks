@@ -55,7 +55,7 @@ std::string runChain(gr::property_map sourceSettings, gr::property_map sinkSetti
     if (!graph.connect<"out", "in">(source, sink).has_value()) {
         return "connect failed";
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     if (auto exchanged = scheduler.exchange(std::move(graph)); !exchanged) {
         return "exchange failed";
     }

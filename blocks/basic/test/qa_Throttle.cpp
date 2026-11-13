@@ -143,7 +143,7 @@ const boost::ut::suite<"Throttle"> throttleTests = [] {
         expect(graph.connect<"out", "in">(source, throttle).has_value());
         expect(graph.connect<"out", "in">(throttle, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -352,7 +352,7 @@ const boost::ut::suite<"Throttle"> throttleTests = [] {
         expect(graph.connect<"out", "in">(source, throttle).has_value());
         expect(graph.connect<"out", "in">(throttle, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(fatal(scheduler.exchange(std::move(graph)).has_value()));
         std::thread runner([&scheduler] { std::ignore = scheduler.runAndWait(); });
 

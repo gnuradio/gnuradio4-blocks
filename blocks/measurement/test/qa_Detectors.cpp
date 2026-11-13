@@ -109,7 +109,7 @@ template<typename TBlock>
     if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
         return {};
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     if (!scheduler.exchange(std::move(graph)).has_value()) {
         return {};
     }

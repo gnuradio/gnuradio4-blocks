@@ -153,7 +153,7 @@ template<typename TBlock>
     if (!graph.connect<"out", "in">(source, block).has_value() || !sinks.has_value()) {
         return run;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     run.ran        = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     run.samples    = sinks->end._samples.size();
     run.endIndex   = sinks->end.endIndex();
@@ -206,7 +206,7 @@ struct RetunedRun {
     if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
         return run;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     run.ran              = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     run.samples          = std::vector<float>(sink._samples.begin(), sink._samples.end());
     run.interval         = block.reseed_interval.value;
@@ -416,7 +416,7 @@ template<typename TBlock>
     if (!graph.connect<"out", "in">(source, block).has_value() || !sinks.has_value()) {
         return run;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     run.ran     = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     run.samples = std::vector<float>(sinks->end._samples.begin(), sinks->end._samples.end());
     run.tags    = sinks->end._tags;

@@ -473,7 +473,7 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
             expect(graph.connect<"out", "in">(source, resampler).has_value());
             expect(graph.connect<"out", "in">(resampler, sink).has_value());
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
 
@@ -517,7 +517,7 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
         expect(graph.connect<"out", "in">(source, block).has_value());
         expect(fatal(sinks.has_value()));
         expect(gt(block.groupDelaySamples(), 2.0)) << "the designed prototype delays the last two inputs past the last output";
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -541,7 +541,7 @@ const boost::ut::suite<"rational resampler"> rationalResamplerTests = [] {
         expect(graph.connect<"out", "in">(source, block).has_value());
         expect(fatal(sinks.has_value()));
         expect(eq(block.input_chunk_size.value, 160U)) << "the ratio does not reduce";
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 

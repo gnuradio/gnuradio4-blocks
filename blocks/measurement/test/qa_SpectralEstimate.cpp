@@ -303,7 +303,7 @@ template<typename TBlock, typename T>
     if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
         return {};
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     if (!scheduler.exchange(std::move(graph)).has_value()) {
         return {};
     }
@@ -325,7 +325,7 @@ template<typename TBlock>
     if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
         return 0UZ;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     if (!scheduler.exchange(std::move(graph)).has_value()) {
         return 0UZ;
     }
@@ -346,7 +346,7 @@ template<typename TBlock>
     if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
         return {};
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     if (!scheduler.exchange(std::move(graph)).has_value()) {
         return {};
     }
@@ -428,8 +428,8 @@ template<typename TBlock>
     if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
         return {-1., 0.};
     }
-    const auto            started = std::chrono::steady_clock::now();
-    gr::scheduler::Simple scheduler;
+    const auto              started = std::chrono::steady_clock::now();
+    gr::scheduler::Simple<> scheduler;
     if (!scheduler.exchange(std::move(graph)).has_value()) {
         return {-1., 0.};
     }
@@ -454,8 +454,8 @@ template<typename TBlock>
     if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
         return {0., 0UZ};
     }
-    const auto            started = std::chrono::steady_clock::now();
-    gr::scheduler::Simple scheduler;
+    const auto              started = std::chrono::steady_clock::now();
+    gr::scheduler::Simple<> scheduler;
     if (!scheduler.exchange(std::move(graph)).has_value()) {
         return {0., 0UZ};
     }
@@ -887,7 +887,7 @@ const boost::ut::suite<"SpectralEstimate"> spectralTests = [] {
             if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
                 return outcome;
             }
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             if (!scheduler.exchange(std::move(graph)).has_value()) {
                 return outcome;
             }
@@ -1077,7 +1077,7 @@ const boost::ut::suite<"SpectralEstimate"> spectralTests = [] {
         source.tags.push_back(gr::Tag{kAt, std::move(moveTo)});
 
         expect(graph.connect<"out", "in">(source, block).has_value() && graph.connect<"out", "in">(block, sink).has_value()) << fatal;
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value()) << fatal;
         std::ignore = scheduler.runAndWait();
 

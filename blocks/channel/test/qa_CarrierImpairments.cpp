@@ -87,7 +87,7 @@ template<typename TMiddle>
     boost::ut::expect(graph.connect<"freq", "in">(loop, frequencySink).has_value());
     boost::ut::expect(graph.connect<"phase", "in">(loop, phaseSink).has_value());
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
     boost::ut::expect(scheduler.runAndWait().has_value());
     return {std::vector<float>(frequencySink._samples.begin(), frequencySink._samples.end()), std::vector<float>(phaseSink._samples.begin(), phaseSink._samples.end()), std::vector<C>(outSink._samples.begin(), outSink._samples.end())};
