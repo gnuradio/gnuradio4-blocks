@@ -45,7 +45,7 @@ template<std::uint8_t R, std::uint8_t G, std::uint8_t B, bool isForegroundColour
     return std::string_view{ansi_string.data(), ansi_string.size};
 }
 
-[[nodiscard]] inline constexpr std::string makeAnsi(const Colour& c, bool isForegroundColour = true) { return std::format("\x1b[{};2;{};{};{}m", isForegroundColour ? "38" : "48", c.r, c.g, c.b); }
+[[nodiscard]] inline std::string makeAnsi(const Colour& c, bool isForegroundColour = true) { return std::format("\x1b[{};2;{};{};{}m", isForegroundColour ? "38" : "48", c.r, c.g, c.b); }
 
 constexpr std::string_view RESET = "\x1b[0m";
 
@@ -872,7 +872,7 @@ public:
     constexpr void clear(const Style& s = {}) {
         std::fill(_grapheme.begin(), _grapheme.end(), " ");
         std::fill(_style.begin(), _style.end(), s);
-        std::fill(_mask.begin(), _mask.end(), 0U);
+        std::fill(_mask.begin(), _mask.end(), std::uint8_t{0});
         std::fill(_blocked.begin(), _blocked.end(), false);
         std::fill(_ownE1.begin(), _ownE1.end(), 0ULL);
         std::fill(_ownE2.begin(), _ownE2.end(), 0ULL);
