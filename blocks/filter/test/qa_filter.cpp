@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <format>
 #include <initializer_list>
@@ -630,6 +631,120 @@ const boost::ut::suite<"tag placement"> TagPlacementTests = [] {
         expect(that % (got.offsetsOf(gr::tag::TRIGGER_META_INFO.key()) == std::vector<std::size_t>{100UZ})) << "the framework's tag on its own input";
         expect(std::ranges::is_sorted(got.tags, std::ranges::less{}, &gr::Tag::index)) << "the tags published in index order";
     };
+};
+
+namespace {
+
+/// @brief Sample @p i of a test stream: values that tell their index apart, so a phase that is off by one is a different value.
+template<typename T>
+[[nodiscard]] T streamSample(std::size_t i) {
+    if constexpr (gr::meta::complex_like<T>) {
+        return T(static_cast<float>(i % 97UZ) * 0.25f - 10.0f, static_cast<float>(i % 13UZ) - 6.0f);
+    } else if constexpr (std::floating_point<T>) {
+        return static_cast<T>(static_cast<float>(i % 97UZ) * 0.25f - 10.0f);
+    } else {
+        return static_cast<T>(static_cast<int>(i * 37UZ % 1000UZ) - 500);
+    }
+}
+
+/// @brief A value no sample of the test stream has.
+template<typename T>
+[[nodiscard]] T sentinelValue() {
+    if constexpr (gr::meta::complex_like<T>) {
+        return T(-12345.0f, -12345.0f);
+    } else {
+        return static_cast<T>(-12345);
+    }
+}
+
+template<typename T>
+[[nodiscard]] std::vector<T> makeStream(std::size_t n) {
+    std::vector<T> stream(n);
+    for (std::size_t i = 0UZ; i < n; ++i) {
+        stream[i] = streamSample<T>(i);
+    }
+    return stream;
+}
+
+/// @brief The decimated stream sample by sample: the input at every `decimation`-th index.
+template<typename T>
+[[nodiscard]] std::vector<T> referenceDecimated(const std::vector<T>& stream, std::size_t decimation) {
+    std::vector<T> reference;
+    for (std::size_t i = 0UZ; i < stream.size(); ++i) {
+        if (i % decimation == 0UZ) {
+            reference.push_back(stream[i]);
+        }
+    }
+    return reference;
+}
+
+/// @brief The chunk sizes, in decimation periods, the cases cut a stream of @p periods into: the framework hands a
+/// resampling block whole periods only, in calls of any count of them.
+[[nodiscard]] inline std::vector<std::vector<std::size_t>> periodChunkings(std::size_t periods) { return {{periods}, std::vector<std::size_t>(periods, 1UZ), {1UZ, 2UZ, 3UZ, periods - 6UZ}, {periods - 1UZ, 1UZ}}; }
+
+} // namespace
+
+const boost::ut::suite<"Decimator output"> DecimatingOutputTests = [] {
+    using namespace boost::ut;
+    using namespace gr::blocks::filter;
+    using namespace std::string_literals;
+
+    constexpr static std::size_t kPeriods = 24UZ;
+
+    "Decimator keeps the first sample of each period for every chunking"_test = []<typename T>() {
+        for (const std::size_t decimation : {1UZ, 2UZ, 3UZ, 10UZ, 130UZ}) {
+            const std::vector<T> stream    = makeStream<T>(kPeriods * decimation);
+            const std::vector<T> reference = referenceDecimated(stream, decimation);
+            expect(eq(reference.size(), kPeriods));
+            Decimator<T> block;
+            block.decim = static_cast<gr::Size_t>(decimation);
+            for (const std::vector<std::size_t>& chunking : periodChunkings(kPeriods)) {
+                std::vector<T> got;
+                std::size_t    at = 0UZ;
+                for (const std::size_t periods : chunking) {
+                    std::vector<T> out(periods, T{});
+                    std::ignore = block.processBulk(std::span<const T>(stream.data() + at, periods * decimation), std::span<T>(out));
+                    got.insert(got.end(), out.begin(), out.end());
+                    at += periods * decimation;
+                }
+                expect(eq(at, stream.size()));
+                expect(got == reference) << std::format("decimation {}, {} calls", decimation, chunking.size());
+            }
+        }
+    } | std::tuple<std::complex<float>, float, std::int16_t>{};
+
+    "Decimator makes no output, and writes none, for fewer inputs than one period"_test = [] {
+        Decimator<float> block;
+        block.decim                        = 130U;
+        const std::vector<float> stream    = makeStream<float>(100UZ);
+        constexpr float          kSentinel = -12345.0f;
+        std::vector<float>       out(1UZ, kSentinel); // no period completes: the block gets a span of zero elements
+        std::ignore = block.processBulk(std::span<const float>(stream), std::span<float>(out).first(0UZ));
+        expect(eq(out[0], kSentinel));
+    };
+
+    "Decimator writes one output a whole period only"_test = []<typename T>() {
+        for (const std::size_t decimation : {2UZ, 3UZ, 10UZ}) {
+            const std::vector<T> stream = makeStream<T>(4UZ * decimation - 1UZ); // three periods and all but one sample
+            Decimator<T>         block;
+            block.decim             = static_cast<gr::Size_t>(decimation);
+            const T        sentinel = sentinelValue<T>();
+            std::vector<T> out(4UZ, sentinel); // one element more than the whole periods: the partial one must leave it alone
+            std::ignore = block.processBulk(std::span<const T>(stream), std::span<T>(out).first(3UZ));
+            expect(std::vector<T>(out.begin(), out.begin() + 3) == referenceDecimated(makeStream<T>(3UZ * decimation), decimation)) << std::format("decimation {}", decimation);
+            expect(out[3] == sentinel) << std::format("decimation {}", decimation);
+        }
+    } | std::tuple<std::complex<float>, float, std::int16_t>{};
+
+    "the reference tells a phase off by one apart"_test = []<typename T>() {
+        // the test's own check: a stream whose sample 1 differs from sample 0 makes a decimation by 2 that starts one sample late a different stream
+        const std::vector<T> stream = makeStream<T>(8UZ);
+        std::vector<T>       late;
+        for (std::size_t i = 1UZ; i < stream.size(); i += 2UZ) {
+            late.push_back(stream[i]);
+        }
+        expect(late != referenceDecimated(stream, 2UZ));
+    } | std::tuple<std::complex<float>, float, std::int16_t>{};
 };
 
 int main() { /* not needed for UT */ }
