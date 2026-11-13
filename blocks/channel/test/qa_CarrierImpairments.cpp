@@ -158,6 +158,54 @@ const boost::ut::suite<"carrier impairments"> carrierTests = [] {
         }
     };
 
+    // a settings change goes through the phasor's chirp-to-fixed handoff; the phase must run on from where the
+    // sweep had put it, against the block's own schedule: the increment at stream sample m is
+    // 2*pi*f0/fs + step*(m + 1/2) while drift is on, 2*pi*f0/fs while it is off
+    "a settings change during a drift leaves the phase continuous"_test = [] {
+        constexpr std::size_t kBefore = 600UZ;
+        constexpr std::size_t kAfter  = 400UZ;
+        constexpr double      fs      = 1.0e6;
+        constexpr double      rate    = 5.0e6;
+        constexpr double      f0      = 20000.;
+        constexpr double      step    = kTwoPi * rate / (fs * fs);
+        const std::vector<C>  input(kBefore + kAfter, C(1.f, 0.f));
+
+        struct Change {
+            const char*      name;
+            gr::property_map settings;
+            double           newOffset;
+            double           newRate;
+        };
+        const std::vector<Change> changes{
+            {"drift set to zero", {{"drift", 0.}}, f0, 0.},
+            {"frequency_offset changed, drift kept", {{"frequency_offset", 45000.}}, 45000., rate},
+        };
+        for (const auto& change : changes) {
+            auto           block = configured<FrequencyOffset<C>>({{"sample_rate", static_cast<float>(fs)}, {"frequency_offset", f0}, {"drift", rate}});
+            std::vector<C> out(input.size());
+            std::ignore = block.processBulk(std::span<const C>(input).first(kBefore), std::span<C>(out).first(kBefore));
+            std::ignore = block.settings().setStaged(change.settings);
+            std::ignore = block.settings().applyStagedParameters();
+            std::ignore = block.processBulk(std::span<const C>(input).subspan(kBefore), std::span<C>(out).subspan(kBefore));
+
+            double      phase   = 0.;
+            double      worst   = 0.;
+            std::size_t worstAt = 0UZ;
+            for (std::size_t m = 0UZ; m < input.size(); ++m) {
+                const double gap = std::abs(std::complex<double>(out[m]) - std::polar(1., phase));
+                if (gap > worst) {
+                    worst   = gap;
+                    worstAt = m;
+                }
+                const bool   after = m >= kBefore;
+                const double off   = after ? change.newOffset : f0;
+                const double slope = after ? change.newRate : rate;
+                phase += kTwoPi * off / fs + (slope == 0. ? 0. : step * (static_cast<double>(m) + 0.5));
+            }
+            expect(lt(worst, 5e-6)) << std::format("{}: the output is {:.3e} from the block's own schedule, worst at sample {}", change.name, worst, worstAt);
+        }
+    };
+
     "a zero offset with no drift is a pure passthrough of the tone"_test = [] {
         const auto input = tone(4096UZ, 0.017);
         auto       block = configured<FrequencyOffset<C>>({{"sample_rate", 1.0e6f}, {"frequency_offset", 0.0}});

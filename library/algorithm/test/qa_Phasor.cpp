@@ -313,6 +313,160 @@ const boost::ut::suite<"Phasor"> phasorTests = [] {
         }
     } | kFloatingTypes;
 
+    "a running chirp reports its own phase and increment, and hands them on"_test = []<std::floating_point F> {
+        using Cx                   = std::complex<F>;
+        constexpr double kStart    = 0.1;
+        constexpr double kPhase0   = 0.4;
+        constexpr double kStep     = 0.001;
+        constexpr double kStateTol = 1e-9;
+        const double     sampleTol = std::is_same_v<F, float> ? 4e-6 : 1e-9;
+
+        // the arithmetic schedule: sample n has increment start + n*step and phase phase0 + n*start + step*n*(n-1)/2
+        const auto schedulePhase     = [&](double start, double phase0, double step, std::size_t n) { return std::remainder(phase0 + static_cast<double>(n) * start + step * static_cast<double>(n) * (static_cast<double>(n) - 1.) * 0.5, kTwoPi); };
+        const auto scheduleIncrement = [&](double start, double step, std::size_t n) { return start + static_cast<double>(n) * step; };
+        const auto phaseGap          = [](double a, double b) { return std::abs(std::remainder(a - b, kTwoPi)); };
+
+        const std::size_t kInterval = Phasor<F>::kReseedInterval;
+        for (const std::size_t n : {1UZ, 100UZ, kInterval - 1UZ, kInterval, kInterval + 1UZ, 3UZ * kInterval + 5UZ, 5000UZ}) {
+            for (const std::size_t chunk : {n, 1UZ, 37UZ, kInterval}) {
+                Phasor<F> phasor;
+                phasor.configure(kStart, kPhase0);
+                std::vector<Cx> out(n);
+                for (std::size_t i = 0UZ; i < n; i += chunk) {
+                    phasor.fillChirp(kStep, std::span<Cx>(out.data() + i, std::min(chunk, n - i)));
+                }
+                expect(lt(phaseGap(phasor.phase(), schedulePhase(kStart, kPhase0, kStep, n)), kStateTol)) << std::format("phase after {} samples in {}-sample calls: {}", n, chunk, phasor.phase());
+                expect(lt(std::abs(phasor.increment() - scheduleIncrement(kStart, kStep, n)), kStateTol)) << std::format("increment after {} samples in {}-sample calls: {}", n, chunk, phasor.increment());
+
+                // a fixed fill after the chirp starts on the schedule's next phase and runs at its next increment
+                std::vector<Cx> next(2UZ);
+                phasor.fill(std::span<Cx>(next));
+                const double               p0    = schedulePhase(kStart, kPhase0, kStep, n);
+                const double               inc   = scheduleIncrement(kStart, kStep, n);
+                const std::complex<double> want0 = std::polar(1., p0);
+                const std::complex<double> want1 = std::polar(1., p0 + inc);
+                expect(lt(std::abs(std::complex<double>(next[0]) - want0), sampleTol)) << std::format("first fixed sample after {} chirp samples in {}-sample calls", n, chunk);
+                expect(lt(std::abs(std::complex<double>(next[1]) - want1), sampleTol)) << std::format("second fixed sample after {} chirp samples in {}-sample calls", n, chunk);
+            }
+        }
+
+        // advance during a chirp moves from the chirp's present phase by its present increment
+        {
+            constexpr std::size_t n = 300UZ;
+            Phasor<F>             phasor;
+            phasor.configure(kStart, kPhase0);
+            std::vector<Cx> out(n);
+            phasor.fillChirp(kStep, std::span<Cx>(out));
+            phasor.advance(10);
+            const double want = schedulePhase(kStart, kPhase0, kStep, n) + 10. * scheduleIncrement(kStart, kStep, n);
+            expect(lt(phaseGap(phasor.phase(), want), kStateTol)) << "advance during a chirp";
+            std::vector<Cx> next(1UZ);
+            phasor.fill(std::span<Cx>(next));
+            expect(lt(std::abs(std::complex<double>(next[0]) - std::polar(1., want)), sampleTol)) << "the sample after advance continues the chirp's phase";
+        }
+
+        // setIncrement during a chirp keeps the phase and takes the new increment
+        {
+            constexpr std::size_t n = 300UZ;
+            Phasor<F>             phasor;
+            phasor.configure(kStart, kPhase0);
+            std::vector<Cx> out(n);
+            phasor.fillChirp(kStep, std::span<Cx>(out));
+            phasor.setIncrement(0.2);
+            const double want = schedulePhase(kStart, kPhase0, kStep, n);
+            expect(lt(phaseGap(phasor.phase(), want), kStateTol)) << "setIncrement during a chirp must keep the phase";
+            expect(lt(std::abs(phasor.increment() - 0.2), kStateTol));
+            std::vector<Cx> next(2UZ);
+            phasor.fill(std::span<Cx>(next));
+            expect(lt(std::abs(std::complex<double>(next[0]) - std::polar(1., want)), sampleTol)) << "the sample after setIncrement continues the chirp's phase";
+            expect(lt(std::abs(std::complex<double>(next[1]) - std::polar(1., want + 0.2)), sampleTol));
+        }
+
+        // a chirp call with another step starts a new frame at the exact phase and increment reached
+        for (const std::size_t n1 : {100UZ, kInterval, 700UZ}) {
+            constexpr double      kStep2 = -0.0005;
+            constexpr std::size_t n2     = 400UZ;
+            Phasor<F>             phasor;
+            phasor.configure(kStart, kPhase0);
+            std::vector<Cx> first(n1);
+            std::vector<Cx> second(n2);
+            phasor.fillChirp(kStep, std::span<Cx>(first));
+            phasor.fillChirp(kStep2, std::span<Cx>(second));
+            const double p1 = schedulePhase(kStart, kPhase0, kStep, n1);
+            const double i1 = scheduleIncrement(kStart, kStep, n1);
+            expect(lt(std::abs(std::complex<double>(second[0]) - std::polar(1., p1)), sampleTol)) << std::format("first sample at the step change after {} samples", n1);
+            for (const std::size_t k : {1UZ, 200UZ, n2 - 1UZ}) {
+                expect(lt(std::abs(std::complex<double>(second[k]) - std::polar(1., schedulePhase(i1, p1, kStep2, k))), sampleTol)) << std::format("sample {} after a step change at {}", k, n1);
+            }
+            expect(lt(phaseGap(phasor.phase(), schedulePhase(i1, p1, kStep2, n2)), kStateTol)) << "phase after a step change";
+            expect(lt(std::abs(phasor.increment() - scheduleIncrement(i1, kStep2, n2)), kStateTol)) << "increment after a step change";
+        }
+
+        // the chirp after a step change, run in calls of 1 and of 37 samples, stays on the schedule
+        for (const std::size_t chunk : {1UZ, 37UZ}) {
+            constexpr double      kStep2 = -0.0005;
+            constexpr std::size_t n1     = 100UZ;
+            constexpr std::size_t n2     = 700UZ;
+            Phasor<F>             phasor;
+            phasor.configure(kStart, kPhase0);
+            std::vector<Cx> first(n1);
+            std::vector<Cx> second(n2);
+            phasor.fillChirp(kStep, std::span<Cx>(first));
+            for (std::size_t i = 0UZ; i < n2; i += chunk) {
+                phasor.fillChirp(kStep2, std::span<Cx>(second.data() + i, std::min(chunk, n2 - i)));
+            }
+            const double p1    = schedulePhase(kStart, kPhase0, kStep, n1);
+            const double i1    = scheduleIncrement(kStart, kStep, n1);
+            double       worst = 0.;
+            for (std::size_t k = 0UZ; k < n2; ++k) {
+                worst = std::max(worst, std::abs(std::complex<double>(second[k]) - std::polar(1., schedulePhase(i1, p1, kStep2, k))));
+            }
+            expect(lt(worst, sampleTol)) << std::format("a chirp after a step change in {}-sample calls is {:.3e} from the schedule", chunk, worst);
+            expect(lt(phaseGap(phasor.phase(), schedulePhase(i1, p1, kStep2, n2)), kStateTol)) << std::format("phase after a step change in {}-sample calls", chunk);
+            expect(lt(std::abs(phasor.increment() - scheduleIncrement(i1, kStep2, n2)), kStateTol)) << std::format("increment after a step change in {}-sample calls", chunk);
+        }
+
+        // setPhase during a chirp keeps the increment the chirp has reached
+        {
+            constexpr std::size_t n = 300UZ;
+            Phasor<F>             phasor;
+            phasor.configure(kStart, kPhase0);
+            std::vector<Cx> out(n);
+            phasor.fillChirp(kStep, std::span<Cx>(out));
+            phasor.setPhase(1.);
+            const double inc = scheduleIncrement(kStart, kStep, n);
+            expect(lt(std::abs(phasor.increment() - inc), kStateTol)) << "setPhase during a chirp must keep the reached increment";
+            std::vector<Cx> next(2UZ);
+            phasor.fill(std::span<Cx>(next));
+            expect(lt(std::abs(std::complex<double>(next[0]) - std::polar(1., 1.)), sampleTol)) << "the sample after setPhase is at the new phase";
+            expect(lt(std::abs(std::complex<double>(next[1]) - std::polar(1., 1. + inc)), sampleTol)) << "the second sample after setPhase advances by the reached increment";
+        }
+
+        // a chirp, a fixed fill, then the chirp again: the second chirp starts at the fixed run's phase and increment
+        {
+            constexpr std::size_t n1 = 100UZ;
+            constexpr std::size_t nf = 50UZ;
+            constexpr std::size_t n2 = 100UZ;
+            Phasor<F>             phasor;
+            phasor.configure(kStart, kPhase0);
+            std::vector<Cx> first(n1);
+            std::vector<Cx> fixed(nf);
+            std::vector<Cx> second(n2);
+            phasor.fillChirp(kStep, std::span<Cx>(first));
+            phasor.fill(std::span<Cx>(fixed));
+            phasor.fillChirp(kStep, std::span<Cx>(second));
+            const double i1    = scheduleIncrement(kStart, kStep, n1);
+            const double p2    = schedulePhase(kStart, kPhase0, kStep, n1) + static_cast<double>(nf) * i1;
+            double       worst = 0.;
+            for (std::size_t k = 0UZ; k < n2; ++k) {
+                worst = std::max(worst, std::abs(std::complex<double>(second[k]) - std::polar(1., schedulePhase(i1, p2, kStep, k))));
+            }
+            expect(lt(worst, sampleTol)) << std::format("the chirp after a fixed fill is {:.3e} from the schedule", worst);
+            expect(lt(phaseGap(phasor.phase(), schedulePhase(i1, p2, kStep, n2)), kStateTol)) << "phase after chirp, fill, chirp";
+            expect(lt(std::abs(phasor.increment() - scheduleIncrement(i1, kStep, n2)), kStateTol)) << "increment after chirp, fill, chirp";
+        }
+    } | kFloatingTypes;
+
     "a call that produces no sample leaves a chirp running"_test = []<std::floating_point F> {
         constexpr std::size_t kBefore = 37UZ;
         constexpr std::size_t kAfter  = 300UZ;
