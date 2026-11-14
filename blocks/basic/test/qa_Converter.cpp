@@ -678,7 +678,7 @@ const boost::ut::suite<"basic Abs and Arg complex span loops"> basicComplexSpans
     constexpr double kArgUlps = 2.0;
 #endif
 
-    "Abs of complex<float> is Magnitude's, the double hypot rounded once and std::abs, at every chunk size"_test = [] {
+    "Abs of complex<float> is Magnitude's and the double hypot rounded once, within a step of std::abs, at every chunk size"_test = [] {
         Abs<CF>             block;
         math::Magnitude<CF> reference;
         applySettings(block);
@@ -688,13 +688,20 @@ const boost::ut::suite<"basic Abs and Arg complex span loops"> basicComplexSpans
         const std::vector<float>  whole    = spanPath(block, in, in.size());
         const std::vector<float>  expected = spanPath(reference, in, in.size());
 
-        std::size_t mismatches = 0UZ;
+        // std::abs is the C library's hypotf, which need not round correctly (it is a step off in musl, the WebAssembly
+        // build's library); the block's value is the double hypot rounded once on every platform
+        std::size_t notMagnitude = 0UZ;
+        std::size_t notHypot     = 0UZ;
+        std::size_t farFromAbs   = 0UZ;
         for (std::size_t i = 0UZ; i < input.size(); ++i) {
-            mismatches += static_cast<std::size_t>(!sameValue(whole[i], expected[i]));
-            mismatches += static_cast<std::size_t>(!sameValue(whole[i], static_cast<float>(std::hypot(static_cast<double>(input[i].real()), static_cast<double>(input[i].imag())))));
-            mismatches += static_cast<std::size_t>(!sameValue(whole[i], std::abs(input[i])));
+            const float library = std::abs(input[i]);
+            notMagnitude += static_cast<std::size_t>(!sameValue(whole[i], expected[i]));
+            notHypot += static_cast<std::size_t>(!sameValue(whole[i], static_cast<float>(std::hypot(static_cast<double>(input[i].real()), static_cast<double>(input[i].imag())))));
+            farFromAbs += static_cast<std::size_t>(!sameValue(whole[i], library) && !(std::isfinite(whole[i]) && std::isfinite(library) && withinUlps(library, static_cast<double>(whole[i]), 1.0)));
         }
-        expect(eq(mismatches, 0UZ)) << "samples whose magnitude differs from Magnitude's, the double hypot or std::abs";
+        expect(eq(notMagnitude, 0UZ)) << "samples whose magnitude differs from Magnitude's";
+        expect(eq(notHypot, 0UZ)) << "samples whose magnitude differs from the double hypot rounded once";
+        expect(eq(farFromAbs, 0UZ)) << "samples whose magnitude is more than one step from std::abs";
         expect(eq(chunkMismatches(block, in, whole), 0UZ)) << "chunked outputs that differ from one call";
     };
 
