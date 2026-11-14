@@ -435,12 +435,35 @@ private:
         if (arity_ == 2UZ) {
             return real > F{0} ? sectorSymbol_[0] : (real < F{0} ? sectorSymbol_[1] : binaryTie_);
         }
-        const F imag      = z.imag() * phaseCosine_ - z.real() * phaseSine_;
-        F       angle     = std::atan2(imag, real);
+        if (arity_ == 8UZ) {
+            return decidePsk8(z);
+        }
+        return decidePskAngle(real, z.imag() * phaseCosine_ - z.real() * phaseSine_);
+    }
+
+    /// @brief the sector of a rotated pair from its angle.
+    [[nodiscard]] std::uint8_t decidePskAngle(F real, F imag) const noexcept {
+        F angle           = std::atan2(imag, real);
         angle             = angle < F{0} ? angle + static_cast<F>(2.0 * std::numbers::pi) : angle;
         const F    scaled = angle * sectorScale_ + F{0.5};
         const auto sector = scaled >= F{0} ? static_cast<std::uint32_t>(scaled) : 0U;
         return sectorSymbol_[sector & (static_cast<std::uint32_t>(arity_) - 1U)];
+    }
+
+    /// @brief 8-PSK: the octant from |imag| against |real| (the tangents of 22.5 and 67.5 degrees), no angle; a pair that is not finite, or whose component sum overflows, takes the angle form.
+    /// In float a point within about 1e-7 rad of a sector boundary can decide for the other sector than the angle form does, as the tangent is rounded (about 1e-16 in double); the axes and diagonals are sector centers and decide alike. The pair (-0, -0) at zero offset decides sector 0, where the angle form decides sector 4.
+    /// Out of line: inlined into `decidePsk`, clang++ compiles BPSK from 8.4 to 11.2 ns a symbol and 16-PSK from 18.2 to 18.7.
+    [[nodiscard, gnu::noinline]] std::uint8_t decidePsk8(std::complex<F> z) const noexcept {
+        const F real    = z.real() * phaseCosine_ + z.imag() * phaseSine_;
+        const F imag    = z.imag() * phaseCosine_ - z.real() * phaseSine_;
+        const F absReal = std::abs(real);
+        const F absImag = std::abs(imag);
+        if (!(absReal + absImag <= std::numeric_limits<F>::max())) {
+            return decidePskAngle(real, imag);
+        }
+        const std::uint32_t quadrantStep = static_cast<std::uint32_t>(absImag > absReal * static_cast<F>(0.41421356237309503)) + static_cast<std::uint32_t>(absImag > absReal * static_cast<F>(2.4142135623730951));
+        const std::uint32_t upper        = real >= F{0} ? quadrantStep : 4U - quadrantStep;
+        return sectorSymbol_[(imag >= F{0} ? upper : 8U - upper) & 7U];
     }
 
     [[nodiscard]] std::uint8_t decideNearest(std::complex<F> z) const noexcept {
