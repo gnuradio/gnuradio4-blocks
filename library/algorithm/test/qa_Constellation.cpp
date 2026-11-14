@@ -791,6 +791,42 @@ const boost::ut::suite<"constellation"> constellationTests = [] {
         }
     };
 
+    "8-PSK decides by octant: every sector, both sides of every boundary, an offset, non-finite input"_test = [] {
+        const auto check = []<typename F>(F, const char* name) {
+            using Cx = std::complex<F>;
+            for (const double offset : {0.0, 0.3, -1.1}) {
+                const auto  psk    = Constellation<F>::psk(8UZ, static_cast<F>(offset));
+                const auto  sector = *psk.rotationToGray();
+                const auto  at     = [&](double angle, double radius) { return Cx(static_cast<F>(radius * std::cos(angle)), static_cast<F>(radius * std::sin(angle))); };
+                std::size_t wrong  = 0UZ;
+                for (std::size_t r = 0UZ; r < 8UZ; ++r) {
+                    const double center   = offset + static_cast<double>(r) * kPi / 4.0;
+                    const double boundary = center + kPi / 8.0;
+                    for (const double radius : {1.0e-3, 1.0, 1.0e3}) {
+                        wrong += psk.hardDecision(at(center, radius)) != sector[r] ? 1UZ : 0UZ;
+                        wrong += psk.hardDecision(at(boundary - 1.0e-3, radius)) != sector[r] ? 1UZ : 0UZ;
+                        wrong += psk.hardDecision(at(boundary + 1.0e-3, radius)) != sector[(r + 1UZ) & 7UZ] ? 1UZ : 0UZ;
+                    }
+                }
+                expect(eq(wrong, 0UZ)) << std::format("{} offset {}: {} decisions in the wrong sector", name, offset, wrong);
+            }
+
+            // an infinite component makes a part of the rotated pair NaN (inf * 0), and a NaN decides sector 0
+            const auto psk      = Constellation<F>::psk8();
+            const auto sector   = *psk.rotationToGray();
+            const F    infinity = std::numeric_limits<F>::infinity();
+            const F    biggest  = std::numeric_limits<F>::max();
+            expect(eq(psk.hardDecision(Cx{std::numeric_limits<F>::quiet_NaN(), 1}), sector[0])) << name << " NaN";
+            expect(eq(psk.hardDecision(Cx{infinity, 0}), sector[0])) << name << " +inf real";
+            expect(eq(psk.hardDecision(Cx{0, -infinity}), sector[0])) << name << " -inf imaginary";
+            expect(eq(psk.hardDecision(Cx{biggest, biggest}), sector[1])) << name << " the largest finite pair, whose sum overflows";
+            expect(eq(psk.hardDecision(Cx{biggest * static_cast<F>(0.6), biggest * static_cast<F>(0.3)}), sector[1])) << name << " a pair whose product with the tangent overflows";
+            expect(eq(psk.hardDecision(Cx{-F{0}, -F{0}}), sector[0])) << name << " negative zero decides sector 0";
+        };
+        check(float{}, "float");
+        check(double{}, "double");
+    };
+
     "the span form is the per-symbol form, and float is registered"_test = [] {
         const C                          qam16 = C::qam(16UZ);
         std::mt19937_64                  engine{7U};
