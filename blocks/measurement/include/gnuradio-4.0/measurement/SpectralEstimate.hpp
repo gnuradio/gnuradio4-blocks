@@ -78,11 +78,11 @@ struct SegmentAccumulator {
     gr::algorithm::fft::SpectralScale<Real> scale{};
     gr::algorithm::FFT<Windowed, Spectrum>  transform{};
 
-    std::vector<T>                                          pending{};  ///< input samples held until they fill a segment
-    std::vector<Windowed, gr::allocator::Aligned<Windowed>> windowed{}; ///< one windowed segment, the transform's input; aligned to 64 bytes so `FFT::compute` takes its zero-copy path on the input
-    std::vector<Spectrum, gr::allocator::Aligned<Spectrum>> spectrum{}; ///< the transform's output
-    std::vector<Real>                                       accumulator{};
-    std::vector<Real>                                       hold{}; ///< one segment's density, compared bin by bin in max_hold mode
+    std::vector<T>                                                                            pending{};  ///< input samples held until they fill a segment
+    std::vector<Windowed, gr::allocator::Aligned<Windowed, gr::algorithm::kSimdFftAlignment>> windowed{}; ///< one windowed segment, the transform's input; aligned to `kSimdFftAlignment` so `FFT::compute` takes its zero-copy path on the input
+    std::vector<Spectrum, gr::allocator::Aligned<Spectrum, gr::algorithm::kSimdFftAlignment>> spectrum{}; ///< the transform's output
+    std::vector<Real>                                                                         accumulator{};
+    std::vector<Real>                                                                         hold{}; ///< one segment's density, compared bin by bin in max_hold mode
 
     std::size_t   segments      = 0UZ;  ///< segments in the accumulator, reported as `n_averaged`
     std::size_t   skipping      = 0UZ;  ///< samples to skip before the next segment starts, when hop > fftSize
