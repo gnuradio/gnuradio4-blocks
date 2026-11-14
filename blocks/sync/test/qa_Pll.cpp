@@ -6,10 +6,13 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <format>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <random>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
@@ -89,6 +92,113 @@ auto driveRefOut(PllRefOut& block, std::span<const CF> input, std::size_t chunk 
         worst = std::max(worst, std::abs(std::atan2(derotated[i].imag(), derotated[i].real())));
     }
     return worst;
+}
+
+using gr::blocks::sync::detail::advanceCarrier;
+using gr::blocks::sync::detail::applyCarrierSettings;
+using gr::blocks::sync::detail::ArgumentTile;
+using gr::blocks::sync::detail::CarrierLoop;
+using gr::blocks::sync::detail::derotator;
+
+/// @brief A tag the reference applies before sample `index`: the loop's phase, frequency, or both.
+struct Steer {
+    std::size_t          index;
+    std::optional<float> phase;
+    std::optional<float> frequency;
+};
+
+struct History {
+    std::vector<CF>    derotated;
+    std::vector<float> frequency;
+    std::vector<float> phase;
+};
+
+[[nodiscard]] CarrierLoop makeLoop(double bandwidth, float bound = std::numbers::pi_v<float>) {
+    CarrierLoop loop{bandwidth, std::numbers::sqrt2 / 2.0, 1.0};
+    applyCarrierSettings(loop, bandwidth, std::numbers::sqrt2 / 2.0, -bound, bound);
+    return loop;
+}
+
+/// @brief The error by the product `x * exp(-j*p)`: `arg(x * exp(-j*p))`, and zero for an exact zero.
+[[nodiscard]] float referenceError(float phase, CF sample) {
+    const CF y = sample * derotator(phase);
+    return sample.real() == 0.f && sample.imag() == 0.f ? 0.f : std::atan2(y.imag(), y.real());
+}
+
+/// @brief The loop run sample by sample on `referenceError`, with its frequency clamped to `+-bound`.
+[[nodiscard]] History referenceRun(std::span<const CF> input, std::span<const Steer> steers = {}, float bound = std::numbers::pi_v<float>) {
+    CarrierLoop loop = makeLoop(kBandwidth, bound);
+    History     history;
+    std::size_t next = 0UZ;
+    for (std::size_t i = 0UZ; i < input.size(); ++i) {
+        for (; next < steers.size() && steers[next].index <= i; ++next) {
+            if (steers[next].phase) {
+                loop.setPhase(*steers[next].phase);
+            }
+            if (steers[next].frequency) {
+                loop.setFrequency(*steers[next].frequency);
+            }
+        }
+        const float phase = loop.phase();
+        history.derotated.push_back(input[i] * derotator(phase));
+        history.phase.push_back(phase);
+        std::ignore = loop.step(referenceError(phase, input[i]));
+        history.frequency.push_back(loop.frequency());
+    }
+    return history;
+}
+
+/// @brief The error `advanceCarrier` feeds the loop for one sample at a given loop phase, read back from a first step taken at zero frequency.
+[[nodiscard]] float patchError(float phase, CF sample) {
+    CarrierLoop loop = makeLoop(kBandwidth);
+    loop.reset(phase, 0.f);
+    ArgumentTile tile;
+    std::ignore = advanceCarrier(loop, sample, tile.at(std::span<const CF>(&sample, 1UZ), 0UZ, 1UZ));
+    return loop.frequency() / loop.beta();
+}
+
+[[nodiscard]] float referenceStepError(float phase, CF sample) {
+    CarrierLoop loop = makeLoop(kBandwidth);
+    loop.reset(phase, 0.f);
+    std::ignore = loop.step(referenceError(loop.phase(), sample));
+    return loop.frequency() / loop.beta();
+}
+
+/// @brief The two errors are the same number to rounding, or both sit on the `+-pi` cut from either side of it.
+[[nodiscard]] bool sameError(float patch, float reference, float tolerance = 2e-6f) {
+    if (std::isnan(patch) || std::isnan(reference)) {
+        return std::isnan(patch) && std::isnan(reference);
+    }
+    const float pi = std::numbers::pi_v<float>;
+    return std::abs(patch - reference) <= tolerance || (std::abs(patch) >= pi - tolerance && std::abs(reference) >= pi - tolerance);
+}
+
+[[nodiscard]] float largestDifference(std::span<const float> a, std::span<const float> b) {
+    float worst = 0.f;
+    for (std::size_t i = 0UZ; i < std::min(a.size(), b.size()); ++i) {
+        worst = std::max(worst, std::abs(a[i] - b[i]));
+    }
+    return worst;
+}
+
+[[nodiscard]] float largestDifference(std::span<const CF> a, std::span<const CF> b, float scale = 1.f) {
+    float worst = 0.f;
+    for (std::size_t i = 0UZ; i < std::min(a.size(), b.size()); ++i) {
+        worst = std::max(worst, std::abs(a[i] - b[i]) / scale);
+    }
+    return worst;
+}
+
+/// @brief A tone of `cyclesPerSample` from phase 0.7, with white noise of sigma `noiseSigma` on each part.
+std::vector<CF> noisyTone(std::size_t nSamples, double cyclesPerSample, double noiseSigma, unsigned seed) {
+    std::mt19937                     rng(seed);
+    std::normal_distribution<double> noise(0.0, noiseSigma);
+    std::vector<CF>                  signal(nSamples);
+    for (std::size_t i = 0UZ; i < nSamples; ++i) {
+        const double phase = 0.7 + 2.0 * kPi * cyclesPerSample * static_cast<double>(i);
+        signal[i]          = CF(static_cast<float>(std::cos(phase) + noise(rng)), static_cast<float>(std::sin(phase) + noise(rng)));
+    }
+    return signal;
 }
 
 } // namespace
@@ -474,6 +584,133 @@ const boost::ut::suite<"Pll"> pllTests = [] {
         const auto second = driveFreqDet(detector, std::span<const CF>(input).subspan(kSplit));
         expect(eq(first.samples.size() + second.samples.size(), kSamples)) << "no sample repeated or dropped";
         expect(eq(first.consumed + second.consumed, kSamples));
+    };
+
+    "the error is the reference arg(x * exp(-j*p)) at every phase difference, including the wrap"_test = [] {
+        // the loop open: the error read for samples at every angle against loop phases across the whole range
+        std::vector<float> angles{-3.14159274f, 3.14159274f, -3.1415925f, 3.1415925f, -3.14f, 3.14f, -1.5707964f, 1.5707964f, 0.f, 1e-7f, -1e-7f, 2.5f, -2.5f};
+        std::vector<float> phases{-3.14159274f, 3.14159274f, -3.14159f, 3.14159f, -3.f, 3.f, -1.f, 1.f, 0.f, 0.5f, -0.5f, 1e-7f};
+        for (float a = -3.1f; a < 3.1f; a += 0.1237f) {
+            angles.push_back(a);
+            phases.push_back(a * 0.9f);
+        }
+        std::size_t cases = 0UZ;
+        std::size_t bad   = 0UZ;
+        std::string first;
+        for (const float phase : phases) {
+            for (const float angle : angles) {
+                for (const float amplitude : {1.f, 1e-3f, 1e3f}) {
+                    const CF    x{amplitude * std::cos(angle), amplitude * std::sin(angle)};
+                    const float patch     = patchError(phase, x);
+                    const float reference = referenceStepError(phase, x);
+                    if (!sameError(patch, reference) || !(std::abs(patch) <= std::numbers::pi_v<float> + 1e-6f)) {
+                        first = bad == 0UZ ? std::format("phase {} angle {} amplitude {}: {} against {}", phase, angle, amplitude, patch, reference) : first;
+                        ++bad;
+                    }
+                    ++cases;
+                }
+            }
+        }
+        expect(eq(bad, 0UZ)) << "errors that are not the reference's, or not reduced to one turn; the first: " << first;
+        expect(gt(cases, 1000UZ));
+
+        // the difference at the cut itself: the argument of -1 with either sign of zero, against a loop phase that puts the difference on +-pi
+        for (const float imag : {0.f, -0.f}) {
+            for (const float phase : {0.f, 1e-7f, -1e-7f, 3.f, -3.f}) {
+                expect(sameError(patchError(phase, CF{-1.f, imag}), referenceStepError(phase, CF{-1.f, imag}))) << "phase " << phase << " imag " << imag;
+            }
+        }
+    };
+
+    "an input of exactly zero feeds the loop zero error, and a stream of tone and zeros matches the reference"_test = [] {
+        for (const CF zero : {CF{0.f, 0.f}, CF{-0.f, 0.f}, CF{0.f, -0.f}, CF{-0.f, -0.f}}) {
+            for (const float phase : {0.f, 1.f, -3.f, 3.1f}) {
+                expect(eq(patchError(phase, zero), 0.f)) << "an exact zero is no error at phase " << phase;
+            }
+        }
+
+        std::vector<CF> input = tone(3000UZ, 0.01, 1.0, 0.4);
+        for (const std::size_t at : {100UZ, 101UZ, 255UZ, 256UZ, 511UZ, 1500UZ, 1501UZ, 1502UZ}) {
+            input[at] = CF{};
+        }
+        const History      expected = referenceRun(std::span<const CF>(input));
+        PllCarrierTracking carrier  = makeCarrier({{"noise_bandwidth", kBandwidth}});
+        PllFreqDet         detector = makeFreqDet({{"noise_bandwidth", kBandwidth}});
+        const auto         removed  = driveCarrier(carrier, std::span<const CF>(input));
+        const auto         measured = driveFreqDet(detector, std::span<const CF>(input));
+        expect(lt(largestDifference(std::span<const CF>(removed.samples), std::span<const CF>(expected.derotated)), 1e-4f)) << "derotated output";
+        expect(lt(largestDifference(std::span<const float>(measured.samples), std::span<const float>(expected.frequency)), 1e-6f)) << "frequency";
+        expect(lt(largestDifference(std::span<const float>(removed.aux[1]), std::span<const float>(expected.phase)), 1e-4f)) << "phase";
+        for (const std::size_t at : {100UZ, 255UZ, 256UZ, 1501UZ}) {
+            expect(eq(removed.samples[at], CF{})) << "a zero in is a zero out at " << at;
+        }
+    };
+
+    "a sample that is not finite gives NaN where the reference does, or the argument of its direction"_test = [] {
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+        for (const float phase : {0.f, 1.f, -2.f}) {
+            for (const CF sample : {CF{nan, 0.f}, CF{0.f, nan}, CF{nan, nan}, CF{1.f, nan}}) {
+                expect(std::isnan(patchError(phase, sample))) << "a NaN part gives a NaN error, as the reference does";
+                expect(std::isnan(referenceStepError(phase, sample)));
+            }
+            // an infinite part has the argument of its direction; the reference's product of an infinity with a rotor part of either sign
+            // or of zero is not that argument in general, so the error is checked against the exact value instead
+            for (const CF sample : {CF{inf, 0.f}, CF{-inf, 0.f}, CF{0.f, inf}, CF{0.f, -inf}, CF{inf, 1.f}, CF{1.f, -inf}}) {
+                const double direction = std::atan2(std::isinf(sample.imag()) ? std::copysign(1.0, sample.imag()) : 0.0, std::isinf(sample.real()) ? std::copysign(1.0, sample.real()) : 0.0);
+                const double exact     = std::remainder(direction - static_cast<double>(phase), 2.0 * kPi);
+                const float  patch     = patchError(phase, sample);
+                expect(std::isfinite(patch)) << "an infinite sample is a direction at phase " << phase;
+                expect(lt(std::abs(std::remainder(static_cast<double>(patch) - exact, 2.0 * kPi)), 2e-6)) << "got " << patch << " expected " << exact << " at phase " << phase;
+            }
+        }
+
+        // in a stream: the samples before a NaN are the reference's, and from it on the loop is NaN in both
+        std::vector<CF> input  = tone(1000UZ, 0.01);
+        input[300]             = CF{nan, 0.f};
+        const History expected = referenceRun(std::span<const CF>(input));
+        PllFreqDet    detector = makeFreqDet({{"noise_bandwidth", kBandwidth}});
+        const auto    measured = driveFreqDet(detector, std::span<const CF>(input));
+        expect(lt(largestDifference(std::span<const float>(measured.samples).first(300UZ), std::span<const float>(expected.frequency).first(300UZ)), 1e-6f)) << "before the NaN";
+        for (std::size_t i = 300UZ; i < input.size(); ++i) {
+            expect(std::isnan(measured.samples[i]) == std::isnan(expected.frequency[i])) << "NaN state at " << i;
+        }
+    };
+
+    "chunkings that split a tile, tags at its edges, and a loop at its frequency bound match the reference"_test = [] {
+        constexpr std::size_t      kSamples = 1300UZ;
+        const std::vector<CF>      input    = noisyTone(kSamples, 0.013, 0.05, 3U);
+        const std::vector<gr::Tag> tags{gr::Tag{255UZ, gr::property_map{{"phase_est", -2.0}}}, gr::Tag{256UZ, gr::property_map{{"freq_est", 0.05}, {"edge", 1.0}}}, gr::Tag{257UZ, gr::property_map{{"phase_est", 2.5}}}, gr::Tag{511UZ, gr::property_map{{"edge", 2.0}}}, gr::Tag{512UZ, gr::property_map{{"phase_est", 0.0}, {"freq_est", -0.02}}}, gr::Tag{700UZ, gr::property_map{{"phase_est", 10.0}}}, gr::Tag{701UZ, gr::property_map{{"phase_est", -10.0}}}, gr::Tag{1024UZ, gr::property_map{{"phase_est", 3.0}}}};
+        const std::vector<Steer>   steers{{255UZ, -2.f, std::nullopt}, {256UZ, std::nullopt, 0.05f}, {257UZ, 2.5f, std::nullopt}, {512UZ, 0.f, -0.02f}, {700UZ, 10.f, std::nullopt}, {701UZ, -10.f, std::nullopt}, {1024UZ, 3.f, std::nullopt}};
+        const History              reference = referenceRun(std::span<const CF>(input), std::span<const Steer>(steers));
+
+        PllCarrierTracking whole     = makeCarrier({{"noise_bandwidth", kBandwidth}});
+        const auto         all       = driveCarrier(whole, std::span<const CF>(input), 0UZ, {true, true, true}, std::span<const gr::Tag>(tags));
+        const float        deviation = largestDifference(std::span<const CF>(all.samples), std::span<const CF>(reference.derotated));
+        expect(lt(deviation, 1e-4f)) << "one call against the sequential reference";
+        expect(lt(largestDifference(std::span<const float>(all.aux[0]), std::span<const float>(reference.frequency)), 1e-5f)) << "frequency";
+        expect(lt(largestDifference(std::span<const float>(all.aux[1]), std::span<const float>(reference.phase)), 1e-4f)) << "phase";
+        expect(eq(all.offsetsOf("edge").size(), 2UZ));
+        expect(eq(all.offsetsOf("edge")[0], 256UZ)) << "a tag on the first sample of the second tile";
+        expect(eq(all.offsetsOf("edge")[1], 511UZ)) << "a tag on the last sample of the first tile";
+
+        for (const std::size_t chunk : {1UZ, 7UZ, 100UZ, 255UZ, 256UZ, 257UZ, 300UZ, 511UZ, 512UZ, 513UZ}) {
+            PllCarrierTracking cut    = makeCarrier({{"noise_bandwidth", kBandwidth}});
+            const auto         pieces = driveCarrier(cut, std::span<const CF>(input), chunk, {true, true, true}, std::span<const gr::Tag>(tags));
+            expect(std::ranges::equal(pieces.samples, all.samples)) << "output at chunk " << chunk;
+            expect(std::ranges::equal(pieces.aux[0], all.aux[0])) << "frequency at chunk " << chunk;
+            expect(std::ranges::equal(pieces.aux[1], all.aux[1])) << "phase at chunk " << chunk;
+            expect(eq(pieces.offsetsOf("edge").size(), 2UZ)) << "tags at chunk " << chunk;
+        }
+
+        // the loop parked at its frequency bound by a tone beyond it, so the error crosses the cut again and again
+        const std::vector<CF> beyond  = tone(kSamples, 0.02, 1.0, 0.3);
+        const History         parked  = referenceRun(std::span<const CF>(beyond), {}, 0.05f);
+        PllCarrierTracking    bounded = makeCarrier({{"noise_bandwidth", kBandwidth}, {"max_frequency", 0.05f}, {"min_frequency", -0.05f}});
+        const auto            held    = driveCarrier(bounded, std::span<const CF>(beyond), 100UZ);
+        expect(lt(largestDifference(std::span<const float>(held.aux[0]), std::span<const float>(parked.frequency)), 1e-5f)) << "frequency at the bound";
+        expect(lt(largestDifference(std::span<const CF>(held.samples), std::span<const CF>(parked.derotated)), 1e-3f)) << "derotated output at the bound";
+        expect(eq(parked.frequency.back(), 0.05f)) << "the reference is parked at the bound";
     };
 };
 

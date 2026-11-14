@@ -2,11 +2,13 @@
 #define GNURADIO_SYNC_PLL_HPP
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstdint>
 #include <format>
 #include <numbers>
+#include <span>
 #include <tuple>
 
 #include <gnuradio-4.0/Block.hpp>
@@ -14,6 +16,7 @@
 #include <gnuradio-4.0/Port.hpp>
 #include <gnuradio-4.0/annotated.hpp>
 
+#include <gnuradio-4.0/algorithm/math/Atan2.hpp>
 #include <gnuradio-4.0/algorithm/sync/ControlLoop.hpp>
 
 #include <gnuradio-4.0/sync/LoopCommon.hpp>
@@ -62,21 +65,59 @@ struct CarrierStep {
     float               frequency; /// the integrator, after this sample's update
 };
 
+/// @brief Samples whose arguments are taken together, ahead of the loop that consumes them.
+inline constexpr std::size_t kArgumentTile = 256UZ;
+
 /**
- * @brief Derotate, take the argument, advance the loop.
+ * @brief The arguments of one tile of input, computed before the loop runs over it.
  *
- * The error is `arg(y)` and not `arg(x) - p`: the two are the same number, but the first is already in `[-pi, pi]` and
- * needs no reduction, and `y` has to be formed anyway. `atan2` is used rather than a polynomial approximation, a polynomial's systematic angle error
- * inside a feedback loop being a frequency bias rather than noise. A zero sample carries no phase and is fed to the
- * loop as zero error, because derotating an exact zero leaves signed zeros and `atan2(+0, -0)` is `pi`, which would
- * drive a silent input to the frequency clamp instead of letting it coast.
+ * `arg(x)` does not depend on the loop's state, so it is taken for the whole tile at once by `gr::math::scaledAtan2`
+ * and the serial chain through the loop's phase and frequency holds no arctangent. The tile is deinterleaved because
+ * the span function takes the two parts as separate arrays, and the arguments are written over the imaginary parts.
+ * A value does not depend on its position in the tile or on the tile's length, so the output is the same for every way
+ * of cutting the stream into calls.
  */
-[[nodiscard]] inline CarrierStep advanceCarrier(CarrierLoop& loop, std::complex<float> sample) noexcept {
+struct ArgumentTile {
+    std::array<float, kArgumentTile> real;
+    std::array<float, kArgumentTile> imag; /// the imaginary parts, then the arguments
+
+    /// @brief The argument of `samples[i]` for `i < n`; at the first sample of a tile, the tile of `samples[i .. min(i + kArgumentTile, n))` is taken first.
+    /// Call it for every `i` in turn, starting at 0; a call at an `i` that is not a tile start reads the tile taken at the last start.
+    [[nodiscard]] float at(const auto& samples, std::size_t i, std::size_t n) noexcept {
+        const std::size_t inTile = i % kArgumentTile;
+        if (inTile == 0UZ) {
+            const std::size_t count = std::min(kArgumentTile, n - i);
+            for (std::size_t k = 0UZ; k < count; ++k) {
+                const std::complex<float> sample = samples[i + k];
+                real[k]                          = sample.real();
+                imag[k]                          = sample.imag();
+            }
+            gr::math::scaledAtan2<float>(std::span<const float>(imag).first(count), std::span<const float>(real).first(count), std::span<float>(imag).first(count), 1.f);
+        }
+        return imag[inTile];
+    }
+};
+
+/**
+ * @brief Derotate, form the error from the sample's argument, advance the loop.
+ *
+ * The error is `arg(x) - p` reduced to `[-pi, pi]`, with `arg(x)` supplied by an `ArgumentTile`; it equals `arg(x * exp(-j*p))`
+ * up to float rounding (2e-6 rad), and modulo a turn where the two land either side of `+-pi`. `arg(x)` and `p`
+ * both lie in `[-pi, pi]`, so one conditional turn reduces the difference. `atan2` is not replaced by a low-order
+ * polynomial, a polynomial's systematic angle error inside a feedback loop being a frequency bias rather than noise;
+ * `scaledAtan2` is within 4 ulp of the exact value on either compiler. A zero sample carries no phase and feeds zero
+ * error: `atan2(+0, -0)` is `pi`, which would drive a silent input to the frequency clamp instead of letting it coast.
+ * A NaN sample or phase gives a NaN error; an infinite sample has the argument of its direction.
+ */
+[[nodiscard]] inline CarrierStep advanceCarrier(CarrierLoop& loop, std::complex<float> sample, float argument) noexcept {
+    constexpr float           kPi    = std::numbers::pi_v<float>;
     const float               phase  = loop.phase();
     const std::complex<float> rotor  = derotator(phase);
     const std::complex<float> y      = sample * rotor;
     const bool                silent = sample.real() == 0.f && sample.imag() == 0.f;
-    std::ignore                      = loop.step(silent ? 0.f : std::atan2(y.imag(), y.real()));
+    const float               turn   = argument - phase;
+    const float               error  = turn > kPi ? turn - 2.f * kPi : (turn < -kPi ? turn + 2.f * kPi : turn);
+    std::ignore                      = loop.step(silent ? 0.f : error);
     return {rotor, y, phase, loop.frequency()};
 }
 
@@ -162,6 +203,7 @@ before the tagged sample and are consumed; everything else passes through at its
         const std::size_t nTags   = rawTags.size();
         std::size_t       cursor  = 0UZ;
 
+        detail::ArgumentTile tile;
         for (std::size_t i = 0UZ; i < nSamples; ++i) {
             while (cursor < nTags && rawTags[cursor].index <= inSpan.streamIndex + i) {
                 if (rawTags[cursor].index >= inSpan.streamIndex) {
@@ -175,7 +217,7 @@ before the tagged sample and are consumed; everything else passes through at its
                 ++cursor;
             }
 
-            const detail::CarrierStep step = detail::advanceCarrier(_loop, inSpan[i]);
+            const detail::CarrierStep step = detail::advanceCarrier(_loop, inSpan[i], tile.at(inSpan, i, nSamples));
 
             if (wantMetric) {
                 _lock.accumulate(step.derotated.real(), std::sqrt(std::norm(step.derotated)));
@@ -277,6 +319,7 @@ contract are PllCarrierTracking's, and so is the freedom from an AGC.
         const std::size_t nTags   = rawTags.size();
         std::size_t       cursor  = 0UZ;
 
+        detail::ArgumentTile tile;
         for (std::size_t i = 0UZ; i < nSamples; ++i) {
             while (cursor < nTags && rawTags[cursor].index <= inSpan.streamIndex + i) {
                 if (rawTags[cursor].index >= inSpan.streamIndex) {
@@ -289,7 +332,7 @@ contract are PllCarrierTracking's, and so is the freedom from an AGC.
                 ++cursor;
             }
 
-            const detail::CarrierStep step = detail::advanceCarrier(_loop, inSpan[i]);
+            const detail::CarrierStep step = detail::advanceCarrier(_loop, inSpan[i], tile.at(inSpan, i, nSamples));
 
             outSpan[i] = step.frequency;
             if (wantPhase) {
@@ -381,6 +424,7 @@ PllCarrierTracking's, and so is the freedom from an AGC.
         const std::size_t nTags   = rawTags.size();
         std::size_t       cursor  = 0UZ;
 
+        detail::ArgumentTile tile;
         for (std::size_t i = 0UZ; i < nSamples; ++i) {
             while (cursor < nTags && rawTags[cursor].index <= inSpan.streamIndex + i) {
                 if (rawTags[cursor].index >= inSpan.streamIndex) {
@@ -394,7 +438,7 @@ PllCarrierTracking's, and so is the freedom from an AGC.
                 ++cursor;
             }
 
-            const detail::CarrierStep step = detail::advanceCarrier(_loop, inSpan[i]);
+            const detail::CarrierStep step = detail::advanceCarrier(_loop, inSpan[i], tile.at(inSpan, i, nSamples));
 
             outSpan[i] = std::conj(step.rotor);
             if (wantFreq) {

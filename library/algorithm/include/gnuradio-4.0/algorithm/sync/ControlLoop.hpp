@@ -111,7 +111,7 @@
  *
  * The last row takes 158827 iterations to arrive at a number unrelated to its input. Reducing to
  * `+/-pi` rather than `+/-2*pi` also makes the state canonical, so a consumer of a `phase` output
- * never has to reduce it again and a detector forming `arg(x) - phase` needs no correction step.
+ * never has to reduce it again and a detector forming `arg(x) - phase` reduces the difference by one conditional turn.
  *
  * One caveat belongs to the `float` instantiation and not to the method: the reduction is exact for
  * the modulus it is given, and `2*pi` in `float` is 2.8e-8 away from `2*pi`. On a phase the loop

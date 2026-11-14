@@ -151,6 +151,26 @@ const boost::ut::suite<"Atan2"> atan2Tests = [] {
         }
     } | std::tuple<float, double>{};
 
+    "out may be y or x exactly, and gives the values of a distinct out"_test = []<typename T> {
+        std::vector<T> y;
+        std::vector<T> x;
+        argumentPairs<T>(y, x);
+        for (const FormCase<T>& form : allForms<T>()) {
+            for (const std::size_t n : {1UZ, 3UZ, 4UZ, 5UZ, 7UZ, 8UZ, 9UZ, 15UZ, 16UZ, 17UZ, 31UZ, 32UZ, 33UZ, 257UZ}) {
+                const std::span<const T> ys = std::span<const T>(y).subspan(1000UZ, n);
+                const std::span<const T> xs = std::span<const T>(x).subspan(1000UZ, n);
+                std::vector<T>           distinct(n);
+                form.run(ys, xs, distinct, T(1));
+                std::vector<T> overY(ys.begin(), ys.end());
+                form.run(overY, xs, overY, T(1));
+                expect(std::ranges::equal(overY, distinct)) << form.name << ", out is y, length " << n;
+                std::vector<T> overX(xs.begin(), xs.end());
+                form.run(ys, overX, overX, T(1));
+                expect(std::ranges::equal(overX, distinct)) << form.name << ", out is x, length " << n;
+            }
+        }
+    } | std::tuple<float, double>{};
+
     "the build takes the form its doc names"_test = []<typename T> {
 #if defined(__clang__)
         static_assert(gr::math::atan2Form<T>() == Atan2Form::Branchless);
