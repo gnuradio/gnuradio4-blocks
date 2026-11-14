@@ -136,11 +136,11 @@ using namespace gr::algorithm;
 
 template<std::floating_point T, Transform tramsform>
 double cal_benchmark(std::size_t N) {
-    const std::size_t                         log2N  = Log2(N);
-    std::size_t                               Nfloat = (tramsform == Transform::Complex ? N * 2UZ : N);
-    std::vector<T, gr::allocator::Aligned<T>> input(Nfloat);
-    std::vector<T, gr::allocator::Aligned<T>> output(Nfloat);
-    double                                    t0, t1, tstop, timeDiff, nI;
+    const std::size_t                                            log2N  = Log2(N);
+    std::size_t                                                  Nfloat = (tramsform == Transform::Complex ? N * 2UZ : N);
+    std::vector<T, gr::allocator::Aligned<T, kSimdFftAlignment>> input(Nfloat);
+    std::vector<T, gr::allocator::Aligned<T, kSimdFftAlignment>> output(Nfloat);
+    double                                                       t0, t1, tstop, timeDiff, nI;
 
     assert(std::has_single_bit(N));
     for (std::size_t k = 0UZ; k < Nfloat; ++k) {
@@ -174,10 +174,10 @@ void benchmark_ffts(std::size_t N, int /*withFFTWfullMeas*/, double iterCal, dou
     [[maybe_unused]] std::size_t log2NextN  = Log2(nextPow2N);
     std::size_t                  pffftPow2N = nextPow2N;
 
-    std::size_t                               Nfloat = (isComplex ? MAX(nextPow2N, pffftPow2N) * 2UZ : MAX(nextPow2N, pffftPow2N));
-    std::vector<T, gr::allocator::Aligned<T>> input(Nfloat);
-    std::vector<T, gr::allocator::Aligned<T>> output(Nfloat);
-    double                                    te, t0, t1, tstop, flops, Tfastest;
+    std::size_t                                                  Nfloat = (isComplex ? MAX(nextPow2N, pffftPow2N) * 2UZ : MAX(nextPow2N, pffftPow2N));
+    std::vector<T, gr::allocator::Aligned<T, kSimdFftAlignment>> input(Nfloat);
+    std::vector<T, gr::allocator::Aligned<T, kSimdFftAlignment>> output(Nfloat);
+    double                                                       te, t0, t1, tstop, flops, Tfastest;
 
     const double      max_test_duration = 0.150;                                                                /* test duration 150 ms */
     double            numIter           = max_test_duration * iterCal / static_cast<double>(log2N * N);         /* number of iteration for max_test_duration */

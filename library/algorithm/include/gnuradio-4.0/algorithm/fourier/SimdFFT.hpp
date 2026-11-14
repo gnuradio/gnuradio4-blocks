@@ -224,6 +224,11 @@ inline constexpr backward_t  backward{};
 inline constexpr ordered_t   ordered{};
 inline constexpr unordered_t unordered{};
 
+/// The alignment in bytes SimdFFT::transform() requires of its input and output, whatever gr::kCacheLine is.
+/// A buffer from gr::allocator::Aligned<T> meets it only where gr::kCacheLine is 64 or more; allocate with
+/// gr::allocator::Aligned<T, kSimdFftAlignment>.
+inline constexpr std::size_t kSimdFftAlignment = 64UZ;
+
 namespace details { // forward declaration, implementations below
 
 template<Direction direction, std::floating_point T, int W = 4>
@@ -333,7 +338,7 @@ private:
     static constexpr std::size_t kMaxLanes = kWideCapable ? 8UZ : V::size(); // the largest lane count a plan of this type can take; sizes the static storage
 
 public:
-    static constexpr std::size_t kAlignment = 64UZ;
+    static constexpr std::size_t kAlignment = kSimdFftAlignment;
     static constexpr std::size_t ceil_div(std::size_t x, std::size_t y) { return (x + y - 1) / y; }
     static constexpr std::size_t kTwiddleCount = 2 * (kMaxLanes - 1) * kMaxLanes * ceil_div((IsRealValued::value ? (N / 2) : N) / kMaxLanes, kMaxLanes);
 
