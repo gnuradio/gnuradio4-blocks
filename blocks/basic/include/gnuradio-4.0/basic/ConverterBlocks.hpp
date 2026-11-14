@@ -324,8 +324,12 @@ struct DegreeToRadiansPorts : Block<Derived> {
     GR_MAKE_REFLECTABLE(DegreeToRadiansPorts, deg, rad);
 };
 
-struct AbsOp : math::unary::Abs {
-    using Description = Doc<"@brief basic block to calculate the absolute (magnitude) value of a complex or arithmetic input stream">;
+/// the real types take `Abs`'s steps; `std::complex<float>` takes `Magnitude`'s span loop
+struct AbsOp : math::unary::Magnitude {
+    using Description = Doc<R""(@brief basic block to calculate the absolute (magnitude) value of a complex or arithmetic input stream
+
+For `std::complex<float>` the block squares and sums the parts in double and rounds the square root to float once. An infinite part gives +inf, also beside a NaN.
+)"">;
     template<typename Derived, typename T, typename R>
     using ports = AbsPorts<Derived, T, R>;
 };
@@ -343,7 +347,12 @@ struct RealOp : math::unary::Real {
 };
 
 struct ArgOp : math::unary::Phase {
-    using Description = Doc<"@brief basic block to calculate the argument (phase angle, [radians]) of a complex input stream">;
+    using Description = Doc<R""(@brief basic block to calculate the argument (phase angle, [radians]) of a complex input stream
+
+For `std::complex<float>` the argument is `math::Phase`'s, `gr::math::scaledAtan2` of the parts: within 2 ulp of the
+exact value with g++ and within 4 ulp with clang. Zeros, infinities and NaN give the C library's results: a zero sample
+gives 0 with the sign of its imaginary part, or +-pi when its real part is -0.
+)"">;
     template<typename Derived, typename T, typename R>
     using ports = ArgPorts<Derived, T, R>;
 };
@@ -361,6 +370,16 @@ struct DegreeToRadiansOp : math::unary::DegToRad {
 };
 
 } // namespace detail
+} // namespace gr::blocks::basic
+
+namespace gr::blocks::math::unary {
+template<>
+inline constexpr bool kSpanLoop<basic::detail::AbsOp> = true;
+template<>
+inline constexpr bool kSpanLoop<basic::detail::ArgOp> = true;
+} // namespace gr::blocks::math::unary
+
+namespace gr::blocks::basic {
 
 GR_REGISTER_BLOCK("gr::blocks::basic::Abs", gr::blocks::basic::Abs, [T], [ uint8_t, int16_t, int32_t, float, std::complex<float> ])
 template<typename T>

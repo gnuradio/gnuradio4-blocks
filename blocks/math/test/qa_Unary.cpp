@@ -301,9 +301,15 @@ const boost::ut::suite<"Unary complex span loops"> unaryComplexSpans = [] {
         expect(that % (output == std::vector<float>{10.5f, 2.5f, 0.5f}));
     };
 
-    // gr::meta::atan2 is within 2 ulp of the exact arctangent on float lanes; the double std::atan2 of the parts
-    // stands for the exact value, its own error far below a float ulp
-    "Phase is within 2 ulp of std::atan2 of the parts, with C's zeros and NaN, at every chunk size"_test = [] {
+    // gr::math::scaledAtan2 is within 2 ulp of the exact arctangent with g++ and 4 ulp with clang; the double
+    // std::atan2 of the parts stands for the exact value, its own error far below a float ulp. This test checks the
+    // wiring of the call; qa_Atan2 pins the accuracy of scaledAtan2 itself.
+#if defined(__clang__)
+    constexpr double kPhaseUlps = 4.0;
+#else
+    constexpr double kPhaseUlps = 2.0;
+#endif
+    "Phase is within the bound of std::atan2 of the parts, with C's zeros and NaN, at every chunk size"_test = [] {
         Phase<CF> block;
         applySettings(block);
         const std::vector<CF>     input = complexInput();
@@ -317,7 +323,7 @@ const boost::ut::suite<"Unary complex span loops"> unaryComplexSpans = [] {
             if (std::isnan(reference) || reference == 0.0) {
                 outside += static_cast<std::size_t>(!sameValue(phase, reference));
             } else {
-                outside += static_cast<std::size_t>(!(std::abs(phase - reference) <= 2.0 * floatUlp(reference)));
+                outside += static_cast<std::size_t>(!(std::abs(phase - reference) <= kPhaseUlps * floatUlp(reference)));
             }
         }
         expect(eq(outside, 0UZ)) << "samples whose phase lies outside the bound";
