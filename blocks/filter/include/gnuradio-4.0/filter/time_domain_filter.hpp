@@ -325,11 +325,10 @@ the last output. So do the tags past the last input sample.
     void filterSamples(std::span<const T> input, std::span<T> output) noexcept {
         assert(output.size() >= input.size() / decim);
 
-        std::size_t out_sample_idx = 0;
-        for (std::size_t i = 0; i < input.size(); ++i) {
-            if (i % decim == 0) {
-                output[out_sample_idx++] = input[i];
-            }
+        const std::size_t step    = static_cast<std::size_t>(decim);
+        const std::size_t outputs = input.size() / step;
+        for (std::size_t k = 0UZ; k < outputs; ++k) {
+            output[k] = input[k * step];
         }
     }
 };
