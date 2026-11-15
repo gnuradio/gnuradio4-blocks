@@ -103,10 +103,12 @@ struct ArgumentTile {
  *
  * The error is `arg(x) - p` reduced to `[-pi, pi]`, with `arg(x)` supplied by an `ArgumentTile`; it equals `arg(x * exp(-j*p))`
  * up to float rounding (2e-6 rad), and modulo a turn where the two land either side of `+-pi`. `arg(x)` and `p`
- * both lie in `[-pi, pi]`, so one conditional turn reduces the difference. `atan2` is not replaced by a low-order
- * polynomial, a polynomial's systematic angle error inside a feedback loop being a frequency bias rather than noise;
- * `scaledAtan2` is within 4 ulp of the exact value on either compiler. A zero sample carries no phase and feeds zero
- * error: `atan2(+0, -0)` is `pi`, which would drive a silent input to the frequency clamp instead of letting it coast.
+ * both lie in `[-pi, pi]`, so one conditional turn reduces the difference. `scaledAtan2` is within 4 ulp of the exact
+ * value on either compiler and runs vectorized over the tile, off the serial chain through the loop state. An
+ * arctangent error shows here as a static phase offset and a ripple at multiples of the offset frequency, since the
+ * error is taken on the absolute angle `arg(x)`; the frequency estimate stays unbiased. A zero sample carries no phase
+ * and feeds zero error: `atan2(+0, -0)` is `pi`, which would drive a silent input to the frequency clamp instead of
+ * letting it coast.
  * A NaN sample or phase gives a NaN error; an infinite sample has the argument of its direction.
  */
 [[nodiscard]] inline CarrierStep advanceCarrier(CarrierLoop& loop, std::complex<float> sample, float argument) noexcept {
