@@ -791,40 +791,105 @@ const boost::ut::suite<"constellation"> constellationTests = [] {
         }
     };
 
-    "8-PSK decides by octant: every sector, both sides of every boundary, an offset, non-finite input"_test = [] {
+    "4-PSK and 8-PSK decide on signs: every sector, both sides of every boundary, three offsets, ties, non-finite input"_test = [] {
         const auto check = []<typename F>(F, const char* name) {
             using Cx = std::complex<F>;
-            for (const double offset : {0.0, 0.3, -1.1}) {
-                const auto  psk    = Constellation<F>::psk(8UZ, static_cast<F>(offset));
-                const auto  sector = *psk.rotationToGray();
-                const auto  at     = [&](double angle, double radius) { return Cx(static_cast<F>(radius * std::cos(angle)), static_cast<F>(radius * std::sin(angle))); };
-                std::size_t wrong  = 0UZ;
-                for (std::size_t r = 0UZ; r < 8UZ; ++r) {
-                    const double center   = offset + static_cast<double>(r) * kPi / 4.0;
-                    const double boundary = center + kPi / 8.0;
-                    for (const double radius : {1.0e-3, 1.0, 1.0e3}) {
-                        wrong += psk.hardDecision(at(center, radius)) != sector[r] ? 1UZ : 0UZ;
-                        wrong += psk.hardDecision(at(boundary - 1.0e-3, radius)) != sector[r] ? 1UZ : 0UZ;
-                        wrong += psk.hardDecision(at(boundary + 1.0e-3, radius)) != sector[(r + 1UZ) & 7UZ] ? 1UZ : 0UZ;
+            for (const std::size_t arity : {4UZ, 8UZ}) {
+                const double step = 2.0 * kPi / static_cast<double>(arity);
+                for (const double offset : {0.0, 0.3, -1.1}) {
+                    const auto psk = Constellation<F>::psk(arity, static_cast<F>(offset));
+                    expect(psk.strategy() == DecisionStrategy::Psk) << name << " " << arity << "PSK takes the phase strategy";
+                    const auto  sector = *psk.rotationToGray();
+                    const auto  at     = [&](double angle, double radius) { return Cx(static_cast<F>(radius * std::cos(angle)), static_cast<F>(radius * std::sin(angle))); };
+                    std::size_t wrong  = 0UZ;
+                    for (std::size_t r = 0UZ; r < arity; ++r) {
+                        const double center   = offset + static_cast<double>(r) * step;
+                        const double boundary = center + step / 2.0;
+                        for (const double radius : {1.0e-3, 1.0, 1.0e3}) {
+                            wrong += psk.hardDecision(at(center, radius)) != sector[r] ? 1UZ : 0UZ;
+                            wrong += psk.hardDecision(at(boundary - 1.0e-3, radius)) != sector[r] ? 1UZ : 0UZ;
+                            wrong += psk.hardDecision(at(boundary + 1.0e-3, radius)) != sector[(r + 1UZ) & (arity - 1UZ)] ? 1UZ : 0UZ;
+                        }
                     }
+                    expect(eq(wrong, 0UZ)) << std::format("{} {}PSK offset {}: {} decisions in the wrong sector", name, arity, offset, wrong);
                 }
-                expect(eq(wrong, 0UZ)) << std::format("{} offset {}: {} decisions in the wrong sector", name, offset, wrong);
             }
 
-            // an infinite component makes a part of the rotated pair NaN (inf * 0), and a NaN decides sector 0
-            const auto psk      = Constellation<F>::psk8();
-            const auto sector   = *psk.rotationToGray();
-            const F    infinity = std::numeric_limits<F>::infinity();
-            const F    biggest  = std::numeric_limits<F>::max();
-            expect(eq(psk.hardDecision(Cx{std::numeric_limits<F>::quiet_NaN(), 1}), sector[0])) << name << " NaN";
-            expect(eq(psk.hardDecision(Cx{infinity, 0}), sector[0])) << name << " +inf real";
-            expect(eq(psk.hardDecision(Cx{0, -infinity}), sector[0])) << name << " -inf imaginary";
-            expect(eq(psk.hardDecision(Cx{biggest, biggest}), sector[1])) << name << " the largest finite pair, whose sum overflows";
-            expect(eq(psk.hardDecision(Cx{biggest * static_cast<F>(0.6), biggest * static_cast<F>(0.3)}), sector[1])) << name << " a pair whose product with the tangent overflows";
-            expect(eq(psk.hardDecision(Cx{-F{0}, -F{0}}), sector[0])) << name << " negative zero decides sector 0";
+            // a pair exactly on an axis or a diagonal of the rotated frame goes to the non-negative side: 4-PSK at zero offset has its boundaries on the diagonals
+            const auto four   = Constellation<F>::psk(4UZ, F{0});
+            const auto sector = *four.rotationToGray();
+            expect(eq(four.hardDecision(Cx{1, 1}), sector[0])) << name << " (1,1)";
+            expect(eq(four.hardDecision(Cx{-1, 1}), sector[1])) << name << " (-1,1)";
+            expect(eq(four.hardDecision(Cx{-1, -1}), sector[3])) << name << " (-1,-1)";
+            expect(eq(four.hardDecision(Cx{1, -1}), sector[0])) << name << " (1,-1)";
+
+            // the origin and a NaN decide sector 0; the largest finite pairs decide as the angle does; every pair of special values decides some symbol
+            const F infinity = std::numeric_limits<F>::infinity();
+            const F nan      = std::numeric_limits<F>::quiet_NaN();
+            const F biggest  = std::numeric_limits<F>::max();
+            const F values[] = {nan, infinity, -infinity, biggest, -biggest, F{0}, -F{0}, F{1}, -F{1}, biggest * static_cast<F>(0.3)};
+            for (const std::size_t arity : {4UZ, 8UZ}) {
+                for (const double offset : {0.3, 0.7}) { // no pair of the set lies on a boundary
+                    const auto psk         = Constellation<F>::psk(arity, static_cast<F>(offset));
+                    const auto sectors     = *psk.rotationToGray();
+                    const auto angleSector = [&](double re, double im) {
+                        re *= 0.25; // the angle is scale-free, and the rotation below must not overflow in double
+                        im *= 0.25;
+                        double angle = std::atan2(im * std::cos(offset) - re * std::sin(offset), re * std::cos(offset) + im * std::sin(offset));
+                        angle        = angle < 0.0 ? angle + 2.0 * kPi : angle;
+                        return sectors[static_cast<std::size_t>(angle * static_cast<double>(arity) / (2.0 * kPi) + 0.5) % arity];
+                    };
+                    expect(eq(psk.hardDecision(Cx{F{0}, F{0}}), sectors[0])) << name << " origin";
+                    expect(eq(psk.hardDecision(Cx{-F{0}, -F{0}}), sectors[0])) << name << " negative zero";
+                    for (const F re : values) {
+                        for (const F im : values) {
+                            const auto symbol = psk.hardDecision(Cx{re, im});
+                            expect(lt(static_cast<std::size_t>(symbol), arity)) << name << " a symbol of the constellation";
+                            if (std::isnan(re) || std::isnan(im)) {
+                                expect(eq(symbol, sectors[0])) << name << " a NaN decides sector 0";
+                            } else if (std::isfinite(re) && std::isfinite(im) && (re != F{0} || im != F{0})) {
+                                expect(eq(symbol, angleSector(static_cast<double>(re), static_cast<double>(im)))) << std::format("{} {}PSK offset {}: finite pair ({}, {})", name, arity, offset, re, im);
+                            }
+                        }
+                    }
+                }
+            }
         };
         check(float{}, "float");
         check(double{}, "double");
+
+        // an 8-PSK diagonal tie: at offset pi/8 in double the frame is exactly (1, 0), so (1, 1) lies on the diagonal and goes to the side where |imag| <= |real|
+        const auto eight = Constellation<double>::psk(8UZ, kPi / 8.0);
+        expect(eq(eight.hardDecision(CD{1.0, 1.0}), (*eight.rotationToGray())[0])) << "8-PSK diagonal tie (1,1)";
+    };
+
+    "4-PSK and 8-PSK decide as the angle form does over a large noisy set"_test = [] {
+        // the reference rotates by the offset the constellation holds (the float one), and a point nearer a boundary than the float decision can resolve is left out and counted
+        constexpr double kMargin = 1.0e-6;
+        for (const std::size_t arity : {4UZ, 8UZ}) {
+            for (const double requested : {0.0, 0.3, -1.1}) {
+                const auto                       psk    = Constellation<float>::psk(arity, static_cast<float>(requested));
+                const double                     offset = static_cast<double>(static_cast<float>(requested));
+                const auto                       sector = *psk.rotationToGray();
+                std::mt19937_64                  engine{0x5EEDU};
+                std::normal_distribution<double> gaussian{0.0, 1.3};
+                std::size_t                      differ  = 0UZ;
+                std::size_t                      skipped = 0UZ;
+                for (std::size_t i = 0UZ; i < 200000UZ; ++i) {
+                    const std::complex<float> z(static_cast<float>(gaussian(engine)), static_cast<float>(gaussian(engine)));
+                    double                    angle = std::atan2(static_cast<double>(z.imag()) * std::cos(offset) - static_cast<double>(z.real()) * std::sin(offset), static_cast<double>(z.real()) * std::cos(offset) + static_cast<double>(z.imag()) * std::sin(offset));
+                    angle                           = angle < 0.0 ? angle + 2.0 * kPi : angle;
+                    const double scaled             = angle * static_cast<double>(arity) / (2.0 * kPi) + 0.5;
+                    if (std::abs(scaled - std::round(scaled)) * 2.0 * kPi / static_cast<double>(arity) < kMargin) {
+                        ++skipped;
+                        continue;
+                    }
+                    differ += psk.hardDecision(z) != sector[static_cast<std::size_t>(scaled) % arity] ? 1UZ : 0UZ;
+                }
+                expect(eq(differ, 0UZ)) << std::format("{}PSK offset {}: {} of 200000 noisy points decide otherwise than the angle form ({} within {} rad of a boundary left out)", arity, requested, differ, skipped, kMargin);
+                expect(lt(skipped, 20UZ)) << std::format("{}PSK offset {}: {} points left out", arity, requested, skipped);
+            }
+        }
     };
 
     "the span form is the per-symbol form, and float is registered"_test = [] {
