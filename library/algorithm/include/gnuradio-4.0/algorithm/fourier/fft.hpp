@@ -666,18 +666,16 @@ private:
         }
     }
 
-    std::unique_ptr<FFT<TOutput, TOutput>>                fftCache;
-    std::vector<TOutput, gr::allocator::Aligned<TOutput>> aCache{};
-    std::vector<TOutput, gr::allocator::Aligned<TOutput>> bCache{};
+    std::unique_ptr<FFT<TOutput, TOutput>>                                   fftCache;
+    std::vector<TOutput, gr::allocator::Aligned<TOutput, kSimdFftAlignment>> aCache{};
+    std::vector<TOutput, gr::allocator::Aligned<TOutput, kSimdFftAlignment>> bCache{};
 
     // chirp-z: X[k] = w[k] * (a (*) b)[k]; the cyclic convolution's inverse FFT is expressed as conj(FFT(conj(.)))/m
     void transformBluestein(std::ranges::input_range auto& inPlace) {
         const std::size_t n = inPlace.size();
         const std::size_t m = std::bit_ceil(2 * n + 1);
 
-        using input_container_t = std::remove_cvref_t<decltype(inPlace)>;
-        using output_alloc_t    = gr::allocator::detail::deduce_output_allocator_t<input_container_t, TOutput>;
-        std::vector<TOutput, output_alloc_t> a(m);
+        std::vector<TOutput, gr::allocator::Aligned<TOutput, kSimdFftAlignment>> a(m);
         for (std::size_t i = 0; i < n; ++i) {
             a[i] = detail::complex_mult(inPlace[i], bluesteinExpTable[i]);
         }
@@ -725,8 +723,8 @@ private:
         std::vector<TOutput, gr::allocator::Aligned<TOutput>>                        bluesteinExpTable{};
         std::vector<TOutput, gr::allocator::Aligned<TOutput>>                        bluesteinChirpFFT{};
         std::unique_ptr<FFT<TOutput, TOutput>>                                       fftCache{};
-        std::vector<TOutput, gr::allocator::Aligned<TOutput>>                        aCache{};
-        std::vector<TOutput, gr::allocator::Aligned<TOutput>>                        bCache{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput, kSimdFftAlignment>>     aCache{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput, kSimdFftAlignment>>     bCache{};
         std::unique_ptr<PocketPlan>                                                  pocketPlan{};
         std::vector<TOutput, gr::allocator::Aligned<TOutput>>                        fourStepWork{};
         std::vector<TOutput, gr::allocator::Aligned<TOutput>>                        fourStepTwiddles{};

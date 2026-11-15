@@ -214,11 +214,11 @@ This block estimates the frequency of a signal using the frequency-domain algori
 
     HistoryBuffer<T> _inputHistory{32UZ};
 
-    gr::algorithm::FFT<T, std::complex<T>>                                _fftImpl{};
-    std::vector<T, gr::allocator::Aligned<T>>                             _inData;
-    std::vector<T>                                                        _window;
-    std::vector<std::complex<T>, gr::allocator::Aligned<std::complex<T>>> _outData;
-    std::vector<T>                                                        _magnitudeSpectrum;
+    gr::algorithm::FFT<T, std::complex<T>>                                      _fftImpl{};
+    std::vector<T, gr::allocator::Aligned<T, gr::algorithm::kSimdFftAlignment>> _inData;
+    std::vector<T>                                                              _window;
+    std::vector<std::complex<T>, gr::allocator::Aligned<std::complex<T>>>       _outData;
+    std::vector<T>                                                              _magnitudeSpectrum;
 
     void settingsChanged(const property_map& /*oldSettings*/, const property_map& newSettings) {
         if (newSettings.contains("sample_rate") || newSettings.contains("f_expected") || newSettings.contains("f_min") || newSettings.contains("f_max") || newSettings.contains("min_fft_size")) {

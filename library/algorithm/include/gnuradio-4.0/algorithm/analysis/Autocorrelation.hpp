@@ -443,7 +443,7 @@ struct Autocorrelation {
     using Scalar    = double;
     using Transform = std::complex<Scalar>;
     template<typename U>
-    using AlignedVector = std::vector<U, gr::allocator::Aligned<U>>;
+    using AlignedVector = std::vector<U, gr::allocator::Aligned<U, gr::algorithm::kSimdFftAlignment>>;
 
     /// The fluctuation power, relative to the sequence's own power, at or below which a window is degenerate. A
     /// constant-modulus waveform stored in single precision fluctuates by a few units in the last place. That is a
