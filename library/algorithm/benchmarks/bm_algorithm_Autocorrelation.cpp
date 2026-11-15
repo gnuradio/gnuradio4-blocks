@@ -103,11 +103,11 @@ void benchAutocorrelation() {
                 const std::size_t hop     = std::max(1UZ, static_cast<std::size_t>(std::llround(static_cast<double>(geometry.windowLength) * (1. - overlap))));
                 const std::size_t windows = kSamples / hop;
 
-                gr::algorithm::FFT<std::complex<double>, std::complex<double>, gr::algorithm::Direction::Forward>  forward{};
-                gr::algorithm::FFT<std::complex<double>, std::complex<double>, gr::algorithm::Direction::Backward> backward{};
-                std::vector<std::complex<double>, gr::allocator::Aligned<std::complex<double>>>                    work(transformLength);
-                std::vector<std::complex<double>, gr::allocator::Aligned<std::complex<double>>>                    spectrum(transformLength);
-                std::vector<std::complex<double>, gr::allocator::Aligned<std::complex<double>>>                    correlation(transformLength);
+                gr::algorithm::FFT<std::complex<double>, std::complex<double>, gr::algorithm::Direction::Forward>                 forward{};
+                gr::algorithm::FFT<std::complex<double>, std::complex<double>, gr::algorithm::Direction::Backward>                backward{};
+                std::vector<std::complex<double>, gr::allocator::Aligned<std::complex<double>, gr::algorithm::kSimdFftAlignment>> work(transformLength);
+                std::vector<std::complex<double>, gr::allocator::Aligned<std::complex<double>, gr::algorithm::kSimdFftAlignment>> spectrum(transformLength);
+                std::vector<std::complex<double>, gr::allocator::Aligned<std::complex<double>, gr::algorithm::kSimdFftAlignment>> correlation(transformLength);
                 for (std::size_t k = 0UZ; k < geometry.windowLength; ++k) {
                     work[k] = std::complex<double>(static_cast<double>(k % 17UZ) - 8., static_cast<double>(k % 23UZ) - 11.);
                 }

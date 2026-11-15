@@ -16,9 +16,9 @@ int main() {
     }
 
     // the transform of a unit impulse is one in every bin
-    gr::algorithm::SimdFFT<float, gr::algorithm::Transform::Complex, 64> fft;
-    std::vector<float, gr::allocator::Aligned<float>>                    in(128UZ);
-    std::vector<float, gr::allocator::Aligned<float>>                    out(128UZ);
+    gr::algorithm::SimdFFT<float, gr::algorithm::Transform::Complex, 64>                fft;
+    std::vector<float, gr::allocator::Aligned<float, gr::algorithm::kSimdFftAlignment>> in(128UZ);
+    std::vector<float, gr::allocator::Aligned<float, gr::algorithm::kSimdFftAlignment>> out(128UZ);
     in[0] = 1.0f;
     fft.transform(gr::algorithm::forward, gr::algorithm::ordered, in, out);
     for (std::size_t k = 0UZ; k < 64UZ; ++k) {

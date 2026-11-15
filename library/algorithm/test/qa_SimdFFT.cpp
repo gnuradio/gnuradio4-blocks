@@ -9,6 +9,9 @@
 
 #include <gnuradio-4.0/algorithm/fourier/SimdFFT.hpp>
 
+template<typename T>
+using SimdAllocator = gr::allocator::Aligned<T, gr::algorithm::kSimdFftAlignment>;
+
 template<gr::algorithm::Transform transform_, gr::algorithm::Order ordering_, std::size_t N>
 struct Flags {
     constexpr static gr::algorithm::Transform transform = transform_;
@@ -38,9 +41,9 @@ boost::ut::suite<"SimdFFT Comprehensive"> _ = [] {
 
             // verify exception thrown
             expect(throws<gr::exception>([&invalidN] {
-                SimdFFT<T, Transform::Real>               setup(invalidN);
-                std::vector<T, gr::allocator::Aligned<T>> in(invalidN);
-                std::vector<T, gr::allocator::Aligned<T>> out(invalidN);
+                SimdFFT<T, Transform::Real>      setup(invalidN);
+                std::vector<T, SimdAllocator<T>> in(invalidN);
+                std::vector<T, SimdAllocator<T>> out(invalidN);
                 setup.transform(forward, ordered, in, out);
             })) << std::format("N={} should throw", invalidN);
         } | std::array{7UZ, 11UZ, 14UZ, 17UZ, 31UZ, 35UZ, 48UZ, 49UZ}; // primes and non-factorable
@@ -52,8 +55,8 @@ boost::ut::suite<"SimdFFT Comprehensive"> _ = [] {
             expect(eq(c2c.size(), 64UZ));
             expect(eq(r2c.size(), 1024UZ));
 
-            std::vector<T, gr::allocator::Aligned<T>> in(128UZ);
-            std::vector<T, gr::allocator::Aligned<T>> out(128UZ);
+            std::vector<T, SimdAllocator<T>> in(128UZ);
+            std::vector<T, SimdAllocator<T>> out(128UZ);
             in[0] = T(1);
             c2c.transform(forward, ordered, in, out);
             for (std::size_t k = 0UZ; k < 64UZ; ++k) {
@@ -92,8 +95,8 @@ boost::ut::suite<"SimdFFT Comprehensive"> _ = [] {
                     T           freq         = T(freqs[f_idx]);
                     std::size_t expected_bin = static_cast<std::size_t>(freq * N);
 
-                    std::vector<T, gr::allocator::Aligned<T>> input(is_real ? N : 2 * N);
-                    std::vector<T, gr::allocator::Aligned<T>> output(is_real ? N : 2 * N);
+                    std::vector<T, SimdAllocator<T>> input(is_real ? N : 2 * N);
+                    std::vector<T, SimdAllocator<T>> output(is_real ? N : 2 * N);
 
                     // generate sine wave
                     for (std::size_t n = 0; n < N; ++n) {
@@ -147,9 +150,9 @@ boost::ut::suite<"SimdFFT Comprehensive"> _ = [] {
                 const std::size_t nSamples  = Flag::transform == Real ? N : 2 * N;
                 const T           tolerance = T(1e-5f) * T(N);
 
-                std::vector<T, gr::allocator::Aligned<T>> input(nSamples);
-                std::vector<T, gr::allocator::Aligned<T>> spectrum(nSamples);
-                std::vector<T, gr::allocator::Aligned<T>> reconstructed(nSamples);
+                std::vector<T, SimdAllocator<T>> input(nSamples);
+                std::vector<T, SimdAllocator<T>> spectrum(nSamples);
+                std::vector<T, SimdAllocator<T>> reconstructed(nSamples);
 
                 // multi-tone signal
                 for (std::size_t i = 0; i < N; ++i) {
@@ -214,9 +217,9 @@ boost::ut::suite<"SimdFFT Comprehensive"> _ = [] {
                 const std::size_t nSamples  = Flag::transform == Real ? N : 2 * N;
                 const T           tolerance = T(1e-5f) * N;
 
-                std::vector<T, gr::allocator::Aligned<T>> input(nSamples);
-                std::vector<T, gr::allocator::Aligned<T>> spectrum(nSamples);
-                std::vector<T, gr::allocator::Aligned<T>> reconstructed(nSamples);
+                std::vector<T, SimdAllocator<T>> input(nSamples);
+                std::vector<T, SimdAllocator<T>> spectrum(nSamples);
+                std::vector<T, SimdAllocator<T>> reconstructed(nSamples);
 
                 // chirp from f=0.05 to f=0.45
                 auto chirp = generate_chirp<T>(N, T(0.05f), T(0.45f));
@@ -274,7 +277,7 @@ boost::ut::suite<"SimdFFT Comprehensive"> _ = [] {
                         // Radix-r butterfly: needs (radix+1)×logical_size for safety margin
                         const std::size_t bufSize = (Radix + 1) * nGroups * stride * L;
 
-                        std::vector<T, gr::allocator::Aligned<T>> input(bufSize);
+                        std::vector<T, SimdAllocator<T>> input(bufSize);
                         std::iota(input.begin(), input.end(), T(0));
 
                         // Twiddle factors: (radix-1) complex values = 2*(radix-1) floats
@@ -285,8 +288,8 @@ boost::ut::suite<"SimdFFT Comprehensive"> _ = [] {
                             twiddles[2 * i + 1] = std::sin(angle);
                         }
 
-                        std::vector<T, gr::allocator::Aligned<T>> fwdOutput(bufSize);
-                        std::vector<T, gr::allocator::Aligned<T>> bwdOutput(bufSize);
+                        std::vector<T, SimdAllocator<T>> fwdOutput(bufSize);
+                        std::vector<T, SimdAllocator<T>> bwdOutput(bufSize);
 
                         if constexpr (Radix == 2UZ) {
                             if (transform == Complex) {
@@ -354,8 +357,8 @@ boost::ut::suite<"SimdFFT Comprehensive"> _ = [] {
 
         /*
         skip / "hermitian symmetry for real signals"_test = [](std::size_t N) {
-            std::vector<T, gr::allocator::Aligned<T>> input(N);
-            std::vector<T, gr::allocator::Aligned<T>> output(N);
+            std::vector<T, SimdAllocator<T>> input(N);
+            std::vector<T, SimdAllocator<T>> output(N);
 
             std::mt19937                      rng(42);
             std::uniform_real_distribution<T> dist(T{-1}, T{1});
@@ -381,8 +384,8 @@ boost::ut::suite<"SimdFFT Comprehensive"> _ = [] {
         */
 
         "DC edge cases"_test = [](std::size_t N) {
-            std::vector<T, gr::allocator::Aligned<T>> input(N, T(1.5f)); // constant DC
-            std::vector<T, gr::allocator::Aligned<T>> output(N);
+            std::vector<T, SimdAllocator<T>> input(N, T(1.5f)); // constant DC
+            std::vector<T, SimdAllocator<T>> output(N);
 
             SimdFFT<T, Real> setup(N);
             setup.template transform<Direction::Forward, Ordered>(input, output);
@@ -397,13 +400,13 @@ boost::ut::suite<"SimdFFT Comprehensive"> _ = [] {
         } | std::array{32UZ, 64UZ, 256UZ};
 
         "Nyquist signal edge case"_test = [](std::size_t N) {
-            std::vector<T, gr::allocator::Aligned<T>> input(N);
+            std::vector<T, SimdAllocator<T>> input(N);
             for (std::size_t n = 0; n < N; ++n) {
                 input[n] = (n % 2 == 0) ? T{1} : T{-1}; // alternating +/- at Nyquist
             }
 
-            std::vector<T, gr::allocator::Aligned<T>> output(N);
-            SimdFFT<T, Real>                          setup(N);
+            std::vector<T, SimdAllocator<T>> output(N);
+            SimdFFT<T, Real>                 setup(N);
             setup.template transform<Direction::Forward, Ordered>(input, output);
 
             // all energy at Nyquist (bin N/2)
@@ -411,9 +414,9 @@ boost::ut::suite<"SimdFFT Comprehensive"> _ = [] {
         } | std::array{32UZ, 64UZ, 128UZ, 256UZ};
 
         "linearity"_test = [](std::size_t N) {
-            std::vector<T, gr::allocator::Aligned<T>> x(2 * N), y(2 * N);
-            std::vector<T, gr::allocator::Aligned<T>> fx(2 * N), fy(2 * N), fsum(2 * N);
-            std::vector<T, gr::allocator::Aligned<T>> sum(2 * N);
+            std::vector<T, SimdAllocator<T>> x(2 * N), y(2 * N);
+            std::vector<T, SimdAllocator<T>> fx(2 * N), fy(2 * N), fsum(2 * N);
+            std::vector<T, SimdAllocator<T>> sum(2 * N);
 
             std::mt19937                      rng(123);
             std::uniform_real_distribution<T> dist(T{-1}, T{1});
@@ -492,8 +495,8 @@ void checkRealAgainstDft(std::size_t n, const RealDftReference& reference) {
     }
     const double tolerance = std::is_same_v<T, float> ? 1e-4 : 1e-9;
 
-    std::vector<T, gr::allocator::Aligned<T>> input(n);
-    std::vector<T, gr::allocator::Aligned<T>> output(n);
+    std::vector<T, SimdAllocator<T>> input(n);
+    std::vector<T, SimdAllocator<T>> output(n);
     for (std::size_t i = 0UZ; i < n; ++i) {
         input[i] = static_cast<T>(reference.signal[i]);
     }
@@ -515,8 +518,8 @@ void checkRealAgainstDft(std::size_t n, const RealDftReference& reference) {
     }
     const double forwardError = std::sqrt(numerator / denominator);
 
-    std::vector<T, gr::allocator::Aligned<T>> spectrum(n);
-    std::vector<T, gr::allocator::Aligned<T>> reconstructed(n);
+    std::vector<T, SimdAllocator<T>> spectrum(n);
+    std::vector<T, SimdAllocator<T>> reconstructed(n);
     spectrum[0] = static_cast<T>(reference.spectrum[0].real());
     spectrum[1] = static_cast<T>(reference.spectrum[n / 2UZ].real());
     for (std::size_t k = 1UZ; k < n / 2UZ; ++k) {
@@ -593,7 +596,7 @@ ComplexDftReference complexDftReference(std::size_t n) {
     return reference;
 }
 
-using AlignedFloats = std::vector<float, gr::allocator::Aligned<float>>;
+using AlignedFloats = std::vector<float, SimdAllocator<float>>;
 
 /// relative RMS distance between an interleaved float result and a double reference
 double relativeError(const AlignedFloats& got, const std::vector<std::complex<double>>& want, double scale = 1.) {
