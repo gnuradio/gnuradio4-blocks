@@ -183,7 +183,7 @@ public:
     [[nodiscard]] std::uint8_t hardDecision(std::complex<F> z) const noexcept {
         switch (strategy_) {
         case DecisionStrategy::SquareQam: return decideSquareQam(z);
-        case DecisionStrategy::Psk: return decidePsk(z);
+        case DecisionStrategy::Psk: return folded_ ? decidePskFolded(z) : decidePsk(z);
         default: return decideNearest(z);
         }
     }
@@ -202,6 +202,12 @@ public:
             }
             return;
         case DecisionStrategy::Psk:
+            if (folded_) {
+                for (std::size_t i = 0UZ; i < in.size(); ++i) {
+                    out[i] = decidePskFolded(in[i]);
+                }
+                return;
+            }
             for (std::size_t i = 0UZ; i < in.size(); ++i) {
                 out[i] = decidePsk(in[i]);
             }
@@ -302,23 +308,37 @@ private:
      */
     [[nodiscard]] static std::complex<F> unitPhasor(F phaseOffset, std::uint32_t index, std::size_t arity) noexcept {
         constexpr double kQuarterPi = std::numbers::pi / 4.0;
-        constexpr F      kHalfRoot  = static_cast<F>(0.707106781186547524400844362104849);
 
         const double eighths = static_cast<double>(phaseOffset) / kQuarterPi + 8.0 * static_cast<double>(index) / static_cast<double>(arity);
         if (std::abs(eighths - std::round(eighths)) < 1.0e-12) {
-            switch (static_cast<std::uint32_t>((std::llround(eighths) % 8LL + 8LL) % 8LL)) {
-            case 0U: return {F{1}, F{0}};
-            case 1U: return {kHalfRoot, kHalfRoot};
-            case 2U: return {F{0}, F{1}};
-            case 3U: return {-kHalfRoot, kHalfRoot};
-            case 4U: return {F{-1}, F{0}};
-            case 5U: return {-kHalfRoot, -kHalfRoot};
-            case 6U: return {F{0}, F{-1}};
-            default: return {kHalfRoot, -kHalfRoot};
-            }
+            return eighthPhasor(std::llround(eighths));
         }
         const F angle = phaseOffset + static_cast<F>(2.0 * std::numbers::pi * static_cast<double>(index) / static_cast<double>(arity));
         return {std::cos(angle), std::sin(angle)};
+    }
+
+    /// @brief `exp(j*pi*eighths/4)` exactly, for any whole number of eighths of a turn.
+    [[nodiscard]] static std::complex<F> eighthPhasor(long long eighths) noexcept {
+        constexpr F kHalfRoot = static_cast<F>(0.707106781186547524400844362104849);
+        switch (static_cast<std::uint32_t>((eighths % 8LL + 8LL) % 8LL)) {
+        case 0U: return {F{1}, F{0}};
+        case 1U: return {kHalfRoot, kHalfRoot};
+        case 2U: return {F{0}, F{1}};
+        case 3U: return {-kHalfRoot, kHalfRoot};
+        case 4U: return {F{-1}, F{0}};
+        case 5U: return {-kHalfRoot, -kHalfRoot};
+        case 6U: return {F{0}, F{-1}};
+        default: return {kHalfRoot, -kHalfRoot};
+        }
+    }
+
+    /// @brief `exp(j*angle)`, rounded once from `double`, and exact when the angle is a whole number of eighths of a turn.
+    [[nodiscard]] static std::complex<F> framePhasor(double angle) noexcept {
+        const double eighths = angle / (std::numbers::pi / 4.0);
+        if (std::abs(eighths - std::round(eighths)) < 1.0e-12) {
+            return eighthPhasor(std::llround(eighths));
+        }
+        return {static_cast<F>(std::cos(angle)), static_cast<F>(std::sin(angle))};
     }
 
     void detectCircle(F factoryPhase, bool pskFamily) {
@@ -368,6 +388,21 @@ private:
         phaseSine_   = std::sin(phase);
         sectorScale_ = static_cast<F>(static_cast<double>(arity_) / (2.0 * std::numbers::pi));
         binaryTie_   = std::min(sectorSymbol_[0], sectorSymbol_[1]);
+
+        // 4-PSK and 8-PSK decide on signs (see `decidePskFolded`). The signs and the diagonal side give the octant of the rotated
+        // pair, whose sector is read from the table: sector `k` holds octant `k` for 8-PSK and octants `2k` and `2k+1` for 4-PSK,
+        // and the octant of the index `4*(Im<0) + 2*(Re<0) + (|Im|>|Re|)` is `0 1 3 2 7 6 4 5`.
+        folded_ = arity_ == 4UZ || arity_ == 8UZ;
+        if (folded_) {
+            const std::complex<F> frame = framePhasor(static_cast<double>(phase) - std::numbers::pi / static_cast<double>(arity_));
+            phaseCosine_                = frame.real();
+            phaseSine_                  = frame.imag();
+            foldMask_                   = arity_ == 8UZ ? 1U : 0U;
+            constexpr std::array<std::uint8_t, 8> kOctant{0U, 1U, 3U, 2U, 7U, 6U, 4U, 5U};
+            for (std::size_t i = 0UZ; i < kOctant.size(); ++i) {
+                foldedSymbol_[i] = sectorSymbol_[arity_ == 8UZ ? kOctant[i] : kOctant[i] / 2U];
+            }
+        }
     }
 
     [[nodiscard]] bool detectSquareQam() {
@@ -435,35 +470,29 @@ private:
         if (arity_ == 2UZ) {
             return real > F{0} ? sectorSymbol_[0] : (real < F{0} ? sectorSymbol_[1] : binaryTie_);
         }
-        if (arity_ == 8UZ) {
-            return decidePsk8(z);
-        }
-        return decidePskAngle(real, z.imag() * phaseCosine_ - z.real() * phaseSine_);
-    }
-
-    /// @brief the sector of a rotated pair from its angle.
-    [[nodiscard]] std::uint8_t decidePskAngle(F real, F imag) const noexcept {
-        F angle           = std::atan2(imag, real);
+        const F imag      = z.imag() * phaseCosine_ - z.real() * phaseSine_;
+        F       angle     = std::atan2(imag, real);
         angle             = angle < F{0} ? angle + static_cast<F>(2.0 * std::numbers::pi) : angle;
         const F    scaled = angle * sectorScale_ + F{0.5};
         const auto sector = scaled >= F{0} ? static_cast<std::uint32_t>(scaled) : 0U;
         return sectorSymbol_[sector & (static_cast<std::uint32_t>(arity_) - 1U)];
     }
 
-    /// @brief 8-PSK: the octant from |imag| against |real| (the tangents of 22.5 and 67.5 degrees), no angle; a pair that is not finite, or whose component sum overflows, takes the angle form.
-    /// In float a point within about 1e-7 rad of a sector boundary can decide for the other sector than the angle form does, as the tangent is rounded (about 1e-16 in double); the axes and diagonals are sector centers and decide alike. The pair (-0, -0) at zero offset decides sector 0, where the angle form decides sector 4.
-    /// Out of line: inlined into `decidePsk`, clang++ compiles BPSK from 8.4 to 11.2 ns a symbol and 16-PSK from 18.2 to 18.7.
-    [[nodiscard, gnu::noinline]] std::uint8_t decidePsk8(std::complex<F> z) const noexcept {
-        const F real    = z.real() * phaseCosine_ + z.imag() * phaseSine_;
-        const F imag    = z.imag() * phaseCosine_ - z.real() * phaseSine_;
-        const F absReal = std::abs(real);
-        const F absImag = std::abs(imag);
-        if (!(absReal + absImag <= std::numeric_limits<F>::max())) {
-            return decidePskAngle(real, imag);
-        }
-        const std::uint32_t quadrantStep = static_cast<std::uint32_t>(absImag > absReal * static_cast<F>(0.41421356237309503)) + static_cast<std::uint32_t>(absImag > absReal * static_cast<F>(2.4142135623730951));
-        const std::uint32_t upper        = real >= F{0} ? quadrantStep : 4U - quadrantStep;
-        return sectorSymbol_[(imag >= F{0} ? upper : 8U - upper) & 7U];
+    /**
+     * @brief 4-PSK and 8-PSK: the signs of the rotated pair and, for 8-PSK, which magnitude is larger; no angle.
+     *
+     * The pair is rotated so that the sector boundaries lie on the axes and, for 8-PSK, the diagonals
+     * (`phaseCosine_` and `phaseSine_` carry the phase offset less half a sector). The sign of each
+     * component is then the quadrant, `|imag| > |real|` is which side of the diagonal, and the three
+     * bits index `foldedSymbol_`. A component that is NaN compares false everywhere and counts as
+     * non-negative, so a pair of NaN decides sector 0, as does the origin; a pair on an axis goes to the
+     * non-negative side, and one on a diagonal to the side where `|imag| <= |real|`.
+     */
+    [[nodiscard]] std::uint8_t decidePskFolded(std::complex<F> z) const noexcept {
+        const F             real  = z.real() * phaseCosine_ + z.imag() * phaseSine_;
+        const F             imag  = z.imag() * phaseCosine_ - z.real() * phaseSine_;
+        const std::uint32_t index = (static_cast<std::uint32_t>(imag < F{0}) << 2U) | (static_cast<std::uint32_t>(real < F{0}) << 1U) | (static_cast<std::uint32_t>(std::abs(imag) > std::abs(real)) & foldMask_);
+        return foldedSymbol_[index];
     }
 
     [[nodiscard]] std::uint8_t decideNearest(std::complex<F> z) const noexcept {
@@ -596,6 +625,9 @@ private:
     F                             phaseCosine_{1};
     F                             phaseSine_{0};
     F                             sectorScale_{0};
+    bool                          folded_{false};
+    std::uint32_t                 foldMask_{0U};
+    std::array<std::uint8_t, 8>   foldedSymbol_{};
     std::uint8_t                  binaryTie_{0};
     std::array<std::uint8_t, 256> sectorSymbol_{};
     std::array<std::uint8_t, 256> symbolSector_{};
