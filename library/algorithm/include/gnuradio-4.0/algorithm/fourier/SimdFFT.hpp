@@ -350,9 +350,9 @@ public:
     std::size_t                   _lanes = V::size(); // 4, or 8 for the eight-lane form (see kWideCapable)
     std::array<std::size_t, 15UZ> _radixPlan{};       // [0]: unused (FFTPACK legacy), [1]: number of stages nf, [2 .. 1 + nf] stage radices in execution ordering (2,3,4,5,...)
 
-    alignas(64) WorkStorage _scratch{};                       // used as local data storage
-    alignas(64) StageTwiddleStorage _stageTwiddles{};         // stage-level twiddles
-    alignas(64) ButterflyTwiddleStorage _butterflyTwiddles{}; // butterfly simd-level twiddles
+    alignas(kAlignment) WorkStorage _scratch{};                       // used as local data storage
+    alignas(kAlignment) StageTwiddleStorage _stageTwiddles{};         // stage-level twiddles
+    alignas(kAlignment) ButterflyTwiddleStorage _butterflyTwiddles{}; // butterfly simd-level twiddles
 
     /// @brief Construct compile-time sized FFT
     /// N must be valid, can be checked using `canProcessSize(std::size_t) -> bool`
@@ -687,10 +687,10 @@ private:
         // complex-valued FFT inverts the stage direction
         constexpr Direction   stagesDir           = (IsRealValued::value == (direction == Direction::Forward)) ? Direction::Forward : Direction::Backward;
         [[maybe_unused]] auto processInterleaving = [&](auto operation, std::span<const T> src, std::span<T> dst) {
-            assert(details::isAligned<64>(src.data()));
-            assert(details::isAligned<64>(dst.data()));
-            const T* RESTRICT pSrc = std::assume_aligned<64>(src.data());
-            T* RESTRICT       pDst = std::assume_aligned<64>(dst.data());
+            assert(details::isAligned<kAlignment>(src.data()));
+            assert(details::isAligned<kAlignment>(dst.data()));
+            const T* RESTRICT pSrc = std::assume_aligned<kAlignment>(src.data());
+            T* RESTRICT       pDst = std::assume_aligned<kAlignment>(dst.data());
 
             for (std::size_t k = 0UZ; k < Ncvec; ++k) {
                 const std::size_t k2 = 2UZ * k * V::size();
@@ -763,7 +763,7 @@ private:
         }
 
         if (buff[ib].data() != outputSpan.data()) { // final copy -- only if needed
-            std::memcpy(std::assume_aligned<64>(outputSpan.data()), std::assume_aligned<64>(buff[ib].data()), Ncvec * 2 * W * sizeof(T));
+            std::memcpy(std::assume_aligned<kAlignment>(outputSpan.data()), std::assume_aligned<kAlignment>(buff[ib].data()), Ncvec * 2 * W * sizeof(T));
             ib = !ib;
         }
         assert(buff[ib].data() == outputSpan.data());
@@ -785,12 +785,12 @@ static NEVER_INLINE(void) complexRadix2(std::size_t stride, std::size_t nGroups,
     const std::size_t totalStride = nGroups * stride;
     assert(input.size() >= 2UZ * totalStride);
     assert(output.size() >= 2UZ * totalStride);
-    assert(isAligned<64UZ>(input.data()));
-    assert(isAligned<64UZ>(output.data()));
+    assert(isAligned<kSimdFftAlignment>(input.data()));
+    assert(isAligned<kSimdFftAlignment>(output.data()));
     assert(stride >= 2UZ && "Radix-2 requires stride >= 2 for SIMD path");
 
-    const T* RESTRICT pInput  = std::assume_aligned<64>(input.data());
-    T* RESTRICT       pOutput = std::assume_aligned<64>(output.data());
+    const T* RESTRICT pInput  = std::assume_aligned<kSimdFftAlignment>(input.data());
+    T* RESTRICT       pOutput = std::assume_aligned<kSimdFftAlignment>(output.data());
     if (stride <= 2UZ) { // fast path: no twiddle factors needed
         for (std::size_t k = 0UZ; k < totalStride; k += stride) {
             // butterfly: [in0, in1] + [in2, in3] and [in0, in1] - [in2, in3]
@@ -806,8 +806,8 @@ static NEVER_INLINE(void) complexRadix2(std::size_t stride, std::size_t nGroups,
             (im0 - im1).copy_to(pOutput + (k + 1 + totalStride) * L, stdx::vector_aligned);
         }
     } else { // general path: apply twiddle factor rotation for each element within stride
-        assert(isAligned<64UZ>(twiddles.data()));
-        const T* RESTRICT pTwiddle = std::assume_aligned<64UZ>(twiddles.data());
+        assert(isAligned<kSimdFftAlignment>(twiddles.data()));
+        const T* RESTRICT pTwiddle = std::assume_aligned<kSimdFftAlignment>(twiddles.data());
         for (std::size_t k = 0UZ; k < totalStride; k += stride) {
             for (std::size_t i = 0UZ; i < stride - 1UZ; i += 2UZ) { // N.B. +2 for Re/Im
                 std::size_t idxIn  = (k * 2 + i) * L;
@@ -845,12 +845,12 @@ static NEVER_INLINE(void) complexRadix3(std::size_t stride, std::size_t nGroups,
     const std::size_t totalStride = nGroups * stride;
     assert(input.size() >= 2UZ * totalStride);
     assert(output.size() >= 2UZ * totalStride);
-    assert(isAligned<64UZ>(input.data()));
-    assert(isAligned<64UZ>(output.data()));
+    assert(isAligned<kSimdFftAlignment>(input.data()));
+    assert(isAligned<kSimdFftAlignment>(output.data()));
     assert(stride >= 3UZ && "Radix-3 requires stride >= 3 for SIMD path");
 
-    const T* RESTRICT pInput  = std::assume_aligned<64>(input.data());
-    T* RESTRICT       pOutput = std::assume_aligned<64>(output.data());
+    const T* RESTRICT pInput  = std::assume_aligned<kSimdFftAlignment>(input.data());
+    T* RESTRICT       pOutput = std::assume_aligned<kSimdFftAlignment>(output.data());
 
     for (std::size_t k = 0UZ; k < totalStride; k += stride) {
         const std::size_t k3     = k * 3UZ; // input:  3 values per group
@@ -909,12 +909,12 @@ static NEVER_INLINE(void) complexRadix4(std::size_t stride, std::size_t nGroups,
     const std::size_t totalStride = nGroups * stride;
     assert(input.size() >= 2UZ * totalStride);
     assert(output.size() >= 2UZ * totalStride);
-    assert(isAligned<64UZ>(input.data()));
-    assert(isAligned<64UZ>(output.data()));
+    assert(isAligned<kSimdFftAlignment>(input.data()));
+    assert(isAligned<kSimdFftAlignment>(output.data()));
     assert(stride >= 2UZ && "Radix-4 requires stride >= 2 for SIMD path");
 
-    const T* RESTRICT pInput  = std::assume_aligned<64>(input.data());
-    T* RESTRICT       pOutput = std::assume_aligned<64>(output.data());
+    const T* RESTRICT pInput  = std::assume_aligned<kSimdFftAlignment>(input.data());
+    T* RESTRICT       pOutput = std::assume_aligned<kSimdFftAlignment>(output.data());
 
     if (stride == 2UZ) { // fast path: no twiddle factors needed
         for (std::size_t k = 0UZ; k < totalStride; k += stride) {
@@ -1025,12 +1025,12 @@ static NEVER_INLINE(void) complexRadix5(std::size_t stride, std::size_t nGroups,
     const std::size_t totalStride = nGroups * stride;
     assert(input.size() >= 2UZ * totalStride);
     assert(output.size() >= 2UZ * totalStride);
-    assert(isAligned<64UZ>(input.data()));
-    assert(isAligned<64UZ>(output.data()));
+    assert(isAligned<kSimdFftAlignment>(input.data()));
+    assert(isAligned<kSimdFftAlignment>(output.data()));
     assert(stride > 2UZ && "Radix-5 requires stride > 2 for SIMD path");
 
-    const T* RESTRICT pInput  = std::assume_aligned<64>(input.data());
-    T* RESTRICT       pOutput = std::assume_aligned<64>(output.data());
+    const T* RESTRICT pInput  = std::assume_aligned<kSimdFftAlignment>(input.data());
+    T* RESTRICT       pOutput = std::assume_aligned<kSimdFftAlignment>(output.data());
 
     for (std::size_t k = 0UZ; k < nGroups; ++k) {
         const std::size_t k5     = k * 5UZ; // input: 5 values per group
@@ -1116,13 +1116,13 @@ constexpr void complexFinalise(std::size_t Ncvec, std::span<T> input, std::span<
     constexpr std::size_t L = V::size();
 
     assert(input.data() != output.data());
-    assert(isAligned<64>(input.data()));
-    assert(isAligned<64>(output.data()));
-    assert(isAligned<64>(butterflyTwiddles.data()));
+    assert(isAligned<kSimdFftAlignment>(input.data()));
+    assert(isAligned<kSimdFftAlignment>(output.data()));
+    assert(isAligned<kSimdFftAlignment>(butterflyTwiddles.data()));
 
-    const T* RESTRICT pInput   = std::assume_aligned<64>(input.data());
-    T* RESTRICT       pOutput  = std::assume_aligned<64>(output.data());
-    const T* RESTRICT pTwiddle = std::assume_aligned<64>(butterflyTwiddles.data());
+    const T* RESTRICT pInput   = std::assume_aligned<kSimdFftAlignment>(input.data());
+    T* RESTRICT       pOutput  = std::assume_aligned<kSimdFftAlignment>(output.data());
+    const T* RESTRICT pTwiddle = std::assume_aligned<kSimdFftAlignment>(butterflyTwiddles.data());
 
     const std::size_t nBlocks = Ncvec / L; // number of 4×4 matrix blocks
 
@@ -1195,13 +1195,13 @@ constexpr void complexPreprocess(std::size_t Ncvec, std::span<const T> input, st
     constexpr std::size_t L = V::size();
 
     assert(input.data() != output.data());
-    assert(isAligned<64>(input.data()));
-    assert(isAligned<64>(output.data()));
-    assert(isAligned<64>(butterflyTwiddles.data()));
+    assert(isAligned<kSimdFftAlignment>(input.data()));
+    assert(isAligned<kSimdFftAlignment>(output.data()));
+    assert(isAligned<kSimdFftAlignment>(butterflyTwiddles.data()));
 
-    const T* RESTRICT pInput   = std::assume_aligned<64>(input.data());
-    T* RESTRICT       pOutput  = std::assume_aligned<64>(output.data());
-    const T* RESTRICT pTwiddle = std::assume_aligned<64>(butterflyTwiddles.data());
+    const T* RESTRICT pInput   = std::assume_aligned<kSimdFftAlignment>(input.data());
+    T* RESTRICT       pOutput  = std::assume_aligned<kSimdFftAlignment>(output.data());
+    const T* RESTRICT pTwiddle = std::assume_aligned<kSimdFftAlignment>(butterflyTwiddles.data());
 
     const std::size_t nBlocks = Ncvec / L; // number of 4×4 matrix blocks
 
@@ -1382,9 +1382,9 @@ dft8(F8 (&re)[8], F8 (&im)[8]) noexcept {
 // stage output (vector q holds the length N/8 transform at q for the eight interleaved decimations) -> the final 8-point butterflies
 inline void complexFinalize8(std::size_t Ncvec, const float* RESTRICT input, float* RESTRICT output, const float* RESTRICT butterflyTwiddles) noexcept {
     for (std::size_t block = 0; block < Ncvec / 8; ++block) {
-        const float* ip = std::assume_aligned<64>(input + 128 * block);
-        float*       op = std::assume_aligned<64>(output + 128 * block);
-        const float* tw = std::assume_aligned<64>(butterflyTwiddles + 112 * block);
+        const float* ip = std::assume_aligned<kSimdFftAlignment>(input + 128 * block);
+        float*       op = std::assume_aligned<kSimdFftAlignment>(output + 128 * block);
+        const float* tw = std::assume_aligned<kSimdFftAlignment>(butterflyTwiddles + 112 * block);
         F8           re[8], im[8];
         for (int i = 0; i < 8; ++i) {
             re[i] = load8(ip + 16 * i);
@@ -1408,9 +1408,9 @@ inline void complexFinalize8(std::size_t Ncvec, const float* RESTRICT input, flo
 
 inline void complexPreprocess8(std::size_t Ncvec, const float* RESTRICT input, float* RESTRICT output, const float* RESTRICT butterflyTwiddles) noexcept {
     for (std::size_t block = 0; block < Ncvec / 8; ++block) {
-        const float* ip = std::assume_aligned<64>(input + 128 * block);
-        float*       op = std::assume_aligned<64>(output + 128 * block);
-        const float* tw = std::assume_aligned<64>(butterflyTwiddles + 112 * block);
+        const float* ip = std::assume_aligned<kSimdFftAlignment>(input + 128 * block);
+        float*       op = std::assume_aligned<kSimdFftAlignment>(output + 128 * block);
+        const float* tw = std::assume_aligned<kSimdFftAlignment>(butterflyTwiddles + 112 * block);
         F8           re[8], im[8];
         for (int i = 0; i < 8; ++i) {
             re[i] = load8(ip + 16 * i);
@@ -1484,12 +1484,12 @@ static NEVER_INLINE(void) realRadix2(std::size_t stride, std::size_t nGroups, st
 
     const std::size_t totalStride = nGroups * stride;
 
-    assert(isAligned<64>(input.data()));
-    assert(isAligned<64>(output.data()));
+    assert(isAligned<kSimdFftAlignment>(input.data()));
+    assert(isAligned<kSimdFftAlignment>(output.data()));
 
-    T* RESTRICT       pInput   = std::assume_aligned<64>(input.data());
-    T* RESTRICT       pOutput  = std::assume_aligned<64>(output.data());
-    const T* RESTRICT pTwiddle = std::assume_aligned<64>(twiddles.data());
+    T* RESTRICT       pInput   = std::assume_aligned<kSimdFftAlignment>(input.data());
+    T* RESTRICT       pOutput  = std::assume_aligned<kSimdFftAlignment>(output.data());
+    const T* RESTRICT pTwiddle = std::assume_aligned<kSimdFftAlignment>(twiddles.data());
 
     // direction-specific complex multiply (Forward: conjugate, Backward: normal)
     constexpr auto applyTwiddle = []<typename Vec, typename Scalar>(Vec& re, Vec& im, const Scalar& wr, const Scalar& wi) {
@@ -1596,11 +1596,11 @@ static NEVER_INLINE(void) realRadix3(std::size_t stride, std::size_t nGroups, st
     // the order it combines the terms and not in the sign of the rotation (FFTPACK RADF3 and RADB3 share +TAUI)
     constexpr T sin120 = T{0.5} * std::numbers::sqrt3_v<T>;
 
-    assert(isAligned<64>(input.data()));
-    assert(isAligned<64>(output.data()));
+    assert(isAligned<kSimdFftAlignment>(input.data()));
+    assert(isAligned<kSimdFftAlignment>(output.data()));
 
-    T* RESTRICT       pInput    = std::assume_aligned<64>(input.data());
-    T* RESTRICT       pOutput   = std::assume_aligned<64>(output.data());
+    T* RESTRICT       pInput    = std::assume_aligned<kSimdFftAlignment>(input.data());
+    T* RESTRICT       pOutput   = std::assume_aligned<kSimdFftAlignment>(output.data());
     const T* RESTRICT pTwiddle1 = twiddles1.data();
     const T* RESTRICT pTwiddle2 = twiddles2.data();
 
@@ -1724,11 +1724,11 @@ static NEVER_INLINE(void) realRadix4(std::size_t stride, std::size_t nGroups, st
     constexpr std::size_t L           = V::size();
     const std::size_t     totalStride = nGroups * stride;
 
-    assert(isAligned<64>(input.data()));
-    assert(isAligned<64>(output.data()));
+    assert(isAligned<kSimdFftAlignment>(input.data()));
+    assert(isAligned<kSimdFftAlignment>(output.data()));
 
-    T* RESTRICT       pInput    = std::assume_aligned<64>(input.data());
-    T* RESTRICT       pOutput   = std::assume_aligned<64>(output.data());
+    T* RESTRICT       pInput    = std::assume_aligned<kSimdFftAlignment>(input.data());
+    T* RESTRICT       pOutput   = std::assume_aligned<kSimdFftAlignment>(output.data());
     const T* RESTRICT pTwiddle1 = twiddles1.data();
     const T* RESTRICT pTwiddle2 = twiddles2.data();
     const T* RESTRICT pTwiddle3 = twiddles3.data();
@@ -1966,11 +1966,11 @@ static NEVER_INLINE(void) realRadix5(std::size_t stride, std::size_t nGroups, st
     constexpr T cos72  = static_cast<T>(0.30901699437494745L);  // cos(2π/5)
     constexpr T cos144 = static_cast<T>(-0.80901699437494745L); // cos(4π/5)
 
-    assert(isAligned<64>(input.data()));
-    assert(isAligned<64>(output.data()));
+    assert(isAligned<kSimdFftAlignment>(input.data()));
+    assert(isAligned<kSimdFftAlignment>(output.data()));
 
-    T* RESTRICT       pInput    = std::assume_aligned<64>(input.data());
-    T* RESTRICT       pOutput   = std::assume_aligned<64>(output.data());
+    T* RESTRICT       pInput    = std::assume_aligned<kSimdFftAlignment>(input.data());
+    T* RESTRICT       pOutput   = std::assume_aligned<kSimdFftAlignment>(output.data());
     const T* RESTRICT pTwiddle1 = twiddles1.data();
     const T* RESTRICT pTwiddle2 = twiddles2.data();
     const T* RESTRICT pTwiddle3 = twiddles3.data();
@@ -2271,12 +2271,12 @@ void dispatchRadix(std::size_t radix, std::size_t stride, std::size_t nGroups, s
 
 template<Direction dir, Transform transform, std::floating_point T, int W>
 static NEVER_INLINE(std::span<T>) fftStages(std::size_t nVectors, std::span<const T> input, std::span<T> workBuffer1, std::span<T> workBuffer2, std::span<const T> twiddles, std::span<const std::size_t, 15> radixPlan) {
-    assert(isAligned<64>(input.data()));
-    assert(isAligned<64>(workBuffer1.data()));
-    assert(isAligned<64>(workBuffer2.data()));
-    assert(isAligned<64>(twiddles.data()));
+    assert(isAligned<kSimdFftAlignment>(input.data()));
+    assert(isAligned<kSimdFftAlignment>(workBuffer1.data()));
+    assert(isAligned<kSimdFftAlignment>(workBuffer2.data()));
+    assert(isAligned<kSimdFftAlignment>(twiddles.data()));
 
-    const T* RESTRICT inputAligned = std::assume_aligned<64>(input.data());
+    const T* RESTRICT inputAligned = std::assume_aligned<kSimdFftAlignment>(input.data());
     std::span<T>      bufferIn{const_cast<T*>(inputAligned), input.size()};
     std::span<T>      bufferOut = (bufferIn.data() == workBuffer2.data()) ? workBuffer1 : workBuffer2;
     if constexpr (transform == Transform::Real && dir == Direction::Backward) {
@@ -2376,7 +2376,7 @@ template<std::floating_point T>
 constexpr ALWAYS_INLINE(void) realFinalise_4x4(const T* RESTRICT in0, const T* RESTRICT in1, const T* RESTRICT in, std::span<const T> eSpan, T* RESTRICT out) {
     using V                 = vec<T, 4>;
     constexpr std::size_t L = V::size();
-    const T* RESTRICT     e = std::assume_aligned<64>(eSpan.data());
+    const T* RESTRICT     e = std::assume_aligned<kSimdFftAlignment>(eSpan.data());
 
     V r0(in0, stdx::vector_aligned);
     V i0(in1, stdx::vector_aligned);
@@ -2443,15 +2443,15 @@ constexpr void realFinalise(std::size_t Ncvec, std::span<const T> inputSpan, std
     constexpr std::size_t L = V::size();
 
     assert(inputSpan.data() != outputSpan.data());
-    assert(isAligned<64>(inputSpan.data()));
-    assert(isAligned<64>(outputSpan.data()));
-    const T* RESTRICT input  = std::assume_aligned<64>(inputSpan.data());
-    T* RESTRICT       output = std::assume_aligned<64>(outputSpan.data());
+    assert(isAligned<kSimdFftAlignment>(inputSpan.data()));
+    assert(isAligned<kSimdFftAlignment>(outputSpan.data()));
+    const T* RESTRICT input  = std::assume_aligned<kSimdFftAlignment>(inputSpan.data());
+    T* RESTRICT       output = std::assume_aligned<kSimdFftAlignment>(outputSpan.data());
 
     V cr(input, stdx::vector_aligned);
     V ci(input + (Ncvec * 2 - 1) * L, stdx::vector_aligned);
 
-    alignas(64UZ) T zero_storage[L] = {};
+    alignas(kSimdFftAlignment) T zero_storage[L] = {};
     realFinalise_4x4(zero_storage, zero_storage, input + L, e.subspan(0, 6 * L), output);
 
     // special handling for DC and Nyquist
@@ -2469,8 +2469,8 @@ constexpr void realFinalise(std::size_t Ncvec, std::span<const T> inputSpan, std
     V                 save(input + 7 * L, stdx::vector_aligned);
 
     for (std::size_t k = 1; k < dx; ++k) {
-        V               save_next(input + (8 * k + 7) * L, stdx::vector_aligned);
-        alignas(64UZ) T save_storage[L];
+        V                            save_next(input + (8 * k + 7) * L, stdx::vector_aligned);
+        alignas(kSimdFftAlignment) T save_storage[L];
         store_unchecked(save, save_storage, stdx::vector_aligned);
         realFinalise_4x4(save_storage, input + 8 * k * L, input + (8 * k + 1) * L, e.subspan(k * 6 * L, 6 * L), output + k * 8 * L);
         save = save_next;
@@ -2505,7 +2505,7 @@ constexpr ALWAYS_INLINE(void) realPreprocess_4x4(const T* RESTRICT in, std::span
     i1 = si0 - dr1;
     i3 = si0 + dr1;
 
-    const T* RESTRICT e = std::assume_aligned<64>(eSpan.data());
+    const T* RESTRICT e = std::assume_aligned<kSimdFftAlignment>(eSpan.data());
 
     V e0(e, stdx::vector_aligned);
     V e1(e + L, stdx::vector_aligned);
@@ -2546,10 +2546,10 @@ constexpr void realPreprocess(std::size_t Ncvec, std::span<const T> inputSpan, s
     constexpr std::size_t L = V::size();
 
     assert(inputSpan.data() != outputSpan.data());
-    assert(isAligned<64>(inputSpan.data()));
-    assert(isAligned<64>(outputSpan.data()));
-    const T* RESTRICT input  = std::assume_aligned<64>(inputSpan.data());
-    T* RESTRICT       output = std::assume_aligned<64>(outputSpan.data());
+    assert(isAligned<kSimdFftAlignment>(inputSpan.data()));
+    assert(isAligned<kSimdFftAlignment>(outputSpan.data()));
+    const T* RESTRICT input  = std::assume_aligned<kSimdFftAlignment>(inputSpan.data());
+    T* RESTRICT       output = std::assume_aligned<kSimdFftAlignment>(outputSpan.data());
 
     V Xr, Xi;
     for (std::size_t k = 0; k < 4; ++k) {
