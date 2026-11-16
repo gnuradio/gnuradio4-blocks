@@ -28,6 +28,8 @@
 #include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
+#include "SoapyTestEnvironment.hpp"
+
 using namespace boost::ut;
 using CF32 = std::complex<float>;
 
@@ -85,13 +87,16 @@ bool hardwareRequested() {
 
 /// Without GR_SDR_TEST_HARDWARE=1, SOAPY_SDR_ROOT names an empty directory and SOAPY_SDR_PLUGIN_PATH the loopback
 /// module's directory. SoapySDR then loads the loopback module alone. With it, the loopback module's directory joins the
-/// host's module folders unless SOAPY_SDR_PLUGIN_PATH is set. The flag is initialized ahead of the suites below.
+/// host's module folders unless SOAPY_SDR_PLUGIN_PATH is set, or GR_SDR_TEST_SOAPY_MODULE_DIR is not. The flag is
+/// initialized ahead of the suites below.
 const bool kHardwareRequested = [] {
     const bool requested = hardwareRequested();
     if (!requested) {
-        setenv("SOAPY_SDR_ROOT", GR_SDR_TEST_SOAPY_EMPTY_ROOT, 1);
+        setenv("SOAPY_SDR_ROOT", soapyEmptyRoot().c_str(), 1);
+        setenv("SOAPY_SDR_PLUGIN_PATH", soapyModuleDirectory().c_str(), 1);
+    } else if (const char* moduleDirectory = std::getenv("GR_SDR_TEST_SOAPY_MODULE_DIR"); moduleDirectory != nullptr) {
+        setenv("SOAPY_SDR_PLUGIN_PATH", moduleDirectory, 0);
     }
-    setenv("SOAPY_SDR_PLUGIN_PATH", GR_SDR_TEST_SOAPY_MODULE_DIR, requested ? 0 : 1);
     return requested;
 }();
 
@@ -348,7 +353,7 @@ const boost::ut::suite<"SoapySDR modules"> moduleTests = [] {
         const std::vector<std::string> modules = soapy::getSoapySDRModules();
         expect(!modules.empty()) << "the loopback module is listed";
         for (const auto& module : modules) {
-            expect(module.starts_with(GR_SDR_TEST_SOAPY_MODULE_DIR "/")) << module;
+            expect(module.starts_with(soapyModuleDirectory() + "/")) << module;
         }
     };
 };
