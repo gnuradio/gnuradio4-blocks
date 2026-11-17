@@ -25,6 +25,22 @@
 #include <immintrin.h>
 #endif
 
+// MSVC evaluates every operand of an #if, and __has_builtin is not an operator it knows (C4067), so the test is nested
+// under the compiler check instead of joined to it with &&
+#if defined(__clang__)
+#if __has_builtin(__builtin_elementwise_fma)
+#define GR_POLYPHASE_HAS_ELEMENTWISE_FMA 1
+#endif
+#endif
+
+// MSVC does not recognise [[gnu::noinline]] (C5030) and spells it as a declspec; the same choice as core's
+// GR_SUBNORMAL_NOINLINE
+#if defined(_MSC_VER) && !defined(__clang__)
+#define GR_POLYPHASE_NOINLINE __declspec(noinline)
+#else
+#define GR_POLYPHASE_NOINLINE [[gnu::noinline]]
+#endif
+
 /**
  * @brief An exact `L/M` rate change: `L` outputs for every `M` inputs.
  *
@@ -337,7 +353,7 @@ struct PolyphaseVector {
                 return a * b + c;
             }
         } else {
-#if defined(__clang__) && __has_builtin(__builtin_elementwise_fma)
+#if defined(GR_POLYPHASE_HAS_ELEMENTWISE_FMA)
             if constexpr (kHardwareFma<Element<V>>) {
                 return __builtin_elementwise_fma(a, b, c);
             }
@@ -419,7 +435,7 @@ inline constexpr std::size_t kPolyphasePassWork = 32UZ;
  * Kept out of line, so that its register allocation does not depend on its caller; inlined, it measured the same.
  */
 template<typename TSample, typename TTap, std::size_t kOutputs>
-[[gnu::noinline]] void polyphaseDotLanes(const typename PolyphaseTraits<TSample, TTap>::TapValue* h, const typename PolyphaseTraits<TSample, TTap>::Value* arranged, const typename PolyphaseTraits<TSample, TTap>::SampleValue* const* x, std::size_t n, typename PolyphaseTraits<TSample, TTap>::Output* out) noexcept {
+GR_POLYPHASE_NOINLINE void polyphaseDotLanes(const typename PolyphaseTraits<TSample, TTap>::TapValue* h, const typename PolyphaseTraits<TSample, TTap>::Value* arranged, const typename PolyphaseTraits<TSample, TTap>::SampleValue* const* x, std::size_t n, typename PolyphaseTraits<TSample, TTap>::Output* out) noexcept {
     using Traits = PolyphaseTraits<TSample, TTap>;
     using Lanes  = PolyphaseLanes<TSample, TTap>;
     using Value  = typename Traits::Value;
@@ -1220,5 +1236,8 @@ private:
 };
 
 } // namespace gr::filter
+
+#undef GR_POLYPHASE_NOINLINE
+#undef GR_POLYPHASE_HAS_ELEMENTWISE_FMA
 
 #endif // GNURADIO_ALGORITHM_POLYPHASE_RESAMPLER_HPP
