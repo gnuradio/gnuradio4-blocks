@@ -181,9 +181,12 @@ public:
     }
 
     [[nodiscard]] std::uint8_t hardDecision(std::complex<F> z) const noexcept {
+        if (decider_ == Decider::Binary) {
+            return decideBinary(z);
+        }
         switch (strategy_) {
-        case DecisionStrategy::SquareQam: return decideSquareQam(z);
-        case DecisionStrategy::Psk: return folded_ ? decidePskFolded(z) : decidePsk(z);
+        case DecisionStrategy::SquareQam: return decider_ == Decider::Quadrant ? decideQuadrant(z) : decideSquareQam(z);
+        case DecisionStrategy::Psk: return decider_ == Decider::Folded ? decidePskFolded(z) : decidePsk(z);
         default: return decideNearest(z);
         }
     }
@@ -195,23 +198,28 @@ public:
         if (out.size() < in.size()) {
             throw std::invalid_argument("gr::digital::Constellation::hardDecisions: output span is shorter than the input");
         }
-        switch (strategy_) {
-        case DecisionStrategy::SquareQam:
+        switch (decider_) {
+        case Decider::Binary:
+            for (std::size_t i = 0UZ; i < in.size(); ++i) {
+                out[i] = decideBinary(in[i]);
+            }
+            return;
+        case Decider::Quadrant:
+            for (std::size_t i = 0UZ; i < in.size(); ++i) {
+                out[i] = decideQuadrant(in[i]);
+            }
+            return;
+        case Decider::Folded:
+            for (std::size_t i = 0UZ; i < in.size(); ++i) {
+                out[i] = decidePskFolded(in[i]);
+            }
+            return;
+        case Decider::SquareQam:
             for (std::size_t i = 0UZ; i < in.size(); ++i) {
                 out[i] = decideSquareQam(in[i]);
             }
             return;
-        case DecisionStrategy::Psk:
-            if (folded_) {
-                for (std::size_t i = 0UZ; i < in.size(); ++i) {
-                    out[i] = decidePskFolded(in[i]);
-                }
-                return;
-            }
-            for (std::size_t i = 0UZ; i < in.size(); ++i) {
-                out[i] = decidePsk(in[i]);
-            }
-            return;
+        case Decider::Angle: decidePskSpan(in, out); return;
         default:
             for (std::size_t i = 0UZ; i < in.size(); ++i) {
                 out[i] = decideNearest(in[i]);
@@ -247,6 +255,10 @@ public:
     }
 
 private:
+    /// @brief The decision `hardDecision` and `hardDecisions` take, chosen at construction so that no symbol tests the geometry.
+    /// BPSK, QPSK, 4-PSK and 8-PSK decide without a branch on the data; such a branch mispredicts on about half of the symbols of a random stream.
+    enum class Decider : std::uint8_t { Binary, Quadrant, Folded, SquareQam, Angle, Nearest };
+
     Constellation(std::vector<std::complex<F>>&& raw, Normalization mode, F phaseOffset, bool pskFamily) : points_(std::move(raw)), normalization_(mode) {
         arity_      = points_.size();
         bits_       = bitCount(arity_);
@@ -279,6 +291,9 @@ private:
         detectCircle(phaseOffset, pskFamily);
         const bool square = detectSquareQam();
         strategy_         = square ? DecisionStrategy::SquareQam : (onCircle_ ? DecisionStrategy::Psk : DecisionStrategy::Nearest);
+        if (strategy_ != DecisionStrategy::Psk) {
+            decider_ = square ? (axisLevels_ == 2UZ ? Decider::Quadrant : Decider::SquareQam) : Decider::Nearest;
+        }
     }
 
     static void requirePowerOfTwo(std::size_t arity, const char* what) {
@@ -383,21 +398,20 @@ private:
             symbolSector_[i] = static_cast<std::uint8_t>(i);
         }
 
-        onCircle_    = true;
-        phaseCosine_ = std::cos(phase);
-        phaseSine_   = std::sin(phase);
-        sectorScale_ = static_cast<F>(static_cast<double>(arity_) / (2.0 * std::numbers::pi));
-        binaryTie_   = std::min(sectorSymbol_[0], sectorSymbol_[1]);
+        onCircle_     = true;
+        phaseCosine_  = std::cos(phase);
+        phaseSine_    = std::sin(phase);
+        sectorScale_  = static_cast<F>(static_cast<double>(arity_) / (2.0 * std::numbers::pi));
+        binarySymbol_ = {sectorSymbol_[0], sectorSymbol_[1], sectorSymbol_[0], std::min(sectorSymbol_[0], sectorSymbol_[1])};
+        decider_      = arity_ == 2UZ ? Decider::Binary : (arity_ == 4UZ || arity_ == 8UZ ? Decider::Folded : Decider::Angle);
 
         // 4-PSK and 8-PSK decide on signs (see `decidePskFolded`). The signs and the diagonal side give the octant of the rotated
         // pair, whose sector is read from the table: sector `k` holds octant `k` for 8-PSK and octants `2k` and `2k+1` for 4-PSK,
         // and the octant of the index `4*(Im<0) + 2*(Re<0) + (|Im|>|Re|)` is `0 1 3 2 7 6 4 5`.
-        folded_ = arity_ == 4UZ || arity_ == 8UZ;
-        if (folded_) {
+        if (decider_ == Decider::Folded) {
             const std::complex<F> frame = framePhasor(static_cast<double>(phase) - std::numbers::pi / static_cast<double>(arity_));
             phaseCosine_                = frame.real();
             phaseSine_                  = frame.imag();
-            foldMask_                   = arity_ == 8UZ ? 1U : 0U;
             constexpr std::array<std::uint8_t, 8> kOctant{0U, 1U, 3U, 2U, 7U, 6U, 4U, 5U};
             for (std::size_t i = 0UZ; i < kOctant.size(); ++i) {
                 foldedSymbol_[i] = sectorSymbol_[arity_ == 8UZ ? kOctant[i] : kOctant[i] / 2U];
@@ -463,35 +477,68 @@ private:
         return (tied ? index - static_cast<std::uint32_t>(axisTieDown_[index]) : index) & (kMaxAxisLevels - 1U);
     }
 
+    /**
+     * @brief QPSK: `decideSquareQam` for two levels per axis, with no floor and no tie branch.
+     *
+     * With two levels `axisIndex` is 1 exactly when the component times `axisHalfScale_` is above zero:
+     * the tie at zero, a NaN and a product that underflows to zero all go to level 0, whose Gray label
+     * is 0, as do negative components. The floor, the clamp and the tie test of `axisIndex` thus
+     * reduce to one comparison per component.
+     */
+    [[nodiscard]] std::uint8_t decideQuadrant(std::complex<F> z) const noexcept {
+        const auto upperI = static_cast<std::uint32_t>(z.real() * axisHalfScale_ > F{0});
+        const auto upperQ = static_cast<std::uint32_t>(z.imag() * axisHalfScale_ > F{0});
+        return static_cast<std::uint8_t>((upperQ << 1U) | upperI);
+    }
+
     [[nodiscard]] std::uint8_t decideSquareQam(std::complex<F> z) const noexcept { return static_cast<std::uint8_t>((axisGray_[axisIndex(z.imag())] << axisBits_) | axisGray_[axisIndex(z.real())]); }
 
-    [[nodiscard]] std::uint8_t decidePsk(std::complex<F> z) const noexcept {
+    /**
+     * @brief BPSK: the sign of the rotated real part, as an index rather than a branch.
+     *
+     * `!(real > 0)` and `!(real < 0)` are two bits of the index into `binarySymbol_`: 2 for a positive
+     * part (sector 0), 1 for a negative one (sector 1), and 3 for zero or NaN (the lower of the two
+     * symbols).
+     */
+    [[nodiscard]] std::uint8_t decideBinary(std::complex<F> z) const noexcept {
         const F real = z.real() * phaseCosine_ + z.imag() * phaseSine_;
-        if (arity_ == 2UZ) {
-            return real > F{0} ? sectorSymbol_[0] : (real < F{0} ? sectorSymbol_[1] : binaryTie_);
+        return binarySymbol_[static_cast<std::uint32_t>(!(real > F{0})) | (static_cast<std::uint32_t>(!(real < F{0})) << 1U)];
+    }
+
+    /// @brief `decidePsk` over a span, kept out of line: inlined into `hardDecisions`, it slows the other loops under g++.
+    [[gnu::noinline]] void decidePskSpan(std::span<const std::complex<F>> in, std::span<std::uint8_t> out) const noexcept {
+        for (std::size_t i = 0UZ; i < in.size(); ++i) {
+            out[i] = decidePsk(in[i]);
         }
-        const F imag      = z.imag() * phaseCosine_ - z.real() * phaseSine_;
-        F       angle     = std::atan2(imag, real);
-        angle             = angle < F{0} ? angle + static_cast<F>(2.0 * std::numbers::pi) : angle;
+    }
+
+    /// @brief 16-PSK and above: the sector from the angle of the rotated pair.
+    [[nodiscard]] std::uint8_t decidePsk(std::complex<F> z) const noexcept {
+        const F real  = z.real() * phaseCosine_ + z.imag() * phaseSine_;
+        const F imag  = z.imag() * phaseCosine_ - z.real() * phaseSine_;
+        F       angle = std::atan2(imag, real);
+        // a product: g++ compiles the select as a branch
+        angle             = angle + static_cast<F>(angle < F{0}) * static_cast<F>(2.0 * std::numbers::pi);
         const F    scaled = angle * sectorScale_ + F{0.5};
         const auto sector = scaled >= F{0} ? static_cast<std::uint32_t>(scaled) : 0U;
         return sectorSymbol_[sector & (static_cast<std::uint32_t>(arity_) - 1U)];
     }
 
     /**
-     * @brief 4-PSK and 8-PSK: the signs of the rotated pair and, for 8-PSK, which magnitude is larger; no angle.
+     * @brief 4-PSK and 8-PSK: the signs of the rotated pair and which magnitude is larger; no angle.
      *
      * The pair is rotated so that the sector boundaries lie on the axes and, for 8-PSK, the diagonals
      * (`phaseCosine_` and `phaseSine_` carry the phase offset less half a sector). The sign of each
      * component is then the quadrant, `|imag| > |real|` is which side of the diagonal, and the three
-     * bits index `foldedSymbol_`. A component that is NaN compares false everywhere and counts as
-     * non-negative, so a pair of NaN decides sector 0, as does the origin; a pair on an axis goes to the
-     * non-negative side, and one on a diagonal to the side where `|imag| <= |real|`.
+     * bits index `foldedSymbol_`, whose two entries per quadrant are equal for 4-PSK. A component that
+     * is NaN compares false everywhere and counts as non-negative, so a pair of NaN decides sector 0, as
+     * does the origin; a pair on an axis goes to the non-negative side, and one on a diagonal to the
+     * side where `|imag| <= |real|`.
      */
     [[nodiscard]] std::uint8_t decidePskFolded(std::complex<F> z) const noexcept {
         const F             real  = z.real() * phaseCosine_ + z.imag() * phaseSine_;
         const F             imag  = z.imag() * phaseCosine_ - z.real() * phaseSine_;
-        const std::uint32_t index = (static_cast<std::uint32_t>(imag < F{0}) << 2U) | (static_cast<std::uint32_t>(real < F{0}) << 1U) | (static_cast<std::uint32_t>(std::abs(imag) > std::abs(real)) & foldMask_);
+        const std::uint32_t index = (static_cast<std::uint32_t>(imag < F{0}) << 2U) | (static_cast<std::uint32_t>(real < F{0}) << 1U) | static_cast<std::uint32_t>(std::abs(imag) > std::abs(real));
         return foldedSymbol_[index];
     }
 
@@ -620,15 +667,14 @@ private:
     F                            normalizationScale_{};
     F                            minimumDistance_{};
     DecisionStrategy             strategy_{DecisionStrategy::Nearest};
+    Decider                      decider_{Decider::Nearest};
 
     bool                          onCircle_{false};
     F                             phaseCosine_{1};
     F                             phaseSine_{0};
     F                             sectorScale_{0};
-    bool                          folded_{false};
-    std::uint32_t                 foldMask_{0U};
     std::array<std::uint8_t, 8>   foldedSymbol_{};
-    std::uint8_t                  binaryTie_{0};
+    std::array<std::uint8_t, 4>   binarySymbol_{};
     std::array<std::uint8_t, 256> sectorSymbol_{};
     std::array<std::uint8_t, 256> symbolSector_{};
 
