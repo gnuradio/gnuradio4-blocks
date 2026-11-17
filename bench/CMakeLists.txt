@@ -12,4 +12,8 @@ function(add_benchmark BM_NAME)
   target_link_libraries(${BM_NAME} PRIVATE gnuradio-options ut gnuradio4::ut-benchmark)
 endfunction()
 
-add_benchmark(bm_example)
+# ut-benchmark and add_benchmark above are defined whatever the options say, since the library's and the block
+# families' benchmarks use them. The example benchmark itself follows ENABLE_EXAMPLES, as the families' benchmarks do.
+if(ENABLE_EXAMPLES)
+  add_benchmark(bm_example)
+endif()
