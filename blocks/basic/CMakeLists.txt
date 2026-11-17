@@ -63,7 +63,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/gnuradio-4.0/basic"
 gr_add_block_library(
   GrBasicBlocks
   MAKE_SHARED_LIBRARY
-  MAKE_STATIC_LIBRARY
+  ${GR4_BLOCK_STATIC_LIBRARY}
   HEADERS
   ${GrBasicBlocks_HDRS}
   SOURCES
