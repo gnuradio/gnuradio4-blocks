@@ -153,6 +153,18 @@ template<std::floating_point F>
     return grayDecode(field & (levels - 1U));
 }
 
+/// @brief How many of `input` the span form `hardDecisions` decides otherwise than the per-symbol `hardDecision`.
+template<std::floating_point F>
+[[nodiscard]] std::size_t spanMismatches(const Constellation<F>& constellation, const std::vector<std::complex<F>>& input) {
+    std::vector<std::uint8_t> span(input.size());
+    constellation.hardDecisions(input, span);
+    std::size_t mismatches = 0UZ;
+    for (std::size_t i = 0UZ; i < input.size(); ++i) {
+        mismatches += span[i] != constellation.hardDecision(input[i]);
+    }
+    return mismatches;
+}
+
 /**
  * @brief Whether `Nearest` is choosing by the tie rule rather than by distance.
  *
@@ -806,9 +818,9 @@ const boost::ut::suite<"constellation"> constellationTests = [] {
                         const double center   = offset + static_cast<double>(r) * step;
                         const double boundary = center + step / 2.0;
                         for (const double radius : {1.0e-3, 1.0, 1.0e3}) {
-                            wrong += psk.hardDecision(at(center, radius)) != sector[r] ? 1UZ : 0UZ;
-                            wrong += psk.hardDecision(at(boundary - 1.0e-3, radius)) != sector[r] ? 1UZ : 0UZ;
-                            wrong += psk.hardDecision(at(boundary + 1.0e-3, radius)) != sector[(r + 1UZ) & (arity - 1UZ)] ? 1UZ : 0UZ;
+                            wrong += psk.hardDecision(at(center, radius)) != sector[r];
+                            wrong += psk.hardDecision(at(boundary - 1.0e-3, radius)) != sector[r];
+                            wrong += psk.hardDecision(at(boundary + 1.0e-3, radius)) != sector[(r + 1UZ) & (arity - 1UZ)];
                         }
                     }
                     expect(eq(wrong, 0UZ)) << std::format("{} {}PSK offset {}: {} decisions in the wrong sector", name, arity, offset, wrong);
@@ -822,15 +834,27 @@ const boost::ut::suite<"constellation"> constellationTests = [] {
             expect(eq(four.hardDecision(Cx{-1, 1}), sector[1])) << name << " (-1,1)";
             expect(eq(four.hardDecision(Cx{-1, -1}), sector[3])) << name << " (-1,-1)";
             expect(eq(four.hardDecision(Cx{1, -1}), sector[0])) << name << " (1,-1)";
+            expect(eq(spanMismatches(four, {Cx{1, 1}, Cx{-1, 1}, Cx{-1, -1}, Cx{1, -1}}), 0UZ)) << name << " the span decides the ties as the single call does";
 
-            // the origin and a NaN decide sector 0; the largest finite pairs decide as the angle does; every pair of special values decides some symbol
+            // the origin and a NaN decide sector 0; the largest finite pairs decide as the angle does; every pair of special values decides some symbol.
+            // The span decides every pair as the single call does, for 16-PSK too, whose angle form has a span loop of its own.
             const F infinity = std::numeric_limits<F>::infinity();
             const F nan      = std::numeric_limits<F>::quiet_NaN();
             const F biggest  = std::numeric_limits<F>::max();
             const F values[] = {nan, infinity, -infinity, biggest, -biggest, F{0}, -F{0}, F{1}, -F{1}, biggest * static_cast<F>(0.3)};
-            for (const std::size_t arity : {4UZ, 8UZ}) {
+            for (const std::size_t arity : {4UZ, 8UZ, 16UZ}) {
                 for (const double offset : {0.3, 0.7}) { // no pair of the set lies on a boundary
-                    const auto psk         = Constellation<F>::psk(arity, static_cast<F>(offset));
+                    const auto      psk = Constellation<F>::psk(arity, static_cast<F>(offset));
+                    std::vector<Cx> pairs{Cx{F{0}, F{0}}, Cx{-F{0}, -F{0}}};
+                    for (const F re : values) {
+                        for (const F im : values) {
+                            pairs.emplace_back(re, im);
+                        }
+                    }
+                    expect(eq(spanMismatches(psk, pairs), 0UZ)) << std::format("{} {}PSK offset {}: the span decides the special pairs as the single call does", name, arity, offset);
+                    if (arity == 16UZ) {
+                        continue;
+                    }
                     const auto sectors     = *psk.rotationToGray();
                     const auto angleSector = [&](double re, double im) {
                         re *= 0.25; // the angle is scale-free, and the rotation below must not overflow in double
@@ -861,35 +885,110 @@ const boost::ut::suite<"constellation"> constellationTests = [] {
         // an 8-PSK diagonal tie: at offset pi/8 in double the frame is exactly (1, 0), so (1, 1) lies on the diagonal and goes to the side where |imag| <= |real|
         const auto eight = Constellation<double>::psk(8UZ, kPi / 8.0);
         expect(eq(eight.hardDecision(CD{1.0, 1.0}), (*eight.rotationToGray())[0])) << "8-PSK diagonal tie (1,1)";
+        expect(eq(spanMismatches(eight, {CD{1.0, 1.0}}), 0UZ)) << "8-PSK: the span decides the diagonal tie as the single call does";
     };
 
-    "4-PSK and 8-PSK decide as the angle form does over a large noisy set"_test = [] {
+    "4-PSK and 8-PSK decide as the angle form does over a large noisy set, and 4-, 8- and 16-PSK spans as the single call"_test = [] {
         // the reference rotates by the offset the constellation holds (the float one), and a point nearer a boundary than the float decision can resolve is left out and counted
         constexpr double kMargin = 1.0e-6;
-        for (const std::size_t arity : {4UZ, 8UZ}) {
+        for (const std::size_t arity : {4UZ, 8UZ, 16UZ}) {
             for (const double requested : {0.0, 0.3, -1.1}) {
                 const auto                       psk    = Constellation<float>::psk(arity, static_cast<float>(requested));
                 const double                     offset = static_cast<double>(static_cast<float>(requested));
                 const auto                       sector = *psk.rotationToGray();
                 std::mt19937_64                  engine{0x5EEDU};
                 std::normal_distribution<double> gaussian{0.0, 1.3};
-                std::size_t                      differ  = 0UZ;
-                std::size_t                      skipped = 0UZ;
-                for (std::size_t i = 0UZ; i < 200000UZ; ++i) {
-                    const std::complex<float> z(static_cast<float>(gaussian(engine)), static_cast<float>(gaussian(engine)));
-                    double                    angle = std::atan2(static_cast<double>(z.imag()) * std::cos(offset) - static_cast<double>(z.real()) * std::sin(offset), static_cast<double>(z.real()) * std::cos(offset) + static_cast<double>(z.imag()) * std::sin(offset));
-                    angle                           = angle < 0.0 ? angle + 2.0 * kPi : angle;
-                    const double scaled             = angle * static_cast<double>(arity) / (2.0 * kPi) + 0.5;
+                std::vector<std::complex<float>> noisy(200000UZ);
+                for (std::complex<float>& z : noisy) {
+                    z = std::complex<float>(static_cast<float>(gaussian(engine)), static_cast<float>(gaussian(engine)));
+                }
+                expect(eq(spanMismatches(psk, noisy), 0UZ)) << std::format("{}PSK offset {}: the span decides the noisy points as the single call does", arity, requested);
+                if (arity == 16UZ) {
+                    continue; // the reference below checks the sign form, which 16-PSK does not take
+                }
+                std::size_t differ  = 0UZ;
+                std::size_t skipped = 0UZ;
+                for (const std::complex<float>& z : noisy) {
+                    double angle        = std::atan2(static_cast<double>(z.imag()) * std::cos(offset) - static_cast<double>(z.real()) * std::sin(offset), static_cast<double>(z.real()) * std::cos(offset) + static_cast<double>(z.imag()) * std::sin(offset));
+                    angle               = angle < 0.0 ? angle + 2.0 * kPi : angle;
+                    const double scaled = angle * static_cast<double>(arity) / (2.0 * kPi) + 0.5;
                     if (std::abs(scaled - std::round(scaled)) * 2.0 * kPi / static_cast<double>(arity) < kMargin) {
                         ++skipped;
                         continue;
                     }
-                    differ += psk.hardDecision(z) != sector[static_cast<std::size_t>(scaled) % arity] ? 1UZ : 0UZ;
+                    differ += psk.hardDecision(z) != sector[static_cast<std::size_t>(scaled) % arity];
                 }
                 expect(eq(differ, 0UZ)) << std::format("{}PSK offset {}: {} of 200000 noisy points decide otherwise than the angle form ({} within {} rad of a boundary left out)", arity, requested, differ, skipped, kMargin);
                 expect(lt(skipped, 20UZ)) << std::format("{}PSK offset {}: {} points left out", arity, requested, skipped);
             }
         }
+    };
+
+    "QPSK and BPSK decide on signs: zeros, subnormals, an underflowing product, infinities and NaN, per symbol and per span"_test = [] {
+        const auto check = [](auto probe, const char* precision) {
+            using F         = decltype(probe);
+            using Z         = std::complex<F>;
+            const F tiny    = std::numeric_limits<F>::denorm_min();
+            const F nan     = std::numeric_limits<F>::quiet_NaN();
+            const F inf     = std::numeric_limits<F>::infinity();
+            const F largest = std::numeric_limits<F>::max();
+            const F low     = std::numeric_limits<F>::min();
+
+            // QPSK, per axis: level 1 when the component times half the axis scale is above zero; level 0 for
+            // a negative component, either zero, NaN, and a product that underflows to zero. Half the axis
+            // scale is 0.5 for the raw lattice, where the smallest subnormal times it rounds to zero.
+            for (const Normalization mode : {Normalization::Power, Normalization::Amplitude, Normalization::None}) {
+                struct Row {
+                    F             x;
+                    std::uint32_t level;
+                };
+                const std::uint32_t               tinyLevel = mode == Normalization::None ? 0U : 1U;
+                const std::array<Row, 14UZ>       rows{Row{F{0}, 0U}, Row{-F{0}, 0U}, Row{tiny, tinyLevel}, Row{-tiny, 0U}, Row{F{2} * tiny, 1U}, Row{low, 1U}, Row{-low, 0U}, Row{F{1}, 1U}, Row{F{-1}, 0U}, Row{largest, 1U}, Row{-largest, 0U}, Row{inf, 1U}, Row{-inf, 0U}, Row{nan, 0U}};
+                const auto                        qam = Constellation<F>::qam(4UZ, mode);
+                std::vector<Z>                    input;
+                std::vector<std::array<Row, 2UZ>> expected;
+                for (const Row& re : rows) {
+                    for (const Row& im : rows) {
+                        input.emplace_back(re.x, im.x);
+                        expected.push_back({re, im});
+                    }
+                }
+                std::vector<std::uint8_t> span(input.size());
+                qam.hardDecisions(input, span);
+                for (std::size_t i = 0UZ; i < input.size(); ++i) {
+                    const std::uint8_t symbol = qam.hardDecision(input[i]);
+                    expect(eq(axisLevelOf(qam, symbol, 2U, false), expected[i][0].level) && eq(axisLevelOf(qam, symbol, 2U, true), expected[i][1].level)) << std::format("{} QPSK normalization {}: ({:a}, {:a})", precision, static_cast<int>(mode), input[i].real(), input[i].imag());
+                    expect(eq(span[i], symbol)) << std::format("{} QPSK: the span decides ({:a}, {:a}) as the single call does", precision, input[i].real(), input[i].imag());
+                }
+            }
+
+            // BPSK: the sign of the real part, rotated by exactly (1, 0); zero and NaN, and an infinite or NaN
+            // imaginary part (whose product with the zero sine is NaN), decide the lower of the two symbols.
+            const auto                bpsk   = Constellation<F>::bpsk();
+            const auto                sector = *bpsk.rotationToGray();
+            const std::uint8_t        tie    = std::min(sector[0], sector[1]);
+            const std::array<F, 12UZ> values{F{0}, -F{0}, tiny, -tiny, low, -low, F{1}, F{-1}, largest, -largest, inf, -inf};
+            std::vector<Z>            input;
+            for (const F re : values) {
+                for (const F im : values) {
+                    input.emplace_back(re, im);
+                }
+                input.emplace_back(re, nan);
+                input.emplace_back(nan, re);
+            }
+            std::vector<std::uint8_t> span(input.size());
+            bpsk.hardDecisions(input, span);
+            for (std::size_t i = 0UZ; i < input.size(); ++i) {
+                const F            re       = input[i].real();
+                const bool         finite   = std::isfinite(input[i].imag());
+                const std::uint8_t symbol   = bpsk.hardDecision(input[i]);
+                const std::uint8_t expected = !finite || !(re > F{0} || re < F{0}) ? tie : (re > F{0} ? sector[0] : sector[1]);
+                expect(eq(symbol, expected)) << std::format("{} BPSK: ({:a}, {:a})", precision, re, input[i].imag());
+                expect(eq(span[i], symbol)) << std::format("{} BPSK: the span decides ({:a}, {:a}) as the single call does", precision, re, input[i].imag());
+            }
+        };
+        check(float{}, "float ");
+        check(double{}, "double");
     };
 
     "the span form is the per-symbol form, and float is registered"_test = [] {
