@@ -28,7 +28,9 @@ gr_add_block_library(
   gnuradio4::gnuradio-algorithm)
 # The precompiled header reaches the vendored PocketFFT through FrequencyEstimator.hpp; cmake/CompilerWarnings.cmake
 # turns -Wnull-dereference off for it under GCC 14.
-set_target_properties(GrFilterBlocksObject PROPERTIES GR_PCH_INCLUDES_POCKETFFT ON)
+if(TARGET GrFilterBlocksObject)
+  set_target_properties(GrFilterBlocksObject PROPERTIES GR_PCH_INCLUDES_POCKETFFT ON)
+endif()
 
 if(TARGET gnuradio4::GrFilterBlocksShared AND ENABLE_TESTING)
   add_subdirectory(test)
