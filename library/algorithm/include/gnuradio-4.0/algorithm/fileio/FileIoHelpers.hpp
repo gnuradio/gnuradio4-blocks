@@ -139,5 +139,15 @@ enum class UriKind {
     return path;
 }
 
+/// @brief The address that a block's HTTP setting names, which must be an `http:` or `https:` address.
+///
+/// A plain path, a `file:` address and every other address are refused, with an error that names the setting.
+[[nodiscard]] inline std::expected<std::string, gr::Error> httpAddress(std::string_view setting, std::string_view value) {
+    if (detail::classifyUri(value) != detail::UriKind::HttpUri) {
+        return std::unexpected(gr::Error{std::format("{} '{}' must be an http: or https: address", setting, value)});
+    }
+    return std::string(value);
+}
+
 } // namespace gr::algorithm::fileio
 #endif // FILEIOHELPERS_HPP

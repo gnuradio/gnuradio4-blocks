@@ -88,6 +88,18 @@ const boost::ut::suite<"FileIO Helpers tests"> fileIoHelpersTests = [] {
         expect(!remote.has_value());
         expect(remote.has_value() ? false : remote.error().message.starts_with("file_name 'file://host/etc' must name a local file: ")) << (remote.has_value() ? ""s : remote.error().message);
     };
+
+    "httpAddress takes an http: or https: address"_test = [] {
+        using gr::algorithm::fileio::httpAddress;
+        expect(eq(httpAddress("url", "http://host/x").value_or(""), "http://host/x"s));
+        expect(eq(httpAddress("url", "HTTPS://host/x").value_or(""), "HTTPS://host/x"s));
+
+        for (const std::string_view address : {"", "tmp/x", "/tmp/x", "file:/tmp/x", "file:///tmp/x", "ftp://host/x", "download:/x"}) {
+            const auto refused = httpAddress("url", address);
+            expect(!refused.has_value()) << address;
+            expect(eq(refused.has_value() ? ""s : refused.error().message, std::format("url '{}' must be an http: or https: address", address))) << address;
+        }
+    };
 };
 
 int main() {}
