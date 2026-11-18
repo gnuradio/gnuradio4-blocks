@@ -1015,7 +1015,7 @@ struct Writer {
     if (!parent.empty()) {
         fs::create_directories(parent, ec);
         if (ec) {
-            return std::unexpected(gr::Error{std::format("runWriteLocalFile: failed to create directory '{}': ec={}", parent.string(), ec.value())});
+            return std::unexpected(gr::Error{std::format("runWriteLocalFile: failed to create directory '{}': {} (ec={})", parent.string(), ec.message(), ec.value())});
         }
     }
 

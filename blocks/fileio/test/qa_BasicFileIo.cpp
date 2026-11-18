@@ -368,13 +368,65 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
     };
 
     "BasicFileSink creates the missing directories of a file name"_test = [] {
-        constexpr gr::Size_t   nSamples = 1024U;
-        ScopedWorkingDirectory workingDirectory;
+        constexpr gr::Size_t nSamples = 1024U;
 
-        const auto written = writeFloatFile("missing/sub/tone.f32", "overwrite", nSamples);
-        expect(written.has_value()) << errorMessage(written);
-        std::error_code ec;
-        expect(eq(std::filesystem::file_size(workingDirectory.directory / "missing/sub/tone.f32", ec), nSamples * sizeof(float))) << ec.message();
+        for (const std::string modeName : {"overwrite", "append", "multi"}) {
+            ScopedWorkingDirectory workingDirectory;
+            const auto             written = writeFloatFile("missing/sub/tone.f32", modeName, nSamples);
+            expect(written.has_value()) << modeName << ": " << errorMessage(written);
+
+            std::size_t     nFiles = 0UZ;
+            std::uintmax_t  nBytes = 0U;
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(workingDirectory.directory / "missing/sub", ec)) {
+                expect(entry.is_regular_file() && entry.path().filename().string().ends_with("tone.f32")) << modeName << ": " << entry.path().string();
+                nFiles++;
+                nBytes += entry.file_size();
+            }
+            expect(!ec) << modeName << ": " << ec.message();
+            expect(eq(nFiles, 1UZ)) << modeName;
+            expect(eq(nBytes, nSamples * sizeof(float))) << modeName;
+        }
+    };
+
+    "BasicFileSink names the reason it cannot create the directory of a file name"_test = [] {
+        ScopedWorkingDirectory workingDirectory;
+        std::ofstream(workingDirectory.directory / "plain", std::ios::binary) << "0123";
+
+        const auto        written = writeFloatFile("plain/sub/tone.f32", "overwrite", 1024U);
+        const std::string reason  = std::make_error_code(std::errc::not_a_directory).message();
+        expect(!written.has_value());
+        expect(errorMessage(written).contains("failed to create directory")) << errorMessage(written);
+        expect(errorMessage(written).contains(reason)) << reason << ": " << errorMessage(written);
+    };
+
+    "BasicFileSink refuses an unsupported address at start and creates no directory"_test = [] {
+        using namespace gr::blocks::fileio;
+        using gr::blocks::basic::ConstantSource;
+
+        for (const std::string fileName : {"ftp://host/tone.f32", "ftp:/host/tone.f32"}) {
+            ScopedWorkingDirectory workingDirectory;
+
+            gr::Graph flow;
+            auto&     source   = flow.emplaceBlock<ConstantSource<float>>({{"n_samples_max", gr::Size_t{1024U}}});
+            auto&     fileSink = flow.emplaceBlock<BasicFileSink<float>>({{"file_name", fileName}, {"mode", "overwrite"}});
+            expect(flow.connect<"out", "in">(source, fileSink).has_value());
+
+            gr::scheduler::Simple<> sched;
+            if (auto ret = sched.exchange(std::move(flow)); !ret) {
+                throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
+            }
+            auto [watchdogThread, externalInterventionNeeded] = createWatchdog(sched, 2s);
+            const auto result                                 = runSchedulerAndWait(sched);
+            if (watchdogThread.joinable()) {
+                watchdogThread.join();
+            }
+            expect(!externalInterventionNeeded->load(std::memory_order_relaxed)) << fileName;
+            expect(!result.has_value()) << fileName << ": the run must fail";
+            expect(fileSink.state() == gr::lifecycle::State::ERROR) << fileName << ": the sink's start() must fail, state " << gr::meta::enumName(fileSink.state()).value_or("");
+            expect(errorMessage(result).contains("Unsupported URI scheme")) << fileName << ": " << errorMessage(result);
+            expect(std::filesystem::is_empty(workingDirectory.directory)) << fileName << ": the working directory stays empty";
+        }
     };
 
     "BasicFileSource refuses a file name whose directory does not exist"_test = [] {

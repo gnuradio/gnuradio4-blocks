@@ -155,8 +155,6 @@ private:
         closeFile();
         _totalBytesWrittenFile = 0UZ;
 
-        detail::ensureDirectoryExists(file_name.value);
-
         std::filesystem::path filePath(file_name.value);
         // Open file handle based on mode
         switch (mode) {
