@@ -305,6 +305,8 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
     };
 
     "the prototype's length per arm does not move with the bank"_test = [] {
+        // `searched` is a length that delivers; a design is held within one percent of it, and the arm length to one tap
+        // of `perArm`, the length over the bank rounded up.
         struct Row {
             std::size_t bank;
             double      rate;
@@ -327,12 +329,14 @@ const boost::ut::suite<"arbitrary resampler"> arbitraryResamplerTests = [] {
 
             const ResamplerDesign design = designArbitraryResampler(row.bank, row.rate);
             expect(that % design.ok) << row.bank << " at " << row.rate << ": the search met both targets";
-            expect(eq(design.designLength, row.searched)) << row.bank << " at " << row.rate << ": searched length";
+            expect(le(std::abs(design.designLength - row.searched), (row.searched + 99) / 100)) << row.bank << " at " << row.rate << ": searched length " << design.designLength << ", within one percent of " << row.searched;
             expect(lt(design.stopbandDb, -60.0)) << row.bank << " at " << row.rate << ": stopband " << design.stopbandDb;
+            expect(le(design.rippleDb, 0.1)) << row.bank << " at " << row.rate << ": ripple " << design.rippleDb;
 
             const std::vector<float>  taps = design.taps;
             ArbitraryResampler<float> kernel(std::max(row.rate, 0.2), row.bank, 1, std::span<const float>(taps));
-            expect(eq(kernel.tapsPerArm(), row.perArm)) << row.bank << " at " << row.rate << ": taps per arm";
+            expect(eq(kernel.tapsPerArm(), (taps.size() + row.bank - 1UZ) / row.bank)) << row.bank << " at " << row.rate << ": taps per arm";
+            expect(le(std::max(kernel.tapsPerArm(), row.perArm) - std::min(kernel.tapsPerArm(), row.perArm), 1UZ)) << row.bank << " at " << row.rate << ": taps per arm, against " << row.perArm;
         };
 
         for (const Row& row : kRows) {

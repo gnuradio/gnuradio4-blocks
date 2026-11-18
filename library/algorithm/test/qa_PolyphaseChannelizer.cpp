@@ -821,6 +821,22 @@ const boost::ut::suite<"PolyphaseChannelizer prototype design"> polyphaseChannel
         expect(eq(design->taps.size(), 8UZ));
         expect(eq(design->span, 1UZ));
         expect(design->ok);
+
+        // The boxcar's response falls from DC across the passband and peaks in the stopband at the stop edge. The
+        // reported ripple is then the fall from DC to the pass edge, and the stopband the level at the stop edge.
+        // Seven channels read the cosine sum; eight read the transform, with the center between two taps.
+        for (const std::size_t channels : {7UZ, 8UZ}) {
+            const auto box = designChannelizerPrototype(channels, "boxcar", 60., 0.2);
+            expect(fatal(box.has_value()));
+            const double spacing  = 1. / static_cast<double>(channels);
+            const double passEdge = 0.5 * (1. - 0.2) * spacing;
+            const double stopEdge = spacing - passEdge;
+            const auto   levelDb  = [&box](double f) { return gr::math::amplitudeToDb(std::abs(gr::filter::fir::design::amplitudeAt(box->taps, f))); };
+            const double rippleDb = levelDb(0.) - levelDb(passEdge);
+            const double stopDb   = levelDb(stopEdge);
+            expect(approx(box->rippleDb, rippleDb, 1e-9)) << std::format("M {}: ripple {:.4f} dB reported against {:.4f} dB", channels, box->rippleDb, rippleDb);
+            expect(approx(box->stopbandDb, stopDb, 1e-9)) << std::format("M {}: stopband {:.4f} dB reported against {:.4f} dB", channels, box->stopbandDb, stopDb);
+        }
     };
 
     "a design refuses parameters outside their range"_test = [] {

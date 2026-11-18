@@ -7,8 +7,6 @@
 #include <cstddef>
 #include <format>
 #include <limits>
-#include <memory>
-#include <mutex>
 #include <numbers>
 #include <stdexcept>
 #include <utility>
@@ -29,7 +27,7 @@
  * `kaiserLength`'s estimate instead.
  *
  * Design is setup path. Nothing here runs per sample: taps are computed when a setting changes.
- * The cost is O(N) transcendental calls for a design and O(N * grid) for a scan. The hot path is
+ * The cost is O(N) transcendental calls for a design and O(N + grid log grid) for a scan. The hot path is
  * whatever consumes the taps, where every extra tap is a multiply-accumulate per output sample.
  * All internal evaluation is `double`; the returned taps are `float`, rounded once.
  */
@@ -209,65 +207,130 @@ struct TransitionBand {
 
 namespace detail {
 
-/// @brief How many designs one memo holds; a new entry past that drops the oldest.
-inline constexpr std::size_t kDesignMemoEntries = 8UZ;
-
-/// @brief How many grid sizes `cosineTable` holds; a caller alternating between two sizes still hits.
-inline constexpr std::size_t kCosineTableGrids = 2UZ;
-
 /**
- * @brief cos(2*pi*j/grid) for every j, built once per grid size and held for the last two sizes.
+ * @brief `cos(2 pi k / grid)` for k over a quarter turn, `grid / 4 + 1` entries. @p grid is a power of two of at least four.
  *
- * At the default grid the table is 32768 doubles, 256 kB, which is worth keeping across calls but not
- * worth keeping one of per size ever asked for: a caller sweeping the grid would leave every table
- * alive for the life of the process. The table is handed out as a shared pointer rather than as a
- * reference because an eviction on one thread would otherwise dangle a reference another thread is
- * part way through reading.
+ * Each entry is `cos(a + b) = cos a cos b - sin a sin b`, with a a multiple of 64 grid steps and b under 64. The
+ * table takes about `grid / 128 + 128` trigonometric calls, and each entry carries the rounding of one product sum.
  */
-[[nodiscard]] inline std::shared_ptr<const std::vector<double>> cosineTable(std::size_t grid) {
-    static std::mutex                                                                      mutex;
-    static std::vector<std::pair<std::size_t, std::shared_ptr<const std::vector<double>>>> tables;
-
-    const std::lock_guard<std::mutex> lock(mutex);
-    for (const auto& [size, table] : tables) {
-        if (size == grid) {
-            return table;
+[[nodiscard]] inline std::vector<double> quarterCosines(std::size_t grid) {
+    constexpr std::size_t kFine   = 64UZ;
+    const std::size_t     quarter = grid / 4UZ;
+    const double          angle   = 2.0 * std::numbers::pi / static_cast<double>(grid);
+    std::vector<double>   fineCos(kFine);
+    std::vector<double>   fineSin(kFine);
+    for (std::size_t j = 0UZ; j < kFine; ++j) {
+        fineCos[j] = std::cos(angle * static_cast<double>(j));
+        fineSin[j] = std::sin(angle * static_cast<double>(j));
+    }
+    std::vector<double> cosines(quarter + 1UZ);
+    double              coarseCos = 1.0;
+    double              coarseSin = 0.0;
+    for (std::size_t k = 0UZ; k <= quarter; ++k) {
+        const std::size_t j = k % kFine;
+        if (j == 0UZ) {
+            coarseCos = std::cos(angle * static_cast<double>(k));
+            coarseSin = std::sin(angle * static_cast<double>(k));
         }
+        cosines[k] = coarseCos * fineCos[j] - coarseSin * fineSin[j];
     }
-
-    std::vector<double> built(grid);
-    for (std::size_t j = 0UZ; j < grid; ++j) {
-        built[j] = std::cos(2.0 * std::numbers::pi * static_cast<double>(j) / static_cast<double>(grid));
-    }
-    if (tables.size() >= kCosineTableGrids) {
-        tables.erase(tables.begin());
-    }
-    tables.emplace_back(grid, std::make_shared<const std::vector<double>>(std::move(built)));
-    return tables.back().second;
+    return cosines;
 }
 
 /**
- * @brief Publish @p computed under @p key, returning whatever the memo ends up holding for that key.
+ * @brief `X[i] = sum_n h[n] e^{-2 pi j i (n - M) / grid}` for i over half a turn, `M = (N-1)/2` rounded down.
  *
- * A design's look-up releases the lock while the design runs, so two callers asking for one key both
- * compute it. This re-checks under the lock and returns the entry the other caller published, so every
- * caller of one key sees one value and the memo never holds a duplicate the linear scan cannot reach.
- * The memo is bounded at @p Capacity entries, oldest dropped, which is what stops a process sweeping a
- * rate from growing without limit.
+ * The taps are folded modulo the grid with tap M at index zero, and one real transform of the grid
+ * reads every bin. Folding leaves the bins unchanged: a tap set longer than the grid reads as its
+ * unfolded sum. A scan costs `O(N + grid log grid)`.
+ *
+ * The real transform is a complex one of half the grid over the even and odd samples, split after.
+ * The twiddles come from `quarterCosines`. A bin's rounding error stays below about `1e-14` of the
+ * sum of the tap magnitudes at the default grid, where a 140 dB stopband is `1e-7`.
+ *
+ * @p grid is a power of two.
  */
-template<std::size_t Capacity, typename Key, typename Value>
-[[nodiscard]] inline Value keepDesign(std::mutex& mutex, std::vector<std::pair<Key, Value>>& memo, const Key& key, Value computed) {
-    const std::lock_guard<std::mutex> lock(mutex);
-    for (const auto& [cached, value] : memo) {
-        if (cached == key) {
-            return value;
+inline void foldedSpectrum(const std::vector<float>& taps, std::vector<std::complex<double>>& spectrum, std::size_t grid) {
+    using Complex          = std::complex<double>;
+    const std::size_t half = grid / 2UZ;
+    spectrum.assign(half + 1UZ, Complex{});
+    if (taps.empty()) {
+        return;
+    }
+    const std::size_t mid = (taps.size() - 1UZ) / 2UZ;
+    if (grid < 4UZ) { // one or two bins, summed directly
+        for (std::size_t n = 0UZ; n < taps.size(); ++n) {
+            const double v = static_cast<double>(taps[n]);
+            spectrum[0UZ] += v;
+            if (half == 1UZ) {
+                spectrum[1UZ] += ((n + mid) % 2UZ) == 0UZ ? v : -v;
+            }
+        }
+        return;
+    }
+
+    // e^{-2 pi j k / grid} for k below half the grid, from the quarter turn of cosines
+    const std::size_t         quarter = grid / 4UZ;
+    const std::vector<double> cosines = quarterCosines(grid);
+    std::vector<Complex>      twiddle(half);
+    for (std::size_t k = 0UZ; k < half; ++k) {
+        twiddle[k] = k <= quarter ? Complex{cosines[k], -cosines[quarter - k]} : Complex{-cosines[half - k], -cosines[k - quarter]};
+    }
+
+    // the folded taps, even samples as the real part and odd samples as the imaginary part
+    std::vector<Complex> z(half);
+    const std::size_t    offset = grid - (mid & (grid - 1UZ));
+    for (std::size_t n = 0UZ; n < taps.size(); ++n) {
+        const std::size_t index = (n + offset) & (grid - 1UZ);
+        if ((index % 2UZ) == 0UZ) {
+            z[index / 2UZ].real(z[index / 2UZ].real() + static_cast<double>(taps[n]));
+        } else {
+            z[index / 2UZ].imag(z[index / 2UZ].imag() + static_cast<double>(taps[n]));
         }
     }
-    if (memo.size() >= Capacity) {
-        memo.erase(memo.begin());
+
+    // in-place radix-2 transform of half the grid
+    for (std::size_t i = 1UZ, j = 0UZ; i < half; ++i) {
+        std::size_t bit = half >> 1UZ;
+        for (; (j & bit) != 0UZ; bit >>= 1UZ) {
+            j ^= bit;
+        }
+        j ^= bit;
+        if (i < j) {
+            std::swap(z[i], z[j]);
+        }
     }
-    memo.emplace_back(key, std::move(computed));
-    return memo.back().second;
+    // the products are written out: `std::complex` multiplication checks for infinities and NaN on every call
+    const auto times = [](Complex a, Complex b) { return Complex{a.real() * b.real() - a.imag() * b.imag(), a.real() * b.imag() + a.imag() * b.real()}; };
+    // each stage's twiddles are gathered into a contiguous run: read in place at a power-of-two stride, they fall into
+    // a few cache sets
+    std::vector<Complex> stage(half / 2UZ);
+    for (std::size_t length = 2UZ; length <= half; length *= 2UZ) {
+        const std::size_t step = grid / length;
+        const std::size_t pair = length / 2UZ;
+        for (std::size_t k = 0UZ; k < pair; ++k) {
+            stage[k] = twiddle[k * step];
+        }
+        for (std::size_t start = 0UZ; start < half; start += length) {
+            Complex* low  = z.data() + start;
+            Complex* high = low + pair;
+            for (std::size_t k = 0UZ; k < pair; ++k) {
+                const Complex odd = times(stage[k], high[k]);
+                high[k]           = low[k] - odd;
+                low[k] += odd;
+            }
+        }
+    }
+
+    // the split: X[i] = E[i] + e^{-2 pi j i / grid} O[i], E and O the transforms of the even and odd samples
+    for (std::size_t i = 0UZ; i <= half; ++i) {
+        const Complex a      = z[i % half];
+        const Complex b      = std::conj(z[(half - i) % half]);
+        const Complex even   = 0.5 * (a + b);
+        const Complex odd    = Complex{0.5 * (a.imag() - b.imag()), -0.5 * (a.real() - b.real())};
+        const Complex rotate = i < half ? twiddle[i] : Complex{-1.0, 0.0};
+        spectrum[i]          = even + times(rotate, odd);
+    }
 }
 
 } // namespace detail
@@ -275,42 +338,57 @@ template<std::size_t Capacity, typename Key, typename Value>
 /**
  * @brief The signed zero-phase amplitude A at i / grid cycles per sample, for i over half a turn.
  *
- * For symmetric taps of odd length `N = 2M+1`, `A(w) = h[M] + 2 * sum_k h[M+k] cos(k w)` is real
- * and `H(e^{jw}) = e^{-jwM} A(w)`. The sign is kept because normalization needs it: a design
+ * `A(w) = sum_n h[n] cos(w (n - (N-1)/2))`, the reading `amplitudeAt` gives at one frequency. For
+ * symmetric taps of odd length `N = 2M+1` it is `h[M] + 2 * sum_k h[M+k] cos(k w)` and
+ * `H(e^{jw}) = e^{-jwM} A(w)`. The sign is kept because normalization needs it: a design
  * normalized at Nyquist against `abs(A)` would silently flip.
  *
- * Each cosine is read out of the table at an index stepped in integer arithmetic, so the result
- * is exact. A running phasor would accumulate error over tens of thousands of
- * steps, which is inside the depth a search has to resolve.
+ * An odd set of at most `kDirectTaps` taps is read by the cosine sum `h[M] + sum_k (h[M-k] + h[M+k])
+ * cos(k w)`, from a full turn of cosines built out of `quarterCosines`. The sum costs less than the
+ * transform up to about 90 taps on the default grid. Any other set is read from one
+ * `foldedSpectrum`: at odd length A is its real part; at even length the center lies half a sample
+ * past tap M, and the bin is turned back by that half sample first.
  *
- * The index step is taken modulo the grid by mask, so the grid must be a power of two, and one that is not
- * is refused.
+ * The grid must be a power of two, and one that is not is refused.
  *
- * A tap set of no taps has no center tap to read and no amplitude anywhere: the result is the grid
- * filled with zero, which is the reading `halfResponseOdd` already gives an empty tap set.
+ * A tap set of no taps has no amplitude anywhere: the result is the grid filled with zero, which is
+ * the reading `halfResponseOdd` gives an empty tap set.
  */
 inline void halfAmplitude(const std::vector<float>& taps, std::vector<double>& amp, std::size_t grid = kDesignGrid) {
     if (grid == 0UZ || (grid & (grid - 1UZ)) != 0UZ) {
-        throw std::invalid_argument(std::format("FilterDesign: the index step is taken modulo the grid by mask, so the grid must be a power of two, got {}", grid));
+        throw std::invalid_argument(std::format("FilterDesign: the grid must be a power of two, got {}", grid));
     }
-    const std::size_t n    = taps.size();
-    const std::size_t half = grid / 2UZ;
-    if (n == 0UZ) {
-        amp.assign(half + 1UZ, 0.0);
+    constexpr std::size_t kDirectTaps = 89UZ;
+    const std::size_t     n           = taps.size();
+    if ((n % 2UZ) == 1UZ && n <= kDirectTaps && grid >= 4UZ) {
+        const std::size_t         half    = grid / 2UZ;
+        const std::size_t         quarter = grid / 4UZ;
+        const std::vector<double> q       = detail::quarterCosines(grid);
+        std::vector<double>       cosines(grid);
+        for (std::size_t j = 0UZ; j <= quarter; ++j) {
+            cosines[j]                 = q[j];
+            cosines[half - j]          = -q[j];
+            cosines[half + j]          = -q[j];
+            cosines[(grid - j) % grid] = q[j];
+        }
+        const std::size_t mid = (n - 1UZ) / 2UZ;
+        amp.assign(half + 1UZ, static_cast<double>(taps[mid]));
+        for (std::size_t k = 1UZ; k <= mid; ++k) {
+            const double c     = static_cast<double>(taps[mid - k]) + static_cast<double>(taps[mid + k]);
+            std::size_t  index = 0UZ;
+            for (std::size_t i = 0UZ; i <= half; ++i) {
+                amp[i] += c * cosines[index];
+                index = (index + k) & (grid - 1UZ);
+            }
+        }
         return;
     }
-    const std::size_t mid = (n - 1UZ) / 2UZ;
-    amp.assign(half + 1UZ, static_cast<double>(taps[mid]));
-
-    const std::shared_ptr<const std::vector<double>> table = detail::cosineTable(grid);
-    const std::vector<double>&                       cs    = *table;
-    for (std::size_t k = 1UZ; k <= mid; ++k) {
-        const double c   = 2.0 * static_cast<double>(taps[mid - k]);
-        std::size_t  idx = 0UZ;
-        for (std::size_t i = 0UZ; i <= half; ++i) {
-            amp[i] += c * cs[idx];
-            idx = (idx + k) & (grid - 1UZ);
-        }
+    std::vector<std::complex<double>> spectrum;
+    detail::foldedSpectrum(taps, spectrum, grid);
+    amp.assign(spectrum.size(), 0.0);
+    const bool evenLength = !taps.empty() && (taps.size() % 2UZ) == 0UZ;
+    for (std::size_t i = 0UZ; i < spectrum.size(); ++i) {
+        amp[i] = evenLength ? (spectrum[i] * std::polar(1.0, std::numbers::pi * static_cast<double>(i) / static_cast<double>(grid))).real() : spectrum[i].real();
     }
 }
 
@@ -340,35 +418,21 @@ requires std::is_floating_point_v<T>
 }
 
 /**
- * @brief |B| at i / grid cycles per sample, for i over half a turn, for antisymmetric taps.
+ * @brief |B| at i / grid cycles per sample, for i over half a turn, for antisymmetric taps of odd length.
  *
- * A type-III design has `H(e^{jw}) = -j e^{-jwM} B(w)` with `B(w) = 2 sum_k h[M+k] sin(k w)`, so
- * reading it needs a sine sum where `halfResponse` uses a cosine one. The same table serves both:
- * `sin(x) = cos(x - pi/2)`, which on a power-of-two grid is an integer index offset, so this keeps
- * the same drift-free integer index stepping.
+ * A type-III design has `H(e^{jw}) = -j e^{-jwM} B(w)` with `B(w) = 2 sum_k h[M+k] sin(k w)`. Read
+ * against tap M, the antisymmetric pairs leave `foldedSpectrum` purely imaginary, `-j B`, so |B| is
+ * the magnitude of its imaginary part.
  */
 inline void halfResponseOdd(const std::vector<float>& taps, std::vector<double>& mag, std::size_t grid = kDesignGrid) {
     if (grid == 0UZ || (grid & (grid - 1UZ)) != 0UZ) {
-        throw std::invalid_argument(std::format("FilterDesign: the index step is taken modulo the grid by mask, so the grid must be a power of two, got {}", grid));
+        throw std::invalid_argument(std::format("FilterDesign: the grid must be a power of two, got {}", grid));
     }
-    const std::size_t n       = taps.size();
-    const std::size_t mid     = n == 0UZ ? 0UZ : (n - 1UZ) / 2UZ;
-    const std::size_t half    = grid / 2UZ;
-    const std::size_t quarter = 3UZ * (grid / 4UZ); // cos(x + 3pi/2) == sin(x)
-    mag.assign(half + 1UZ, 0.0);
-
-    const std::shared_ptr<const std::vector<double>> table = detail::cosineTable(grid);
-    const std::vector<double>&                       cs    = *table;
-    for (std::size_t k = 1UZ; k <= mid; ++k) {
-        const double c   = 2.0 * static_cast<double>(taps[mid + k]);
-        std::size_t  idx = quarter;
-        for (std::size_t i = 0UZ; i <= half; ++i) {
-            mag[i] += c * cs[idx];
-            idx = (idx + k) & (grid - 1UZ);
-        }
-    }
-    for (double& v : mag) {
-        v = std::abs(v);
+    std::vector<std::complex<double>> spectrum;
+    detail::foldedSpectrum(taps, spectrum, grid);
+    mag.assign(spectrum.size(), 0.0);
+    for (std::size_t i = 0UZ; i < spectrum.size(); ++i) {
+        mag[i] = std::abs(spectrum[i].imag());
     }
 }
 
@@ -439,33 +503,41 @@ struct BandLevels {
     [[nodiscard]] double rippleDb() const { return gr::math::amplitudeToDb(maxMag) - gr::math::amplitudeToDb(minMag); }
 };
 
+namespace detail {
+
 /**
- * @brief |A| over the closed band [@p lowEdge, @p highEdge], on the design grid and at both exact edges.
+ * @brief |A| over the closed band [@p lowEdge, @p highEdge], read from @p mag, the `halfResponse` of
+ *        @p taps on @p grid, and at both exact edges.
  *
  * A band edge is where the response is steepest; the stopband edge sits at the foot of the
  * transition. A grid that never lands on the stated edge therefore reports the design as better
  * than it is, by however much the response moves in one grid step. On an 87-tap high-pass that
- * bias is 0.11 dB of stopband peak. Evaluating the two edges exactly costs two cosine sums and
- * removes it.
- *
- * `scanLowpass` keeps its grid-only reading: it is what `searchLowpass` compares lengths with, and
- * changing it would change every length that search returns.
+ * bias is 0.11 dB of stopband peak. An edge off the grid is evaluated by `amplitudeAt`, a cosine
+ * sum over the taps, which removes it; an edge on the grid is read from @p mag.
  */
-[[nodiscard]] inline BandLevels scanBand(const std::vector<float>& taps, double lowEdge, double highEdge, std::size_t grid = kDesignGrid) {
+[[nodiscard]] inline BandLevels bandLevels(const std::vector<double>& mag, const std::vector<float>& taps, double lowEdge, double highEdge, std::size_t grid) {
+    const std::size_t half = grid / 2UZ;
+    const auto        edge = [&](double f) {
+        const double index = f * static_cast<double>(grid);
+        if (index >= 0.0 && index <= static_cast<double>(half) && index == std::floor(index)) {
+            return mag[static_cast<std::size_t>(index)];
+        }
+        return std::abs(amplitudeAt(taps, f));
+    };
+    const double atLow  = edge(lowEdge);
+    const double atHigh = edge(highEdge);
+
     BandLevels out;
-    out.minMag = std::min(std::abs(amplitudeAt(taps, lowEdge)), std::abs(amplitudeAt(taps, highEdge)));
-    out.maxMag = std::max(std::abs(amplitudeAt(taps, lowEdge)), std::abs(amplitudeAt(taps, highEdge)));
+    out.minMag = std::min(atLow, atHigh);
+    out.maxMag = std::max(atLow, atHigh);
 
     const double      lowest = std::ceil(lowEdge * static_cast<double>(grid));
     const std::size_t first  = lowest > 0.0 ? static_cast<std::size_t>(lowest) : 0UZ;
     const double      top    = std::floor(highEdge * static_cast<double>(grid));
-    const std::size_t last   = top > 0.0 ? std::min(grid / 2UZ, static_cast<std::size_t>(top)) : 0UZ;
+    const std::size_t last   = top > 0.0 ? std::min(half, static_cast<std::size_t>(top)) : 0UZ;
     if (first > last || !(top >= 0.0)) {
         return out;
     }
-
-    std::vector<double> mag;
-    halfResponse(taps, mag, grid);
     for (std::size_t i = first; i <= last; ++i) {
         out.minMag = std::min(out.minMag, mag[i]);
         out.maxMag = std::max(out.maxMag, mag[i]);
@@ -473,17 +545,39 @@ struct BandLevels {
     return out;
 }
 
+} // namespace detail
+
+/**
+ * @brief |A| over the closed band [@p lowEdge, @p highEdge], on the design grid and at both exact edges.
+ *
+ * `scanLowpass` keeps its grid-only reading: `searchLowpass` compares lengths by it, and changing
+ * it would change every length that search returns.
+ */
+[[nodiscard]] inline BandLevels scanBand(const std::vector<float>& taps, double lowEdge, double highEdge, std::size_t grid = kDesignGrid) {
+    std::vector<double> mag;
+    halfResponse(taps, mag, grid);
+    return detail::bandLevels(mag, taps, lowEdge, highEdge, grid);
+}
+
 /**
  * @brief The stopband peak from @p stopEdge to Nyquist and the ripple from DC to @p passEdge, both
- *        read by `scanBand`, so both stated edges are evaluated exactly as well as on the grid.
+ *        read as `scanBand` reads a band, so both stated edges are evaluated exactly as well as on the grid.
  *
- * A design whose transition band narrows while the grid stays fixed reads this in place of
- * `scanLowpass`. `scanBand` states the bias of a grid-only reading at a band edge.
+ * One `halfResponse` serves both bands. A design whose transition band narrows while the grid stays
+ * fixed reads this in place of `scanLowpass`.
+ *
+ * The stopband peak is read at the grid points and at the exact stop edge. A lobe peak between two
+ * grid points reads low, and the reported stopband can then be better than the true one. The gap
+ * depends on where the stop edge falls between grid points and grows with the tap count against the
+ * grid. On the default grid the measured worst cases are about 0.05 dB at 1159 taps, 0.15 dB at 2315
+ * to 5787 taps and 0.46 dB at 14609 taps. The passband ripple reads low by up to about 0.002 dB.
  */
 [[nodiscard]] inline LowpassScan scanEdges(const std::vector<float>& taps, double passEdge, double stopEdge, std::size_t grid = kDesignGrid) {
+    std::vector<double> mag;
+    halfResponse(taps, mag, grid);
     LowpassScan s;
-    s.stopbandDb = scanBand(taps, stopEdge, 0.5, grid).peakDb();
-    s.rippleDb   = scanBand(taps, 0.0, passEdge, grid).rippleDb();
+    s.stopbandDb = detail::bandLevels(mag, taps, stopEdge, 0.5, grid).peakDb();
+    s.rippleDb   = detail::bandLevels(mag, taps, 0.0, passEdge, grid).rippleDb();
     return s;
 }
 
@@ -618,8 +712,8 @@ struct LowpassSearch {
  * and for wide transitions it is several taps out in either direction. `shortestOddLength` searches
  * from it in either direction. The length stays odd, which keeps the group delay a whole sample.
  *
- * The cost is a response scan per candidate, and a scan is proportional to the length times the
- * grid.
+ * The cost is a design and a response scan per candidate; a scan is one transform of the grid,
+ * whatever the length.
  */
 [[nodiscard]] inline LowpassSearch searchLowpass(double passEdge, double stopEdge, double attenDb, double maxRippleDb, std::size_t maxTaps, std::size_t grid = kDesignGrid) {
     const double cutoff = 0.5 * (passEdge + stopEdge);

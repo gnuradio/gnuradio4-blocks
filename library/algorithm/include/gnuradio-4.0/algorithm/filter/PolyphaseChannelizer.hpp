@@ -14,7 +14,6 @@
 #include <vector>
 
 #include <initializer_list>
-#include <mutex>
 #include <numeric>
 #include <ranges>
 #include <string>
@@ -50,19 +49,6 @@ struct ChannelizerDesign {
 
 namespace detail {
 
-struct ChannelizerDesignKey {
-    std::size_t channels = 0UZ;
-    std::string family;
-    double      attenuationDb = 0.;
-    double      transition    = 0.;
-    double      maxRippleDb   = 0.;
-    std::size_t span          = 0UZ;
-    std::size_t oversample    = 0UZ;
-    std::size_t maxSpan       = 0UZ;
-
-    [[nodiscard]] bool operator==(const ChannelizerDesignKey&) const = default;
-};
-
 /// @brief `fir::design::scanEdges` on the design grid, as a pair of stopband peak and passband ripple, in dB.
 [[nodiscard]] inline std::pair<double, double> channelizerEdgeScan(const std::vector<float>& taps, double passEdge, double stopEdge) {
     const gr::filter::fir::design::LowpassScan scan = gr::filter::fir::design::scanEdges(taps, passEdge, stopEdge);
@@ -87,8 +73,6 @@ struct ChannelizerDesignKey {
  * @param oversample     the commutator stride the bank runs, which sets the alias edge
  * @param maxSpan        the longest root-Nyquist span; `maxSpan * channels` also floors the lowpass search's cap
  *
- * The design is memoized by its parameters; the memo holds the last eight designs.
- *
  * A parameter outside its range or an unknown family is an error.
  */
 [[nodiscard]] inline std::expected<ChannelizerDesign, gr::Error> designChannelizerPrototype(std::size_t channels, std::string_view family, double attenuationDb, double transition, std::size_t span = 16UZ, std::size_t oversample = 1UZ, double maxRippleDb = 0.1, std::size_t maxSpan = 64UZ, std::source_location location = std::source_location::current()) {
@@ -103,19 +87,6 @@ struct ChannelizerDesignKey {
     }
     if (family == "root_nyquist" && (span < 2UZ || span > maxSpan)) {
         return std::unexpected(gr::Error(std::format("gr::filter::designChannelizerPrototype: span is {}; the range is 2 to {}", span, maxSpan), location));
-    }
-
-    const detail::ChannelizerDesignKey key{channels, std::string(family), attenuationDb, transition, maxRippleDb, span, oversample, maxSpan};
-
-    static std::mutex                                                              mutex;
-    static std::vector<std::pair<detail::ChannelizerDesignKey, ChannelizerDesign>> cache;
-    {
-        const std::lock_guard<std::mutex> lock(mutex);
-        for (const auto& [cached, value] : cache) {
-            if (cached == key) {
-                return value;
-            }
-        }
     }
 
     // Decimating by channels/oversample folds every multiple of oversample/channels onto baseband, so that is where
@@ -167,15 +138,15 @@ struct ChannelizerDesignKey {
     std::tie(out.stopbandDb, out.rippleDb) = detail::channelizerEdgeScan(out.taps, passEdge, stopEdge);
     // Only the lowpass family has a target. `ok` is false only for a lowpass that misses it.
     out.ok = family != "lowpass" || (out.stopbandDb <= -attenuationDb && out.rippleDb <= maxRippleDb);
-
-    return fir::design::detail::keepDesign<fir::design::detail::kDesignMemoEntries>(mutex, cache, key, std::move(out));
+    return out;
 }
 
 /**
  * @brief Measures a supplied prototype on the terms a designed one is measured.
  *
  * `ok` is true. The figures are relative to the prototype's DC gain. Leading and trailing zero taps are left out of
- * the scan. The scan assumes a symmetric prototype. An asymmetric one is measured as if it were symmetric.
+ * the scan. The scan assumes a symmetric prototype. An asymmetric one is measured by its symmetric part, the mean of each
+ * tap and its mirror.
  *
  * Fewer than two channels, an empty prototype or one with no DC gain is an error.
  */

@@ -7,7 +7,6 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
-#include <mutex>
 #include <numbers>
 #include <span>
 #include <stdexcept>
@@ -193,17 +192,6 @@ requires PolyphaseSample<T>
     return sum;
 }
 
-struct ArbitraryDesignKey {
-    std::size_t bankSize      = 0UZ;
-    double      minRate       = 0.0;
-    double      rolloff       = 0.0;
-    double      attenuationDb = 0.0;
-    double      maxRippleDb   = 0.0;
-    std::size_t maxTaps       = 0UZ;
-
-    [[nodiscard]] bool operator==(const ArbitraryDesignKey&) const = default;
-};
-
 /// a 64-bit position quotient narrowed to an index; a template, so the cast stands where `std::size_t` is 32 bits and is
 /// not a useless cast where it is the same 64-bit type
 template<std::integral To, std::integral From>
@@ -274,8 +262,7 @@ struct ShiftedQuotient {
  *
  * `minRate` is what makes a rise in rate free and a fall a rebuild: raising the rate inside the
  * designed band leaves the prototype narrower than it needs to be, which costs bandwidth and never
- * aliases. Memoized, because the search at `minRate = 0.2` is over ~5800-tap candidates; the memo
- * holds the last eight designs and drops the oldest.
+ * aliases.
  */
 [[nodiscard]] inline ResamplerDesign designArbitraryResampler(std::size_t bankSize, double minRate, double rolloff = 0.2, double attenuationDb = 60.0, double maxRippleDb = 0.1, std::size_t maxTaps = 1UZ << 16) {
     if (bankSize == 0UZ) {
@@ -285,20 +272,7 @@ struct ShiftedQuotient {
         throw std::invalid_argument("designArbitraryResampler: the rate must be positive");
     }
 
-    const detail::ArbitraryDesignKey key = {bankSize, std::min(1.0, minRate), rolloff, attenuationDb, maxRippleDb, maxTaps};
-
-    static std::mutex                                                          mutex;
-    static std::vector<std::pair<detail::ArbitraryDesignKey, ResamplerDesign>> cache;
-    {
-        const std::lock_guard<std::mutex> lock(mutex);
-        for (const auto& [cached, value] : cache) {
-            if (cached == key) {
-                return value;
-            }
-        }
-    }
-
-    const double stopEdge = 0.5 * key.minRate / static_cast<double>(bankSize);
+    const double stopEdge = 0.5 * std::min(1.0, minRate) / static_cast<double>(bankSize);
     const double passEdge = (1.0 - rolloff) * stopEdge;
     const double cutoff   = 0.5 * (passEdge + stopEdge);
 
@@ -319,8 +293,7 @@ struct ShiftedQuotient {
     for (float& v : out.taps) {
         v *= gain;
     }
-
-    return fir::design::detail::keepDesign<fir::design::detail::kDesignMemoEntries>(mutex, cache, key, std::move(out));
+    return out;
 }
 
 /**
