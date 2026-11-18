@@ -28,8 +28,6 @@
 </head>
 
 <body>
-<button id="read-file" disabled>Read local file</button>
-<button id="write-file" disabled>Save file</button>
 <button id="http-get" disabled>HTTP GET /getNumbers</button>
 <button id="http-get-404" disabled>HTTP GET /return404</button>
 <button id="http-post" disabled>HTTP POST /postNumbers</button>
@@ -50,8 +48,6 @@
 
     Module.onRuntimeInitialized = () => {
         log('WASM ready.');
-        document.getElementById('read-file').disabled = false;
-        document.getElementById('write-file').disabled = false;
         document.getElementById('http-get').disabled = false;
         document.getElementById('http-get-404').disabled = false;
         document.getElementById('http-post').disabled = false;
@@ -63,14 +59,6 @@
 <script src="FileioTestApp.js"></script>
 
 <script>
-    document.getElementById('read-file').addEventListener('click', () => {
-        Module.ccall('test_dialog_read', null, [], []);
-    });
-
-    document.getElementById('write-file').addEventListener('click', () => {
-        Module.ccall('test_save_file', null, [], []);
-    });
-
     document.getElementById('http-get').addEventListener('click', () => {
         Module.ccall('test_http_get', null, [], []);
     });

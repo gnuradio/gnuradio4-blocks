@@ -2,48 +2,19 @@
 #define FILEIOHELPERS_HPP
 
 #include <expected>
-#include <filesystem>
 #include <gnuradio-4.0/Message.hpp>
 
 namespace gr::algorithm::fileio {
 
-struct DialogOpenHandle {
-    // UI side calls this when it has the file contents in memory.
-    std::function<void(std::span<const std::uint8_t>)> completeWithMemory;
-
-    // UI side calls this when the dialog returns a native path.
-    std::function<void(std::string)> completeWithFile;
-
-    // UI side calls this on error or cancel.
-    std::function<void(std::string_view)> fail;
-};
-
-namespace detail {
-
-using DialogOpenCallback = std::function<void(DialogOpenHandle&)>;
-
-inline DialogOpenCallback& dialogOpenCallback() {
-    static DialogOpenCallback cb;
-    return cb;
-}
-
-} // namespace detail
-
-inline void setDialogOpenCallback(detail::DialogOpenCallback cb) { detail::dialogOpenCallback() = std::move(cb); }
-
 struct Capabilities {
-    bool httpEnabled              = false; // GR_HTTP_ENABLED or fetch()
-    bool dialogOpenAvailable      = false; // dialog:/ callback registered
-    bool browserDownloadSupported = false; // download:/ supported
+    bool httpEnabled = false; // GR_HTTP_ENABLED or fetch()
 };
 
 inline Capabilities capabilities() noexcept {
     Capabilities c{};
 
 #if __EMSCRIPTEN__
-    c.httpEnabled              = true; // We always compile with emscripten fetch here
-    c.browserDownloadSupported = true;
-    c.dialogOpenAvailable      = static_cast<bool>(detail::dialogOpenCallback());
+    c.httpEnabled = true; // We always compile with emscripten fetch here
 #else
 
 #if GR_HTTP_ENABLED
@@ -51,8 +22,6 @@ inline Capabilities capabilities() noexcept {
 #else
     c.httpEnabled = false;
 #endif
-    c.browserDownloadSupported = true;
-    c.dialogOpenAvailable      = static_cast<bool>(detail::dialogOpenCallback());
 #endif
     return c;
 }
@@ -90,18 +59,12 @@ namespace detail {
     return ciEquals(sc, "http") || ciEquals(sc, "https");
 }
 
-[[nodiscard]] inline bool isDownloadUri(std::string_view uri) { return ciEquals(schemeOf(uri), "download"); }
-
 [[nodiscard]] inline bool isFileUri(std::string_view uri) { return ciEquals(schemeOf(uri), "file"); }
-
-[[nodiscard]] inline bool isDialogUri([[maybe_unused]] std::string_view uri) { return ciEquals(schemeOf(uri), "dialog"); }
 
 enum class UriKind {
     LocalPath,
     FileUri,
     HttpUri,
-    DownloadUri,
-    DialogUri,
     UnsupportedUri,
 };
 
@@ -113,39 +76,12 @@ enum class UriKind {
         if (isHttpUri(uri)) {
             return UriKind::HttpUri;
         }
-        if (isDownloadUri(uri)) {
-            return UriKind::DownloadUri;
-        }
-        if (isDialogUri(uri)) {
-            return UriKind::DialogUri;
-        }
         return UriKind::UnsupportedUri;
     }
     if (uri.contains(":/")) {
         return UriKind::UnsupportedUri;
     }
     return UriKind::LocalPath;
-}
-
-[[nodiscard]] inline std::expected<std::string, gr::Error> stripDownloadUri(std::string_view uri) {
-    if (!isDownloadUri(uri)) {
-        return std::unexpected(gr::Error{std::format("Not a browser download URI:{}", uri)});
-    }
-    return std::string(uri.substr(std::string_view("download:/").size()));
-}
-
-namespace detail {
-inline std::filesystem::path defaultDownloadDir() {
-    if (const char* home = std::getenv("HOME")) {
-        return std::filesystem::path(home) / "Downloads";
-    }
-    return std::filesystem::current_path();
-}
-} // namespace detail
-
-inline std::string resolveDownloadPath(std::string_view filename) {
-    std::filesystem::path base = detail::defaultDownloadDir();
-    return (base / std::filesystem::path{filename}).string();
 }
 
 [[nodiscard]] inline std::expected<std::string, gr::Error> toLocalPath(std::string_view uri) {

@@ -40,8 +40,8 @@ const boost::ut::suite<"FileIO Helpers tests"> fileIoHelpersTests = [] {
         expect(fio::classifyUri("tmp/x") == fio::UriKind::LocalPath);
         expect(fio::classifyUri("file:/tmp/x") == fio::UriKind::FileUri);
         expect(fio::classifyUri("http://x") == fio::UriKind::HttpUri);
-        expect(fio::classifyUri("download:/x") == fio::UriKind::DownloadUri);
-        expect(fio::classifyUri("dialog:/open") == fio::UriKind::DialogUri);
+        expect(fio::classifyUri("download:/x") == fio::UriKind::UnsupportedUri);
+        expect(fio::classifyUri("dialog:/open") == fio::UriKind::UnsupportedUri);
         expect(fio::classifyUri("wrong_sch://wrong_uri") == fio::UriKind::UnsupportedUri);
         expect(fio::classifyUri("ftp://x") == fio::UriKind::UnsupportedUri);
     };

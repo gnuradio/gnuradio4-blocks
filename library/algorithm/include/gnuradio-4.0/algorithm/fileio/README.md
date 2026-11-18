@@ -9,8 +9,8 @@ using namespace gr::algorithm::fileio;
 
 **Main components**
 
-- `Reader` – async read from file / HTTP / memory / dialog.
-- `Writer` – async write to file / HTTP / browser download.
+- `Reader` – async read from file / HTTP / memory.
+- `Writer` – async write to file / HTTP.
 - `ReaderConfig` / `WriterConfig` – configuration structs.
 - Convenience: `Reader::get()` and `write()` for synchronous use.
 
@@ -20,14 +20,12 @@ All heavy I/O runs on an internal thread pool (except in-memory readers).
 
 ## 2. URI schemes
 
-| Scheme           | Meaning                               | Notes                                                                                          |
-| ---------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `file:/path`     | Local file (native FS or MEMFS)       | Append mode only for `file:/`                                                                  |
-| `http://...`     | HTTP GET / POST                       | Native: CPR; Emscripten: `emscripten_fetch`                                                    |
-| `https://...`    | HTTPS GET / POST                      | `tlsVerifyPeer` controls SSL verify                                                            |
-| `dialog:/open`   | File-open dialog -> memory or file    | Needs dialog callback registered                                                               |
-| `<memory>`       | In-memory span (no URI, just a label) | No background work after `readAsync`                                                           |
-| `download:/name` | Browser download (Writer only)        | Emscripten: browser “save file”; Native: writes to default Downloads (e.g. `~/Downloads/name`) |
+| Scheme        | Meaning                               | Notes                                       |
+| ------------- | ------------------------------------- | ------------------------------------------- |
+| `file:/path`  | Local file (native FS or MEMFS)       | Append mode only for `file:/`               |
+| `http://...`  | HTTP GET / POST                       | Native: CPR; Emscripten: `emscripten_fetch` |
+| `https://...` | HTTPS GET / POST                      | `tlsVerifyPeer` controls SSL verify         |
+| `<memory>`    | In-memory span (no URI, just a label) | No background work after `readAsync`        |
 
 If the URI scheme is unknown, `readAsync` / `writeAsync` return `std::unexpected<gr::Error>`.
 
@@ -225,20 +223,6 @@ if (!resExp) {
 
 ---
 
-### 4.4 Download (`download:/`)
-
-On the web, browsers don’t let you write arbitrary paths on the user’s disk. You usually either
-
-- use `file:/...` -> write into MEMFS (in-memory file system), or
-- use `download:/name` -> hand the file to the user.
-
-`download:/name` is a small cross-platform convenience:
-
-- **Emscripten**: triggers a browser "Save file" download.
-- **Native**: writes into the user’s default download folder (e.g. `~/Downloads/name`).
-
----
-
 ## 5. Emscripten caveats
 
 - `file:/` uses MEMFS (in-memory file system).
@@ -247,6 +231,7 @@ On the web, browsers don’t let you write arbitrary paths on the user’s disk.
 
 - Blocking calls on **main runtime thread**: `Reader::wait()`, `Writer::wait()`, `write()` -> refuse to block, return early / error.
 
-- `download:/` is implemented via JS in the browser.
+- Browsers don’t let you write arbitrary paths on the user’s disk. Write into MEMFS with `file:/...`. An application that
+  lets the user pick a file passes the library its path or bytes; one that hands a file to the user offers it itself.
 
 - Cancellation for HTTP is **best-effort**: the fetch cannot always be aborted immediately, but you will always get a Final message.

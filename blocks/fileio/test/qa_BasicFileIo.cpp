@@ -10,6 +10,7 @@
 #include "ScopedWorkingDirectory.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <format>
 #include <optional>
 #include <string_view>
@@ -237,6 +238,22 @@ std::expected<std::uint64_t, gr::Error> readFloatFile(const std::string& fileNam
     return run.nSamples;
 }
 
+// Points HOME at the given directory and restores it on exit.
+struct ScopedHomeDirectory {
+    std::optional<std::string> previous = std::getenv("HOME") != nullptr ? std::optional<std::string>{std::getenv("HOME")} : std::nullopt;
+
+    explicit ScopedHomeDirectory(const std::filesystem::path& directory) { ::setenv("HOME", directory.c_str(), 1); }
+    ScopedHomeDirectory(const ScopedHomeDirectory&)            = delete;
+    ScopedHomeDirectory& operator=(const ScopedHomeDirectory&) = delete;
+    ~ScopedHomeDirectory() {
+        if (previous.has_value()) {
+            ::setenv("HOME", previous->c_str(), 1);
+        } else {
+            ::unsetenv("HOME");
+        }
+    }
+};
+
 // expects a run that the source ended at its start, with an error naming the source and each of the given texts
 void expectRefusedStart(const SourceRun& run, std::initializer_list<std::string_view> texts) {
     using namespace boost::ut;
@@ -404,8 +421,10 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
         using namespace gr::blocks::fileio;
         using gr::blocks::basic::ConstantSource;
 
-        for (const std::string fileName : {"ftp://host/tone.f32", "ftp:/host/tone.f32"}) {
+        for (const std::string fileName : {"ftp://host/tone.f32", "ftp:/host/tone.f32", "download:/tone.f32"}) {
             ScopedWorkingDirectory workingDirectory;
+            // HOME points at the working directory: the emptiness check below covers HOME too.
+            const ScopedHomeDirectory home(workingDirectory.directory);
 
             gr::Graph flow;
             auto&     source   = flow.emplaceBlock<ConstantSource<float>>({{"n_samples_max", gr::Size_t{1024U}}});

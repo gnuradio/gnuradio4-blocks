@@ -1,8 +1,6 @@
 #ifndef FILEIOEMSCRIPTENHELPER_HPP
 #define FILEIOEMSCRIPTENHELPER_HPP
 
-#include <gnuradio-4.0/algorithm/fileio/FileIoHelpers.hpp>
-
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
 #include <emscripten/emscripten.h>
@@ -84,122 +82,6 @@ inline void listPersistentFiles([[maybe_unused]] bool recursive = true) {
 #endif
 }
 // clang-format on
-
-#if defined(__EMSCRIPTEN__)
-namespace detail {
-// clang-format off
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdollar-in-identifier-extension"
-inline void startFileDialogEmscripten(DialogOpenHandle* handle) {
-    EM_ASM(
-        {
-            const handlePtr = $0 >>> 0;
-
-            const input = document.createElement('input');
-            input.type  = 'file';
-            input.style.display = 'none';
-            document.body.appendChild(input);
-
-            const cleanup = () => {
-                if (input.parentNode) {
-                    input.parentNode.removeChild(input);
-                }
-            };
-
-
-            input.addEventListener('cancel', (event) => {
-                Module.ccall('fileio_dialog_on_cancel',null,['number'],[handlePtr]);
-            }, { once: true });
-
-            input.addEventListener('change', async (e) => {
-                const files = e.target.files;
-                if (!files || files.length === 0) {
-                    cleanup();
-                    return;
-                }
-
-                try {
-                    const f   = files[0];
-                    const buf = await f.arrayBuffer();
-                    const u8  = new Uint8Array(buf);
-                    const ptr = Module._malloc(u8.byteLength);
-                    Module.HEAPU8.set(u8, ptr);
-                    Module.ccall('fileio_dialog_on_bytes',null,['number', 'number', 'number'],[handlePtr, ptr, u8.byteLength]);
-                    Module._free(ptr);
-                } catch (err) {
-                    console.error('[fileio] dialog:/open – error reading file:', err);
-                    Module.ccall('fileio_dialog_on_error',null,['number'],[handlePtr]);
-                } finally {
-                    cleanup();
-                }
-            }, { once: true });
-
-            input.click();
-        },
-        handle);
-}
-#pragma GCC diagnostic pop
-// clang-format on
-} // namespace detail
-
-inline void setupEmscriptenDialogCallback() {
-    setDialogOpenCallback([](DialogOpenHandle& handle) {
-        auto* handlePtr = &handle;
-        if (isMainThread()) {
-            detail::startFileDialogEmscripten(handlePtr);
-        } else {
-            emscripten_async_run_in_main_runtime_thread(
-                EM_FUNC_SIG_VI,
-                +[](void* p) {
-                    auto* hPtr = static_cast<DialogOpenHandle*>(p);
-                    detail::startFileDialogEmscripten(hPtr);
-                },
-                handlePtr);
-        }
-    });
-}
-#endif
-
-#if defined(__EMSCRIPTEN__)
-FILEIO_EXTERN_C {
-
-    FILEIO_EXPORT
-    inline void fileio_dialog_on_bytes(std::uintptr_t handleToken, const std::uint8_t* data, int len) {
-        auto* handle = reinterpret_cast<DialogOpenHandle*>(handleToken);
-        if (handle == nullptr) {
-            return;
-        }
-
-        if (!data || len <= 0) {
-            if (handle->fail) {
-                handle->fail("Empty or invalid buffer");
-            }
-            return;
-        }
-
-        if (handle->completeWithMemory) {
-            handle->completeWithMemory(std::span<const std::uint8_t>{data, static_cast<std::size_t>(len)});
-        }
-    }
-
-    FILEIO_EXPORT
-    inline void fileio_dialog_on_cancel(std::uintptr_t handleToken) {
-        auto* handle = reinterpret_cast<DialogOpenHandle*>(handleToken);
-        if (handle != nullptr && handle->fail) {
-            handle->fail("User cancelled");
-        }
-    }
-
-    FILEIO_EXPORT
-    inline void fileio_dialog_on_error(std::uintptr_t handleToken) {
-        auto* handle = reinterpret_cast<DialogOpenHandle*>(handleToken);
-        if (handle != nullptr && handle->fail) {
-            handle->fail("JS error while reading file");
-        }
-    }
-
-} // FILEIO_EXTERN_C
-#endif
 
 } // namespace gr::algorithm::fileio
 
