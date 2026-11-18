@@ -48,6 +48,13 @@ const suite<"SchmittTrigger Block"> triggerTests = [] {
         expect(eq(trig._now, 1'250'000'000ULL));
     };
 
+    "a negative trigger_offset seeds the clock before trigger_time"_test = [] {
+        SchmittTrigger<float, NO_INTERPOLATION> trig({{"trigger_time", std::uint64_t{1'000'000'000ULL}}, {"trigger_offset", -0.25f}});
+        trig.settings().init();
+        std::ignore = trig.settings().applyStagedParameters();
+        expect(eq(trig._now, 750'000'000ULL));
+    };
+
     skip / "SchmittTrigger"_test =
         [&enableVisualTests]<class Method> {
             Graph graph;
