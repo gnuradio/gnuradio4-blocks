@@ -190,14 +190,34 @@
         pollPlayback();
     });
 
-    document.getElementById('play-server').addEventListener('click', function() {
+    // WavSource reads local files only: the page fetches the WAV file, writes it into MEMFS and plays that copy.
+    // The page cannot fetch a file from another host itself, so it asks the demo server's /proxy route for it.
+    // Stop during the fetch aborts it, and nothing plays.
+    var fetchAbort = null;
+    document.getElementById('play-server').addEventListener('click', async function() {
         var url = document.getElementById('wav-url').value.trim();
-        var uri = url ? (location.origin + '/proxy?url=' + encodeURIComponent(url)) : (location.origin + '/tone.wav');
+        var source = url ? (location.origin + '/proxy?url=' + encodeURIComponent(url)) : (location.origin + '/tone.wav');
+        var path = '/fetched.wav';
         playbackBusy = true; refreshUi();
+        Module.print('Fetching: ' + source);
+        fetchAbort = new AbortController();
+        var signal = fetchAbort.signal;
+        try {
+            var response = await fetch(source, { signal: signal });
+            if (!response.ok) throw new Error('HTTP ' + response.status + ' ' + response.statusText);
+            var bytes = new Uint8Array(await response.arrayBuffer());
+            if (signal.aborted) throw new Error('stopped');
+            Module.FS.writeFile(path, bytes);
+        } catch (e) {
+            Module.print('Fetch failed, nothing plays: ' + e);
+            playbackBusy = false; refreshUi(); return;
+        } finally {
+            fetchAbort = null;
+        }
         var outDev = outputSel.value;
-        Module.print('Playing: ' + uri);
+        Module.print('Playing: ' + path);
         if (outDev) Module.print('Output device: ' + outputSel.options[outputSel.selectedIndex].textContent);
-        var ok = Module.ccall('play_audio_from_uri', 'number', ['string', 'string', 'number'], [uri, outDev, getRepeatFlag()]);
+        var ok = Module.ccall('play_audio_from_uri', 'number', ['string', 'string', 'number'], [path, outDev, getRepeatFlag()]);
         if (!ok) { Module.print('Playback did not start'); playbackBusy = false; refreshUi(); return; }
         setTimeout(resumeAudio, 100);
         setTimeout(resumeAudio, 300);
@@ -207,6 +227,7 @@
 
     document.getElementById('stop-playback').addEventListener('click', function () {
         Module.print('Stopping playback');
+        if (fetchAbort) fetchAbort.abort();
         Module.ccall('stop_playback', null, [], []);
     });
 

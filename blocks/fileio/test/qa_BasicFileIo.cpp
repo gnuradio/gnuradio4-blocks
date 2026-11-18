@@ -9,9 +9,11 @@
 #include "FileOpenCounter.hpp"
 #include "ScopedWorkingDirectory.hpp"
 
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <format>
+#include <iterator>
 #include <optional>
 #include <string_view>
 
@@ -168,6 +170,10 @@ using gr::blocks::fileio::test::ScopedWorkingDirectory;
 
 // the reason the reader gives for a path it cannot open as a regular file
 constexpr std::string_view kReaderRefusal = "file not found or not a regular file";
+
+// names a file block refuses: the reader and the writer serve the first two, and the last two are a file: name without
+// a slash and a path that holds ':/'
+constexpr std::array<const char*, 8> kRefusedAddresses{"http://127.0.0.1:8080/tone.f32", "https://host/tone.f32", "ftp://host/tone.f32", "ftp:/host/tone.f32", "download:/tone.f32", "dialog:/open", "file:tone.f32", "file:///tmp/a:/tone.f32"};
 
 template<typename TValue>
 std::string errorMessage(const std::expected<TValue, gr::Error>& result) {
@@ -417,11 +423,11 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
         expect(errorMessage(written).contains(reason)) << reason << ": " << errorMessage(written);
     };
 
-    "BasicFileSink refuses an unsupported address at start and creates no directory"_test = [] {
+    "BasicFileSink refuses at start every address but a plain path or a file: address and writes nothing"_test = [] {
         using namespace gr::blocks::fileio;
         using gr::blocks::basic::ConstantSource;
 
-        for (const std::string fileName : {"ftp://host/tone.f32", "ftp:/host/tone.f32", "download:/tone.f32"}) {
+        for (const std::string fileName : kRefusedAddresses) {
             ScopedWorkingDirectory workingDirectory;
             // HOME points at the working directory: the emptiness check below covers HOME too.
             const ScopedHomeDirectory home(workingDirectory.directory);
@@ -443,8 +449,48 @@ const boost::ut::suite<"basic file IO tests"> basicFileIOTests = [] {
             expect(!externalInterventionNeeded->load(std::memory_order_relaxed)) << fileName;
             expect(!result.has_value()) << fileName << ": the run must fail";
             expect(fileSink.state() == gr::lifecycle::State::ERROR) << fileName << ": the sink's start() must fail, state " << gr::meta::enumName(fileSink.state()).value_or("");
-            expect(errorMessage(result).contains("Unsupported URI scheme")) << fileName << ": " << errorMessage(result);
+            // the block's own refusal: the address never reaches the writer, which would post to an http: address
+            expect(errorMessage(result).contains(std::format("file_name '{}' must be a plain path or a file: address", fileName))) << fileName << ": " << errorMessage(result);
             expect(std::filesystem::is_empty(workingDirectory.directory)) << fileName << ": the working directory stays empty";
+        }
+    };
+
+    "BasicFileSource refuses at start every address but a plain path or a file: address"_test = [] {
+        for (const std::string fileName : kRefusedAddresses) {
+            ScopedWorkingDirectory workingDirectory;
+            for (const std::string modeName : {"overwrite", "multi"}) {
+                expectRefusedStart(runFloatSource(fileName, modeName), {std::format("file_name '{}' must be a plain path or a file: address", fileName)});
+            }
+            expect(std::filesystem::is_empty(workingDirectory.directory)) << fileName << ": the working directory stays empty";
+        }
+    };
+
+    "BasicFileSink and BasicFileSource take a file: address as its path"_test = [] {
+        constexpr gr::Size_t nSamples        = 1024U;
+        constexpr gr::Size_t maxBytesPerFile = 256U;
+
+        for (const std::string modeName : {"overwrite", "multi"}) {
+            ScopedWorkingDirectory workingDirectory;
+            const std::string      address = std::format("file://{}", (workingDirectory.directory / "out" / "tone.f32").string());
+            const auto             written = writeFloatFile(address, modeName, nSamples, modeName == "multi" ? maxBytesPerFile : 0U);
+            expect(written.has_value()) << modeName << ": " << errorMessage(written);
+
+            std::size_t     nFiles = 0UZ;
+            std::uintmax_t  nBytes = 0U;
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(workingDirectory.directory / "out", ec)) {
+                expect(entry.is_regular_file() && entry.path().filename().string().ends_with("tone.f32")) << modeName << ": " << entry.path().string();
+                nFiles++;
+                nBytes += entry.file_size();
+            }
+            expect(!ec) << modeName << ": " << ec.message();
+            expect(ge(nFiles, 1UZ)) << modeName;
+            expect(eq(nBytes, nSamples * sizeof(float))) << modeName;
+            expect(eq(std::ranges::distance(std::filesystem::directory_iterator(workingDirectory.directory)), std::ptrdiff_t{1})) << modeName << ": only 'out' is made";
+
+            const auto nRead = readFloatFile(std::format("file:{}", (workingDirectory.directory / "out" / "tone.f32").string()), modeName);
+            expect(nRead.has_value()) << modeName << ": " << errorMessage(nRead);
+            expect(eq(nRead.value_or(0U), nSamples)) << modeName;
         }
     };
 

@@ -2,6 +2,10 @@
 
 #include <gnuradio-4.0/algorithm/fileio/FileIoHelpers.hpp>
 
+#include <format>
+#include <string>
+#include <string_view>
+
 const boost::ut::suite<"FileIO Helpers tests"> fileIoHelpersTests = [] {
     using namespace boost::ut;
     using namespace gr;
@@ -65,6 +69,24 @@ const boost::ut::suite<"FileIO Helpers tests"> fileIoHelpersTests = [] {
 
         auto r2 = fio::toLocalPath("file://example.com");
         expect(!r2.has_value());
+    };
+
+    "localFileName takes a plain path or a file: address"_test = [] {
+        using gr::algorithm::fileio::localFileName;
+        expect(eq(localFileName("file_name", "tmp/x").value_or(""), "tmp/x"s));
+        expect(eq(localFileName("file_name", "/tmp/x").value_or(""), "/tmp/x"s));
+        expect(eq(localFileName("file_name", "file:/tmp/x").value_or(""), "/tmp/x"s));
+        expect(eq(localFileName("file_name", "file:///tmp/x").value_or(""), "/tmp/x"s));
+        expect(eq(localFileName("file_name", "FILE://localhost/tmp/x").value_or(""), "/tmp/x"s));
+
+        for (const std::string_view address : {"http://host/x", "HTTPS://host/x", "ftp://host/x", "ftp:/host/x", "download:/x", "dialog:/open", "tmp/a:/b", "file:x", "FILE:x", "file:///d/a:/x", "C:/x"}) {
+            const auto refused = localFileName("file_name", address);
+            expect(!refused.has_value()) << address;
+            expect(eq(refused.has_value() ? ""s : refused.error().message, std::format("file_name '{}' must be a plain path or a file: address", address))) << address;
+        }
+        const auto remote = localFileName("file_name", "file://host/etc");
+        expect(!remote.has_value());
+        expect(remote.has_value() ? false : remote.error().message.starts_with("file_name 'file://host/etc' must name a local file: ")) << (remote.has_value() ? ""s : remote.error().message);
     };
 };
 

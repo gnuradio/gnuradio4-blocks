@@ -114,5 +114,30 @@ enum class UriKind {
 
 } // namespace detail
 
+/// @brief The local path that a block's file name setting names: a plain path unchanged, a `file:` address as its path.
+///
+/// The function accepts only names that the reader and the writer take as the local file it returns. It refuses every
+/// other address, `http:` and `https:` among them, and a path that contains `:/`, which reads as an address; a drive
+/// path such as `C:/x` reads as one too. It also refuses a `file:` name with no slash after the colon, such as `file:x`,
+/// which the reader and the writer would take as a relative path. The error names the setting and the forms it takes.
+[[nodiscard]] inline std::expected<std::string, gr::Error> localFileName(std::string_view setting, std::string_view value) {
+    const auto refused = [&] { return std::unexpected(gr::Error{std::format("{} '{}' must be a plain path or a file: address", setting, value)}); };
+
+    const auto uriKind          = detail::classifyUri(value);
+    const auto colon            = value.find(':');
+    const bool fileWithoutSlash = uriKind == detail::UriKind::LocalPath && colon != std::string_view::npos && detail::ciEquals(value.substr(0, colon), "file");
+    if ((uriKind != detail::UriKind::LocalPath && uriKind != detail::UriKind::FileUri) || fileWithoutSlash) {
+        return refused();
+    }
+    auto path = detail::toLocalPath(value);
+    if (!path.has_value()) {
+        return std::unexpected(gr::Error{std::format("{} '{}' must name a local file: {}", setting, value, path.error().message)});
+    }
+    if (detail::classifyUri(path.value()) != detail::UriKind::LocalPath) {
+        return refused();
+    }
+    return path;
+}
+
 } // namespace gr::algorithm::fileio
 #endif // FILEIOHELPERS_HPP
