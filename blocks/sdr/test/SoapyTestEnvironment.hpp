@@ -10,12 +10,12 @@
 // GR_SDR_TEST_SOAPY_MODULE_DIR and GR_SDR_TEST_SOAPY_EMPTY_ROOT (see CMakeLists.txt), and a packaged test's runner sets
 // them to where it installed the two directories. The test binary carries no path of the tree it was built in.
 
-// A directory the run names through the test's environment. Without it the test cannot confine SoapySDR to the loopback
-// module, so it stops and names the variable.
+// A directory the run names through the test's environment. Without it the test cannot find the loopback module or
+// confine SoapySDR to it, so it stops and names the variable. blocks/sdr/Readme.md shows a direct run that sets them.
 [[nodiscard]] inline std::string soapyTestDirectory(const char* variable) {
     const char* value = std::getenv(variable);
     if (value == nullptr || *value == '\0') {
-        throw std::runtime_error(std::format("the environment variable {} is not set or empty; run the test through ctest", variable));
+        throw std::runtime_error(std::format("the environment variable {} is not set or empty; run the test through ctest, or set it as blocks/sdr/Readme.md describes", variable));
     }
     return value;
 }
