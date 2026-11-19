@@ -66,7 +66,7 @@ jobs:
   build:
     needs: [dco, restyled]
     name: "${{ matrix.name }}"
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
     concurrency:
       group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-${{ matrix.name }}
       cancel-in-progress: true
@@ -79,6 +79,7 @@ jobs:
       matrix:
         include:
           - name: "Ubuntu 24.04 | gcc-14 | Release"
+            runs-on: ubuntu-latest
             require_gr3: true
             core_sdk_tag: main-ubuntu-24.04-gcc14-release
             cc: gcc-14
@@ -86,22 +87,32 @@ jobs:
             cmake-build-type: Release
             extra_cmake_flags: ""
           - name: "Ubuntu 26.04 | gcc | Release"
+            runs-on: ubuntu-latest
             core_sdk_tag: main-ubuntu-26.04-gcc-release
             cc: gcc
             cxx: g++
             cmake-build-type: Release
             extra_cmake_flags: ""
           - name: "Fedora 44 | clang | Debug"
+            runs-on: ubuntu-latest
             core_sdk_tag: main-fedora-44-clang-debug
             cc: clang
             cxx: clang++
             cmake-build-type: Debug
             extra_cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
           - name: "Ubuntu 24.04 | Emscripten | Release"
+            runs-on: ubuntu-latest
             core_sdk_tag: main-ubuntu-24.04-emscripten-release
             cc: emcc
             cxx: em++
             cmake_wrapper: emcmake
+            cmake-build-type: Release
+            extra_cmake_flags: ""
+          - name: "Fedora 44 | gcc | Release | aarch64"
+            runs-on: ubuntu-24.04-arm
+            core_sdk_tag: main-fedora-44-gcc-release-aarch64
+            cc: gcc
+            cxx: g++
             cmake-build-type: Release
             extra_cmake_flags: ""
 
