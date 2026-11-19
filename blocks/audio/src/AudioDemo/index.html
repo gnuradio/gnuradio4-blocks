@@ -145,14 +145,23 @@
         waitForGrant();
     });
 
+    // MEMFS holds the fetched WAV file in page memory until the page removes it.
+    var fetchedPath = '/fetched.wav';
+    function removeFetchedFile() {
+        if (Module.FS.analyzePath(fetchedPath).exists) Module.FS.unlink(fetchedPath);
+    }
+
     function pollPlayback() {
         setTimeout(function() {
             try {
                 if (Module.ccall('audio_playback_is_running', 'number', [], []) === 0) {
                     Module.print('Playback finished');
+                    removeFetchedFile();
                     playbackBusy = false; refreshUi(); return;
                 }
                 pollPlayback();
+            // A poll error leaves the fetched file in place, because the page cannot tell whether the graph has finished.
+            // The next fetch replaces it.
             } catch(e) { Module.print('Poll error: ' + e); playbackBusy = false; refreshUi(); }
         }, 100);
     }
@@ -197,7 +206,7 @@
     document.getElementById('play-server').addEventListener('click', async function() {
         var url = document.getElementById('wav-url').value.trim();
         var source = url ? (location.origin + '/proxy?url=' + encodeURIComponent(url)) : (location.origin + '/tone.wav');
-        var path = '/fetched.wav';
+        var path = fetchedPath;
         playbackBusy = true; refreshUi();
         Module.print('Fetching: ' + source);
         fetchAbort = new AbortController();
@@ -210,6 +219,7 @@
             Module.FS.writeFile(path, bytes);
         } catch (e) {
             Module.print('Fetch failed, nothing plays: ' + e);
+            removeFetchedFile();
             playbackBusy = false; refreshUi(); return;
         } finally {
             fetchAbort = null;
@@ -218,7 +228,7 @@
         Module.print('Playing: ' + path);
         if (outDev) Module.print('Output device: ' + outputSel.options[outputSel.selectedIndex].textContent);
         var ok = Module.ccall('play_audio_from_uri', 'number', ['string', 'string', 'number'], [path, outDev, getRepeatFlag()]);
-        if (!ok) { Module.print('Playback did not start'); playbackBusy = false; refreshUi(); return; }
+        if (!ok) { Module.print('Playback did not start'); removeFetchedFile(); playbackBusy = false; refreshUi(); return; }
         setTimeout(resumeAudio, 100);
         setTimeout(resumeAudio, 300);
         setTimeout(resumeAudio, 600);
