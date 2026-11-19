@@ -45,7 +45,7 @@ elseif(IS_ABSOLUTE "${CMAKE_INSTALL_DATADIR}")
 else()
   set(GR4_EXAMPLE_GRAPHS_TEST_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/install-layout")
   add_test(NAME qa_ExampleGraphsInstall COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix
-                                                ${GR4_EXAMPLE_GRAPHS_TEST_PREFIX} --component gr4-example-graphs)
+                                                ${GR4_EXAMPLE_GRAPHS_TEST_PREFIX} --component gr4_example_graphs)
   set_tests_properties(qa_ExampleGraphsInstall PROPERTIES FIXTURES_SETUP gr4_example_graphs_installed)
   set_tests_properties(qa_ExampleGraphsInstall PROPERTIES TIMEOUT 60)
   set_tests_properties(qa_ExampleGraphs PROPERTIES FIXTURES_REQUIRED gr4_example_graphs_installed)
