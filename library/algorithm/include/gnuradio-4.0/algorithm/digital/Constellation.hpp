@@ -322,9 +322,9 @@ private:
      * coordinate swap, which is what makes the boundaries agree.
      */
     [[nodiscard]] static std::complex<F> unitPhasor(F phaseOffset, std::uint32_t index, std::size_t arity) noexcept {
-        constexpr double kQuarterPi = std::numbers::pi / 4.0;
+        constexpr double kEighthsPerRadian = 4.0 / std::numbers::pi;
 
-        const double eighths = static_cast<double>(phaseOffset) / kQuarterPi + 8.0 * static_cast<double>(index) / static_cast<double>(arity);
+        const double eighths = static_cast<double>(phaseOffset) * kEighthsPerRadian + 8.0 * static_cast<double>(index) / static_cast<double>(arity);
         if (std::abs(eighths - std::round(eighths)) < 1.0e-12) {
             return eighthPhasor(std::llround(eighths));
         }
@@ -349,7 +349,9 @@ private:
 
     /// @brief `exp(j*angle)`, rounded once from `double`, and exact when the angle is a whole number of eighths of a turn.
     [[nodiscard]] static std::complex<F> framePhasor(double angle) noexcept {
-        const double eighths = angle / (std::numbers::pi / 4.0);
+        constexpr double kEighthsPerRadian = 4.0 / std::numbers::pi;
+
+        const double eighths = angle * kEighthsPerRadian;
         if (std::abs(eighths - std::round(eighths)) < 1.0e-12) {
             return eighthPhasor(std::llround(eighths));
         }
@@ -357,6 +359,8 @@ private:
     }
 
     void detectCircle(F factoryPhase, bool pskFamily) {
+        constexpr double kTurnsPerRadian = 1.0 / (2.0 * std::numbers::pi);
+
         onCircle_ = false;
         sectorSymbol_.fill(0U);
         symbolSector_.fill(0U);
@@ -401,7 +405,7 @@ private:
         onCircle_     = true;
         phaseCosine_  = std::cos(phase);
         phaseSine_    = std::sin(phase);
-        sectorScale_  = static_cast<F>(static_cast<double>(arity_) / (2.0 * std::numbers::pi));
+        sectorScale_  = static_cast<F>(static_cast<double>(arity_) * kTurnsPerRadian);
         binarySymbol_ = {sectorSymbol_[0], sectorSymbol_[1], sectorSymbol_[0], std::min(sectorSymbol_[0], sectorSymbol_[1])};
         decider_      = arity_ == 2UZ ? Decider::Binary : (arity_ == 4UZ || arity_ == 8UZ ? Decider::Folded : Decider::Angle);
 
@@ -478,16 +482,16 @@ private:
     }
 
     /**
-     * @brief QPSK: `decideSquareQam` for two levels per axis, with no floor and no tie branch.
+     * @brief QPSK: each component compared with zero, in place of the floor, clamp and tie test of `decideSquareQam`.
      *
-     * With two levels `axisIndex` is 1 exactly when the component times `axisHalfScale_` is above zero:
-     * the tie at zero, a NaN and a product that underflows to zero all go to level 0, whose Gray label
-     * is 0, as do negative components. The floor, the clamp and the tie test of `axisIndex` thus
-     * reduce to one comparison per component.
+     * With two levels per axis the only boundary is zero. A component above zero is level 1. Anything
+     * else is level 0, whose Gray label is 0: a negative component, `+0` and `-0` (equal to zero, the
+     * tie `axisIndex` also sends down), and a NaN (`>` with a NaN is false). The axis scale, never
+     * negative, is not used, and a positive component is level 1 down to the smallest subnormal.
      */
     [[nodiscard]] std::uint8_t decideQuadrant(std::complex<F> z) const noexcept {
-        const auto upperI = static_cast<std::uint32_t>(z.real() * axisHalfScale_ > F{0});
-        const auto upperQ = static_cast<std::uint32_t>(z.imag() * axisHalfScale_ > F{0});
+        const auto upperI = static_cast<std::uint32_t>(z.real() > F{0});
+        const auto upperQ = static_cast<std::uint32_t>(z.imag() > F{0});
         return static_cast<std::uint8_t>((upperQ << 1U) | upperI);
     }
 
