@@ -731,7 +731,7 @@ const boost::ut::suite<"staged decimator"> stagedDecimatorTests = [] {
         filter_test::expectStopCost(make, std::span<const float>(input).first(80UZ), std::span<const float>(input).subspan(80UZ), tags, 8UZ, 1UZ, gr::tag::TRIGGER_NAME.key());
     };
 
-    "a rebuild to a ladder already built designs nothing new"_test = [] {
+    "a rebuild to a ladder already built gives the same taps"_test = [] {
         StagedDecimator<CF>             block = makeBlock<CF>({{"decimation", 16U}, {"passband_width", 0.90f}});
         std::vector<std::vector<float>> first;
         for (std::size_t s = 0UZ; s < block.stages(); ++s) {

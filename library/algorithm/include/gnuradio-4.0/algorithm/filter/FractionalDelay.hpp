@@ -122,8 +122,8 @@ template<std::size_t N>
  *
  * It reads three numbers and designs nothing. A combination it refuses is past the cap on the grids the estimate was
  * measured on. One it accepts can still miss its target: the design then returns a length of
- * `kFractionalDelayMaxTaps | 1` that is not `ok`. A design near the cap takes tens of seconds to a few minutes, and
- * longer in a Debug build.
+ * `kFractionalDelayMaxTaps | 1` that is not `ok`. A design near the cap builds and reads one tap set near the cap for
+ * each length the search tries.
  */
 [[nodiscard]] inline bool fractionalDelayReachable(std::size_t bankSize, double rolloff, double attenuationDb) {
     const std::size_t estimate = fractionalDelayTapEstimate(bankSize, rolloff, attenuationDb);
@@ -134,7 +134,8 @@ template<std::size_t N>
  * @brief The prototype for a pure delay over a bank of @p bankSize arms.
  *
  * It is `designArbitraryResampler` at a rate of one, with the stopband edge at `0.5/L`. A bank of no arms is an
- * error. A combination `fractionalDelayReachable` refuses takes seconds to come back with a design that is not `ok`.
+ * error. A combination `fractionalDelayReachable` refuses searches up to the cap before it comes back with a design
+ * that is not `ok`.
  */
 [[nodiscard]] inline std::expected<ResamplerDesign, gr::Error> designFractionalDelay(std::size_t bankSize, double rolloff = 0.2, double attenuationDb = 60.0, double maxRippleDb = 0.1, std::source_location location = std::source_location::current()) {
     if (bankSize == 0UZ) {

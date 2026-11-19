@@ -162,7 +162,9 @@ change leaves the bank as it was.
 
 `designed_taps` holds the prototype that runs, zero-padded to a whole number of branches. `stopband_db` is the
 prototype's worst level from the alias edge to Nyquist. That band folds into each channel when the bank decimates.
-`ripple_db` is the passband ripple. Both figures are measured before the padding, relative to the DC gain.
+`stopband_db` is read on a grid and can read better than the true level, by about 0.15 dB at a few thousand taps and
+up to about 0.5 dB above ten thousand. `ripple_db` is the passband ripple. Both figures are measured before the
+padding, relative to the DC gain.
 `design_ok` is false only when a `lowpass` design misses `attenuation_db` or the ripple limit.
 )"";
 

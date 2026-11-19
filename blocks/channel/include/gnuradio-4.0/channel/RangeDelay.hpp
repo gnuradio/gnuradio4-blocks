@@ -105,12 +105,12 @@ three. A bank whose estimated prototype needs more than 65536 taps is refused be
 follows `bank_size * (attenuation_db - 8) / rolloff`, and below 45 dB the ripple limit makes it longer, many times so
 for a rolloff up to 0.85. From 45 dB up no rolloff below one holds more than 8192 arms. Below 45 dB a rolloff above 0.7
 is estimated short, so the check can admit a bank the design cannot hold, and the block refuses it after the design. At
-`rolloff` 0.2 with `bank_size` 0, `order` 1 designs up to 110 dB and `order` 3 up to 140 dB. A design near the cap takes
-tens of seconds to a few minutes inside the settings change, and longer in a Debug build. A change to any of the four
-builds a new bank, drops the line's history and counts in `nBankRebuilds()`. A design that misses `attenuation_db` or
-its ripple limit is refused too, and the refusal gives the stopband and ripple it delivers. A change of table,
-direction, bias or rate takes effect at the next sample and keeps the history. A new rate re-times the whole stream from
-the anchor.
+`rolloff` 0.2 with `bank_size` 0, `order` 1 designs up to 110 dB and `order` 3 up to 140 dB. A design near the cap runs
+inside the settings change. A change to any of the four builds a new bank, drops the line's history and counts in
+`nBankRebuilds()`. A design that misses `attenuation_db` or its ripple limit is refused too, and the refusal gives the
+stopband and ripple it delivers. The stopband is read on a grid. The true stopband can fall short of `attenuation_db`
+by about 0.15 dB at a few thousand taps and about 0.5 dB above ten thousand. A change of table, direction, bias or rate
+takes effect at the next sample and keeps the history. A new rate re-times the whole stream from the anchor.
 
 The settings `anchor_source`, `anchor_index`, `anchor_ns` and `honor_trigger_offset` and the counters
 `nIgnoredAnchors()`, `nReanchors()` and `nRefusedAnchors()` work as in `DopplerShift`. Until a trigger anchor is armed,

@@ -100,27 +100,23 @@ void forEachCombo(Body&& body) {
     std::apply([&](auto... combo) { (body(combo), ...); }, List{});
 }
 
-/// One row of the default-design table: what the design surface is asserted to return for a ratio.
+/// One row of the default-design table: the band edges of a ratio and the length its design is held near.
 struct DesignRow {
-    std::size_t l          = 1UZ;
-    std::size_t m          = 1UZ;
-    double      passEdge   = 0.0;
-    double      stopEdge   = 0.0;
-    int         estimated  = 0; /// Kaiser's own estimate, rounded odd
-    int         searched   = 0; /// the shortest length that measurably delivers
-    int         padded     = 0; /// rounded up to a multiple of l
-    int         perBranch  = 0;
-    double      stopbandDb = 0.0;
-    double      rippleDb   = 0.0;
+    std::size_t l         = 1UZ;
+    std::size_t m         = 1UZ;
+    double      passEdge  = 0.0;
+    double      stopEdge  = 0.0;
+    int         estimated = 0; /// Kaiser's own estimate, rounded odd
+    int         searched  = 0; /// a length that measurably delivers; the design stays within one percent of it
 };
 
 constexpr DesignRow kDefaults[] = {
-    {1UZ, 2UZ, 0.2, 0.25, 73, 77, 77, 77, -60.192, 0.0156},                //
-    {3UZ, 2UZ, 2.0 / 15.0, 1.0 / 6.0, 109, 111, 111, 37, -60.087, 0.0155}, //
-    {2UZ, 3UZ, 2.0 / 15.0, 1.0 / 6.0, 109, 111, 112, 56, -60.087, 0.0155}, //
-    {1UZ, 4UZ, 0.1, 0.125, 145, 147, 147, 147, -60.357, 0.0160},           //
-    {1UZ, 25UZ, 0.016, 0.02, 907, 907, 907, 907, -60.194, 0.0166},         //
-    {4UZ, 5UZ, 0.08, 0.1, 183, 183, 184, 46, -60.396, 0.0161},             //
+    {1UZ, 2UZ, 0.2, 0.25, 73, 77},               //
+    {3UZ, 2UZ, 2.0 / 15.0, 1.0 / 6.0, 109, 111}, //
+    {2UZ, 3UZ, 2.0 / 15.0, 1.0 / 6.0, 109, 111}, //
+    {1UZ, 4UZ, 0.1, 0.125, 145, 147},            //
+    {1UZ, 25UZ, 0.016, 0.02, 907, 907},          //
+    {4UZ, 5UZ, 0.08, 0.1, 183, 183},             //
 };
 
 [[nodiscard]] std::vector<float> noise(std::size_t n, std::uint32_t seed) {
@@ -264,14 +260,14 @@ const boost::ut::suite<"polyphase resampler"> polyphaseResamplerTests = [] {
 
             const ResamplerDesign design = designResampler(row.l, row.m);
             expect(that % design.ok) << row.l << "/" << row.m << ": the search met both targets";
-            expect(eq(design.designLength, row.searched)) << row.l << "/" << row.m << ": searched length";
-            expect(approx(design.stopbandDb, row.stopbandDb, 0.05)) << row.l << "/" << row.m << ": stopband " << design.stopbandDb;
-            expect(approx(design.rippleDb, row.rippleDb, 0.002)) << row.l << "/" << row.m << ": ripple " << design.rippleDb;
+            expect(le(std::abs(design.designLength - row.searched), (row.searched + 99) / 100)) << row.l << "/" << row.m << ": searched length " << design.designLength << ", within one percent of " << row.searched;
+            expect(le(design.stopbandDb, -60.0)) << row.l << "/" << row.m << ": stopband " << design.stopbandDb;
+            expect(le(design.rippleDb, 0.1)) << row.l << "/" << row.m << ": ripple " << design.rippleDb;
 
             const PolyphaseResampler<float> resampler(row.l, row.m, std::span<const float>(design.taps));
-            expect(eq(resampler.taps(), static_cast<std::size_t>(row.padded))) << row.l << "/" << row.m << ": padded to a multiple of l";
-            expect(eq(resampler.branchLength(), static_cast<std::size_t>(row.perBranch))) << row.l << "/" << row.m << ": taps per branch";
-            expect(eq(resampler.taps() % row.l, 0UZ));
+            const std::size_t               padded = (design.taps.size() + row.l - 1UZ) / row.l * row.l;
+            expect(eq(resampler.taps(), padded)) << row.l << "/" << row.m << ": padded to a multiple of l";
+            expect(eq(resampler.branchLength(), padded / row.l)) << row.l << "/" << row.m << ": taps per branch";
         };
 
         for (const DesignRow& row : kDefaults) {

@@ -8,7 +8,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <mutex>
 #include <numeric>
 #include <span>
 #include <stdexcept>
@@ -527,17 +526,6 @@ struct ResamplerDesign {
 
 namespace detail {
 
-struct PolyphaseDesignKey {
-    std::size_t interpolation = 0UZ;
-    std::size_t decimation    = 0UZ;
-    double      rolloff       = 0.0;
-    double      attenuationDb = 0.0;
-    double      maxRippleDb   = 0.0;
-    std::size_t maxTaps       = 0UZ;
-
-    [[nodiscard]] bool operator==(const PolyphaseDesignKey&) const = default;
-};
-
 /// @brief `fir::design::scanEdges` as a pair of stopband peak and passband ripple, in dB.
 [[nodiscard]] inline std::pair<double, double> polyphaseEdgeScan(const std::vector<float>& taps, double passEdge, double stopEdge, std::size_t grid) {
     const fir::design::LowpassScan scan = fir::design::scanEdges(taps, passEdge, stopEdge, grid);
@@ -589,33 +577,17 @@ struct PolyphaseDesignKey {
  *
  * The length is searched rather than estimated. `fir::design::kaiserLength` gives the length where a
  * design first touches its target rather than where it clears it, up to 1.8 dB short, and the
- * search costs a response scan per candidate, which is a settings-time cost and never a per-sample
- * one. At `147/160` the search designs six candidates of about 5800 taps. The result is
- * memoized by `(l, m, rolloff, attenuationDb, maxRippleDb, maxTaps)`; the first design of a ratio still
- * pays. The memo holds the last eight designs and drops the oldest, so a stream sweeping its rate cannot
- * grow it.
+ * search costs a design and a response scan per candidate, which is a settings-time cost and never a
+ * per-sample one. At `147/160` the search designs six candidates of about 5800 taps.
  */
 [[nodiscard]] inline ResamplerDesign designResampler(std::size_t interpolation, std::size_t decimation, double rolloff = 0.2, double attenuationDb = 60.0, double maxRippleDb = 0.1, std::size_t maxTaps = kResamplerMaxTaps) {
     if (interpolation == 0UZ || decimation == 0UZ) {
         throw std::invalid_argument("designResampler: interpolation and decimation must both be at least one");
     }
 
-    const std::size_t                g   = std::gcd(interpolation, decimation);
-    const detail::PolyphaseDesignKey key = {interpolation / g, decimation / g, rolloff, attenuationDb, maxRippleDb, maxTaps};
-
-    static std::mutex                                                          mutex;
-    static std::vector<std::pair<detail::PolyphaseDesignKey, ResamplerDesign>> cache;
-    {
-        const std::lock_guard<std::mutex> lock(mutex);
-        for (const auto& [cached, value] : cache) {
-            if (cached == key) {
-                return value;
-            }
-        }
-    }
-
-    const std::size_t l = key.interpolation;
-    const std::size_t m = key.decimation;
+    const std::size_t g = std::gcd(interpolation, decimation);
+    const std::size_t l = interpolation / g;
+    const std::size_t m = decimation / g;
 
     ResamplerDesign out;
     if (l == 1UZ && m == 1UZ) { // no rate change: a pass-through, not a delta convolved at full cost
@@ -639,8 +611,7 @@ struct PolyphaseDesignKey {
             v *= gain;
         }
     }
-
-    return fir::design::detail::keepDesign<fir::design::detail::kDesignMemoEntries>(mutex, cache, key, std::move(out));
+    return out;
 }
 
 /**
@@ -735,21 +706,6 @@ struct StagedDecimatorDesign {
     bool                        ok                 = false;
 };
 
-namespace detail {
-
-struct DecimatorLadderKey {
-    std::vector<std::size_t> ladder;
-    std::size_t              decimation    = 0UZ;
-    double                   passbandWidth = 0.0;
-    double                   attenuationDb = 0.0;
-    double                   rippleDb      = 0.0;
-    std::size_t              maxTaps       = 0UZ;
-
-    [[nodiscard]] bool operator==(const DecimatorLadderKey&) const = default;
-};
-
-} // namespace detail
-
 /**
  * @brief Design a stated ladder: every stage is given the same passband in hertz.
  *
@@ -834,9 +790,8 @@ struct DecimatorLadderKey {
  * budget is divided as a worst case on the assumption that stage ripples add, and measured they
  * largely do not.
  *
- * This is setup path and costs one length search per stage, each a response scan per candidate, so
- * the result is memoized by the whole parameter tuple: a retune returning to a ladder already built
- * pays nothing. The memo holds the last eight ladders and drops the oldest.
+ * This is setup path and costs one length search per stage, each a design and a response scan per
+ * candidate.
  *
  * @param ladder        the stage decimations, from `stagedDecimatorLadder` or stated; `{D}` is the
  *                      single-stage design the ladder is judged against
@@ -851,19 +806,6 @@ struct DecimatorLadderKey {
     }
     if (!(passbandWidth > 0.0) || !(passbandWidth < 1.0)) {
         throw std::invalid_argument("designDecimatorLadder: the passband width is a fraction of the output rate and must lie in (0, 1)");
-    }
-
-    const detail::DecimatorLadderKey key = {std::vector<std::size_t>(ladder.begin(), ladder.end()), decimation, passbandWidth, attenuationDb, rippleDb, maxTaps};
-
-    static std::mutex                                                                mutex;
-    static std::vector<std::pair<detail::DecimatorLadderKey, StagedDecimatorDesign>> cache;
-    {
-        const std::lock_guard<std::mutex> lock(mutex);
-        for (const auto& [cached, value] : cache) {
-            if (cached == key) {
-                return value;
-            }
-        }
     }
 
     StagedDecimatorDesign out;
@@ -907,8 +849,7 @@ struct DecimatorLadderKey {
         stride *= d;
         out.stages.push_back(std::move(stage));
     }
-
-    return fir::design::detail::keepDesign<fir::design::detail::kDesignMemoEntries>(mutex, cache, key, std::move(out));
+    return out;
 }
 
 /**
