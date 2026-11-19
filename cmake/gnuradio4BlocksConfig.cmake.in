@@ -5,14 +5,6 @@ include(CMakeFindDependencyMacro)
 find_dependency(gnuradio4 CONFIG)
 find_dependency(gnuradio4Library CONFIG)
 
-# gnuradio4::ut-benchmark, which gnuradio4::gr-testing links, comes from core when core was built with its tests and
-# from this package otherwise; core's own package config finds Boost.UT in the first case and this one in the second
-set(_gnuradio4Blocks_needs_ut @GR4_EXPORT_NEEDS_UT@)
-if(_gnuradio4Blocks_needs_ut)
-  find_dependency(ut 2.3.1 CONFIG)
-endif()
-unset(_gnuradio4Blocks_needs_ut)
-
 set(_gnuradio4Blocks_needs_Python @GR4_EXPORT_NEEDS_PYTHON@)
 if(_gnuradio4Blocks_needs_Python)
   find_dependency(Python3 3.12 COMPONENTS Interpreter Development.Embed NumPy)

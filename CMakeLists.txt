@@ -113,13 +113,6 @@ endif()
 if(NOT TARGET ut-benchmark AND TARGET gnuradio4::ut-benchmark)
   add_library(ut-benchmark ALIAS gnuradio4::ut-benchmark)
 endif()
-# core exports gnuradio4::ut-benchmark only from a build with its tests enabled. Without it, bench/ defines and exports
-# one in this project, and the package config has to find the Boost.UT that target links for a consumer.
-if(TARGET gnuradio4::ut-benchmark)
-  set(GR4_EXPORT_NEEDS_UT OFF)
-else()
-  set(GR4_EXPORT_NEEDS_UT ON)
-endif()
 
 # core's package config already finds both, because its exported targets link them; the library links them directly, so
 # they are found here as well, at the versions core requires
@@ -132,38 +125,39 @@ find_package(vir-simd CONFIG REQUIRED)
 # vir-simd installs no version file; core's package config defines this check, which reads the version from its header
 gr_require_vir_simd_version(0.4.4)
 
-# Boost.UT is needed whatever ENABLE_TESTING says: the installed gr-testing family links ut-benchmark, whose header
-# includes it
-add_compile_definitions(BOOST_UT_DISABLE_MODULE)
-find_package(
-  ut
-  2.3.1
-  CONFIG
-  REQUIRED)
-if(TARGET Boost::ut AND NOT TARGET ut)
-  add_library(ut ALIAS Boost::ut)
-elseif(TARGET boost::ut AND NOT TARGET ut)
-  add_library(ut ALIAS boost::ut)
-endif()
+# Boost.UT is for the tests and the benchmarks, the latter built with ENABLE_EXAMPLES; nothing installed links it
+if(ENABLE_TESTING OR ENABLE_EXAMPLES)
+  add_compile_definitions(BOOST_UT_DISABLE_MODULE)
+  find_package(
+    ut
+    2.3.1
+    CONFIG
+    REQUIRED)
+  if(TARGET Boost::ut AND NOT TARGET ut)
+    add_library(ut ALIAS Boost::ut)
+  elseif(TARGET boost::ut AND NOT TARGET ut)
+    add_library(ut ALIAS boost::ut)
+  endif()
 
-if(EMSCRIPTEN)
-  # Boost.UT upstream adds -fwasm-exceptions which conflicts with -fexceptions, so replace it. The options live on the
-  # imported target that ut aliases.
-  get_target_property(_ut_target ut ALIASED_TARGET)
-  if(NOT _ut_target)
-    set(_ut_target ut)
-  endif()
-  get_target_property(_ut_copts ${_ut_target} INTERFACE_COMPILE_OPTIONS)
-  get_target_property(_ut_lopts ${_ut_target} INTERFACE_LINK_OPTIONS)
-  if(_ut_copts)
-    list(REMOVE_ITEM _ut_copts -fwasm-exceptions)
-    list(APPEND _ut_copts -fexceptions)
-    set_target_properties(${_ut_target} PROPERTIES INTERFACE_COMPILE_OPTIONS "${_ut_copts}")
-  endif()
-  if(_ut_lopts)
-    list(REMOVE_ITEM _ut_lopts -fwasm-exceptions)
-    list(APPEND _ut_lopts -fexceptions)
-    set_target_properties(${_ut_target} PROPERTIES INTERFACE_LINK_OPTIONS "${_ut_lopts}")
+  if(EMSCRIPTEN)
+    # Boost.UT upstream adds -fwasm-exceptions which conflicts with -fexceptions, so replace it. The options live on the
+    # imported target that ut aliases.
+    get_target_property(_ut_target ut ALIASED_TARGET)
+    if(NOT _ut_target)
+      set(_ut_target ut)
+    endif()
+    get_target_property(_ut_copts ${_ut_target} INTERFACE_COMPILE_OPTIONS)
+    get_target_property(_ut_lopts ${_ut_target} INTERFACE_LINK_OPTIONS)
+    if(_ut_copts)
+      list(REMOVE_ITEM _ut_copts -fwasm-exceptions)
+      list(APPEND _ut_copts -fexceptions)
+      set_target_properties(${_ut_target} PROPERTIES INTERFACE_COMPILE_OPTIONS "${_ut_copts}")
+    endif()
+    if(_ut_lopts)
+      list(REMOVE_ITEM _ut_lopts -fwasm-exceptions)
+      list(APPEND _ut_lopts -fexceptions)
+      set_target_properties(${_ut_target} PROPERTIES INTERFACE_LINK_OPTIONS "${_ut_lopts}")
+    endif()
   endif()
 endif()
 
