@@ -54,13 +54,8 @@
  * QAM, and every soft decision compares a distance against `N0`, so an AGC holding the input at the
  * constellation's own scale is a precondition of both.
  *
- * `Nearest` is the definition of the hard decision and resolves a tie to the lowest symbol; the closed
- * forms resolve theirs the same way. Two ties are decided by floating point rather than by that rule,
- * because the slicer rounds in the raw lattice while `Nearest` measures against the normalized points:
- * the two place a boundary other than an axis zero a couple of ulp apart, and at the origin of a
- * constant-modulus constellation the closed form answers `sectorSymbol[0]`, the symbol at the
- * constellation's own phase offset, while `Nearest` decides on the last bit of each point's magnitude.
- * Both are deterministic.
+ * `Nearest` is the definition of the hard decision and resolves a tie to the lowest symbol; a closed
+ * form sends a sample exactly on a boundary to one of its nearest symbols.
  *
  * Soft decisions. `MaxLog` is the default and is what the closed forms compute:
  *
