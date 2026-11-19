@@ -2,6 +2,7 @@
 #define EXPRESSIONBLOCKS_HPP
 
 #include <algorithm>
+#include <cstddef>
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 
@@ -25,8 +26,8 @@ inline std::string formatParserError(const auto& parser, std::string_view expres
 }
 
 struct VectorInfo {
-    std::size_t size;
-    ssize_t     index;
+    std::size_t    size;
+    std::ptrdiff_t index;
 };
 
 inline VectorInfo computeVectorInfo(void* base_ptr, void* end_ptr, std::size_t elementSize, void* access_ptr) {
@@ -42,7 +43,7 @@ inline VectorInfo computeVectorInfo(void* base_ptr, void* end_ptr, std::size_t e
         throw std::out_of_range(std::format("invalid vector boundaries [{}, {}]", base_ptr, end_ptr));
     }
 
-    return {static_cast<std::size_t>(end - base) / elementSize, (access - base) / static_cast<ssize_t>(elementSize)};
+    return {static_cast<std::size_t>(end - base) / elementSize, (access - base) / static_cast<std::ptrdiff_t>(elementSize)};
 }
 
 struct vector_access_rtc : public exprtk::vector_access_runtime_check {
@@ -258,7 +259,7 @@ For full syntax, conditionals, loops, and advanced features:
     // will be registered once and then just rebased as needed.
     // N.B. _maxBaseSize limits the maximum chunk size and needs
     // to be defined in-advance due to ExprTk constraints
-    std::array<T, 1UZ>           _arrOutDummy{T(0)}; // only needed for initialising
+    std::array<T, 1UZ>           _arrOutDummy{{T(0)}}; // only needed for initialising
     static constexpr std::size_t _maxBaseSize = 1UZ << 16;
     exprtk::vector_view<T>       _vecIn       = exprtk::make_vector_view<T>(_arrOutDummy.data(), _maxBaseSize);
     exprtk::vector_view<T>       _vecOut      = exprtk::make_vector_view<T>(_arrOutDummy.data(), _maxBaseSize);

@@ -14,6 +14,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <numbers>
 #include <optional>
 #include <print>
@@ -23,7 +24,12 @@
 #include <tuple>
 #include <vector>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
@@ -237,52 +243,86 @@ std::size_t endWithNoRoom(PowerMeter<CF>& block, std::size_t count) {
     return full.count;
 }
 
-/// @brief Sends file descriptor 2 to a temporary file until `release()`. `text()` reads what arrived.
+/// The descriptor calls `StderrCapture` needs. The CRT names them with a leading underscore and deprecates POSIX's.
+namespace stderr_fd {
+#ifdef _WIN32
+inline constexpr int kStderr = 2;
+inline int           openPipe(std::array<int, 2UZ>& ends) { return ::_pipe(ends.data(), 4096U, _O_BINARY); }
+inline int           duplicate(int fd) { return ::_dup(fd); }
+inline int           duplicateTo(int fd, int target) { return ::_dup2(fd, target); }
+inline int           closeFd(int fd) { return ::_close(fd); }
+inline int           readSome(int fd, std::span<char> into) { return ::_read(fd, into.data(), static_cast<unsigned>(into.size())); }
+#else
+inline constexpr int kStderr = STDERR_FILENO;
+inline int           openPipe(std::array<int, 2UZ>& ends) { return ::pipe(ends.data()); }
+inline int           duplicate(int fd) { return ::dup(fd); }
+inline int           duplicateTo(int fd, int target) { return ::dup2(fd, target); }
+inline int           closeFd(int fd) { return ::close(fd); }
+inline int           readSome(int fd, std::span<char> into) { return static_cast<int>(::read(fd, into.data(), into.size())); }
+#endif
+} // namespace stderr_fd
+
+/// @brief Sends file descriptor 2 into a pipe until `release()`. A thread drains the pipe; `text()` returns what it has
+/// drained so far, and everything that was written once `release()` has returned.
+///
+/// Reading a pipe moves no position the writers share. A temporary file read with `lseek()` and `read()` would, and
+/// Windows has no `pread()`.
 class StderrCapture {
-    std::FILE* _file  = std::tmpfile();
-    int        _saved = -1;
+    std::array<int, 2UZ> _pipe{-1, -1}; // read end, write end
+    int                  _saved = -1;
+    mutable std::mutex   _mutex;
+    std::string          _text;
+    std::thread          _drain;
 
 public:
     StderrCapture() {
-        if (_file != nullptr) {
-            std::fflush(stderr);
-            _saved = ::dup(STDERR_FILENO);
-            ::dup2(::fileno(_file), STDERR_FILENO);
+        if (stderr_fd::openPipe(_pipe) != 0) {
+            _pipe = {-1, -1};
+            return;
         }
+        std::fflush(stderr);
+        _saved = stderr_fd::duplicate(stderr_fd::kStderr);
+        if (_saved < 0 || stderr_fd::duplicateTo(_pipe[1], stderr_fd::kStderr) < 0) {
+            release();
+            return;
+        }
+        _drain = std::thread([this] {
+            std::array<char, 4096UZ> chunk{};
+            for (int n = stderr_fd::readSome(_pipe[0], chunk); n > 0; n = stderr_fd::readSome(_pipe[0], chunk)) {
+                std::lock_guard lock(_mutex);
+                _text.append(chunk.data(), static_cast<std::size_t>(n));
+            }
+        });
     }
     StderrCapture(const StderrCapture&)            = delete;
     StderrCapture& operator=(const StderrCapture&) = delete;
-    ~StderrCapture() {
-        release();
-        if (_file != nullptr) {
-            std::fclose(_file);
-        }
-    }
+    ~StderrCapture() { release(); }
 
+    /// Restores file descriptor 2 and waits until the pipe is drained.
     void release() {
         if (_saved >= 0) {
             std::fflush(stderr);
-            ::dup2(_saved, STDERR_FILENO);
-            ::close(_saved);
+            stderr_fd::duplicateTo(_saved, stderr_fd::kStderr);
+            stderr_fd::closeFd(_saved);
             _saved = -1;
+        }
+        if (_pipe[1] >= 0) { // with descriptor 2 restored this is the last write end, so the drain reaches end of file
+            stderr_fd::closeFd(_pipe[1]);
+            _pipe[1] = -1;
+        }
+        if (_drain.joinable()) {
+            _drain.join();
+        }
+        if (_pipe[0] >= 0) {
+            stderr_fd::closeFd(_pipe[0]);
+            _pipe[0] = -1;
         }
     }
 
     [[nodiscard]] std::string text() const {
-        std::string out;
-        if (_file == nullptr) {
-            return out;
-        }
         std::fflush(stderr);
-        std::array<char, 4096UZ> chunk{};
-        for (off_t at = 0;;) {
-            const ssize_t n = ::pread(::fileno(_file), chunk.data(), chunk.size(), at);
-            if (n <= 0) {
-                return out;
-            }
-            out.append(chunk.data(), static_cast<std::size_t>(n));
-            at += n;
-        }
+        std::lock_guard lock(_mutex);
+        return _text;
     }
 };
 
@@ -1193,9 +1233,9 @@ const boost::ut::suite<"PowerMeter"> powerMeterTests = [] {
         }
 
         hold->released.store(true);
-        const bool        ran  = finished.get().has_value();
-        const std::string text = capture.text();
+        const bool ran = finished.get().has_value();
         capture.release();
+        const std::string text = capture.text();
 
         expect(ran);
         expect(text.contains(sourceLine)) << "the capture sees the report the held source draws";

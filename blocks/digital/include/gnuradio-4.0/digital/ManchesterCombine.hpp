@@ -51,7 +51,7 @@ enum class ManchesterInput : std::uint8_t {
  * symbol can move a grid a whole averaging window agreed on.
  */
 struct ManchesterPairing {
-    std::array<double, 2UZ> stat{0., 0.}; ///< the leaky mean of each parity's statistic
+    std::array<double, 2UZ> stat{{0., 0.}}; ///< the leaky mean of each parity's statistic
     double                  alpha    = 1. / 256.;
     unsigned                phase    = 0U;
     std::size_t             hold     = 64UZ;
