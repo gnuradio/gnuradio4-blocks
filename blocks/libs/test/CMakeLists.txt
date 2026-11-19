@@ -35,9 +35,13 @@ if(NOT EMSCRIPTEN AND TARGET gnuradio4::GrBasicBlocksShared)
     target_link_libraries(qa_KnownSharedLibBlocks PRIVATE ${_known_shared_lib_targets})
   endif()
 
-  add_executable(qa_apptest_KnownStaticLibBlocks qa_apptest_KnownStaticLibBlocks.cpp)
-  setup_test(qa_apptest_KnownStaticLibBlocks)
-  target_link_libraries(qa_apptest_KnownStaticLibBlocks PRIVATE gnuradio-core gnuradio4::GrBasicBlocksStatic)
+  # basic, like every family, builds its static library only for Emscripten (GR4_BLOCK_STATIC_LIBRARY), which this
+  # block excludes, so for now the test is built nowhere; it comes back with any build that makes the static library
+  if(TARGET gnuradio4::GrBasicBlocksStatic)
+    add_executable(qa_apptest_KnownStaticLibBlocks qa_apptest_KnownStaticLibBlocks.cpp)
+    setup_test(qa_apptest_KnownStaticLibBlocks)
+    target_link_libraries(qa_apptest_KnownStaticLibBlocks PRIVATE gnuradio-core gnuradio4::GrBasicBlocksStatic)
+  endif()
 
   add_executable(qa_apptest_LoadingPlainBlocklibs qa_apptest_LoadingPlainBlocklibs.cpp)
   setup_test(qa_apptest_LoadingPlainBlocklibs)
