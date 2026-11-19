@@ -86,16 +86,9 @@ if(WIN32)
   if(NOT COMMAND gr_configure_innosetup_installer)
     message(FATAL_ERROR "GR_PACKAGING on Windows needs a gnuradio4 core that installs GrInnoSetup.cmake")
   endif()
-  # Inno Setup takes each component name as written, and its compiler rejects
-  # any name that is not letters, digits and underscores (and a few reserved
-  # words). Without this check, a hyphen fails only once ISCC runs, after
-  # staging has finished.
-  foreach(_gr_component IN LISTS CPACK_COMPONENTS_ALL)
-    if(NOT _gr_component MATCHES "^[A-Za-z_][A-Za-z0-9_]*$" OR _gr_component MATCHES "^(not|and|or)$")
-      message(FATAL_ERROR "install component '${_gr_component}' is not a valid Inno Setup component name: "
-                          "use letters, digits and underscores, not starting with a digit")
-    endif()
-  endforeach()
+  # cpack checks the component names against Inno Setup's rules before it
+  # stages anything; see CPackProjectConfig.cmake
+  set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_LIST_DIR}/CPackProjectConfig.cmake")
   set(CPACK_INNOSETUP_USE_CMAKE_BOOL_FORMAT ON)
   set(CPACK_INNOSETUP_USE_MODERN_WIZARD ON)
   set(CPACK_INNOSETUP_ALLOW_CUSTOM_DIRECTORY ON)
