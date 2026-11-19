@@ -44,6 +44,7 @@ if(NOT EMSCRIPTEN AND TARGET gnuradio4::GrBasicBlocksShared)
   target_link_libraries(qa_apptest_LoadingPlainBlocklibs PRIVATE gnuradio-core gnuradio-blocklib-core)
   set_property(
     TEST qa_apptest_LoadingPlainBlocklibs
+    APPEND
     PROPERTY ENVIRONMENT_MODIFICATION
              "GNURADIO4_PLUGIN_DIRECTORIES=set:${CMAKE_CURRENT_BINARY_DIR}/../../../blocks/basic")
 
