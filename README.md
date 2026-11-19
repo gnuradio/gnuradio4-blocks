@@ -52,7 +52,7 @@ by this build. They are:
 | ------------ | ------- | --------------------------------------------------------------- |
 | `magic_enum` | 0.9.3   | always                                                          |
 | `vir-simd`   | 0.4.4   | always                                                          |
-| `ut`         | 2.3.1   | always (Boost.UT, linked by `gr-testing`)                       |
+| `ut`         | 2.3.1   | `ENABLE_TESTING` or `ENABLE_EXAMPLES` (Boost.UT)                |
 | `httplib`    | 0.18.1  | `ENABLE_TESTING`, except under Emscripten                       |
 | `SoapySDR`   | 0.8     | the SoapySDR blocks of `GR4_ENABLE_SDR`                         |
 | `cppzmq`     | 4.7     | `GR4_ENABLE_ZEROMQ`; the ZMQ transports of `GR4_ENABLE_NETWORK` |
@@ -91,7 +91,8 @@ cmake --install build --prefix /path/to/gnuradio4-prefix
 
 Useful configuration options are:
 
-- `ENABLE_EXAMPLES` (default: `ON`): build examples and benchmarks
+- `ENABLE_EXAMPLES` (default: `ON`): build examples and benchmarks; the
+  benchmarks use core's harness, so core must be built with its tests
 - `ENABLE_TESTING` (default: `ON`): build and register tests
 - `GR4_ENABLE_AUDIO` (default: `OFF`): build audio blocks; native builds use
   libsoundio, while Emscripten builds use the Web Audio backend
