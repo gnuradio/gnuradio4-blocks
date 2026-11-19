@@ -24,7 +24,9 @@ gr_add_block_library(
   gr-measurement)
 # The precompiled header reaches the vendored PocketFFT through SpectralEstimate.hpp and fourier/fft.hpp;
 # cmake/CompilerWarnings.cmake turns -Wnull-dereference off for it under GCC 14.
-set_target_properties(GrMeasurementBlocksObject PROPERTIES GR_PCH_INCLUDES_POCKETFFT ON)
+if(TARGET GrMeasurementBlocksObject)
+  set_target_properties(GrMeasurementBlocksObject PROPERTIES GR_PCH_INCLUDES_POCKETFFT ON)
+endif()
 
 if(TARGET gnuradio4::GrMeasurementBlocksShared AND ENABLE_TESTING)
   add_subdirectory(test)
