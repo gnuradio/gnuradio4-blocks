@@ -15,13 +15,14 @@ env:
 jobs:
   publish:
     name: "${{ matrix.name }}"
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
     if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Ubuntu 24.04 | gcc-14 | Release
+            runs-on: ubuntu-latest
             tag_suffix: ubuntu-24.04-gcc14-release
             core_sdk_tag: main-ubuntu-24.04-gcc14-release
             cc: gcc-14
@@ -29,6 +30,7 @@ jobs:
             cmake_build_type: RelWithDebInfo
             cmake_flags: ""
           - name: Ubuntu 26.04 | gcc | Release
+            runs-on: ubuntu-latest
             tag_suffix: ubuntu-26.04-gcc-release
             core_sdk_tag: main-ubuntu-26.04-gcc-release
             cc: gcc
@@ -36,6 +38,7 @@ jobs:
             cmake_build_type: RelWithDebInfo
             cmake_flags: ""
           - name: Ubuntu 26.04 | gcc | Debug
+            runs-on: ubuntu-latest
             tag_suffix: ubuntu-26.04-gcc-debug
             core_sdk_tag: main-ubuntu-26.04-gcc-debug
             cc: gcc
@@ -43,6 +46,7 @@ jobs:
             cmake_build_type: Debug
             cmake_flags: ""
           - name: Ubuntu 24.04 | clang-20 | Release
+            runs-on: ubuntu-latest
             tag_suffix: ubuntu-24.04-clang20-release
             core_sdk_tag: main-ubuntu-24.04-clang20-release
             cc: clang-20
@@ -50,6 +54,7 @@ jobs:
             cmake_build_type: RelWithDebInfo
             cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
           - name: Fedora 44 | clang | Release
+            runs-on: ubuntu-latest
             tag_suffix: fedora-44-clang-release
             core_sdk_tag: main-fedora-44-clang-release
             cc: clang
@@ -57,6 +62,7 @@ jobs:
             cmake_build_type: RelWithDebInfo
             cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
           - name: Fedora 44 | clang | Debug
+            runs-on: ubuntu-latest
             tag_suffix: fedora-44-clang-debug
             core_sdk_tag: main-fedora-44-clang-debug
             cc: clang
@@ -64,12 +70,21 @@ jobs:
             cmake_build_type: Debug
             cmake_flags: "-DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
           - name: Ubuntu 24.04 | Emscripten | Release
+            runs-on: ubuntu-latest
             tag_suffix: ubuntu-24.04-emscripten-release
             core_sdk_tag: main-ubuntu-24.04-emscripten-release
             sdk_target: emscripten
             cc: emcc
             cxx: em++
             cmake_build_type: Release
+            cmake_flags: ""
+          - name: Fedora 44 | gcc | Release | aarch64
+            runs-on: ubuntu-24.04-arm
+            tag_suffix: fedora-44-gcc-release-aarch64
+            core_sdk_tag: main-fedora-44-gcc-release-aarch64
+            cc: gcc
+            cxx: g++
+            cmake_build_type: RelWithDebInfo
             cmake_flags: ""
 
     steps:
