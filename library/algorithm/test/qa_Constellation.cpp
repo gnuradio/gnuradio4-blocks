@@ -16,6 +16,7 @@
 #include <ranges>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gnuradio-4.0/algorithm/digital/Constellation.hpp>
@@ -924,7 +925,7 @@ const boost::ut::suite<"constellation"> constellationTests = [] {
         }
     };
 
-    "QPSK and BPSK decide on signs: zeros, subnormals, an underflowing product, infinities and NaN, per symbol and per span"_test = [] {
+    "QPSK and BPSK decide on signs: zeros, subnormals, infinities and NaN, per symbol and per span"_test = [] {
         const auto check = [](auto probe, const char* precision) {
             using F         = decltype(probe);
             using Z         = std::complex<F>;
@@ -934,16 +935,14 @@ const boost::ut::suite<"constellation"> constellationTests = [] {
             const F largest = std::numeric_limits<F>::max();
             const F low     = std::numeric_limits<F>::min();
 
-            // QPSK, per axis: level 1 when the component times half the axis scale is above zero; level 0 for
-            // a negative component, either zero, NaN, and a product that underflows to zero. Half the axis
-            // scale is 0.5 for the raw lattice, where the smallest subnormal times it rounds to zero.
+            // QPSK, per axis, under every normalization: level 1 for a component above zero, the smallest
+            // subnormal included; level 0 for a negative component, both zeros and NaN.
             for (const Normalization mode : {Normalization::Power, Normalization::Amplitude, Normalization::None}) {
                 struct Row {
                     F             x;
                     std::uint32_t level;
                 };
-                const std::uint32_t               tinyLevel = mode == Normalization::None ? 0U : 1U;
-                const std::array<Row, 14UZ>       rows{Row{F{0}, 0U}, Row{-F{0}, 0U}, Row{tiny, tinyLevel}, Row{-tiny, 0U}, Row{F{2} * tiny, 1U}, Row{low, 1U}, Row{-low, 0U}, Row{F{1}, 1U}, Row{F{-1}, 0U}, Row{largest, 1U}, Row{-largest, 0U}, Row{inf, 1U}, Row{-inf, 0U}, Row{nan, 0U}};
+                const std::array<Row, 14UZ>       rows{Row{F{0}, 0U}, Row{-F{0}, 0U}, Row{tiny, 1U}, Row{-tiny, 0U}, Row{F{2} * tiny, 1U}, Row{low, 1U}, Row{-low, 0U}, Row{F{1}, 1U}, Row{F{-1}, 0U}, Row{largest, 1U}, Row{-largest, 0U}, Row{inf, 1U}, Row{-inf, 0U}, Row{nan, 0U}};
                 const auto                        qam = Constellation<F>::qam(4UZ, mode);
                 std::vector<Z>                    input;
                 std::vector<std::array<Row, 2UZ>> expected;
@@ -985,6 +984,60 @@ const boost::ut::suite<"constellation"> constellationTests = [] {
                 const std::uint8_t expected = !finite || !(re > F{0} || re < F{0}) ? tie : (re > F{0} ? sector[0] : sector[1]);
                 expect(eq(symbol, expected)) << std::format("{} BPSK: ({:a}, {:a})", precision, re, input[i].imag());
                 expect(eq(span[i], symbol)) << std::format("{} BPSK: the span decides ({:a}, {:a}) as the single call does", precision, re, input[i].imag());
+            }
+        };
+        check(float{}, "float ");
+        check(double{}, "double");
+    };
+
+    "QPSK decides noise-free points of any small amplitude by their signs, and a zero component of either sign as level 0"_test = [] {
+        const auto check = [](auto probe, const char* precision) {
+            using F                       = decltype(probe);
+            using Z                       = std::complex<F>;
+            const F                  low  = std::numeric_limits<F>::min();
+            const F                  tiny = std::numeric_limits<F>::denorm_min();
+            const std::array<F, 5UZ> amplitudes{static_cast<F>(1e-20), static_cast<F>(1e-30), low, low / F{1024}, tiny};
+
+            const std::array<std::pair<Constellation<F>, const char*>, 4UZ> constellations{std::pair{Constellation<F>::qpsk(), "qpsk()"}, std::pair{Constellation<F>::qam(4UZ, Normalization::Power), "qam(4, Power)"}, std::pair{Constellation<F>::qam(4UZ, Normalization::Amplitude), "qam(4, Amplitude)"}, std::pair{Constellation<F>::qam(4UZ, Normalization::None), "qam(4, None)"}};
+            for (const auto& [qam, name] : constellations) {
+                // each point, scaled down, is still its own symbol, however small
+                std::vector<Z>            input;
+                std::vector<std::uint8_t> sent;
+                for (const F amplitude : amplitudes) {
+                    for (std::uint8_t s = 0U; s < 4U; ++s) {
+                        input.push_back(qam.point(s) * amplitude);
+                        sent.push_back(s);
+                    }
+                }
+                std::vector<std::uint8_t> span(input.size());
+                qam.hardDecisions(input, span);
+                for (std::size_t i = 0UZ; i < input.size(); ++i) {
+                    expect(input[i].real() != F{0} && input[i].imag() != F{0}) << std::format("{} {}: the scaled point ({:a}, {:a}) has no zero component", precision, name, input[i].real(), input[i].imag());
+                    expect(eq(qam.hardDecision(input[i]), sent[i])) << std::format("{} {}: symbol {} scaled to ({:a}, {:a})", precision, name, sent[i], input[i].real(), input[i].imag());
+                    expect(eq(span[i], sent[i])) << std::format("{} {}: the span decides symbol {} scaled to ({:a}, {:a})", precision, name, sent[i], input[i].real(), input[i].imag());
+                }
+
+                // a point on an axis: the zero component is level 0 whether it is +0 or -0, the other one decides by its sign
+                const std::array<F, 8UZ> values{F{1}, F{-1}, static_cast<F>(1e-30), static_cast<F>(-1e-30), low, -low, tiny, -tiny};
+                for (const bool zeroImaginary : {true, false}) {
+                    std::vector<Z> axis;
+                    for (const F x : values) {
+                        for (const F zero : {F{0}, -F{0}}) {
+                            axis.push_back(zeroImaginary ? Z{x, zero} : Z{zero, x});
+                        }
+                    }
+                    std::vector<std::uint8_t> axisSpan(axis.size());
+                    qam.hardDecisions(axis, axisSpan);
+                    for (std::size_t i = 0UZ; i < axis.size(); i += 2UZ) {
+                        const F             x         = zeroImaginary ? axis[i].real() : axis[i].imag();
+                        const std::uint8_t  plusZero  = qam.hardDecision(axis[i]);
+                        const std::uint8_t  minusZero = qam.hardDecision(axis[i + 1UZ]);
+                        const std::uint32_t level     = x > F{0} ? 1U : 0U;
+                        expect(eq(plusZero, minusZero)) << std::format("{} {}: ({:a}, {:a}) and ({:a}, {:a}) decide alike", precision, name, axis[i].real(), axis[i].imag(), axis[i + 1UZ].real(), axis[i + 1UZ].imag());
+                        expect(eq(axisLevelOf(qam, plusZero, 2U, !zeroImaginary), level) && eq(axisLevelOf(qam, plusZero, 2U, zeroImaginary), 0U)) << std::format("{} {}: ({:a}, {:a})", precision, name, axis[i].real(), axis[i].imag());
+                        expect(eq(axisSpan[i], plusZero) && eq(axisSpan[i + 1UZ], minusZero)) << std::format("{} {}: the span decides ({:a}, {:a}) as the single call does", precision, name, axis[i].real(), axis[i].imag());
+                    }
+                }
             }
         };
         check(float{}, "float ");
