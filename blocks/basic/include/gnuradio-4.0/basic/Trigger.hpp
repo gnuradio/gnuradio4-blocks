@@ -76,7 +76,9 @@ The information is stored (info only) in `trigger_name`, `trigger_time`, `trigge
         _trigger.setThreshold(threshold);
 
         if (newSettings.contains("trigger_time") || newSettings.contains("trigger_offset")) {
-            _now = trigger_time + static_cast<std::uint64_t>(static_cast<std::int64_t>(1e9f * trigger_offset)); // the offset can be negative
+            // converting a negative float straight to std::uint64_t is undefined behavior
+            const float offsetNs = 1e9f * trigger_offset;
+            _now                 = trigger_time + (offsetNs >= 0.f ? static_cast<std::uint64_t>(offsetNs) : static_cast<std::uint64_t>(static_cast<std::int64_t>(offsetNs)));
         }
         if (newSettings.contains("offset") || newSettings.contains("threshold")) {
             _trigger.reset();
