@@ -5,19 +5,29 @@
 #include <gnuradio-4.0/meta/UnitTestHelper.hpp>
 #include <gnuradio-4.0/meta/formatter.hpp>
 
-namespace boost::ut { // unit test helper for pod struct comparable but not stream-insertable objects
+namespace boost::ext::ut { // unit test helper for pod struct comparable but not stream-insertable objects
 
 template<class L, class R>
 requires(std::equality_comparable_with<L, R> && !(boost::ut::type_traits::is_stream_insertable_v<L> && boost::ut::type_traits::is_stream_insertable_v<R>))
 constexpr bool eq(const L& lhs, const R& rhs) noexcept {
     return lhs == rhs;
 }
-} // namespace boost::ut
+} // namespace boost::ext::ut
 
 #include <gnuradio-4.0/algorithm/ImCanvas.hpp>
 
 using namespace boost::ut;
 using namespace gr::utf8;
+
+// MSVC cannot constant-evaluate std::string unless _ITERATOR_DEBUG_LEVEL is 0: the container proxy
+// is heap-allocated and its destructor then trips "deallocation of pointer not allocated on the heap"
+// (C2131). The two canvas checks below therefore run at run time on a debug MSVC build; every other
+// toolchain, and MSVC in release, still evaluates them at compile time.
+#if defined(_MSC_VER) && defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
+#define GR_CONSTEXPR_STRING_ASSERT(expr) expect(expr)
+#else
+#define GR_CONSTEXPR_STRING_ASSERT(expr) static_assert(expr)
+#endif
 
 [[nodiscard]] std::string stripAnsiMetaInfo(std::string_view str) {
     std::string result;
@@ -391,7 +401,7 @@ const suite<"ImCanvas"> canvasSuite = [] {
         };
 
         "compile-time operations"_test = [] {
-            constexpr auto makeCanvas = []() consteval {
+            constexpr auto makeCanvas = []() constexpr {
                 ImCanvas<5, 3> cv;
 
                 // text
@@ -409,7 +419,7 @@ const suite<"ImCanvas"> canvasSuite = [] {
 
                 return cv._grapheme[0];
             };
-            static_assert(makeCanvas() == "H");
+            GR_CONSTEXPR_STRING_ASSERT(makeCanvas() == "H");
         };
     };
 
@@ -457,7 +467,7 @@ const suite<"ImCanvas"> canvasSuite = [] {
             return cv._grapheme[0];
         };
 
-        static_assert(result() == "█");
+        GR_CONSTEXPR_STRING_ASSERT(result() == "█");
     };
 
     "Bar drawing"_test = [](bool colored) {
