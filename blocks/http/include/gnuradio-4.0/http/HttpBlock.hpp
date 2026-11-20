@@ -12,6 +12,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #ifdef __GNUC__
@@ -42,6 +43,8 @@ GR_REGISTER_BLOCK(gr::blocks::http::HttpSource)
 struct HttpSource : Block<HttpSource> {
     using Description = Doc<R""(
 Read data from an HTTP endpoint.
+
+The url is an http: or https: address. Another value is refused at start and when the url changes.
 
 GET reads one response.
 SUBSCRIBE keeps polling and publishes each new response.
@@ -93,7 +96,11 @@ Internally this uses FileIo.
     }
 
     void openReader() {
-        auto readerExp = fileio::readAsync(url.value, readerConfig());
+        const auto address = fileio::httpAddress("url", url.value);
+        if (!address.has_value()) {
+            throw gr::exception(address.error().message);
+        }
+        auto readerExp = fileio::readAsync(address.value(), readerConfig());
         if (!readerExp.has_value()) {
             throw gr::exception(readerExp.error().message, readerExp.error().sourceLocation);
         }
@@ -156,6 +163,8 @@ struct HttpSink : Block<HttpSink> {
     using Description = Doc<R""(
 Send incoming bytes to an HTTP endpoint with POST.
 
+The url is an http: or https: address. Another value is refused at start and before each POST.
+
 Each input chunk is sent as one POST request.
 Use content_type to set the Content-Type header.
 
@@ -191,7 +200,10 @@ Internally this uses FileIo.
         return config;
     }
 
-    void start() { _writer.reset(); }
+    void start() {
+        _writer.reset();
+        std::ignore = checkedUrl();
+    }
 
     void stop() {
         if (_writer.has_value()) {
@@ -218,13 +230,22 @@ Internally this uses FileIo.
         }
 
         auto bytes     = std::span<const std::uint8_t>(inSpan.data(), inSpan.size());
-        auto writerExp = fileio::writeAsync(url.value, bytes, writerConfig());
+        auto writerExp = fileio::writeAsync(checkedUrl(), bytes, writerConfig());
         if (!writerExp.has_value()) {
             throw gr::exception(writerExp.error().message, writerExp.error().sourceLocation);
         }
         _writer = std::move(writerExp.value());
 
         return work::Status::OK;
+    }
+
+private:
+    [[nodiscard]] std::string checkedUrl() const {
+        auto address = fileio::httpAddress("url", url.value);
+        if (!address.has_value()) {
+            throw gr::exception(address.error().message);
+        }
+        return std::move(address.value());
     }
 };
 

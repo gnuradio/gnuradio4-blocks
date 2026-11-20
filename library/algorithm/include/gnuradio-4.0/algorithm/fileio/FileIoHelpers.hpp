@@ -2,48 +2,19 @@
 #define FILEIOHELPERS_HPP
 
 #include <expected>
-#include <filesystem>
 #include <gnuradio-4.0/Message.hpp>
 
 namespace gr::algorithm::fileio {
 
-struct DialogOpenHandle {
-    // UI side calls this when it has the file contents in memory.
-    std::function<void(std::span<const std::uint8_t>)> completeWithMemory;
-
-    // UI side calls this when the dialog returns a native path.
-    std::function<void(std::string)> completeWithFile;
-
-    // UI side calls this on error or cancel.
-    std::function<void(std::string_view)> fail;
-};
-
-namespace detail {
-
-using DialogOpenCallback = std::function<void(DialogOpenHandle&)>;
-
-inline DialogOpenCallback& dialogOpenCallback() {
-    static DialogOpenCallback cb;
-    return cb;
-}
-
-} // namespace detail
-
-inline void setDialogOpenCallback(detail::DialogOpenCallback cb) { detail::dialogOpenCallback() = std::move(cb); }
-
 struct Capabilities {
-    bool httpEnabled              = false; // GR_HTTP_ENABLED or fetch()
-    bool dialogOpenAvailable      = false; // dialog:/ callback registered
-    bool browserDownloadSupported = false; // download:/ supported
+    bool httpEnabled = false; // GR_HTTP_ENABLED or fetch()
 };
 
 inline Capabilities capabilities() noexcept {
     Capabilities c{};
 
 #if __EMSCRIPTEN__
-    c.httpEnabled              = true; // We always compile with emscripten fetch here
-    c.browserDownloadSupported = true;
-    c.dialogOpenAvailable      = static_cast<bool>(detail::dialogOpenCallback());
+    c.httpEnabled = true; // We always compile with emscripten fetch here
 #else
 
 #if GR_HTTP_ENABLED
@@ -51,8 +22,6 @@ inline Capabilities capabilities() noexcept {
 #else
     c.httpEnabled = false;
 #endif
-    c.browserDownloadSupported = true;
-    c.dialogOpenAvailable      = static_cast<bool>(detail::dialogOpenCallback());
 #endif
     return c;
 }
@@ -90,18 +59,12 @@ namespace detail {
     return ciEquals(sc, "http") || ciEquals(sc, "https");
 }
 
-[[nodiscard]] inline bool isDownloadUri(std::string_view uri) { return ciEquals(schemeOf(uri), "download"); }
-
 [[nodiscard]] inline bool isFileUri(std::string_view uri) { return ciEquals(schemeOf(uri), "file"); }
-
-[[nodiscard]] inline bool isDialogUri([[maybe_unused]] std::string_view uri) { return ciEquals(schemeOf(uri), "dialog"); }
 
 enum class UriKind {
     LocalPath,
     FileUri,
     HttpUri,
-    DownloadUri,
-    DialogUri,
     UnsupportedUri,
 };
 
@@ -113,39 +76,12 @@ enum class UriKind {
         if (isHttpUri(uri)) {
             return UriKind::HttpUri;
         }
-        if (isDownloadUri(uri)) {
-            return UriKind::DownloadUri;
-        }
-        if (isDialogUri(uri)) {
-            return UriKind::DialogUri;
-        }
         return UriKind::UnsupportedUri;
     }
     if (uri.contains(":/")) {
         return UriKind::UnsupportedUri;
     }
     return UriKind::LocalPath;
-}
-
-[[nodiscard]] inline std::expected<std::string, gr::Error> stripDownloadUri(std::string_view uri) {
-    if (!isDownloadUri(uri)) {
-        return std::unexpected(gr::Error{std::format("Not a browser download URI:{}", uri)});
-    }
-    return std::string(uri.substr(std::string_view("download:/").size()));
-}
-
-namespace detail {
-inline std::filesystem::path defaultDownloadDir() {
-    if (const char* home = std::getenv("HOME")) {
-        return std::filesystem::path(home) / "Downloads";
-    }
-    return std::filesystem::current_path();
-}
-} // namespace detail
-
-inline std::string resolveDownloadPath(std::string_view filename) {
-    std::filesystem::path base = detail::defaultDownloadDir();
-    return (base / std::filesystem::path{filename}).string();
 }
 
 [[nodiscard]] inline std::expected<std::string, gr::Error> toLocalPath(std::string_view uri) {
@@ -177,6 +113,41 @@ inline std::string resolveDownloadPath(std::string_view filename) {
 }
 
 } // namespace detail
+
+/// @brief The local path that a block's file name setting names: a plain path unchanged, a `file:` address as its path.
+///
+/// The function accepts only names that the reader and the writer take as the local file it returns. It refuses every
+/// other address, `http:` and `https:` among them, and a path that contains `:/`, which reads as an address; a drive
+/// path such as `C:/x` reads as one too. It also refuses a `file:` name with no slash after the colon, such as `file:x`,
+/// which the reader and the writer would take as a relative path. The error names the setting and the forms it takes.
+[[nodiscard]] inline std::expected<std::string, gr::Error> localFileName(std::string_view setting, std::string_view value) {
+    const auto refused = [&] { return std::unexpected(gr::Error{std::format("{} '{}' must be a plain path or a file: address", setting, value)}); };
+
+    const auto uriKind          = detail::classifyUri(value);
+    const auto colon            = value.find(':');
+    const bool fileWithoutSlash = uriKind == detail::UriKind::LocalPath && colon != std::string_view::npos && detail::ciEquals(value.substr(0, colon), "file");
+    if ((uriKind != detail::UriKind::LocalPath && uriKind != detail::UriKind::FileUri) || fileWithoutSlash) {
+        return refused();
+    }
+    auto path = detail::toLocalPath(value);
+    if (!path.has_value()) {
+        return std::unexpected(gr::Error{std::format("{} '{}' must name a local file: {}", setting, value, path.error().message)});
+    }
+    if (detail::classifyUri(path.value()) != detail::UriKind::LocalPath) {
+        return refused();
+    }
+    return path;
+}
+
+/// @brief The address that a block's HTTP setting names, which must be an `http:` or `https:` address.
+///
+/// A plain path, a `file:` address and every other address are refused, with an error that names the setting.
+[[nodiscard]] inline std::expected<std::string, gr::Error> httpAddress(std::string_view setting, std::string_view value) {
+    if (detail::classifyUri(value) != detail::UriKind::HttpUri) {
+        return std::unexpected(gr::Error{std::format("{} '{}' must be an http: or https: address", setting, value)});
+    }
+    return std::string(value);
+}
 
 } // namespace gr::algorithm::fileio
 #endif // FILEIOHELPERS_HPP

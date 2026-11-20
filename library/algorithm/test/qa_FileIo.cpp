@@ -3,6 +3,8 @@
 #endif
 #include <boost/ut.hpp>
 
+#include <cstdlib>
+#include <filesystem>
 #include <format>
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/algorithm/fileio/FileIo.hpp>
@@ -170,6 +172,31 @@ template<typename TForEachCallback>
 }
 
 [[nodiscard]] std::string bytesToString(const std::vector<std::uint8_t>& bytes) { return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()); }
+
+// Points HOME at a new empty directory. On exit it restores HOME and removes the directory.
+struct ScopedHomeDirectory {
+    std::optional<std::string> previous = std::getenv("HOME") != nullptr ? std::optional<std::string>{std::getenv("HOME")} : std::nullopt;
+    std::filesystem::path      directory;
+
+    ScopedHomeDirectory() {
+        directory = std::filesystem::temp_directory_path() / std::format("gr4_fileio_home_{}", std::chrono::steady_clock::now().time_since_epoch().count());
+        std::filesystem::create_directories(directory);
+        ::setenv("HOME", directory.c_str(), 1);
+    }
+    ScopedHomeDirectory(const ScopedHomeDirectory&)            = delete;
+    ScopedHomeDirectory& operator=(const ScopedHomeDirectory&) = delete;
+    ~ScopedHomeDirectory() {
+        if (previous.has_value()) {
+            ::setenv("HOME", previous->c_str(), 1);
+        } else {
+            ::unsetenv("HOME");
+        }
+        std::error_code ec;
+        std::filesystem::remove_all(directory, ec);
+    }
+
+    [[nodiscard]] bool empty() const { return std::filesystem::is_empty(directory); }
+};
 
 const boost::ut::suite<"FileIO local - Native + Emscripten"> fileIoLocalTests = [] {
     using namespace boost::ut;
@@ -1006,6 +1033,36 @@ const boost::ut::suite<"FileIO error tests"> fileIoErrorTests = [] {
         auto                      writerExp = fileio::writeAsync("wrong_sch://wrong_uri", data, fileio::WriterConfig{});
         expect(!writerExp.has_value());
         std::println("FileIO - Writer with wrong end");
+    };
+
+    "FileIO - Reader refuses dialog:/open as an unsupported URI"_test = [&] {
+        constexpr std::string_view uri       = "dialog:/open";
+        auto                       readerExp = fileio::readAsync(uri, fileio::ReaderConfig{});
+        expect(!readerExp.has_value());
+        if (!readerExp.has_value()) {
+            expect(eq(readerExp.error().message, std::format("Unsupported URI scheme for readAsync(): {}", uri)));
+        }
+    };
+
+    "FileIO - Writer refuses download:/name as an unsupported URI and writes nothing"_test = [&] {
+        constexpr std::string_view uri = "download:/gr4_fileio_test.bin";
+        std::vector<std::uint8_t>  data{0, 1, 2, 3, 4, 5};
+        ScopedHomeDirectory        home;
+
+        auto writerExp = fileio::writeAsync(uri, data, fileio::WriterConfig{});
+        expect(!writerExp.has_value());
+        if (writerExp.has_value()) {
+            writerExp->wait();
+        } else {
+            expect(eq(writerExp.error().message, std::format("Unsupported URI scheme for writeAsync(): {}", uri)));
+        }
+
+        auto writeResult = fileio::write(uri, data, fileio::WriterConfig{});
+        expect(!writeResult.has_value());
+        if (!writeResult.has_value()) {
+            expect(eq(writeResult.error().message, std::format("Unsupported URI scheme for writeAsync(): {}", uri)));
+        }
+        expect(home.empty()) << "nothing is written under the home directory";
     };
 
     "FileIO - poll maxSize too small"_test = [&] {

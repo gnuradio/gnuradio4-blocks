@@ -2,6 +2,10 @@
 
 #include <gnuradio-4.0/algorithm/fileio/FileIoHelpers.hpp>
 
+#include <format>
+#include <string>
+#include <string_view>
+
 const boost::ut::suite<"FileIO Helpers tests"> fileIoHelpersTests = [] {
     using namespace boost::ut;
     using namespace gr;
@@ -40,8 +44,8 @@ const boost::ut::suite<"FileIO Helpers tests"> fileIoHelpersTests = [] {
         expect(fio::classifyUri("tmp/x") == fio::UriKind::LocalPath);
         expect(fio::classifyUri("file:/tmp/x") == fio::UriKind::FileUri);
         expect(fio::classifyUri("http://x") == fio::UriKind::HttpUri);
-        expect(fio::classifyUri("download:/x") == fio::UriKind::DownloadUri);
-        expect(fio::classifyUri("dialog:/open") == fio::UriKind::DialogUri);
+        expect(fio::classifyUri("download:/x") == fio::UriKind::UnsupportedUri);
+        expect(fio::classifyUri("dialog:/open") == fio::UriKind::UnsupportedUri);
         expect(fio::classifyUri("wrong_sch://wrong_uri") == fio::UriKind::UnsupportedUri);
         expect(fio::classifyUri("ftp://x") == fio::UriKind::UnsupportedUri);
     };
@@ -65,6 +69,36 @@ const boost::ut::suite<"FileIO Helpers tests"> fileIoHelpersTests = [] {
 
         auto r2 = fio::toLocalPath("file://example.com");
         expect(!r2.has_value());
+    };
+
+    "localFileName takes a plain path or a file: address"_test = [] {
+        using gr::algorithm::fileio::localFileName;
+        expect(eq(localFileName("file_name", "tmp/x").value_or(""), "tmp/x"s));
+        expect(eq(localFileName("file_name", "/tmp/x").value_or(""), "/tmp/x"s));
+        expect(eq(localFileName("file_name", "file:/tmp/x").value_or(""), "/tmp/x"s));
+        expect(eq(localFileName("file_name", "file:///tmp/x").value_or(""), "/tmp/x"s));
+        expect(eq(localFileName("file_name", "FILE://localhost/tmp/x").value_or(""), "/tmp/x"s));
+
+        for (const std::string_view address : {"http://host/x", "HTTPS://host/x", "ftp://host/x", "ftp:/host/x", "download:/x", "dialog:/open", "tmp/a:/b", "file:x", "FILE:x", "file:///d/a:/x", "C:/x"}) {
+            const auto refused = localFileName("file_name", address);
+            expect(!refused.has_value()) << address;
+            expect(eq(refused.has_value() ? ""s : refused.error().message, std::format("file_name '{}' must be a plain path or a file: address", address))) << address;
+        }
+        const auto remote = localFileName("file_name", "file://host/etc");
+        expect(!remote.has_value());
+        expect(remote.has_value() ? false : remote.error().message.starts_with("file_name 'file://host/etc' must name a local file: ")) << (remote.has_value() ? ""s : remote.error().message);
+    };
+
+    "httpAddress takes an http: or https: address"_test = [] {
+        using gr::algorithm::fileio::httpAddress;
+        expect(eq(httpAddress("url", "http://host/x").value_or(""), "http://host/x"s));
+        expect(eq(httpAddress("url", "HTTPS://host/x").value_or(""), "HTTPS://host/x"s));
+
+        for (const std::string_view address : {"", "tmp/x", "/tmp/x", "file:/tmp/x", "file:///tmp/x", "ftp://host/x", "download:/x"}) {
+            const auto refused = httpAddress("url", address);
+            expect(!refused.has_value()) << address;
+            expect(eq(refused.has_value() ? ""s : refused.error().message, std::format("url '{}' must be an http: or https: address", address))) << address;
+        }
     };
 };
 

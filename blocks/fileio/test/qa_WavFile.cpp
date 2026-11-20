@@ -8,6 +8,7 @@
 #include <format>
 #include <fstream>
 #include <future>
+#include <iterator>
 #include <numeric>
 #include <optional>
 #include <span>
@@ -26,18 +27,6 @@
 
 #include "FileOpenCounter.hpp"
 #include "ScopedWorkingDirectory.hpp"
-
-#if GR4_ENABLE_HTTP_TESTS && !defined(__EMSCRIPTEN__)
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-// GCC 16 misreads the inlined gzip_compressor dtor as indexing past a compressor[2] object
-#pragma GCC diagnostic ignored "-Warray-bounds"
-#endif
-#include <httplib.h>
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
-#endif
 
 using namespace boost::ut;
 using namespace std::chrono_literals;
@@ -639,7 +628,45 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
     };
 #endif
 
-    "WavSource refuses at start a uri scheme it cannot read"_test = [] { expectRefusedStart(runWavSource("ftp://127.0.0.1/tone.wav", "overwrite"), {"ftp://127.0.0.1/tone.wav"}); };
+    "WavSource and WavSink refuse at start every address but a plain path or a file: address"_test = [] {
+        const std::vector<std::int16_t> reference{1000, 2000, 3000};
+        // the library's reader serves the first two; the refusal names the block's setting, so the address reached neither
+        // the reader nor the disk
+        for (const std::string uri : {"http://127.0.0.1:8080/tone.wav", "https://host/tone.wav", "ftp://127.0.0.1/tone.wav", "ftp:/host/tone.wav", "download:/tone.wav", "dialog:/open", "file:tone.wav"}) {
+            ScopedWorkingDirectory workingDirectory;
+            const std::string      refusal = std::format("uri '{}' must be a plain path or a file: address", uri);
+            for (const std::string modeName : {"overwrite", "multi"}) {
+                expectRefusedStart(runWavSource(uri, modeName), {refusal});
+                expectRefusedStart(runWavSink(uri, modeName, reference), {refusal});
+            }
+            expect(std::filesystem::is_empty(workingDirectory.directory)) << uri << ": the working directory stays empty";
+        }
+    };
+
+    "WavSink and WavSource take a file: address as its path"_test = [] {
+        std::vector<std::int16_t> reference(64UZ);
+        std::iota(reference.begin(), reference.end(), std::int16_t(1));
+        constexpr gr::Size_t maxBytesPerFile = 75U;
+
+        for (const std::string modeName : {"overwrite", "multi"}) {
+            ScopedWorkingDirectory workingDirectory;
+            const std::string      path    = (workingDirectory.directory / "out" / "tone.wav").string();
+            const auto             written = writeWavFile(std::format("file://{}", path), modeName, reference, modeName == "multi" ? maxBytesPerFile : 0U);
+            expect(written.has_value()) << modeName << ": " << errorMessage(written);
+
+            std::size_t     nFiles = 0UZ;
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(workingDirectory.directory / "out", ec)) {
+                expect(entry.is_regular_file() && entry.path().filename().string().ends_with("tone.wav")) << modeName << ": " << entry.path().string();
+                nFiles++;
+            }
+            expect(!ec) << modeName << ": " << ec.message();
+            expect(ge(nFiles, 1UZ)) << modeName;
+            expect(eq(std::ranges::distance(std::filesystem::directory_iterator(workingDirectory.directory)), std::ptrdiff_t{1})) << modeName << ": only 'out' is made";
+
+            expect(eq(readWavFile(std::format("file:{}", path), modeName), reference)) << modeName;
+        }
+    };
 
     "WavSink refuses at start an empty uri or a file it cannot open"_test = [] {
         const std::vector<std::int16_t> reference{1000, 2000, 3000};
@@ -648,41 +675,6 @@ const boost::ut::suite<"WAV file blocks"> _wavFileTests = [] {
         expectRefusedStart(runWavSink("", "overwrite", reference), {"uri is empty"});
         expectRefusedStart(runWavSink(workingDirectory.directory.string(), "overwrite", reference), {workingDirectory.directory.string(), "cannot open", std::make_error_code(std::errc::is_a_directory).message()});
     };
-
-#if GR4_ENABLE_HTTP_TESTS && !defined(__EMSCRIPTEN__)
-    "HTTP WAV sources"_test = [] {
-        constexpr std::string_view      caseName = "gr::blocks::fileio::WavSource<float>";
-        const std::vector<std::int16_t> reference{0, 8192, -8192, 16384};
-        const auto                      wavBytes = makeWav(1U, 1U, 16U, 11025U, encodePcm16(reference));
-        const std::string               body(reinterpret_cast<const char*>(wavBytes.data()), wavBytes.size());
-
-        httplib::Server server;
-        server.Get("/tone.wav", [&body](const httplib::Request&, httplib::Response& res) { res.set_content(body, "audio/wav"); });
-        const int port = server.bind_to_any_port("127.0.0.1");
-        expect(port > 0) << caseName;
-
-        auto thread = std::thread{[&server] { server.listen_after_bind(); }};
-        server.wait_until_ready();
-
-        gr::Graph graph;
-        auto&     source = graph.emplaceBlock<gr::blocks::fileio::WavSource<float>>({{"uri", std::format("http://127.0.0.1:{}/tone.wav", port)}});
-        auto&     sink   = graph.emplaceBlock<gr::blocks::testing::TagSink<float, gr::blocks::testing::ProcessFunction::USE_PROCESS_BULK>>();
-        expect(graph.connect<"out", "in">(source, sink).has_value()) << caseName;
-        gr::scheduler::Simple<> sched;
-        expect(sched.exchange(std::move(graph)).has_value()) << caseName;
-        expect(sched.runAndWait().has_value()) << caseName;
-
-        server.stop();
-        thread.join();
-
-        const auto samples = std::vector<float>(sink._samples.begin(), sink._samples.end());
-        expect(eq(samples.size(), reference.size())) << caseName;
-        expect(approx(samples[1], 0.25f, 1e-3f)) << caseName;
-        expect(approx(samples[2], -0.25f, 1e-3f)) << caseName;
-        expectSingleFormatTag(sink._tags, 11025.f, 1U, caseName);
-    };
-
-#endif
 };
 
 int main() { return boost::ut::cfg<boost::ut::override>.run(); }

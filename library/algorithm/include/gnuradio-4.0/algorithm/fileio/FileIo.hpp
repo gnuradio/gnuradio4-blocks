@@ -44,8 +44,6 @@
  *    - Local files via file:/ URIs (native + MEMFS under Emscripten)
  *    - HTTP(S) GET / long-polling via http:// and https://
  *    - In-memory sources (readAsync(span<const uint8_t>))
- *    - dialog:/ URIs (open file dialog -> memory or local file)
- *    - download:/ URIs (WASM "download to disk")
  *
  *  Reader:
  *    - ReaderConfig controls chunkBytes, offset, httpTimeoutNanos and longPolling.
@@ -95,7 +93,6 @@
  *      onto a worker thread when the main runtime thread may be blocked by the caller. This is mainly a unit-test issue;
  *      normal Emscripten applications should keep the default main-thread path.
  *    - Blocking wait() / write() is explicitly forbidden on the main WASM runtime thread; attempts are detected and return an error/warning.
- *    - download:/ URIs trigger a JS "download" in the browser.
  */
 
 namespace gr::algorithm::fileio {
@@ -150,8 +147,6 @@ struct ReaderState {
     std::atomic<std::size_t> updateCounter{0};
     std::atomic<bool>        cancelRequested{false};
     std::atomic<bool>        finalPublished{false};
-
-    std::unique_ptr<DialogOpenHandle> dialogHandle; // Present only for dialog:/ readers
 
     ReaderState(std::string uri_, ReaderConfig config_) //
         : uri(std::move(uri_)), config(std::move(config_)), buffer(config.bufferMinSize), bufferWriter(buffer.new_writer()), bufferReader(buffer.new_reader()) {}
@@ -744,44 +739,9 @@ void runHttpGetEmscripten(std::shared_ptr<ReaderState> state) {
 // Lifetime note:
 // - For HTTP(S) Readers under Emscripten, dropping the returned `Reader` is memory-safe; pending HTTP callbacks
 //   stop publishing new data/final events once the Reader state expires.
-// - For `dialog:/` Readers, the caller must keep the returned `Reader` alive until the registered
-//   DialogOpenCallback completes with exactly one terminal callback: completeWithMemory(...), completeWithFile(...), or fail(...).
 [[nodiscard]] inline std::expected<Reader, gr::Error> readAsync(std::string_view uri, ReaderConfig config = {}) {
     detail::normalizeReaderConfig(config);
     const auto uriKind = detail::classifyUri(uri);
-
-    if (uriKind == detail::UriKind::DialogUri) {
-        auto& dialogCallback = detail::dialogOpenCallback();
-        if (!dialogCallback) {
-            return std::unexpected(gr::Error{"dialog:/open used but no DialogOpenCallback registered"});
-        }
-
-        auto                       state = std::make_shared<ReaderState>(std::string(uri), std::move(config));
-        std::weak_ptr<ReaderState> weakState{state};
-
-        state->dialogHandle      = std::make_unique<DialogOpenHandle>();
-        DialogOpenHandle& handle = *state->dialogHandle;
-
-        handle.completeWithMemory = [weakState](std::span<const std::uint8_t> bytes) {
-            if (auto st = weakState.lock()) {
-                runReadMemorySource(st, bytes);
-            }
-        };
-        handle.completeWithFile = [weakState](std::string path) {
-            if (auto st = weakState.lock()) {
-                st->uri = std::move(path);
-                gr::thread_pool::Manager::defaultIoPool()->execute([st = std::move(st)]() mutable { runReadLocalFile(st); });
-            }
-        };
-        handle.fail = [weakState](std::string_view msg) {
-            if (auto st = weakState.lock()) {
-                pushErrorFinal(st.get(), msg);
-            }
-        };
-
-        dialogCallback(handle);
-        return Reader{state};
-    }
 
 #if __EMSCRIPTEN__
     if (uriKind == detail::UriKind::LocalPath || uriKind == detail::UriKind::FileUri) {
@@ -1015,7 +975,7 @@ struct Writer {
     if (!parent.empty()) {
         fs::create_directories(parent, ec);
         if (ec) {
-            return std::unexpected(gr::Error{std::format("runWriteLocalFile: failed to create directory '{}': ec={}", parent.string(), ec.value())});
+            return std::unexpected(gr::Error{std::format("runWriteLocalFile: failed to create directory '{}': {} (ec={})", parent.string(), ec.message(), ec.value())});
         }
     }
 
@@ -1213,76 +1173,6 @@ inline void runHttpPostEmscripten(std::shared_ptr<WriterState> state) {
     }
 }
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdollar-in-identifier-extension"
-// Browser "download to disk"
-inline void runDownloadEmscriptenImpl(WriterState* st) {
-    if (st == nullptr) {
-        return;
-    }
-
-    const auto len = static_cast<int>(st->data.size());
-    if (len <= 0) {
-        st->setResult(WriteResult{});
-        return;
-    }
-
-    // clang-format off
-    EM_ASM(
-        {
-            const filename = UTF8ToString($0);
-            const ptr      = $1 >>> 0;
-            const len      = $2 >>> 0;
-
-            const array = new Uint8Array(len);
-            array.set(HEAPU8.subarray(ptr, ptr + len));
-
-            const blob = new Blob([array], {
-                type:
-                    'application/octet-stream'
-            });
-            const link    = document.createElement('a');
-            link.href     = URL.createObjectURL(blob);
-            link.download = filename;
-            document.body.appendChild(link);
-
-            try {
-                link.click();
-            } catch (e) {
-                console.error("gr::fileio: download link.click() failed:", e);
-            }
-
-            try {
-                document.body.removeChild(link);
-            } catch (e) {
-                console.error("gr::fileio: download removeChild failed:", e);
-            }
-
-            try {
-                URL.revokeObjectURL(link.href);
-            } catch (e) {
-                console.error("gr::fileio: download revokeObjectURL failed:", e);
-            }
-        },
-        st->uri.c_str(), st->data.data(), len);
-    // clang-format on
-
-    st->setResult(WriteResult{});
-}
-#pragma GCC diagnostic pop
-
-inline void runDownloadEmscripten(std::shared_ptr<WriterState> state) {
-    if (state == nullptr) {
-        return;
-    }
-
-    if (isMainThread()) {
-        runDownloadEmscriptenImpl(state.get());
-    } else {
-        emscripten_async_run_in_main_runtime_thread(EM_FUNC_SIG_VI, +[](void* p) { runDownloadEmscriptenImpl(static_cast<WriterState*>(p)); }, state.get());
-    }
-}
-
 } // namespace detail
 #endif // __EMSCRIPTEN__
 
@@ -1302,18 +1192,6 @@ inline void runDownloadEmscripten(std::shared_ptr<WriterState> state) {
             detail::runHttpPostEmscripten<false>(state);
         }
         return Writer{state};
-    } else if (uriKind == detail::UriKind::DownloadUri) {
-        const auto filename = detail::stripDownloadUri(uri);
-        if (!filename.has_value()) {
-            return std::unexpected(filename.error());
-        }
-
-        auto state = std::make_shared<WriterState>(filename.value(), config);
-        state->data.assign(data.begin(), data.end());
-
-        detail::runDownloadEmscripten(state);
-        return Writer{state};
-
     } else if (uriKind == detail::UriKind::LocalPath || uriKind == detail::UriKind::FileUri) {
         const auto pathExp = detail::toLocalPath(uri);
         if (!pathExp.has_value()) {
@@ -1349,25 +1227,6 @@ inline void runDownloadEmscripten(std::shared_ptr<WriterState> state) {
 #else
         return std::unexpected(gr::Error{"HTTP(S) disabled at build time. See GR_HTTP_ENABLED for details."});
 #endif
-    } else if (uriKind == detail::UriKind::DownloadUri) {
-        const auto filenameExp = detail::stripDownloadUri(uri);
-        if (!filenameExp.has_value()) {
-            return std::unexpected(filenameExp.error());
-        }
-
-        const auto path  = detail::resolveDownloadPath(filenameExp.value());
-        auto       state = std::make_shared<WriterState>(path, config);
-        state->data.assign(data.begin(), data.end());
-
-        gr::thread_pool::Manager::defaultIoPool()->execute([state]() mutable {
-            auto r = runWriteLocalFile(state);
-            if (state->cancelRequested.load(std::memory_order_acquire)) {
-                r = std::unexpected(gr::Error{"cancelled by user"});
-            }
-            state->setResult(std::move(r));
-        });
-        return Writer{state};
-
     } else if (uriKind == detail::UriKind::LocalPath || uriKind == detail::UriKind::FileUri) {
         const auto pathExp = detail::toLocalPath(uri);
         if (!pathExp.has_value()) {
@@ -1402,17 +1261,8 @@ inline void runDownloadEmscripten(std::shared_ptr<WriterState> state) {
     // senders, watchdogs) never schedules — a deadlock for the scheduler thread calling the
     // blocking API. Only genuinely asynchronous transports take the pool round-trip.
     const auto uriKind = detail::classifyUri(uri);
-    if (uriKind == detail::UriKind::LocalPath || uriKind == detail::UriKind::FileUri || uriKind == detail::UriKind::DownloadUri) {
-        std::expected<std::string, gr::Error> pathExp;
-        if (uriKind == detail::UriKind::DownloadUri) {
-            const auto filenameExp = detail::stripDownloadUri(uri);
-            if (!filenameExp.has_value()) {
-                return std::unexpected(filenameExp.error());
-            }
-            pathExp = detail::resolveDownloadPath(filenameExp.value());
-        } else {
-            pathExp = detail::toLocalPath(uri);
-        }
+    if (uriKind == detail::UriKind::LocalPath || uriKind == detail::UriKind::FileUri) {
+        const auto pathExp = detail::toLocalPath(uri);
         if (!pathExp.has_value()) {
             return std::unexpected(pathExp.error());
         }

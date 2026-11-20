@@ -165,14 +165,14 @@ GR_REGISTER_BLOCK(gr::blocks::fileio::WavSource, [T], [ float, int16_t ])
 
 template<detail::WavSample T>
 struct WavSource : gr::Block<WavSource<T>> {
-    using Description = Doc<R""(Streams RIFF/WAVE audio from local paths or HTTP/HTTPS URLs.
+    using Description = Doc<R""(Streams RIFF/WAVE audio from a local file.
 
 Supported WAV encodings: PCM 8/16/24/32-bit, IEEE float 32-bit, interleaved multi-channel.
 Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
 
     gr::PortOut<T> out;
 
-    gr::Annotated<std::string, "uri", gr::Visible, gr::Doc<"Local file path or HTTP/HTTPS URL to a WAV file">>                                uri;
+    gr::Annotated<std::string, "uri", gr::Visible, gr::Doc<"WAV file path or file: address">>                                                 uri;
     gr::Annotated<Mode, "mode", gr::Visible, gr::Doc<"overwrite/append: single file, multi: read all matching files in order">>               mode         = Mode::overwrite;
     gr::Annotated<bool, "repeat", gr::Doc<"true: restart from beginning when all files are exhausted">>                                       repeat       = false;
     gr::Annotated<gr::Size_t, "offset", gr::Visible, gr::Doc<"Skip this many samples at the start of each file's data chunk">>                offset       = 0U;
@@ -205,7 +205,7 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
     std::array<std::uint8_t, 4>               _partialSample{};
     std::size_t                               _partialSampleSize{0U};
     bool                                      _formatTagPending{true};
-    std::size_t                               _fileBytes{0U}; // 0 when the source is not a local file
+    std::size_t                               _fileBytes{0U}; // 0 when the file size cannot be read
 
     using gr::Block<WavSource<T>>::Block;
 
@@ -233,16 +233,20 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
         _failed          = true;
     }
 
-    // Throws when there is nothing to read. That is when, in multi mode, the directory cannot be listed or no file
-    // name in it holds the base name, or when the reader refuses the uri or cannot open a local file. A failure the
-    // reader meets later, any failure of an HTTP read and a header that is not valid WAV end the stream with ERROR
+    // Throws when there is nothing to read. That is when the uri is neither a plain path nor a file: address, when, in
+    // multi mode, the directory cannot be listed or no file name in it holds the base name, or when the reader cannot
+    // open the file. A failure the reader meets later and a header that is not valid WAV end the stream with ERROR
     // during the run.
     void start() {
         sample_rate  = 0.f;
         num_channels = 0U;
         _filesToRead.clear();
 
-        std::filesystem::path filePath(uri.value);
+        const auto localName = gr::algorithm::fileio::localFileName("uri", uri.value);
+        if (!localName.has_value()) {
+            throw gr::exception(localName.error().message);
+        }
+        std::filesystem::path filePath(localName.value());
         if (mode.value == Mode::multi) {
             const auto        directory = detail::parentDirectory(filePath);
             const std::string baseName  = filePath.filename().string();
@@ -265,16 +269,12 @@ Compressed formats (ADPCM, mu-law, A-law, MP3-in-WAV) are not supported.)"">;
         }
         _nextFile = _filesToRead.begin();
 
-        const bool localFile = gr::algorithm::fileio::detail::toLocalPath(_nextFile->string()).has_value();
         if (auto opened = openFile(); !opened) {
             throw gr::exception(opened.error().message, opened.error().sourceLocation);
         }
-        // The reader's first message comes after it opens a local file. An HTTP read waits on the network and is
-        // left to processBulk().
-        if (localFile) {
-            if (const auto error = pollHeader(true)) {
-                throw gr::exception(error->message, error->sourceLocation);
-            }
+        // the reader's first message comes after it opens the file; an error in it refuses the start
+        if (const auto error = pollHeader(true)) {
+            throw gr::exception(error->message, error->sourceLocation);
         }
     }
 
@@ -453,7 +453,7 @@ private:
     [[nodiscard]] std::expected<void, gr::Error> openFile() {
         resetFileState();
 
-        const std::string fileUri = _nextFile->string();
+        const std::string fileName = _nextFile->string();
 
         // the header scan buffers whole chunks, so the chunk must stay well under kMaxHeaderBytes and
         // must also fit one output span once decoding starts: size it from the actual ring, capped
@@ -466,7 +466,7 @@ private:
         const auto      physicalSize = std::filesystem::file_size(*_nextFile, sizeError);
         _fileBytes                   = sizeError ? 0UZ : static_cast<std::size_t>(physicalSize);
 
-        auto readerExp = gr::algorithm::fileio::readAsync(fileUri, std::move(config));
+        auto readerExp = gr::algorithm::fileio::readAsync(fileName, std::move(config));
         if (!readerExp) {
             return std::unexpected(readerExp.error());
         }
@@ -688,7 +688,7 @@ In multi mode, rotates to a new timestamped file when max_bytes_per_file is reac
 
     gr::PortIn<T> in;
 
-    gr::Annotated<std::string, "uri", gr::Visible, gr::Doc<"Output file path">>                                                               uri;
+    gr::Annotated<std::string, "uri", gr::Visible, gr::Doc<"Output file path or file: address">>                                              uri;
     gr::Annotated<Mode, "mode", gr::Visible, gr::Doc<"overwrite: truncate, multi: rotate to new timestamped file on max_bytes_per_file">>     mode                  = Mode::overwrite;
     gr::Annotated<gr::Size_t, "max_bytes_per_file", gr::Visible, gr::Doc<"Max bytes per file before rotating in multi mode (0 = unlimited)">> max_bytes_per_file    = 0U;
     gr::Annotated<float, "sample_rate", gr::Visible, gr::Unit<"Hz">, gr::Doc<"Sample rate for the WAV header">>                               sample_rate           = 48000.f;
@@ -712,8 +712,8 @@ In multi mode, rotates to a new timestamped file when max_bytes_per_file is reac
 
     using gr::Block<WavSink<T>>::Block;
 
-    // Throws when the uri is empty or the file does not open. In multi mode, a rotation that cannot open its next file
-    // ends the stream with ERROR during the run.
+    // Throws when the uri is empty, is neither a plain path nor a file: address, or the file does not open. In multi
+    // mode, a rotation that cannot open its next file ends the stream with ERROR during the run.
     void start() {
         total_samples_written = 0U;
         _fileCounter          = 0U;
@@ -794,10 +794,14 @@ private:
         if (uri.value.empty()) {
             return std::unexpected(gr::Error("uri is empty"));
         }
+        const auto localName = gr::algorithm::fileio::localFileName("uri", uri.value);
+        if (!localName.has_value()) {
+            return std::unexpected(localName.error());
+        }
 
         std::string actualPath;
         if (mode.value == Mode::multi) {
-            std::filesystem::path filePath(uri.value);
+            std::filesystem::path filePath(localName.value());
             const auto            now   = std::chrono::system_clock::now();
             const auto            timeT = std::chrono::system_clock::to_time_t(now);
             std::array<char, 32>  timeBuf{};
@@ -805,7 +809,7 @@ private:
             actualPath = (filePath.parent_path() / std::format("{}_{}_{}", std::string_view(timeBuf.data()), _fileCounter++, filePath.filename().string())).string();
             detail::ensureDirectoryExists(actualPath);
         } else {
-            actualPath = uri.value;
+            actualPath = localName.value();
             detail::ensureDirectoryExists(actualPath);
         }
 

@@ -155,16 +155,18 @@ private:
         closeFile();
         _totalBytesWrittenFile = 0UZ;
 
-        detail::ensureDirectoryExists(file_name.value);
-
-        std::filesystem::path filePath(file_name.value);
+        const auto localName = gr::algorithm::fileio::localFileName("file_name", file_name.value);
+        if (!localName.has_value()) {
+            throw gr::exception(localName.error().message);
+        }
+        std::filesystem::path filePath(localName.value());
         // Open file handle based on mode
         switch (mode) {
         case Mode::overwrite: {
-            _actualFileName = file_name.value;
+            _actualFileName = localName.value();
         } break;
         case Mode::append: {
-            _actualFileName = file_name.value;
+            _actualFileName = localName.value();
         } break;
         case Mode::multi: {
             // _fileCounter ensures that the filenames are unique and still sortable by date-time, with an additional counter to handle rapid successive file creation.
@@ -221,22 +223,27 @@ Important: this implementation assumes a host-order, CPU architecture specific b
         }
     }
 
-    // Throws when there is nothing to read. That is when the reader cannot open the file, or, in multi mode, when the
-    // directory cannot be listed or no file name in it holds the base name.
+    // Throws when there is nothing to read. That is when the file name is neither a plain path nor a file: address, when
+    // the reader cannot open the file, or, in multi mode, when the directory cannot be listed or no file name in it
+    // holds the base name.
     void start() {
         _totalBytesRead = 0UZ;
         _filesToRead.clear();
         _reader       = {};
         _readerActive = false;
 
-        std::filesystem::path filePath(file_name.value);
+        const auto localName = gr::algorithm::fileio::localFileName("file_name", file_name.value);
+        if (!localName.has_value()) {
+            throw gr::exception(localName.error().message);
+        }
+        std::filesystem::path filePath(localName.value());
         switch (mode) {
         case Mode::overwrite:
         case Mode::append: {
             _filesToRead.insert(filePath);
         } break;
         case Mode::multi: {
-            const auto matchingFiles = detail::getSortedFilesContaining(file_name.value);
+            const auto matchingFiles = detail::getSortedFilesContaining(localName.value());
             if (matchingFiles.empty()) {
                 throw gr::exception(std::format("no file in '{}' has a name containing '{}'", detail::parentDirectory(filePath).string(), filePath.filename().string()));
             }
