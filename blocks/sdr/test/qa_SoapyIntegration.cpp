@@ -28,6 +28,8 @@
 #include <gnuradio-4.0/testing/NullSources.hpp>
 #include <gnuradio-4.0/testing/TagMonitors.hpp>
 
+#include "SoapyTestEnvironment.hpp"
+
 using namespace boost::ut;
 using CF32 = std::complex<float>;
 
@@ -85,13 +87,14 @@ bool hardwareRequested() {
 
 /// Without GR_SDR_TEST_HARDWARE=1, SOAPY_SDR_ROOT names an empty directory and SOAPY_SDR_PLUGIN_PATH the loopback
 /// module's directory. SoapySDR then loads the loopback module alone. With it, the loopback module's directory joins the
-/// host's module folders unless SOAPY_SDR_PLUGIN_PATH is set. The flag is initialized ahead of the suites below.
+/// host's module folders unless SOAPY_SDR_PLUGIN_PATH is set. The loopback cases need the module in both runs, so either
+/// run stops and names GR_SDR_TEST_SOAPY_MODULE_DIR when it is unset. The flag is initialized ahead of the suites below.
 const bool kHardwareRequested = [] {
     const bool requested = hardwareRequested();
     if (!requested) {
-        setenv("SOAPY_SDR_ROOT", GR_SDR_TEST_SOAPY_EMPTY_ROOT, 1);
+        setenv("SOAPY_SDR_ROOT", soapyEmptyRoot().c_str(), 1);
     }
-    setenv("SOAPY_SDR_PLUGIN_PATH", GR_SDR_TEST_SOAPY_MODULE_DIR, requested ? 0 : 1);
+    setenv("SOAPY_SDR_PLUGIN_PATH", soapyModuleDirectory().c_str(), requested ? 0 : 1);
     return requested;
 }();
 
@@ -348,7 +351,7 @@ const boost::ut::suite<"SoapySDR modules"> moduleTests = [] {
         const std::vector<std::string> modules = soapy::getSoapySDRModules();
         expect(!modules.empty()) << "the loopback module is listed";
         for (const auto& module : modules) {
-            expect(module.starts_with(GR_SDR_TEST_SOAPY_MODULE_DIR "/")) << module;
+            expect(module.starts_with(soapyModuleDirectory() + "/")) << module;
         }
     };
 };
@@ -1061,16 +1064,16 @@ const boost::ut::suite<"SoapySink + SoapySource shared device"> txRxTests = [] {
     "shared device handle verified via Device::make()"_test = [] {
         auto dev1 = soapy::Device::make({{"driver", "loopback"}});
         auto dev2 = soapy::Device::make({{"driver", "loopback"}});
-        expect(dev1.has_value());
-        expect(dev2.has_value());
+        expect(fatal(dev1.has_value()));
+        expect(fatal(dev2.has_value()));
         expect(eq(dev1->get(), dev2->get())) << "same kwargs should return same device handle";
     };
 
     "device handle survives after one user resets"_test = [] {
         auto dev1 = soapy::Device::make({{"driver", "loopback"}});
         auto dev2 = soapy::Device::make({{"driver", "loopback"}});
-        expect(dev1.has_value());
-        expect(dev2.has_value());
+        expect(fatal(dev1.has_value()));
+        expect(fatal(dev2.has_value()));
         auto* rawPtr = dev1->get();
         dev1->reset();
         expect(eq(dev1->get(), static_cast<SoapySDRDevice*>(nullptr)));

@@ -61,3 +61,21 @@ driver (`rtlsdr` or `lime`). With `DISABLE_SENSITIVE_TESTS` in the environment,
 none of them runs. The parameterized Basic API test always opens the loopback
 device. It opens a listed hardware device only when the hardware cases run.
 Under ctest the test loads only the loopback module, whatever the variable says.
+
+The test binaries carry no path of the build tree. ctest hands each test that
+loads the loopback module its two directories through the environment:
+
+- `GR_SDR_TEST_SOAPY_MODULE_DIR`, the loopback module's directory,
+  `<build-dir>/blocks/sdr/test/soapy_modules`
+- `GR_SDR_TEST_SOAPY_EMPTY_ROOT`, the empty directory that stands in for
+  SoapySDR's root, `<build-dir>/blocks/sdr/test/soapy_empty_root`
+
+A run outside ctest, or of tests installed elsewhere, sets them itself. A test
+that needs one stops and names it when it is unset. A hardware run of
+`qa_SoapyIntegration` needs the module directory for its loopback cases:
+
+```sh
+GR_SDR_TEST_HARDWARE=1 \
+GR_SDR_TEST_SOAPY_MODULE_DIR=<build-dir>/blocks/sdr/test/soapy_modules \
+<build-dir>/blocks/sdr/test/qa_SoapyIntegration
+```
