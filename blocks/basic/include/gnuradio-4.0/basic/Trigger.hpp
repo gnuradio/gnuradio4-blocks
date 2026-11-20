@@ -76,7 +76,9 @@ The information is stored (info only) in `trigger_name`, `trigger_time`, `trigge
         _trigger.setThreshold(threshold);
 
         if (newSettings.contains("trigger_time") || newSettings.contains("trigger_offset")) {
-            _now = trigger_time + static_cast<std::uint64_t>(1e9f * trigger_offset);
+            // converting a negative float straight to std::uint64_t is undefined behavior
+            const float offsetNs = 1e9f * trigger_offset;
+            _now                 = trigger_time + (offsetNs >= 0.f ? static_cast<std::uint64_t>(offsetNs) : static_cast<std::uint64_t>(static_cast<std::int64_t>(offsetNs)));
         }
         if (newSettings.contains("offset") || newSettings.contains("threshold")) {
             _trigger.reset();
@@ -122,11 +124,12 @@ The information is stored (info only) in `trigger_name`, `trigger_time`, `trigge
             forwardTags(edgePos);
 
             const UncertainValue<float> edgeIdxOffset = UncertainValue<float>{static_cast<float>(_trigger.lastEdgeIdx)} + _trigger.lastEdgeOffset;
-            const float                 relOffset     = gr::value(edgeIdxOffset) * static_cast<float>(_period); // nanoseconds
+            const float                 relOffset     = gr::value(edgeIdxOffset) * static_cast<float>(_period); // nanoseconds from the current sample to the edge, zero or negative
+            const std::uint64_t         edgeTime      = _now - static_cast<std::uint64_t>(static_cast<std::int64_t>(relOffset));
             outputSpan.publishTag(
                 property_map{
                     {gr::tag::TRIGGER_NAME.key(), triggerName},                                                                  //
-                    {gr::tag::TRIGGER_TIME.key(), _now - static_cast<uint64_t>(relOffset)},                                      //
+                    {gr::tag::TRIGGER_TIME.key(), edgeTime},                                                                     //
                     {"trigger_time_error", static_cast<uint64_t>(gr::uncertainty(edgeIdxOffset) * static_cast<float>(_period))}, //
                     {gr::tag::TRIGGER_OFFSET.key(), relOffset / 1e9f},                                                           // seconds, as Tag.hpp declares the key
                     {gr::tag::CONTEXT.key(), context}                                                                            //
