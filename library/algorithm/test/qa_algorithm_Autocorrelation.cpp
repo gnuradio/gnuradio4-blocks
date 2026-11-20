@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-#include <magic_enum.hpp>
+#include <gnuradio-4.0/meta/MagicEnum.hpp>
 
 #include <gnuradio-4.0/algorithm/analysis/Autocorrelation.hpp>
 #include <gnuradio-4.0/algorithm/rng/GaussianNoise.hpp>

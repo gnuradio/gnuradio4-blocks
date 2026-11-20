@@ -1,6 +1,6 @@
 add_library(gr-zeromq INTERFACE)
 add_library(gnuradio4::gr-zeromq ALIAS gr-zeromq)
-target_link_libraries(gr-zeromq INTERFACE gnuradio4::gnuradio-core gnuradio4::gnuradio-algorithm ${GR4_CPPZMQ_TARGET})
+target_link_libraries(gr-zeromq INTERFACE gnuradio4::gnuradio-core gnuradio4::gnuradio-algorithm cppzmq)
 target_include_directories(gr-zeromq INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
                                                $<INSTALL_INTERFACE:include/>)
 install(TARGETS gr-zeromq EXPORT gnuradio4Targets)

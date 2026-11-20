@@ -43,8 +43,34 @@ enabled.
 
 The project requires CMake 3.27 or newer, a C++23 compiler, and compatible
 installations of the `gnuradio4` and `GnuRadioBlockLib` CMake packages, both
-installed by core. A default test build also requires Boost.UT and cpp-httplib.
-Point `CMAKE_PREFIX_PATH` at the prefix containing the installed core SDK:
+installed by core.
+
+Third-party dependencies are located with `find_package` and never downloaded
+by this build. They are:
+
+| Package      | Minimum | Needed for                                                      |
+| ------------ | ------- | --------------------------------------------------------------- |
+| `magic_enum` | 0.9.3   | always                                                          |
+| `vir-simd`   | 0.4.4   | always                                                          |
+| `ut`         | 2.3.1   | `ENABLE_TESTING` or `ENABLE_EXAMPLES` (Boost.UT)                |
+| `httplib`    | 0.18.1  | `ENABLE_TESTING`, except under Emscripten                       |
+| `SoapySDR`   | 0.8     | the SoapySDR blocks of `GR4_ENABLE_SDR`                         |
+| `cppzmq`     | 4.7     | `GR4_ENABLE_ZEROMQ`; the ZMQ transports of `GR4_ENABLE_NETWORK` |
+| `libsoundio` | 2.0     | `GR4_ENABLE_AUDIO`, except under Emscripten                     |
+| `Python3`    | 3.12    | `GR4_ENABLE_PYTHON`, with NumPy                                 |
+
+cppzmq's package finds libzmq itself. libsoundio ships no package of its own,
+so `cmake/Findlibsoundio.cmake` first takes the one gr-deps installs for it (a
+CMake config and, when built with CMake 4.3 or newer, a CPS file), then
+pkg-config, then a plain search for its library and header. A copy found by the
+plain search alone carries no version to check.
+
+The [gr-deps](https://github.com/gnuradio/gnuradio4-deps) superbuild
+builds all of them except Python into one prefix
+(`-DTARGET_GR_CORE=ON -DTARGET_GR_BLOCKS=ON`).
+
+Point `CMAKE_PREFIX_PATH` at the prefixes containing the installed core SDK and
+the dependencies:
 
 ```bash
 git clone https://github.com/gnuradio/gnuradio4-blocks.git
@@ -52,7 +78,7 @@ cd gnuradio4-blocks
 
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DCMAKE_PREFIX_PATH=/path/to/gnuradio4-prefix
+  "-DCMAKE_PREFIX_PATH=/path/to/gnuradio4-prefix;/path/to/gr-deps-prefix"
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
@@ -65,16 +91,16 @@ cmake --install build --prefix /path/to/gnuradio4-prefix
 
 Useful configuration options are:
 
-- `ENABLE_EXAMPLES` (default: `ON`): build examples and benchmarks
+- `ENABLE_EXAMPLES` (default: `ON`): build examples and benchmarks; the
+  benchmarks use core's harness, so core must be built with its tests
 - `ENABLE_TESTING` (default: `ON`): build and register tests
 - `GR4_ENABLE_AUDIO` (default: `OFF`): build audio blocks; native builds use
   libsoundio, while Emscripten builds use the Web Audio backend
 - `GR4_ENABLE_SDR` (default: `OFF`): build the SDR block family; its SoapySDR
-  source/sink blocks build when SoapySDR is found
+  source/sink blocks build when SoapySDR 0.8 or newer is found
 - `GR4_ENABLE_HTTP_TESTS` (default: `OFF`): enable HTTP integration tests
 - `GR4_ENABLE_PYTHON` (default: `OFF`): build the Python block and its test;
   needs Python 3.12 or later with its development files and NumPy
-- `GR_USE_FETCHCONTENT_DEPS` (default: `OFF`): allow CMake to fetch Boost.UT
 - `GR4_PKG_VERSION` (default: `4.0.0-git`): version recorded in the installed
   `gnuradio4Blocks.pc` metadata
 

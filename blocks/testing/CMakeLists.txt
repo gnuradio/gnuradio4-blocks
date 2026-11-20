@@ -1,7 +1,8 @@
 add_library(gr-testing INTERFACE)
 add_library(gnuradio4::gr-testing ALIAS gr-testing)
-target_link_libraries(gr-testing INTERFACE gnuradio4::gnuradio-core gnuradio4::gnuradio-algorithm
-                                           gnuradio4::ut-benchmark)
+# bm_test_helper.hpp includes core's benchmark.hpp, so whoever includes it links gnuradio4::ut-benchmark as well; the
+# family itself does not, which keeps Boost.UT out of a build without tests or benchmarks
+target_link_libraries(gr-testing INTERFACE gnuradio4::gnuradio-core gnuradio4::gnuradio-algorithm)
 target_include_directories(gr-testing INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
                                                 $<INSTALL_INTERFACE:include/>)
 install(TARGETS gr-testing EXPORT gnuradio4Targets)

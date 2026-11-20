@@ -33,8 +33,8 @@ target_link_libraries(
   INTERFACE gnuradio4::gnuradio-options
             gnuradio4::gnuradio-core
             gnuradio4::gnuradio-meta
-            gnuradio4::vir
-            gnuradio4::magic_enum)
+            vir-simd::vir-simd
+            magic_enum::magic_enum)
 
 if(GR_HTTP_ENABLED AND NOT EMSCRIPTEN)
   target_link_libraries(gnuradio-algorithm INTERFACE cpr::cpr)

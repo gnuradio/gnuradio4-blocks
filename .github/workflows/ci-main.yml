@@ -90,6 +90,18 @@ jobs:
           apt-get install -y --no-install-recommends gnuradio python3-zmq
           python3 -c 'from gnuradio import blocks, gr, zeromq; import pmt; print(gr.version())'
 
+      # the core SDK image carries core's own dependencies; the superbuild adds the ones only gr-blocks needs (SoapySDR,
+      # libzmq, cppzmq, libsoundio) and prepends its prefix to CMAKE_PREFIX_PATH
+      - name: Build the gr-blocks dependencies
+        if: matrix.cmake_wrapper == null
+        uses: johnwparent/gnuradio4-deps@b8ac47d5af3b482bc7d8c37c0fcadc06f45d4855
+        with:
+          target-gr-core: OFF
+          target-gr-blocks: ON
+          generator: Ninja
+          c-compiler: ${{ matrix.cc }}
+          cxx-compiler: ${{ matrix.cxx }}
+
       - name: Configure
         if: matrix.cmake_wrapper == null
         shell: bash
