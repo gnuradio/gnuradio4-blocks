@@ -730,7 +730,7 @@ const boost::ut::suite<"PacketToDataSet boundary under the scheduler"> boundaryS
         expect(graph.connect<"out", "in">(convert, records, EdgeParameters{.minBufferSize = 2UZ}).has_value());
         expect(graph.connect<"reject", "in">(convert, refused).has_value());
 
-        scheduler::Simple scheduler;
+        scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 

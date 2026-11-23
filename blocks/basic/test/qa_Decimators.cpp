@@ -242,7 +242,7 @@ template<typename TBlock>
     if (!connected) {
         return run;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     run.ran     = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     run.samples = sink._samples.size();
     run.values  = sink._samples;

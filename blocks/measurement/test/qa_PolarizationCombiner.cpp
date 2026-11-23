@@ -197,7 +197,7 @@ template<typename TScheduler>
     if (!connected) {
         return notRun;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     if (!scheduler.exchange(std::move(graph)).has_value()) {
         return notRun;
     }
@@ -654,7 +654,7 @@ const boost::ut::suite<"PolarizationCombiner"> polarizationCombinerTests = [] {
             if (!graph.connect<"out", "in0">(src0, block).has_value() || !graph.connect<"out", "in1">(src1, block).has_value() || !graph.connect<"out", "in">(block, outS).has_value() || !graph.connect<"measurements", "in">(block, recS).has_value()) {
                 return outcome;
             }
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             if (!scheduler.exchange(std::move(graph)).has_value()) {
                 return outcome;
             }

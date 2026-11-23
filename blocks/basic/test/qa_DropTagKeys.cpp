@@ -48,7 +48,7 @@ template<ProcessFunction kSinkFunction = ProcessFunction::USE_PROCESS_ONE, typen
     boost::ut::expect(graph.connect<"out", "in">(source, block).has_value()) << boost::ut::fatal;
     boost::ut::expect(graph.connect<"out", "in">(block, sink).has_value()) << boost::ut::fatal;
 
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     boost::ut::expect(scheduler.exchange(std::move(graph)).has_value()) << boost::ut::fatal;
     boost::ut::expect(scheduler.runAndWait().has_value()) << "the run ends without an error";
     return {std::vector<float>(sink._samples.begin(), sink._samples.end()), sink._tags};
@@ -202,7 +202,7 @@ const boost::ut::suite<"DropTagKeys"> dropTagKeysTests = [] {
         expect(graph.connect<"out", "in">(source, block).has_value()) << fatal;
         expect(graph.connect<"out", "in">(block, sink).has_value()) << fatal;
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value()) << fatal;
         const auto result = scheduler.runAndWait();
         expect(result.has_value()) << (result.has_value() ? std::string() : std::string(result.error().message));

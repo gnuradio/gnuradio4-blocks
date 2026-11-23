@@ -706,7 +706,7 @@ const boost::ut::suite<"PowerMeter"> powerMeterTests = [] {
             boost::ut::expect(graph.connect<"out", "in">(source, meter).has_value());
             boost::ut::expect(graph.connect<"records", "in">(meter, sink).has_value());
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
             boost::ut::expect(scheduler.runAndWait().has_value());
             return std::tuple{meter.level(), meter.coverage(), sink.received.size(), sink.tags};
@@ -923,7 +923,7 @@ const boost::ut::suite<"PowerMeter"> powerMeterTests = [] {
         expect(graph.connect<"out", "in">(source, meter).has_value());
         expect(graph.connect<"records", "in">(meter, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -1067,7 +1067,7 @@ const boost::ut::suite<"PowerMeter"> powerMeterTests = [] {
             boost::ut::expect(graph.connect<"out", "in">(source, meter).has_value());
             boost::ut::expect(graph.connect<"records", "in">(meter, sink).has_value());
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
             const bool                                   ran = scheduler.runAndWait().has_value();
             std::vector<std::pair<std::uint64_t, float>> records;
@@ -1175,7 +1175,7 @@ const boost::ut::suite<"PowerMeter"> powerMeterTests = [] {
         const std::string bareLine     = std::format("'{}' keeps returning OK", bare.unique_name);
         const std::string recordedLine = std::format("'{}' keeps returning OK", recorded.unique_name);
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
 
         StderrCapture capture;

@@ -1130,7 +1130,7 @@ const boost::ut::suite<"NoiseBlanker"> noiseBlankerTests = [] {
         expect(graph.connect<"out", "in">(source, block).has_value());
         expect(graph.connect<"out", "in">(block, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -1161,7 +1161,7 @@ const boost::ut::suite<"NoiseBlanker"> noiseBlankerTests = [] {
             boost::ut::expect(graph.connect<"out", "in">(source, block).has_value());
             boost::ut::expect(graph.connect<"out", "in">(block, sink).has_value());
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
             boost::ut::expect(scheduler.runAndWait().has_value());
             const auto read = [&block](const char* key) {
@@ -1345,7 +1345,7 @@ const boost::ut::suite<"NoiseBlanker"> noiseBlankerTests = [] {
             boost::ut::expect(graph.connect<"out", "in">(source, block).has_value());
             boost::ut::expect(graph.connect<"out", "in">(block, sink).has_value());
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             boost::ut::expect(scheduler.exchange(std::move(graph)).has_value());
             const bool      ran = scheduler.runAndWait().has_value();
             std::vector<CF> out;

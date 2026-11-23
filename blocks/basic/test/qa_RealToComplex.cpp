@@ -188,7 +188,7 @@ struct GraphRun {
     if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"out", "in">(block, sink).has_value()) {
         return run;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     run.ran     = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     run.samples = sink._samples;
     run.tags    = sink._tags;
@@ -477,7 +477,7 @@ const boost::ut::suite<"RealToComplex"> realToComplexTests = [] {
         auto&     block  = graph.emplaceBlock<Block>();
         auto&     sink   = graph.emplaceBlock<EndSink<CF>>();
         expect(fatal(graph.connect<"out", "in">(source, block).has_value() && graph.connect<"out", "in">(block, sink).has_value()));
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(fatal(scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value())) << "the run completes";
         expect(fatal(eq(sink._samples.size(), kSamples / 2UZ)));
 
@@ -535,7 +535,7 @@ const boost::ut::suite<"RealToComplex"> realToComplexTests = [] {
         auto&      block  = graph.emplaceBlock<Block>({{"transition", 0.04f}});
         auto&      sink   = graph.emplaceBlock<EndSink<CF>>();
         expect(fatal(graph.connect<"out", "in">(source, block).has_value() && graph.connect<"out", "in">(block, sink).has_value()));
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(fatal(scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value())) << "the run completes";
 
         const auto reference = byKernel(0.04f, x);

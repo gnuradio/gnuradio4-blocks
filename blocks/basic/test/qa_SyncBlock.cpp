@@ -73,7 +73,7 @@ void runTest(const TestParams& par) {
         expect(graph.connect(syncBlock, "outputs#"s + std::to_string(i), *sinks[i], "in"s).has_value());
     }
 
-    gr::scheduler::Simple sched;
+    gr::scheduler::Simple<> sched;
     if (auto ret = sched.exchange(std::move(graph)); !ret) {
         throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
     }

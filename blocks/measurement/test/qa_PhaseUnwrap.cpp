@@ -141,7 +141,7 @@ struct Scene {
     if (!graph.connect<"out", "in">(source, block).has_value() || !graph.connect<"cycles", "in">(block, cyclesSink).has_value() || !graph.connect<"phase", "in">(block, phaseSink).has_value()) {
         return {};
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     if (!scheduler.exchange(std::move(graph)).has_value()) {
         return {};
     }

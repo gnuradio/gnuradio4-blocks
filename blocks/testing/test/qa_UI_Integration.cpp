@@ -74,7 +74,7 @@ const boost::ut::suite TagTests = [] {
         expect(testGraph.connect<"out", "in">(funcGen, sink).has_value());
         expect(testGraph.connect<"out", "in">(funcGen, uiSink).has_value());
 
-        scheduler::Simple sched;
+        scheduler::Simple<> sched;
         if (auto ret = sched.exchange(std::move(testGraph)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }
@@ -111,7 +111,7 @@ const boost::ut::suite TagTests = [] {
         expect(testGraph.connect<"out", "clk_in">(clockSrc, funcGen).has_value());
         expect(testGraph.connect<"out", "in">(funcGen, uiSink).has_value());
 
-        scheduler::Simple sched;
+        scheduler::Simple<> sched;
         if (auto ret = sched.exchange(std::move(testGraph)); !ret) {
             throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
         }

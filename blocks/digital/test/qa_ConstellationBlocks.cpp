@@ -456,7 +456,7 @@ const boost::ut::suite<"constellation blocks"> constellationBlockTests = [] {
         expect(graph.connect<"out", "in">(source, mapper).has_value());
         expect(graph.connect<"out", "in">(mapper, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -488,7 +488,7 @@ const boost::ut::suite<"constellation blocks"> constellationBlockTests = [] {
         expect(graph.connect<"out", "in">(encoder, decoder).has_value());
         expect(graph.connect<"out", "in">(decoder, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 

@@ -180,7 +180,7 @@ template<typename T>
         phaseSink = &graph.emplaceBlock<RecordSink>();
         boost::ut::expect(graph.connect<"phase", "in">(block, *phaseSink).has_value());
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     if (!scheduler.exchange(std::move(graph)).has_value()) {
         boost::ut::expect(false) << "the scheduler takes the graph";
         return {};
@@ -1161,7 +1161,7 @@ const suite<"autocorrelation scenes"> _acfScenes = [] {
             expect(graph.connect<"out", "in">(source, acf).has_value());
             expect(graph.connect<"out", "in">(acf, detector).has_value());
             expect(graph.connect<"out", "in">(detector, sink).has_value());
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             if (!scheduler.exchange(std::move(graph)).has_value()) {
                 expect(false) << "the scheduler takes the graph";
                 return std::vector<gr::DataSet<float>>{};

@@ -79,7 +79,7 @@ void execute_selector_test(TestParams params, std::source_location location = st
     expect(monitorSink->settings().applyStagedParameters().forwardParameters.empty());
     expect(graph.connect(*selector, "monitor"s, *monitorSink, "in"s).has_value());
 
-    gr::scheduler::Simple sched;
+    gr::scheduler::Simple<> sched;
     if (auto ret = sched.exchange(std::move(graph)); !ret) {
         throw std::runtime_error(std::format("failed to initialize scheduler: {}", ret.error()));
     }
@@ -467,7 +467,7 @@ const boost::ut::suite SelectorTest = [] {
         expect(graph.connect(selector, "outputs#0"s, sink, "in"s).has_value());
         expect(graph.connect(selector, "monitor"s, monitorSink, "in"s, {.minBufferSize = kMonitorBuffer}).has_value());
 
-        gr::scheduler::Simple sched;
+        gr::scheduler::Simple<> sched;
         expect(sched.exchange(std::move(graph)).has_value());
         expect(sched.runAndWait().has_value());
 

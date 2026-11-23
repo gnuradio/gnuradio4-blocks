@@ -969,7 +969,7 @@ const boost::ut::suite<"DataSetToStream boundary under the scheduler"> boundaryS
         expect(graph.connect<"out", "in">(convert, samples, EdgeParameters{.minBufferSize = 1024UZ}).has_value());
         expect(graph.connect<"reject", "in">(convert, refused).has_value());
 
-        scheduler::Simple scheduler;
+        scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 

@@ -246,7 +246,7 @@ const boost::ut::suite<"DesignedFilter"> designedFilterTests = [] {
 
         const std::size_t at96k = gr::filter::fir::design::tapCountOf({.sampleRate = 96000.0, .cutoff = 10000.0, .transitionWidth = 2000.0});
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 

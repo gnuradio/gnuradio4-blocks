@@ -304,7 +304,7 @@ struct TaggedRun {
     if (!graph.connect<"out", "in">(source, dc).has_value() || !graph.connect<"out", "in">(dc, sink).has_value()) {
         return run;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     run.ran         = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     run.samples     = std::vector<CF>(sink._samples.begin(), sink._samples.end());
     run.tau         = dc.tau.value;
@@ -362,7 +362,7 @@ struct LoopRun {
     if (!graph.connect<"out", "in">(source, swap).has_value() || !graph.connect<"out", "in">(swap, loop).has_value() || !graph.connect<"out", "in">(loop, derotated).has_value() || !graph.connect<"phase", "in">(loop, phase).has_value() || !graph.connect<"freq", "in">(loop, frequency).has_value()) {
         return run;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     run.ran       = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     run.derotated = std::vector<CF>(derotated._samples.begin(), derotated._samples.end());
     run.phase     = std::vector<float>(phase._samples.begin(), phase._samples.end());
@@ -383,7 +383,7 @@ struct LoopRun {
     if (!graph.connect<"out", "in">(source, swap).has_value() || !graph.connect<"out", "in">(swap, sink).has_value()) {
         return received;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     if (!scheduler.exchange(std::move(graph)).has_value() || !scheduler.runAndWait().has_value()) {
         return received;
     }
@@ -414,7 +414,7 @@ constexpr std::size_t kSwapCount = 1000UZ;
     if (!graph.connect<"out", "in">(source, swap).has_value() || !graph.connect<"out", "in">(swap, sink).has_value()) {
         return run;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     run.ran     = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     run.samples = std::vector<CF>(sink._samples.begin(), sink._samples.end());
     run.tags    = sink._tags;
@@ -442,7 +442,7 @@ constexpr std::size_t kHeldChunk = 16UZ;
     if (!graph.connect<"out", "in">(source, swap).has_value() || !graph.connect<"out", "in">(swap, sink).has_value()) {
         return run;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     run.ran     = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     run.samples = std::vector<CF>(sink._samples.begin(), sink._samples.end());
     run.tags    = sink._tags;
@@ -555,7 +555,7 @@ template<typename TBlock>
     if (!graph.connect<"out", "in">(source, dc).has_value() || !graph.connect<"out", "in">(dc, sink).has_value()) {
         return run;
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     run.ran     = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     run.samples = std::vector<CF>(sink._samples.begin(), sink._samples.end());
     run.tags    = std::vector<gr::Tag>(sink._tags.begin(), sink._tags.end());
@@ -645,7 +645,7 @@ namespace {
     if (!graph.connect<"out", "in">(source, swap).has_value() || !graph.connect<"out", "in">(swap, recorder).has_value() || !graph.connect<"out", "in">(recorder, sink).has_value()) {
         return {};
     }
-    gr::scheduler::Simple scheduler;
+    gr::scheduler::Simple<> scheduler;
     ran = scheduler.exchange(std::move(graph)).has_value() && scheduler.runAndWait().has_value();
     return recorder._endTags;
 }
@@ -969,7 +969,7 @@ const boost::ut::suite<"IqCorrection"> iqCorrectionTests = [] {
         expect(graph.connect<"out", "in">(swap, dc).has_value());
         expect(graph.connect<"out", "in">(dc, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 

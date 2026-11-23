@@ -938,7 +938,7 @@ const boost::ut::suite<"DataSetToPacket under the scheduler"> schedulerTests = [
         expect(graph.connect<"ok", "in">(checker, convert).has_value());
         expect(graph.connect<"out", "in">(convert, sink).has_value());
 
-        gr::scheduler::Simple scheduler;
+        gr::scheduler::Simple<> scheduler;
         expect(scheduler.exchange(std::move(graph)).has_value());
         expect(scheduler.runAndWait().has_value());
 
@@ -994,7 +994,7 @@ const boost::ut::suite<"DataSetToPacket under the scheduler"> schedulerTests = [
                 expect(graph.connect<"reject", "in">(convert, refused).has_value());
             }
 
-            gr::scheduler::Simple scheduler;
+            gr::scheduler::Simple<> scheduler;
             expect(scheduler.exchange(std::move(graph)).has_value());
             expect(scheduler.runAndWait().has_value());
             return std::pair<std::size_t, std::vector<std::size_t>>{refused._items.size(), offsetsOf(std::span<const Tag>(refused._tags), "discard_reason")};
