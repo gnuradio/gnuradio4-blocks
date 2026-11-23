@@ -15,6 +15,7 @@
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/DataSet.hpp>
 #include <gnuradio-4.0/math/Unary.hpp>
+#include <gnuradio-4.0/meta/Attributes.hpp>
 #include <gnuradio-4.0/meta/UncertainValue.hpp>
 
 #include <vir/simd_bit.h>
@@ -89,7 +90,7 @@ struct Int32FromFloat {
 /// `ScalingConvert`. Every other conversion from `float` or `double` keeps its result.
 template<typename R, typename T>
 requires std::is_arithmetic_v<T> && std::is_arithmetic_v<R>
-[[gnu::always_inline, nodiscard]] constexpr R saturatingCast(T value) noexcept {
+[[nodiscard]] GR_ALWAYS_INLINE constexpr R saturatingCast(T value) noexcept {
     using Limits = std::numeric_limits<R>;
     if constexpr (kRoundsFloatToInt32<T, R>) {
         // a NaN clears its bits; below 2^23 in magnitude, adding and subtracting 2^23 with the sign of the value
@@ -149,7 +150,7 @@ requires std::is_arithmetic_v<T> && std::is_arithmetic_v<R>
 
 template<typename R, gr::meta::any_simd V>
 requires std::is_arithmetic_v<R>
-[[gnu::always_inline, nodiscard]] constexpr auto saturatingCast(const V& value) noexcept {
+[[nodiscard]] GR_ALWAYS_INLINE constexpr auto saturatingCast(const V& value) noexcept {
     using T       = typename V::value_type;
     using RetType = vir::stdx::rebind_simd_t<R, V>;
     using Limits  = std::numeric_limits<R>;

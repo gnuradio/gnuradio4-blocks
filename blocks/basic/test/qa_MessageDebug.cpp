@@ -8,7 +8,11 @@
 #include <string_view>
 #include <utility>
 
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Message.hpp>
@@ -70,6 +74,23 @@ using gr::blocks::basic::MessageDebug;
 using qa_message_debug::IndexedMessageSource;
 using qa_message_debug::SettingsChangingSource;
 
+/// the descriptor calls StdoutCapture needs; the CRT spells them with a leading underscore and deprecates the POSIX names
+namespace stdout_fd {
+#ifdef _WIN32
+inline constexpr int kStdout = 1;
+inline int           duplicate(int fd) { return ::_dup(fd); }
+inline int           duplicateTo(int fd, int target) { return ::_dup2(fd, target); }
+inline int           closeFd(int fd) { return ::_close(fd); }
+inline int           descriptorOf(std::FILE* file) { return ::_fileno(file); }
+#else
+inline constexpr int kStdout = STDOUT_FILENO;
+inline int           duplicate(int fd) { return ::dup(fd); }
+inline int           duplicateTo(int fd, int target) { return ::dup2(fd, target); }
+inline int           closeFd(int fd) { return ::close(fd); }
+inline int           descriptorOf(std::FILE* file) { return ::fileno(file); }
+#endif
+} // namespace stdout_fd
+
 /// redirects standard output to a temporary file while it lives, and returns what was written
 class StdoutCapture {
     std::FILE* _file  = std::tmpfile();
@@ -78,8 +99,8 @@ class StdoutCapture {
 public:
     StdoutCapture() {
         std::fflush(stdout);
-        _saved = ::dup(STDOUT_FILENO);
-        ::dup2(::fileno(_file), STDOUT_FILENO);
+        _saved = stdout_fd::duplicate(stdout_fd::kStdout);
+        stdout_fd::duplicateTo(stdout_fd::descriptorOf(_file), stdout_fd::kStdout);
     }
     StdoutCapture(const StdoutCapture&)            = delete;
     StdoutCapture& operator=(const StdoutCapture&) = delete;
@@ -102,8 +123,8 @@ private:
     void restore() {
         if (_saved >= 0) {
             std::fflush(stdout);
-            ::dup2(_saved, STDOUT_FILENO);
-            ::close(_saved);
+            stdout_fd::duplicateTo(_saved, stdout_fd::kStdout);
+            stdout_fd::closeFd(_saved);
             _saved = -1;
         }
     }
