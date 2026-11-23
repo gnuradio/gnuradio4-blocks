@@ -5,6 +5,7 @@
 #include <gnuradio-4.0/BlockRegistry.hpp>
 #include <gnuradio-4.0/CircularBuffer.hpp>
 #include <gnuradio-4.0/DataSet.hpp>
+#include <gnuradio-4.0/Export.hpp>
 #include <gnuradio-4.0/HistoryBuffer.hpp>
 #include <gnuradio-4.0/Tag.hpp>
 #include <gnuradio-4.0/TriggerMatcher.hpp>
@@ -457,9 +458,18 @@ private:
     }
 };
 
+// The export attribute is load-bearing: this project builds with hidden visibility (CMAKE_CXX_VISIBILITY_PRESET and
+// CMAKE_VISIBILITY_INLINES_HIDDEN), which would otherwise give every shared object its own copy of this function's
+// local static, and so its own registry. Default visibility lets the dynamic linker bind one instance across the
+// executable and every plugin.
+//
+// Windows has no such interposition: each module that includes this header keeps its own registry, so a sink created
+// in a plugin DLL is not visible to a host that queries the registry. One registry there needs this function moved out
+// of line into a single shared library.
+//
 // The registry is never destroyed. A sink held by an object of static storage duration unregisters during exit, and
 // it may do so after every other function-local static is gone.
-__attribute__((visibility("default"))) inline DataSinkRegistry& globalDataSinkRegistry() {
+GNURADIO_EXPORT inline DataSinkRegistry& globalDataSinkRegistry() {
     static auto* const instance = new DataSinkRegistry;
     return *instance;
 }
