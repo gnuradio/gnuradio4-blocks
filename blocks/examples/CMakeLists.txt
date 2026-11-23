@@ -4,7 +4,7 @@ set(GR4_EXAMPLE_GRAPHS_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/gnuradio-4.0/exampl
 install(
   DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/graphs/"
   DESTINATION "${GR4_EXAMPLE_GRAPHS_INSTALL_DIR}"
-  COMPONENT gr4-example-graphs)
+  COMPONENT gr4_example_graphs)
 
 # the qa constructs each block the graphs name by id and links the shared library of each family
 if(ENABLE_TESTING

@@ -36,6 +36,7 @@ option(GR4_ENABLE_HTTP_TESTS "Build HTTP integration tests" OFF)
 option(GR4_ENABLE_PYTHON "Build the Python block and its test (needs Python 3.12 or later with NumPy)" OFF)
 option(GR_USE_FETCHCONTENT_DEPS "Allow CMake to download selected third-party dependencies with FetchContent" OFF)
 option(WARNINGS_AS_ERRORS "Enable -Werror flags" ON)
+option(GR_PACKAGING "Allow GNU Radio 4 blocks to be packaged with CPack" OFF)
 
 # A prefix this tree has already been installed into. What an export writes into an installed config file is read by
 # consumers and by nothing inside the build, so the legs that check it configure a separate project against a real
@@ -341,3 +342,7 @@ install(
   EXPORT ${GR4_EXPORT_NAME}
   NAMESPACE gnuradio4::
   DESTINATION "${GR4_CMAKE_INSTALL_DIR}")
+
+if(GR_PACKAGING)
+  include(cmake/CPackConfig.cmake)
+endif()
