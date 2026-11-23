@@ -20,7 +20,9 @@ gr_add_block_library(
   gr-ofdm)
 # The precompiled header reaches the vendored PocketFFT through CyclicPrefix.hpp and fourier/fft.hpp;
 # cmake/CompilerWarnings.cmake turns -Wnull-dereference off for it under GCC 14.
-set_target_properties(GrOfdmBlocksObject PROPERTIES GR_PCH_INCLUDES_POCKETFFT ON)
+if(TARGET GrOfdmBlocksObject)
+  set_target_properties(GrOfdmBlocksObject PROPERTIES GR_PCH_INCLUDES_POCKETFFT ON)
+endif()
 
 if(TARGET gnuradio4::GrOfdmBlocksShared AND ENABLE_TESTING)
   add_subdirectory(test)
