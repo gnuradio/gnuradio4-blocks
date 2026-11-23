@@ -18,11 +18,36 @@
 #include <vector>
 
 #include <gnuradio-4.0/algorithm/filter/FilterDesign.hpp>
+#include <gnuradio-4.0/meta/Attributes.hpp>
 
 #include <vir/simd.h>
 
 #if defined(__AVX__) || defined(__FMA__)
 #include <immintrin.h>
+#endif
+
+// MSVC evaluates every operand of an #if, and __has_builtin is not an operator it knows (C4067), so the test is nested
+// under the compiler check instead of joined to it with &&
+#if defined(__clang__)
+#if __has_builtin(__builtin_elementwise_fma)
+#define GR_POLYPHASE_HAS_ELEMENTWISE_FMA 1
+#endif
+#endif
+
+// MSVC does not recognise [[gnu::noinline]] (C5030) and spells it as a declspec; the same choice as core's
+// GR_SUBNORMAL_NOINLINE
+#if defined(_MSC_VER) && !defined(__clang__)
+#define GR_POLYPHASE_NOINLINE __declspec(noinline)
+#else
+#define GR_POLYPHASE_NOINLINE [[gnu::noinline]]
+#endif
+
+// GR_ALWAYS_INLINE, core's, is __forceinline under MSVC, which a lambda cannot carry; a lambda takes MSVC's own
+// attribute instead (C5030 again for the GNU one)
+#if defined(_MSC_VER) && !defined(__clang__)
+#define GR_POLYPHASE_LAMBDA_ALWAYS_INLINE [[msvc::forceinline]]
+#else
+#define GR_POLYPHASE_LAMBDA_ALWAYS_INLINE [[gnu::always_inline]]
 #endif
 
 /**
@@ -286,7 +311,7 @@ struct PolyphaseVector {
 #endif
 
     template<typename V>
-    [[nodiscard, gnu::always_inline]] static V zero() noexcept {
+    [[nodiscard]] GR_ALWAYS_INLINE static V zero() noexcept {
 #if defined(__clang__)
         return V{};
 #else
@@ -296,7 +321,7 @@ struct PolyphaseVector {
 
     /// @brief The vector's lanes from @p p, each converted to the vector's value type.
     template<typename V, typename T>
-    [[nodiscard, gnu::always_inline]] static V load(const T* p) noexcept {
+    [[nodiscard]] GR_ALWAYS_INLINE static V load(const T* p) noexcept {
         V v;
 #if defined(__clang__)
         if constexpr (std::is_same_v<T, Element<V>>) {
@@ -313,7 +338,7 @@ struct PolyphaseVector {
     }
 
     template<typename V>
-    [[gnu::always_inline]] static void store(const V& v, Element<V>* p) noexcept {
+    GR_ALWAYS_INLINE static void store(const V& v, Element<V>* p) noexcept {
 #if defined(__clang__)
         __builtin_memcpy(p, &v, sizeof(V));
 #else
@@ -329,7 +354,7 @@ struct PolyphaseVector {
      * contraction setting allows.
      */
     template<typename V>
-    [[nodiscard, gnu::always_inline]] static V multiplyAdd(const V& a, const V& b, const V& c) noexcept {
+    [[nodiscard]] GR_ALWAYS_INLINE static V multiplyAdd(const V& a, const V& b, const V& c) noexcept {
         if constexpr (std::is_arithmetic_v<V>) {
             if constexpr (kHardwareFma<V>) {
                 return std::fma(a, b, c);
@@ -337,7 +362,7 @@ struct PolyphaseVector {
                 return a * b + c;
             }
         } else {
-#if defined(__clang__) && __has_builtin(__builtin_elementwise_fma)
+#if defined(GR_POLYPHASE_HAS_ELEMENTWISE_FMA)
             if constexpr (kHardwareFma<Element<V>>) {
                 return __builtin_elementwise_fma(a, b, c);
             }
@@ -355,7 +380,7 @@ struct PolyphaseVector {
 
     /// @brief The four values at @p p twice over, `p[0..3], p[0..3]`, as one eight-lane vector.
     template<typename V, typename T>
-    [[nodiscard, gnu::always_inline]] static V repeatedRun(const T* p) noexcept {
+    [[nodiscard]] GR_ALWAYS_INLINE static V repeatedRun(const T* p) noexcept {
 #if defined(__clang__)
         V v;
         for (std::size_t i = 0UZ; i < 8UZ; ++i) {
@@ -419,7 +444,7 @@ inline constexpr std::size_t kPolyphasePassWork = 32UZ;
  * Kept out of line, so that its register allocation does not depend on its caller; inlined, it measured the same.
  */
 template<typename TSample, typename TTap, std::size_t kOutputs>
-[[gnu::noinline]] void polyphaseDotLanes(const typename PolyphaseTraits<TSample, TTap>::TapValue* h, const typename PolyphaseTraits<TSample, TTap>::Value* arranged, const typename PolyphaseTraits<TSample, TTap>::SampleValue* const* x, std::size_t n, typename PolyphaseTraits<TSample, TTap>::Output* out) noexcept {
+GR_POLYPHASE_NOINLINE void polyphaseDotLanes(const typename PolyphaseTraits<TSample, TTap>::TapValue* h, const typename PolyphaseTraits<TSample, TTap>::Value* arranged, const typename PolyphaseTraits<TSample, TTap>::SampleValue* const* x, std::size_t n, typename PolyphaseTraits<TSample, TTap>::Output* out) noexcept {
     using Traits = PolyphaseTraits<TSample, TTap>;
     using Lanes  = PolyphaseLanes<TSample, TTap>;
     using Value  = typename Traits::Value;
@@ -434,15 +459,15 @@ template<typename TSample, typename TTap, std::size_t kOutputs>
     // Each accumulator has a constant index, which lets the compiler keep it in a register where the target has enough.
     // The index lambdas are forced inline: Clang otherwise calls one every step, with the accumulators in memory.
     std::array<V, kOutputs> acc;
-    const auto              each = [&]<typename F> [[gnu::always_inline]] (F&& f) { [&]<std::size_t... K> [[gnu::always_inline]] (std::index_sequence<K...>) { (f(std::integral_constant<std::size_t, K>{}), ...); }(std::make_index_sequence<kOutputs>{}); };
-    each([&] [[gnu::always_inline]] (auto k) { acc[k] = PolyphaseVector::zero<V>(); });
+    const auto              each = [&]<typename F> GR_POLYPHASE_LAMBDA_ALWAYS_INLINE (F&& f) { [&]<std::size_t... K> GR_POLYPHASE_LAMBDA_ALWAYS_INLINE (std::index_sequence<K...>) { (f(std::integral_constant<std::size_t, K>{}), ...); }(std::make_index_sequence<kOutputs>{}); };
+    each([&] GR_POLYPHASE_LAMBDA_ALWAYS_INLINE (auto k) { acc[k] = PolyphaseVector::zero<V>(); });
 
     const std::size_t bulk = n - (n % kBlock);
     const Value*      next = arranged;
     for (std::size_t r = 0UZ; r < bulk; r += kBlock) {
         const V w = PolyphaseVector::load<V>(next);
         next += Lanes::kLanes;
-        each([&] [[gnu::always_inline]] (auto k) {
+        each([&] GR_POLYPHASE_LAMBDA_ALWAYS_INLINE (auto k) {
             const auto* run = x[k] + kSampleLanes * r;
             V           s;
             if constexpr (Lanes::kRun == Lanes::kLanes) {
@@ -456,7 +481,7 @@ template<typename TSample, typename TTap, std::size_t kOutputs>
     }
 
     std::array<Value, kOutputs * Lanes::kLanes> lanes;
-    each([&] [[gnu::always_inline]] (auto k) { PolyphaseVector::store(acc[k], lanes.data() + k * Lanes::kLanes); });
+    each([&] GR_POLYPHASE_LAMBDA_ALWAYS_INLINE (auto k) { PolyphaseVector::store(acc[k], lanes.data() + k * Lanes::kLanes); });
 
     for (std::size_t k = 0UZ; k < kOutputs; ++k) {
         Value tail[kAcc]{};
@@ -1178,7 +1203,7 @@ private:
      * then `polyphaseDot`.
      */
     template<std::size_t kPass>
-    [[gnu::always_inline]] void computeRow(const TapValue* h, const Value* arranged, const auto& at, std::size_t anchor, std::size_t count, output_type* out) const noexcept {
+    GR_ALWAYS_INLINE void computeRow(const TapValue* h, const Value* arranged, const auto& at, std::size_t anchor, std::size_t count, output_type* out) const noexcept {
         if constexpr (kPass == 1UZ) {
             for (std::size_t j = 0UZ; j < count; ++j) {
                 out[j * _interpolation] = detail::polyphaseDot<TSample, TTap>(h, at(anchor + j * _decimation), _branchLength);
@@ -1220,5 +1245,9 @@ private:
 };
 
 } // namespace gr::filter
+
+#undef GR_POLYPHASE_LAMBDA_ALWAYS_INLINE
+#undef GR_POLYPHASE_NOINLINE
+#undef GR_POLYPHASE_HAS_ELEMENTWISE_FMA
 
 #endif // GNURADIO_ALGORITHM_POLYPHASE_RESAMPLER_HPP

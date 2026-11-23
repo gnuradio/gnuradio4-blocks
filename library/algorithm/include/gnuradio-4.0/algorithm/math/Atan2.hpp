@@ -10,6 +10,7 @@
 #include <numbers>
 #include <span>
 
+#include <gnuradio-4.0/meta/Attributes.hpp>
 #include <gnuradio-4.0/meta/simd_math.hpp>
 
 namespace gr::math {
@@ -50,7 +51,7 @@ void scaledAtan2Lanes(std::span<const T> y, std::span<const T> x, std::span<T> o
 
 /// @brief The arctangent of `t` for `0 <= |t| <= tan(pi/8)`: an odd polynomial in float, a rational function in double.
 template<std::floating_point T>
-[[gnu::always_inline]] inline T atanSmall(T t) noexcept {
+GR_ALWAYS_INLINE T atanSmall(T t) noexcept {
     const T z = t * t;
     if constexpr (std::is_same_v<T, float>) {
         return (((8.05374449538e-2f * z - 1.38776856032e-1f) * z + 1.99777106478e-1f) * z - 3.33329491539e-1f) * z * t + t;
@@ -68,7 +69,7 @@ template<std::floating_point T>
 /// Infinities enter as a ratio of 1 (both infinite) or 0, values above a quarter of the largest finite are quartered so
 /// that `mx + mn` stays finite, and a NaN in either argument returns a NaN.
 template<std::floating_point T>
-[[gnu::always_inline]] inline T atan2Branchless(T y, T x) noexcept {
+GR_ALWAYS_INLINE T atan2Branchless(T y, T x) noexcept {
     constexpr T kInf  = std::numeric_limits<T>::infinity();
     constexpr T kHuge = std::numeric_limits<T>::max() / T(4);
     // pi/4 = kQuarterHigh + kQuarterLow, the high part with few enough bits that its multiples up to 4 are exact
