@@ -15,8 +15,8 @@
 // pays the per-length setup again on every change; a dedicated instance per length pays it once
 
 template<typename T>
-std::vector<T, gr::allocator::Aligned<T>> tone(std::size_t N) {
-    std::vector<T, gr::allocator::Aligned<T>> signal(N);
+std::vector<T, gr::allocator::Aligned<T, gr::algorithm::kSimdFftAlignment>> tone(std::size_t N) {
+    std::vector<T, gr::allocator::Aligned<T, gr::algorithm::kSimdFftAlignment>> signal(N);
     for (std::size_t i = 0; i < N; i++) {
         const double v = std::sin(2. * std::numbers::pi * 5. * static_cast<double>(i) / static_cast<double>(N));
         if constexpr (gr::meta::complex_like<T>) {
@@ -48,8 +48,8 @@ void benchSizePair(std::size_t nA, std::size_t nB) {
     const auto signalA = tone<T>(nA);
     const auto signalB = tone<T>(nB);
 
-    std::vector<Out, gr::allocator::Aligned<Out>> outA(nA);
-    std::vector<Out, gr::allocator::Aligned<Out>> outB(nB);
+    std::vector<Out, gr::allocator::Aligned<Out, gr::algorithm::kSimdFftAlignment>> outA(nA);
+    std::vector<Out, gr::allocator::Aligned<Out, gr::algorithm::kSimdFftAlignment>> outB(nB);
 
     Fft dedicatedA;
     Fft dedicatedB;

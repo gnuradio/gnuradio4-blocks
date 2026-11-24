@@ -161,9 +161,9 @@ struct FFT {
     constexpr static bool      kInverse   = kDirection == Direction::Backward;
     static_assert(kTransform == Transform::Complex || kDirection == Direction::Forward, "real-valued input (R2C) supports the forward transform only");
 
-    SimdFFT<ValueType, kTransform>                            simdFFT{};
-    std::vector<ValueType, gr::allocator::Aligned<ValueType>> alignedInputBuffer{};
-    std::vector<ValueType, gr::allocator::Aligned<ValueType>> alignedOutputBuffer{};
+    SimdFFT<ValueType, kTransform>                                               simdFFT{};
+    std::vector<ValueType, gr::allocator::Aligned<ValueType, kSimdFftAlignment>> alignedInputBuffer{};
+    std::vector<ValueType, gr::allocator::Aligned<ValueType, kSimdFftAlignment>> alignedOutputBuffer{};
 
     /// The one-dimensional PocketFFT plan for this instance's current length. It is built through
     /// pocketfft::detail directly and not through the header's c2c()/r2c() drivers. The plan belongs to this
@@ -556,7 +556,7 @@ private:
         static_assert(sizeof(std::complex<ValueType>) == 2 * sizeof(ValueType), "SimdFFT backend expects interleaved scalars; complex<T> must be 2*T bytes.");
 
         if constexpr (std::is_same_v<InputValueType, ValueType>) {
-            if (gr::allocator::isAligned(in.data(), 64UZ) && gr::allocator::isAligned(out.data(), 64UZ)) { // zero-copy path (same precision and aligned)
+            if (gr::allocator::isAligned(in.data(), kSimdFftAlignment) && gr::allocator::isAligned(out.data(), kSimdFftAlignment)) { // zero-copy path (same precision and aligned)
                 std::span<const ValueType> inputSpan(reinterpret_cast<const ValueType*>(in.data()), nElements);
                 std::span<ValueType>       outputSpan(reinterpret_cast<ValueType*>(out.data()), nElements);
                 simdFFT.template transform<kDirection, Order::Ordered>(inputSpan, outputSpan);
@@ -599,9 +599,9 @@ private:
         }
 
         if constexpr (std::is_same_v<InputValueType, ValueType>) {
-            if (gr::allocator::isAligned(in.data(), 64UZ)) { // input is cacheline-aligned
+            if (gr::allocator::isAligned(in.data(), kSimdFftAlignment)) { // input meets SimdFFT's alignment
                 simdFFT.template transform<kDirection, Order::Ordered>(std::span<const ValueType>{in.data(), N}, alignedOutputBuffer);
-            } else { // not cacheline-aligned -> copy to aligned scratch
+            } else { // otherwise copy into the aligned scratch
                 if (alignedInputBuffer.size() != N) {
                     alignedInputBuffer.resize(N);
                 }
@@ -666,18 +666,16 @@ private:
         }
     }
 
-    std::unique_ptr<FFT<TOutput, TOutput>>                fftCache;
-    std::vector<TOutput, gr::allocator::Aligned<TOutput>> aCache{};
-    std::vector<TOutput, gr::allocator::Aligned<TOutput>> bCache{};
+    std::unique_ptr<FFT<TOutput, TOutput>>                                   fftCache;
+    std::vector<TOutput, gr::allocator::Aligned<TOutput, kSimdFftAlignment>> aCache{};
+    std::vector<TOutput, gr::allocator::Aligned<TOutput, kSimdFftAlignment>> bCache{};
 
     // chirp-z: X[k] = w[k] * (a (*) b)[k]; the cyclic convolution's inverse FFT is expressed as conj(FFT(conj(.)))/m
     void transformBluestein(std::ranges::input_range auto& inPlace) {
         const std::size_t n = inPlace.size();
         const std::size_t m = std::bit_ceil(2 * n + 1);
 
-        using input_container_t = std::remove_cvref_t<decltype(inPlace)>;
-        using output_alloc_t    = gr::allocator::detail::deduce_output_allocator_t<input_container_t, TOutput>;
-        std::vector<TOutput, output_alloc_t> a(m);
+        std::vector<TOutput, gr::allocator::Aligned<TOutput, kSimdFftAlignment>> a(m);
         for (std::size_t i = 0; i < n; ++i) {
             a[i] = detail::complex_mult(inPlace[i], bluesteinExpTable[i]);
         }
@@ -716,20 +714,20 @@ private:
     }
 
     struct Plan {
-        std::size_t                                               size{0UZ};
-        SimdFFT<ValueType, kTransform>                            simdFFT{};
-        std::vector<ValueType, gr::allocator::Aligned<ValueType>> alignedInputBuffer{};
-        std::vector<ValueType, gr::allocator::Aligned<ValueType>> alignedOutputBuffer{};
-        std::vector<std::vector<TOutput>>                         stageTwiddles{};
-        std::vector<std::size_t>                                  bitReverseTable{};
-        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     bluesteinExpTable{};
-        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     bluesteinChirpFFT{};
-        std::unique_ptr<FFT<TOutput, TOutput>>                    fftCache{};
-        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     aCache{};
-        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     bCache{};
-        std::unique_ptr<PocketPlan>                               pocketPlan{};
-        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     fourStepWork{};
-        std::vector<TOutput, gr::allocator::Aligned<TOutput>>     fourStepTwiddles{};
+        std::size_t                                                                  size{0UZ};
+        SimdFFT<ValueType, kTransform>                                               simdFFT{};
+        std::vector<ValueType, gr::allocator::Aligned<ValueType, kSimdFftAlignment>> alignedInputBuffer{};
+        std::vector<ValueType, gr::allocator::Aligned<ValueType, kSimdFftAlignment>> alignedOutputBuffer{};
+        std::vector<std::vector<TOutput>>                                            stageTwiddles{};
+        std::vector<std::size_t>                                                     bitReverseTable{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput>>                        bluesteinExpTable{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput>>                        bluesteinChirpFFT{};
+        std::unique_ptr<FFT<TOutput, TOutput>>                                       fftCache{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput, kSimdFftAlignment>>     aCache{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput, kSimdFftAlignment>>     bCache{};
+        std::unique_ptr<PocketPlan>                                                  pocketPlan{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput>>                        fourStepWork{};
+        std::vector<TOutput, gr::allocator::Aligned<TOutput>>                        fourStepTwiddles{};
     };
 
     // a parked plan holds the whole per-length state, ~16 MB at N = 2^20 for complex<float>, so the count is

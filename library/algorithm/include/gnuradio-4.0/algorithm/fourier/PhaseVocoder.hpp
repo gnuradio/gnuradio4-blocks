@@ -169,9 +169,9 @@ private:
     std::vector<float>               _accWindow;
     bool                             _primed = false;
 
-    FFT<std::complex<float>>                                                      _fft;
-    std::vector<std::complex<float>, gr::allocator::Aligned<std::complex<float>>> _scratch, _spectrum;
-    std::vector<std::complex<float>>                                              _synth, _frameOut;
+    FFT<std::complex<float>>                                                                         _fft;
+    std::vector<std::complex<float>, gr::allocator::Aligned<std::complex<float>, kSimdFftAlignment>> _scratch, _spectrum;
+    std::vector<std::complex<float>>                                                                 _synth, _frameOut;
 };
 
 } // namespace gr::algorithm
