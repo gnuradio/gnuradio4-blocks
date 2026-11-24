@@ -24,7 +24,7 @@
 using namespace std::chrono;
 
 template<typename T>
-using Aligned = std::vector<T, gr::allocator::Aligned<T>>;
+using Aligned = std::vector<T, gr::allocator::Aligned<T, gr::algorithm::kSimdFftAlignment>>;
 
 template<typename T>
 Aligned<T> broadbandSignal(std::size_t N) {
