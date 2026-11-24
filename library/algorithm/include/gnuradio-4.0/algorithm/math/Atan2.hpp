@@ -106,18 +106,15 @@ void scaledAtan2Branchless(std::span<const T> y, std::span<const T> x, std::span
     const T* const    py = y.data();
     const T* const    px = x.data();
     T* const          po = out.data();
-#if defined(__clang__)
-// the hint is a request: a target without a vector unit for T (WebAssembly without simd128 for double) leaves the loop scalar, which is not an error
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpass-failed"
+// WebAssembly without simd128 has no vector unit, so the hint is not given there: clang cannot honor it and reports
+// -Wpass-failed, and with no debug info the report lands on the outermost function this loop is inlined into, where no
+// diagnostic pragma in this header reaches it
+#if defined(__clang__) && (!defined(__wasm__) || defined(__wasm_simd128__))
 #pragma clang loop vectorize(enable)
 #endif
     for (std::size_t i = 0UZ; i < n; ++i) {
         po[i] = scale * atan2Branchless<T>(py[i], px[i]);
     }
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
 }
 
 template<std::floating_point T>
