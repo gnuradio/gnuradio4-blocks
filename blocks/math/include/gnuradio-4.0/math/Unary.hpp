@@ -165,7 +165,7 @@ void overParts(std::span<const std::complex<float>> input, std::span<float> outp
             } else {
                 std::array<float, kWidth> last;
                 result.copy_to(last.data(), vir::stdx::element_aligned);
-                std::copy_n(last.begin(), count - i, output.begin() + static_cast<std::ptrdiff_t>(base + i));
+                std::copy_n(last.begin(), std::min(count - i, kWidth), output.begin() + static_cast<std::ptrdiff_t>(base + i));
             }
         }
     }
