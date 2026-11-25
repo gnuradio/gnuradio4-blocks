@@ -33,6 +33,8 @@
 #include <gnuradio-4.0/sdr/SoapySource.hpp>
 #include <gnuradio-4.0/testing/NullSources.hpp>
 
+#include "SoapyTestEnvironment.hpp"
+
 namespace gr::blocks::sdr {
 static_assert(std::is_constructible_v<SoapySource<std::complex<float>>, gr::property_map>, "SoapySource not default constructible w/ property_map");
 static_assert(std::is_constructible_v<SoapySimpleSource<std::complex<float>>, gr::property_map>, "SoapySource not default constructible w/ property_map");
@@ -50,8 +52,8 @@ bool hardwareRequested() {
 const bool kHardwareRequested = [] {
     const bool requested = hardwareRequested();
     if (!requested) {
-        setenv("SOAPY_SDR_ROOT", GR_SDR_TEST_SOAPY_EMPTY_ROOT, 1);
-        setenv("SOAPY_SDR_PLUGIN_PATH", GR_SDR_TEST_SOAPY_MODULE_DIR, 1);
+        setenv("SOAPY_SDR_ROOT", soapyEmptyRoot().c_str(), 1);
+        setenv("SOAPY_SDR_PLUGIN_PATH", soapyModuleDirectory().c_str(), 1);
     }
     return requested;
 }();
@@ -122,7 +124,7 @@ const boost::ut::suite<"basic SoapySDR API "> basicSoapyAPI = [] {
         }
         if (!kHardwareRequested) { // every module SoapySDR lists lies in the loopback module's directory
             for (const auto& module : modules) {
-                expect(module.starts_with(GR_SDR_TEST_SOAPY_MODULE_DIR "/")) << std::format("{} lies outside the loopback module's directory", module);
+                expect(module.starts_with(soapyModuleDirectory() + "/")) << std::format("{} lies outside the loopback module's directory", module);
             }
         }
     };
