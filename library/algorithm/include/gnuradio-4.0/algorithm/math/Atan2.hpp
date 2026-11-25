@@ -37,14 +37,15 @@ void scaledAtan2Lanes(std::span<const T> y, std::span<const T> x, std::span<T> o
         result.copy_to(&out[i], vir::stdx::element_aligned);
     }
     if (i < n) {
-        std::array<T, W> tailY{};
-        std::array<T, W> tailX{};
-        std::array<T, W> tailOut;
-        std::copy_n(&y[i], n - i, tailY.begin());
-        std::copy_n(&x[i], n - i, tailX.begin());
+        const std::size_t tail = std::min(n - i, W); // always n - i; the bound lets GCC see the copies fit the arrays
+        std::array<T, W>  tailY{};
+        std::array<T, W>  tailX{};
+        std::array<T, W>  tailOut;
+        std::copy_n(&y[i], tail, tailY.begin());
+        std::copy_n(&x[i], tail, tailX.begin());
         V result = factor * gr::meta::atan2(V(tailY.data(), vir::stdx::element_aligned), V(tailX.data(), vir::stdx::element_aligned));
         result.copy_to(tailOut.data(), vir::stdx::element_aligned);
-        std::copy_n(tailOut.begin(), n - i, &out[i]);
+        std::copy_n(tailOut.begin(), tail, &out[i]);
     }
 }
 
